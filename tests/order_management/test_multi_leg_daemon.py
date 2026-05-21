@@ -321,8 +321,8 @@ def test_daemon_shares_exchange_snapshot_for_same_symbol_and_poll() -> None:
 
     daemon.run_once()
 
-    adapter_a.sync_open_orders.assert_called_once_with("BTCUSDT")
-    adapter_a.sync_positions.assert_called_once_with("BTCUSDT")
+    assert adapter_a.sync_open_orders.call_args_list[0].args == ("BTCUSDT",)
+    assert adapter_a.sync_positions.call_args_list[0].args == ("BTCUSDT",)
     adapter_b.sync_open_orders.assert_not_called()
     adapter_b.sync_positions.assert_not_called()
 

@@ -133,6 +133,19 @@ class MultiLegLiveDaemon:
                     continue
                 self._last_processed.add(key)
                 bars_seen += 1
+                sym = str(rt.symbol or "").upper().strip()
+                exchange_orders = None
+                exchange_positions = None
+                live_sync = getattr(rt.engine, "sync_live_exchange_state", None)
+                if callable(live_sync):
+                    exchange_orders, exchange_positions = self._exchange_snapshot(
+                        sym, rt, exchange_snapshots
+                    )
+                    self._last_reconciled_at[sym] = time.monotonic()
+                    live_sync(
+                        exchange_orders=exchange_orders,
+                        exchange_positions=exchange_positions,
+                    )
                 actions = rt.engine.on_bar(
                     symbol=bar.symbol,
                     timestamp=bar.timestamp,
@@ -142,7 +155,6 @@ class MultiLegLiveDaemon:
                     atr=bar.atr,
                     features=bar.features,
                 )
-                sym = str(rt.symbol or "").upper().strip()
                 owner = symbol_owner.get(sym, "")
                 if owner and owner != str(rt.name or ""):
                     dropped = [
@@ -197,12 +209,11 @@ class MultiLegLiveDaemon:
                         features=dict(bar.features or {}),
                     )
                 should_reconcile = bool(actions) or bool(reconcile_due_symbols.get(sym))
-                exchange_orders = None
-                exchange_positions = None
                 if should_reconcile:
-                    exchange_orders, exchange_positions = self._exchange_snapshot(
-                        sym, rt, exchange_snapshots
-                    )
+                    if exchange_orders is None or exchange_positions is None:
+                        exchange_orders, exchange_positions = self._exchange_snapshot(
+                            sym, rt, exchange_snapshots
+                        )
                     self._last_reconciled_at[sym] = time.monotonic()
                 report = rt.orchestrator.run_actions(
                     actions,

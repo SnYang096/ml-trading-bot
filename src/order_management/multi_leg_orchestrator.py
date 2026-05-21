@@ -152,8 +152,9 @@ class MultiLegLiveOrchestrator:
             reconcile_orders = orders
             reconcile_positions = positions
             if execution_results:
-                reconcile_orders = self.adapter.sync_open_orders(None)
-                reconcile_positions = self.adapter.sync_positions(None)
+                reconcile_symbol = self.symbol or _first_action_symbol(action_list) or None
+                reconcile_orders = self.adapter.sync_open_orders(reconcile_symbol)
+                reconcile_positions = self.adapter.sync_positions(reconcile_symbol)
             reconciliation, reconciliation_results = self.reconcile(
                 exchange_orders=reconcile_orders,
                 exchange_positions=reconcile_positions,
@@ -249,6 +250,17 @@ class MultiLegLiveOrchestrator:
         self._persist_reconciliation(report)
 
         results: List[MultiLegExecutionResult] = []
+        protection_actions = _call_snapshot(
+            self.engine,
+            "actions_ensure_protection",
+            exchange_positions=positions,
+            exchange_orders=orders,
+        )
+        if protection_actions:
+            prot_results = self.adapter.execute_actions(protection_actions)
+            results.extend(prot_results)
+            _call_optional(self.engine, "on_execution_results", prot_results)
+
         if self.execute_reconciliation_actions and report.suggested_actions:
             logger.info(
                 "multi-leg reconcile cancels: strategy=%s symbol=%s count=%d "
@@ -259,8 +271,9 @@ class MultiLegLiveOrchestrator:
             )
             # Reconciliation actions are cancel-only by construction today. Route
             # them through the same adapter so client logging stays consistent.
-            results = self.adapter.execute_actions(report.suggested_actions)
-            _call_optional(self.engine, "on_execution_results", results)
+            cancel_results = self.adapter.execute_actions(report.suggested_actions)
+            results.extend(cancel_results)
+            _call_optional(self.engine, "on_execution_results", cancel_results)
         return report, results
 
     def on_execution_report(self, report: Mapping[str, Any]) -> None:
@@ -366,11 +379,24 @@ def _call_optional(target: object, method_name: str, arg: object) -> None:
         method(arg)
 
 
-def _call_snapshot(target: object, method_name: str) -> List[Any]:
+def _call_snapshot(target: object, method_name: str, **kwargs: Any) -> List[Any]:
     method = getattr(target, method_name, None)
     if not callable(method):
         return []
-    return list(method())
+    out = method(**kwargs) if kwargs else method()
+    if out is None:
+        return []
+    if isinstance(out, list):
+        return out
+    return list(out)
+
+
+def _first_action_symbol(actions: Iterable[Mapping[str, Any]]) -> str:
+    for action in actions:
+        symbol = str((action or {}).get("symbol") or "").strip()
+        if symbol:
+            return symbol
+    return ""
 
 
 def _exchange_positions_to_exposures(

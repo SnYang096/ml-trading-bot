@@ -17,6 +17,119 @@ def test_take_profit_maps_to_exit_event():
     assert _multi_leg_event("entry", "LIMIT") == "entry"
 
 
+def test_l1_entry_shows_tp_from_l1_tp_protection_row(multi_leg_db):
+    from src.order_management.multi_leg_storage import MultiLegStorage
+
+    from mlbot_console.services.orders_list import collect_orders
+
+    storage = MultiLegStorage(str(multi_leg_db))
+    run_id = storage.create_run(
+        mode="testnet",
+        strategies=["chop_grid"],
+        symbols=["BNBUSDT"],
+        run_id="mlr_l1_tp",
+    )
+    group = "BNBUSDT_2026-05-19 08:40:00+00:00"
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": f"{group}_L1",
+            "symbol": "BNBUSDT",
+            "side": "BUY",
+            "purpose": "entry",
+            "quantity": 0.31,
+            "price": 637.11,
+            "status": "filled",
+            "filled_quantity": 0.31,
+            "average_price": 637.11,
+        }
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": f"{group}_L1_tp",
+            "leg_id": f"{group}_L1",
+            "symbol": "BNBUSDT",
+            "side": "LONG",
+            "purpose": "take_profit",
+            "quantity": 0.31,
+            "price": 643.55,
+            "status": "open",
+            "filled_quantity": 0.0,
+        }
+    )
+    rows = collect_orders(
+        trend_db=multi_leg_db.parent / "missing_trend.db",
+        spot_db=multi_leg_db.parent / "missing_spot.db",
+        multi_leg_db=multi_leg_db,
+        symbol="BNBUSDT",
+        scopes=["multi_leg"],
+        limit=50,
+    )
+    l1 = next(r for r in rows if r["order_id"].endswith("_L1"))
+    assert l1["take_profit_price"] == 643.55
+    assert "tp" in (l1.get("take_profit_hint") or "").lower()
+
+
+def test_l1_entry_does_not_use_s_grid_as_tp(multi_leg_db):
+    from src.order_management.multi_leg_storage import MultiLegStorage
+
+    from mlbot_console.services.multileg_order_links import resolve_take_profit_display
+    from mlbot_console.services.orders_list import collect_orders
+
+    storage = MultiLegStorage(str(multi_leg_db))
+    run_id = storage.create_run(
+        mode="testnet",
+        strategies=["chop_grid"],
+        symbols=["BNBUSDT"],
+        run_id="mlr_l1_s1",
+    )
+    group = "BNBUSDT_2026-05-19 08:40:00+00:00"
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": f"{group}_L1",
+            "symbol": "BNBUSDT",
+            "side": "BUY",
+            "purpose": "entry",
+            "quantity": 0.31,
+            "price": 637.11,
+            "status": "filled",
+            "filled_quantity": 0.31,
+            "average_price": 637.11,
+            "filled_at": "2026-05-19T14:48:21+00:00",
+        }
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": f"{group}_S1",
+            "symbol": "BNBUSDT",
+            "side": "SELL",
+            "purpose": "entry",
+            "quantity": 0.31,
+            "price": 656.42,
+            "status": "expired",
+            "filled_quantity": 0.0,
+        }
+    )
+    rows = collect_orders(
+        trend_db=multi_leg_db.parent / "missing_trend.db",
+        spot_db=multi_leg_db.parent / "missing_spot.db",
+        multi_leg_db=multi_leg_db,
+        symbol="BNBUSDT",
+        scopes=["multi_leg"],
+        exclude_statuses=["expired", "canceled"],
+        limit=50,
+    )
+    l1 = next(r for r in rows if r["order_id"].endswith("_L1"))
+    assert l1.get("take_profit_price") is None or l1.get("take_profit_price") != 656.42
+
+
 def test_take_profit_price_from_stop_or_short_leg(multi_leg_db):
     row = {
         "purpose": "take_profit",

@@ -184,12 +184,21 @@ def _order_key(order: Mapping[str, Any]) -> Set[str]:
     } - {""}
 
 
+def _normalize_symbol(value: Any) -> str:
+    raw = str(value or "").upper().strip()
+    if "/" in raw:
+        base, rest = raw.split("/", 1)
+        quote = rest.split(":", 1)[0]
+        return f"{base}{quote}"
+    return raw.split(":", 1)[0]
+
+
 def _position_quantities(
     positions: Iterable[LocalPositionSnapshot],
 ) -> Dict[Tuple[str, str], float]:
     out: Dict[Tuple[str, str], float] = {}
     for pos in positions:
-        key = (str(pos.symbol).upper(), str(pos.side).upper())
+        key = (_normalize_symbol(pos.symbol), str(pos.side).upper())
         out[key] = out.get(key, 0.0) + abs(float(pos.quantity))
     return out
 
@@ -199,7 +208,7 @@ def _exchange_position_quantities(
 ) -> Dict[Tuple[str, str], float]:
     out: Dict[Tuple[str, str], float] = {}
     for pos in positions:
-        symbol = str(pos.get("symbol", "") or "").upper()
+        symbol = _normalize_symbol(pos.get("symbol", ""))
         side = str(pos.get("position_side") or pos.get("positionSide") or "").upper()
         if not side:
             amount = float(pos.get("position_amount") or pos.get("positionAmt") or 0.0)

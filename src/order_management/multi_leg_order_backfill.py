@@ -162,7 +162,17 @@ def run_multi_leg_backfill_once(
         if not ex_id or not symbol:
             continue
         try:
-            snap = api.get_order(ex_id, symbol)
+            try:
+                snap = api.get_order(ex_id, symbol)
+            except Exception:
+                api_error_count += 1
+                logger.debug(
+                    "multi-leg REST backfill: get_order failed symbol=%s exchange=%s",
+                    symbol,
+                    ex_id,
+                    exc_info=True,
+                )
+                continue
             if not snap:
                 open_exchange_ids = open_exchange_ids_by_symbol.get(symbol)
                 if open_exchange_ids is None:

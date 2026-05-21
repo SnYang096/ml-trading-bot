@@ -497,6 +497,7 @@ def build_daemon(
             reconciler = MultiLegReconciler(
                 ReconciliationPolicy(
                     client_id_prefixes={f"{prefix}_"},
+                    cancel_orphan_exchange_orders=(strategy != "chop_grid"),
                     skip_position_reconciliation=(sym_u in multi_engine_symbols),
                 )
             )
@@ -562,6 +563,7 @@ def _make_engine(strategy: str, *, symbol: str, args: argparse.Namespace) -> Any
             state_path=state_dir / f"chop_grid_{symbol}.json",
             level_notional=args.unit_notional,
             metrics_strategy=strategy,
+            bar_simulation=args.mode == "shadow",
         )
     if strategy in ("dual_add_trend", "trend_scalp"):
         return DualAddTrendLiveEngine(

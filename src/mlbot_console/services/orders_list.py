@@ -6,11 +6,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from mlbot_console.services.db import query_rows
-from mlbot_console.services.trade_markers import (
-    _marker_id,
-    _multi_leg_take_profit_price,
-    _parse_ts,
+from mlbot_console.services.multileg_order_links import (
+    enrich_multileg_rows_for_symbol,
+    resolve_take_profit_display,
 )
+from mlbot_console.services.trade_markers import _marker_id, _parse_ts
 
 _ALL_SYMBOLS = frozenset({"", "*", "ALL", "__ALL__"})
 
@@ -78,7 +78,12 @@ def _normalize(
         "marker_id": _marker_id(scope, source, marker_key) if oid else None,
     }
     if scope == "multi_leg":
-        item["take_profit_price"] = _multi_leg_take_profit_price(row)
+        tp_px, tp_hint = resolve_take_profit_display(row)
+        item["take_profit_price"] = tp_px
+        item["take_profit_hint"] = tp_hint
+        if row.get("_link_exit_price") is not None:
+            item["exit_price"] = row.get("_link_exit_price")
+            item["exit_order_id"] = row.get("_link_exit_leg")
     return item
 
 
@@ -181,6 +186,7 @@ def multi_leg_orders_list(
             LIMIT ?
         """
         rows = query_rows(db_path, sql, (sym, int(limit)))
+    enrich_multileg_rows_for_symbol(db_path, symbol, rows)
     out = []
     for r in rows:
         item = _normalize("multi_leg", r)

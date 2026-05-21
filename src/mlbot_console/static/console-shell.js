@@ -216,7 +216,7 @@
       ["类型", o.order_type],
       ["数量", o.filled_quantity ?? o.quantity],
       ["价格", o.average_price ?? o.price],
-      ["止盈价", o.take_profit_price ?? o.stop_price],
+      ["止盈价", formatTpPrice(o)],
       ["用途", o.purpose ?? o.order_type],
       ["策略", o.strategy],
       ["成交时间", formatOrderTime(o.time)],
@@ -272,7 +272,9 @@
     const v = row?.take_profit_price ?? row?.stop_price;
     if (v == null || v === "") return "—";
     const n = Number(v);
-    return Number.isFinite(n) ? String(n) : "—";
+    if (!Number.isFinite(n)) return "—";
+    const hint = row?.take_profit_hint ? ` (${row.take_profit_hint})` : "";
+    return `${n}${hint}`;
   }
 
   function ordersTableColspan(showSymbol) {

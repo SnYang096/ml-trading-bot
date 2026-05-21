@@ -11,7 +11,7 @@ import json
 import logging
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from src.config.multileg_config import load_multileg_effective_config
 from src.config.strategy_layout import resolve_strategy_config_input
@@ -74,6 +74,29 @@ def _as_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _normalize_symbol(value: Any) -> str:
+    raw = str(value or "").upper().strip()
+    if not raw:
+        return ""
+    if "/" in raw:
+        base, rest = raw.split("/", 1)
+        quote = rest.split(":", 1)[0]
+        return f"{base}{quote}"
+    return raw.split(":", 1)[0]
+
+
+def _exchange_position_quantity(row: Mapping[str, Any]) -> float:
+    return abs(
+        _as_float(
+            row.get("size")
+            or row.get("quantity")
+            or row.get("contracts")
+            or row.get("position_amount")
+            or row.get("positionAmt")
+        )
+    )
 
 
 def _load_grid_config(path: str | Path) -> GridEngineConfig:
@@ -145,6 +168,7 @@ class ChopGridLiveEngine:
         state_path: str | Path = "results/chop_grid/live_state.json",
         level_notional: float = 1.0,
         metrics_strategy: str = "",
+        bar_simulation: bool = True,
     ) -> None:
         self.config_path = Path(config_path)
         self.state_path = Path(state_path)
@@ -153,6 +177,8 @@ class ChopGridLiveEngine:
         self.state = self.load_state()
         self._pending_actions: List[Dict[str, Any]] = []
         self.metrics_strategy = str(metrics_strategy or "")
+        self.bar_simulation = bool(bar_simulation)
+        self._live_exchange_has_activity = False
 
     def _emit_chop_bar_outcome(
         self,
@@ -401,6 +427,205 @@ class ChopGridLiveEngine:
         self._pending_actions.clear()
         return actions
 
+    def actions_ensure_protection(
+        self,
+        *,
+        exchange_positions: Iterable[Mapping[str, Any]],
+        exchange_orders: Iterable[Mapping[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Place missing reduce-only TP/SL for open exchange legs (live reconcile)."""
+        if self.bar_simulation or not self.state.active or self.state.spacing <= 0:
+            return []
+        sym = str(self.state.symbol or "").upper()
+        if not sym:
+            return []
+
+        self._sync_inventory_from_exchange(exchange_positions, symbol=sym)
+        open_orders = [dict(o) for o in exchange_orders]
+        actions: List[Dict[str, Any]] = []
+        ts = self.state.last_timestamp or ""
+        for pos in self.state.inventory:
+            if str(pos.symbol or "").upper() != sym:
+                continue
+            if self._has_open_protection(pos, open_orders):
+                continue
+            new_actions = self._protection_actions(
+                order_id=pos.leg_id,
+                pos=pos,
+                timestamp=ts,
+            )
+            for action in new_actions:
+                if str(action.get("protection_type") or "") == "take_profit":
+                    # Catch-up protection must close if price already crossed TP.
+                    action["post_only"] = False
+                    action["time_in_force"] = "GTC"
+            actions.extend(new_actions)
+        if actions:
+            logger.info(
+                "chop_grid ensure_protection: symbol=%s inventory=%d actions=%d",
+                sym,
+                len(self.state.inventory),
+                len(actions),
+            )
+            self.save_state()
+        return actions
+
+    def sync_live_exchange_state(
+        self,
+        *,
+        exchange_positions: Iterable[Mapping[str, Any]],
+        exchange_orders: Iterable[Mapping[str, Any]],
+    ) -> None:
+        """Use exchange truth to avoid opening a fresh grid over live exposure."""
+        self._live_exchange_has_activity = False
+        if self.bar_simulation:
+            return
+        sym = str(self.state.symbol or "").upper()
+        if not sym:
+            # If state was lost, infer symbol from exchange rows later in the daemon.
+            sym = ""
+        open_grid_orders = [
+            dict(o)
+            for o in exchange_orders
+            if self._is_chop_grid_exchange_order(o)
+            and (not sym or _normalize_symbol(o.get("symbol")) == sym)
+        ]
+        positions = [
+            dict(p)
+            for p in exchange_positions
+            if (not sym or _normalize_symbol(p.get("symbol")) == sym)
+            and _exchange_position_quantity(p) > 0
+        ]
+        self._live_exchange_has_activity = bool(open_grid_orders or positions)
+        if not self._live_exchange_has_activity:
+            return
+        if not self.state.active:
+            logger.warning(
+                "chop_grid live exchange activity blocks new grid: symbol=%s "
+                "open_orders=%d positions=%d",
+                sym or "unknown",
+                len(open_grid_orders),
+                len(positions),
+            )
+            self.state.active = True
+            self.state.current_regime = "chop_grid"
+            if not self.state.symbol and positions:
+                self.state.symbol = _normalize_symbol(positions[0].get("symbol"))
+            if not self.state.symbol and open_grid_orders:
+                self.state.symbol = _normalize_symbol(open_grid_orders[0].get("symbol"))
+        if self.state.symbol:
+            self._sync_inventory_from_exchange(
+                positions,
+                symbol=str(self.state.symbol).upper(),
+            )
+        self.save_state()
+
+    def _sync_inventory_from_exchange(
+        self,
+        exchange_positions: Iterable[Mapping[str, Any]],
+        *,
+        symbol: str,
+    ) -> None:
+        """Rebuild inventory from hedge positions when user-stream fill was missed."""
+        sym = str(symbol).upper()
+        existing = {
+            (str(p.side).upper(), round(float(p.entry_price), 4)): p
+            for p in self.state.inventory
+        }
+        for raw in exchange_positions:
+            row = dict(raw)
+            row_sym = _normalize_symbol(row.get("symbol"))
+            if row_sym != sym:
+                continue
+            qty = _exchange_position_quantity(row)
+            if qty <= 0:
+                continue
+            side_raw = str(row.get("side") or row.get("positionSide") or "").lower()
+            pos_side = "LONG" if side_raw in {"long", "buy"} else "SHORT"
+            entry = _as_float(row.get("entry_price") or row.get("entryPrice"))
+            if entry <= 0:
+                continue
+            key = (pos_side, round(entry, 4))
+            if key in existing:
+                continue
+            leg_id = self._match_leg_id_for_fill(pos_side, entry)
+            self.state.inventory.append(
+                GridPosition(
+                    symbol=sym,
+                    side=pos_side,
+                    level=0,
+                    entry_price=entry,
+                    quantity=qty,
+                    entry_time=self.state.last_timestamp,
+                    leg_id=leg_id,
+                )
+            )
+            existing[key] = self.state.inventory[-1]
+
+    def _match_leg_id_for_fill(self, pos_side: str, entry_price: float) -> str:
+        best_id = f"{self.state.grid_id}_{'L1' if pos_side == 'LONG' else 'S1'}"
+        best_dist = float("inf")
+        for order in list(self.state.pending_orders):
+            oside = "LONG" if order.side == "BUY" else "SHORT"
+            if oside != pos_side:
+                continue
+            dist = abs(order.price - entry_price)
+            if dist < best_dist:
+                best_dist = dist
+                best_id = order.order_id
+        if best_dist < max(self.state.spacing * 0.5, entry_price * 0.002):
+            return best_id
+        gid = self.state.grid_id or ""
+        return f"{gid}_{'L1' if pos_side == 'LONG' else 'S1'}"
+
+    def _has_open_protection(
+        self, pos: GridPosition, open_orders: List[Dict[str, Any]]
+    ) -> bool:
+        if pos.protection_order_ids:
+            return True
+        tp_px = self._tp_price_for_position(pos)
+        if tp_px is None:
+            return False
+        pos_side = str(pos.side).upper()
+        for order in open_orders:
+            o_side = str(order.get("side") or "").lower()
+            o_pos = str(
+                order.get("position_side")
+                or order.get("positionSide")
+                or (order.get("info") or {}).get("positionSide")
+                or ""
+            ).upper()
+            if not o_pos:
+                # Without Hedge Mode side we cannot distinguish protection from
+                # the opposite grid entry, so fail closed and place protection.
+                continue
+            if o_pos != pos_side:
+                continue
+            if pos_side == "LONG" and o_side != "sell":
+                continue
+            if pos_side == "SHORT" and o_side != "buy":
+                continue
+            price = _as_float(order.get("price"), 0.0)
+            if price <= 0:
+                continue
+            if abs(price - tp_px) <= max(self.state.spacing * 0.15, price * 0.001):
+                return True
+            if abs(price - tp_px) <= self.state.spacing * 2:
+                return True
+        return False
+
+    def _is_chop_grid_exchange_order(self, order: Mapping[str, Any]) -> bool:
+        info = order.get("info") or {}
+        cid = str(order.get("client_order_id") or info.get("clientOrderId") or "")
+        return cid.startswith("cg_")
+
+    def _tp_price_for_position(self, pos: GridPosition) -> Optional[float]:
+        if self.state.spacing <= 0:
+            return None
+        if pos.side == "LONG":
+            return pos.entry_price + self.state.spacing
+        return pos.entry_price - self.state.spacing
+
     def on_bar(
         self,
         *,
@@ -424,6 +649,7 @@ class ChopGridLiveEngine:
             and self.state.symbol == symbol
             and not self.state.pending_orders
             and not self.state.inventory
+            and not self._live_exchange_has_activity
         ):
             logger.warning(
                 "chop_grid stale active state reset: symbol=%s grid_id=%s",
@@ -441,8 +667,9 @@ class ChopGridLiveEngine:
             actions.extend(self._start_grid(symbol, timestamp, close, atr))
 
         if self.state.active and self.state.symbol == symbol:
-            actions.extend(self._simulate_fills(timestamp, high, low))
-            actions.extend(self._simulate_targets(timestamp, high, low))
+            if self.bar_simulation:
+                actions.extend(self._simulate_fills(timestamp, high, low))
+                actions.extend(self._simulate_targets(timestamp, high, low))
             if self._risk_stop(close):
                 should_exit = True
 
@@ -683,8 +910,8 @@ class ChopGridLiveEngine:
                 "order_type": "limit",
                 "protection_type": "take_profit",
                 "reduce_only": True,
-                "post_only": True,
-                "time_in_force": "GTX",
+                "post_only": False,
+                "time_in_force": "GTC",
                 "timestamp": timestamp,
             },
             {

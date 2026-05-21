@@ -123,8 +123,8 @@ def test_chop_grid_execution_report_moves_filled_order_to_inventory(
     tp_action = follow_ups[0]
     assert tp_action["order_type"] == "limit"
     assert tp_action["reduce_only"] is True
-    assert tp_action["post_only"] is True
-    assert tp_action["time_in_force"] == "GTX"
+    assert tp_action["post_only"] is False
+    assert tp_action["time_in_force"] == "GTC"
     assert tp_action["price"] == tp_action["trigger_price"]
 
 
