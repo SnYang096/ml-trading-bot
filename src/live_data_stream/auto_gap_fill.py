@@ -56,6 +56,74 @@ def _load_recent_bars(
     return out.sort_values("timestamp").drop_duplicates("timestamp", keep="last")
 
 
+def _load_recent_ticks(
+    storage: StorageManager,
+    symbol: str,
+    *,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> pd.DataFrame:
+    df = storage.ticks.load_range(
+        symbol,
+        start.strftime("%Y-%m-%d"),
+        end.strftime("%Y-%m-%d"),
+    )
+    if df.empty or "timestamp" not in df.columns:
+        return pd.DataFrame()
+    out = df.copy()
+    out["timestamp"] = pd.to_datetime(out["timestamp"], utc=True)
+    out = out[(out["timestamp"] >= start) & (out["timestamp"] <= end)]
+    return out.sort_values("timestamp")
+
+
+def _gaps_from_minute_series(
+    symbol: str,
+    minute_ts: pd.Series,
+    *,
+    end: pd.Timestamp,
+    min_gap: float,
+    kind_prefix: str,
+) -> List[BarGap]:
+    minutes = (
+        pd.to_datetime(minute_ts, utc=True)
+        .dt.floor("min")
+        .drop_duplicates()
+        .sort_values()
+        .reset_index(drop=True)
+    )
+    if minutes.empty:
+        return []
+
+    gaps: List[BarGap] = []
+    diffs = minutes.diff().dt.total_seconds().div(60.0)
+    for idx, gap_minutes in diffs[diffs > min_gap + 1.0].items():
+        prev_ts = minutes.iloc[int(idx) - 1]
+        next_ts = minutes.iloc[int(idx)]
+        gaps.append(
+            BarGap(
+                symbol=symbol,
+                start=prev_ts + pd.Timedelta(minutes=1),
+                end=next_ts - pd.Timedelta(minutes=1),
+                minutes=float(gap_minutes - 1.0),
+                kind=f"{kind_prefix}_internal",
+            )
+        )
+
+    last_ts = minutes.iloc[-1]
+    tail_minutes = (end - last_ts).total_seconds() / 60.0
+    if tail_minutes > min_gap:
+        gaps.append(
+            BarGap(
+                symbol=symbol,
+                start=last_ts + pd.Timedelta(minutes=1),
+                end=end.floor("min"),
+                minutes=float(tail_minutes),
+                kind=f"{kind_prefix}_tail",
+            )
+        )
+    return gaps
+
+
 def detect_large_bar_gaps(
     storage: StorageManager,
     symbols: Iterable[str],
@@ -86,35 +154,69 @@ def detect_large_bar_gaps(
             )
             continue
 
-        ts = bars["timestamp"].reset_index(drop=True)
-        diffs = ts.diff().dt.total_seconds().div(60.0)
-        for idx, minutes in diffs[diffs > min_gap + 1.0].items():
-            prev_ts = ts.iloc[int(idx) - 1]
-            next_ts = ts.iloc[int(idx)]
-            gaps.append(
-                BarGap(
-                    symbol=symbol,
-                    start=prev_ts + pd.Timedelta(minutes=1),
-                    end=next_ts - pd.Timedelta(minutes=1),
-                    minutes=float(minutes - 1.0),
-                    kind="internal",
-                )
+        gaps.extend(
+            _gaps_from_minute_series(
+                symbol,
+                bars["timestamp"],
+                end=end,
+                min_gap=min_gap,
+                kind_prefix="bars",
             )
-
-        last_ts = ts.iloc[-1]
-        tail_minutes = (end - last_ts).total_seconds() / 60.0
-        if tail_minutes > min_gap:
-            gaps.append(
-                BarGap(
-                    symbol=symbol,
-                    start=last_ts + pd.Timedelta(minutes=1),
-                    end=end.floor("min"),
-                    minutes=float(tail_minutes),
-                    kind="tail",
-                )
-            )
+        )
 
     return gaps
+
+
+def detect_large_tick_gaps(
+    storage: StorageManager,
+    symbols: Iterable[str],
+    *,
+    lookback_hours: float = 48.0,
+    min_gap_minutes: float = 60.0,
+    ignore_recent_minutes: float = 5.0,
+    now: Optional[pd.Timestamp] = None,
+) -> List[BarGap]:
+    """Find large gaps in persisted tick minutes."""
+    now_ts = _utc_timestamp(now or pd.Timestamp.now(tz="UTC"))
+    end = now_ts - pd.Timedelta(minutes=float(ignore_recent_minutes))
+    start = end - pd.Timedelta(hours=float(lookback_hours))
+    min_gap = float(min_gap_minutes)
+    gaps: List[BarGap] = []
+
+    for raw_symbol in symbols:
+        symbol = str(raw_symbol).upper()
+        ticks = _load_recent_ticks(storage, symbol, start=start, end=end)
+        if ticks.empty:
+            logger.warning(
+                "auto-gap-fill: no recent ticks for %s in last %.1fh",
+                symbol,
+                lookback_hours,
+            )
+            continue
+
+        gaps.extend(
+            _gaps_from_minute_series(
+                symbol,
+                ticks["timestamp"],
+                end=end,
+                min_gap=min_gap,
+                kind_prefix="ticks",
+            )
+        )
+
+    return gaps
+
+
+def _dedupe_gaps(gaps: Iterable[BarGap]) -> List[BarGap]:
+    seen: set[tuple[str, int, int]] = set()
+    out: List[BarGap] = []
+    for gap in sorted(gaps, key=lambda g: (g.symbol, g.start, g.end, g.kind)):
+        key = (gap.symbol, int(gap.start.timestamp()), int(gap.end.timestamp()))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(gap)
+    return out
 
 
 def _save_bars_by_day(storage: StorageManager, symbol: str, bars: pd.DataFrame) -> int:
@@ -263,6 +365,15 @@ async def auto_gap_fill_loop(
                     lookback_hours=lookback_hours,
                     min_gap_minutes=min_gap_minutes,
                 )
+                gaps.extend(
+                    detect_large_tick_gaps(
+                        storage,
+                        symbol_list,
+                        lookback_hours=lookback_hours,
+                        min_gap_minutes=min_gap_minutes,
+                    )
+                )
+                gaps = _dedupe_gaps(gaps)
                 if not gaps:
                     logger.info("auto-gap-fill: no gaps >= %.1f min", min_gap_minutes)
                     return 0

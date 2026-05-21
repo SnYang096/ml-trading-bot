@@ -5,6 +5,7 @@ import pandas as pd
 from src.live_data_stream.auto_gap_fill import (
     BarGap,
     detect_large_bar_gaps,
+    detect_large_tick_gaps,
     fill_large_bar_gaps,
 )
 from src.live_data_stream.feature_storage import StorageManager
@@ -126,7 +127,58 @@ def test_detect_large_bar_gaps_finds_internal_and_tail(tmp_path):
         now=pd.Timestamp("2026-05-21T04:00:00Z"),
     )
 
-    assert [g.kind for g in gaps] == ["internal", "tail"]
+    assert [g.kind for g in gaps] == ["bars_internal", "bars_tail"]
+    assert gaps[0].start == pd.Timestamp("2026-05-21T00:02:00Z")
+    assert gaps[0].end == pd.Timestamp("2026-05-21T02:09:00Z")
+    assert gaps[1].start == pd.Timestamp("2026-05-21T02:12:00Z")
+    assert gaps[1].end == pd.Timestamp("2026-05-21T04:00:00Z")
+
+
+def test_detect_large_tick_gaps_finds_missing_tick_minutes(tmp_path):
+    storage = StorageManager(tmp_path)
+    storage.bar_1min.append(
+        "ETHUSDT",
+        "2026-05-21",
+        _bars(
+            [
+                "2026-05-21T00:00:00Z",
+                "2026-05-21T00:01:00Z",
+                "2026-05-21T02:10:00Z",
+                "2026-05-21T02:11:00Z",
+            ]
+        ),
+    )
+    storage.ticks.append(
+        "ETHUSDT",
+        "2026-05-21",
+        pd.DataFrame(
+            {
+                "timestamp": pd.to_datetime(
+                    [
+                        "2026-05-21T00:00:00Z",
+                        "2026-05-21T00:01:00Z",
+                        "2026-05-21T02:10:00Z",
+                        "2026-05-21T02:11:00Z",
+                    ],
+                    utc=True,
+                ),
+                "price": 100.0,
+                "volume": 1.0,
+                "side": 1,
+            }
+        ),
+    )
+
+    gaps = detect_large_tick_gaps(
+        storage,
+        ["ETHUSDT"],
+        lookback_hours=12,
+        min_gap_minutes=60,
+        ignore_recent_minutes=0,
+        now=pd.Timestamp("2026-05-21T04:00:00Z"),
+    )
+
+    assert [g.kind for g in gaps] == ["ticks_internal", "ticks_tail"]
     assert gaps[0].start == pd.Timestamp("2026-05-21T00:02:00Z")
     assert gaps[0].end == pd.Timestamp("2026-05-21T02:09:00Z")
     assert gaps[1].start == pd.Timestamp("2026-05-21T02:12:00Z")
