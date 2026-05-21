@@ -164,6 +164,18 @@ function chartBaseOptions() {
   };
 }
 
+/** Feature/volume panes: no grid lines so stacked subcharts read as one block. */
+function subchartBaseOptions() {
+  return {
+    ...chartBaseOptions(),
+    grid: {
+      vertLines: { visible: false },
+      horzLines: { visible: false },
+    },
+    timeScale: { visible: false },
+  };
+}
+
 function applyChartViewport(barCount) {
   const visible = Core.defaultVisibleBarCount(barCount);
   const spacing = Core.barSpacingForCount(visible);
@@ -364,10 +376,7 @@ function ensureVolumePane(show, candles) {
     const inner = document.createElement("div");
     inner.className = "subchart-pane-inner";
     host.appendChild(inner);
-    const c = LightweightCharts.createChart(inner, {
-      ...chartBaseOptions(),
-      timeScale: { visible: false },
-    });
+    const c = LightweightCharts.createChart(inner, subchartBaseOptions());
     const series = c.addHistogramSeries({ color: "#546e7a" });
     pane = { chart: c, series, host: inner, label: "成交量", kind: "volume" };
     subcharts.set(id, pane);
@@ -398,10 +407,7 @@ function ensureFeaturePane(column, overlay, colorIndex) {
     const inner = document.createElement("div");
     inner.className = "subchart-pane-inner";
     host.appendChild(inner);
-    const c = LightweightCharts.createChart(inner, {
-      ...chartBaseOptions(),
-      timeScale: { visible: false },
-    });
+    const c = LightweightCharts.createChart(inner, subchartBaseOptions());
     const color = Core.subchartColor(colorIndex);
     const series = c.addLineSeries({ color, lineWidth: 2 });
     let refSeries = null;
