@@ -138,6 +138,9 @@ function setStatusFromBundle(symbol, timeframe, candles, markers, meta, overlays
     `${candles.length} bars`,
     `${markers.length} markers`,
   ];
+  if (meta.trade_link_count != null && meta.trade_link_count > 0) {
+    parts.push(`links=${meta.trade_link_count}`);
+  }
   if (lastMarkerCounts?.total != null && lastMarkerCounts.total > markers.length) {
     parts[2] = `${markers.length}/${lastMarkerCounts.total} markers`;
     const scopes = [];
@@ -686,17 +689,38 @@ function clearTradeLinks() {
   tradeLinkSeries = [];
 }
 
+function clipLinkToCandles(link, candles) {
+  if (!candles?.length) return link;
+  const times = candles.map((c) => Number(c.time)).filter(Number.isFinite);
+  const first = times[0];
+  const last = times[times.length - 1];
+  const out = { ...link };
+  let t0 = Number(link.entry_time);
+  let t1 = Number(link.exit_time);
+  if (t0 < first) t0 = first;
+  if (t0 > last) t0 = last;
+  if (t1 < first) t1 = first;
+  if (t1 > last) t1 = last;
+  if (t1 <= t0) t1 = Math.min(last, t0 + Core.barDurationSec(document.getElementById("timeframeSelect")?.value || "2h"));
+  out.entry_time = t0;
+  out.exit_time = t1;
+  return out;
+}
+
 function applyTradeLinks(links) {
   clearTradeLinks();
   if (!chart || !Array.isArray(links) || !links.length) return;
-  for (const lk of links) {
+  const clipped = lastCandles.length
+    ? links.map((lk) => clipLinkToCandles(lk, lastCandles))
+    : links;
+  for (const lk of clipped) {
     const t0 = Number(lk.entry_time);
     let t1 = Number(lk.exit_time);
     const p0 = Number(lk.entry_price);
     const p1 = Number(lk.exit_price);
     if (![t0, t1, p0, p1].every(Number.isFinite)) continue;
     if (t1 <= t0) {
-      t1 = t0 + 7200;
+      t1 = t0 + Core.barDurationSec(document.getElementById("timeframeSelect")?.value || "2h");
     }
     const color = lk.color || "#73BF69";
     const open = String(lk.status || "").toLowerCase() === "open";

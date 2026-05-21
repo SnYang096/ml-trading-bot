@@ -281,6 +281,7 @@ def trade_map_bundle(
         markers = align_markers_to_candles(markers, candle_times)
     trade_links, _ = collect_trade_links(
         multi_leg_db=SETTINGS.multi_leg_db,
+        trend_db=SETTINGS.trend_order_db,
         symbol=symbol,
         scopes=_scopes_list(scopes),
         start_ts=mk.get("start_ts"),
@@ -360,6 +361,7 @@ def trade_map_bundle(
             "expected_bars": ohlcv.get("expected_bars"),
             "data_sparse": ohlcv.get("data_sparse"),
             "marker_counts": marker_counts,
+            "trade_link_count": len(trade_links),
         },
     )
 

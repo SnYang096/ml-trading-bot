@@ -116,8 +116,13 @@ def _pick_filled_tp(tp_rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
 
 def annotate_leg_group(legs: List[Dict[str, Any]]) -> None:
     """Mutate raw multi_leg_orders rows with _link_* fields for entry legs."""
-    l_legs = [r for r in legs if leg_side_kind(str(r.get("order_id") or "")) == "L"]
-    s_legs = [r for r in legs if leg_side_kind(str(r.get("order_id") or "")) == "S"]
+    l_legs = [r for r in legs if is_l_entry_row(r)]
+    s_legs = [
+        r
+        for r in legs
+        if leg_side_kind(str(r.get("order_id") or "")) == "S"
+        or leg_side_kind(str(r.get("leg_id") or "")) == "S"
+    ]
     if not l_legs and not s_legs:
         return
 
@@ -136,10 +141,40 @@ def annotate_leg_group(legs: List[Dict[str, Any]]) -> None:
             row["_link_exit_status"] = str(exit_row.get("status") or "")
 
 
+def row_group_key(row: Dict[str, Any]) -> Optional[str]:
+    """Group key for chop_grid legs (cg_* ids use leg_id for L1/L2 grouping)."""
+    for field in ("order_id", "local_order_id", "leg_id"):
+        gk = leg_group_key(str(row.get(field) or ""))
+        if gk:
+            return gk
+    lid = str(row.get("leg_id") or "")
+    m = _LEG_SUFFIX_RE.search(lid)
+    if m:
+        return lid[: m.start()]
+    return None
+
+
+def is_l_entry_row(row: Dict[str, Any]) -> bool:
+    purpose = str(row.get("purpose") or "").lower()
+    if "take_profit" in purpose or "market_exit" in purpose:
+        return False
+    for field in ("order_id", "local_order_id", "leg_id"):
+        if leg_side_kind(str(row.get(field) or "")) == "L":
+            return True
+    return False
+
+
+def entry_link_id(row: Dict[str, Any]) -> str:
+    lid = str(row.get("leg_id") or "").strip()
+    if lid:
+        return lid
+    return str(row.get("local_order_id") or row.get("order_id") or "")
+
+
 def build_leg_link_index(rows: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
     by_group: Dict[str, List[Dict[str, Any]]] = {}
     for row in rows:
-        gk = leg_group_key(str(row.get("order_id") or ""))
+        gk = row_group_key(row)
         if not gk:
             continue
         by_group.setdefault(gk, []).append(row)
