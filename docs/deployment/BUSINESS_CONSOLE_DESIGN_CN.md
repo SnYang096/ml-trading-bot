@@ -157,14 +157,14 @@ Spot  eligibility 已在 `decision_chain_debug` 打日志；CMS 可解析最近 
 
 **P1 规范（业务控制台 MVP）**：主 K 线 **一律** 从 `live/shared_feature_bus/bars_1min/<SYMBOL>.parquet` 读取，在 CMS 内重采样为 UI 周期；`features/<tf>` **不** 作为主 OHLC 源（行内可能缺 `open/high/low`）。`features/<tf>` 与 `latest/features/*` 仅用于叠加层、最新特征卡片、新鲜度对账。
 
-**K 线根数上限（常见误解）**：控制台默认 `full_range` 会读完 Parquet 内全部 1m 行；若图上只有 ~27 根 2h K 线，通常是 **`quant-feature-bus` 的 `--max-rows` 只保留约 3000 行 1m（≈2 天）**，与 `--warmup-days 180` 无关。2h 根数 ≈ `bars_1min 行数 / 120`。生产应对齐：`max_rows ≥ warmup_days × 1440`（180 天 → 259200）。
+**K 线根数（常见误解）**：`shared_feature_bus/bars_1min` 是 **滚动发布快照**（`--max-rows` 约 3000≈2 天），**不等于** `live/highcap/data/bars/` 里 warmup 的 180 天 1m 档案。控制台 **2h/15m/1m** 默认 **拼接**：`live_storage` 历史 1m（`MLBOT_CONSOLE_MAX_OHLCV_DAYS` 窗口）+ bus 近端（重叠时间以 bus 为准）。若只有 ~27 根 2h，检查 `live_storage` 是否有 `bars/<SYMBOL>/YYYY-MM-DD.parquet`，或 `MLBOT_CONSOLE_STITCH_LIVE_STORAGE=0`。
 
 | UI 周期 | 内部 key | P1 主数据源 | 备注 |
 |---------|----------|-------------|------|
-| **2h**（默认） | `2h` / `120T` | `bars_1min` → `2h` | — |
-| **15min** | `15min` | `bars_1min` → `15min` | — |
-| **1min** | `1min` | `bars_1min`（直通） | — |
-| **日线** | `1d` | `bars_1min` → `1D` | P2 可叠加 macro 周线 seed 参考线，不作主 K 线 |
+| **2h**（默认） | `2h` / `120T` | `live_storage/bars` + `bars_1min` → `2h` | bus 仅近端；历史来自档案库 |
+| **15min** | `15min` | 同上 → `15min` | — |
+| **1min** | `1min` | 同上（直通 1m） | — |
+| **日线** | `1d` | `live/highcap/data/macro/spot_klines`（Vision 日 K，默认自 2017） | 尾部与 `bars_1min` 重采样合并；不受 `max_rows`/180d 1m 窗口限制；周线 seed 仍为附图 |
 
 实现：`deploy/business-console/backend/app/services/ohlcv_reader.py`；API：`GET /api/bus/ohlcv`、`GET /api/trade-map/bundle`（`source: bars_1min`）。
 

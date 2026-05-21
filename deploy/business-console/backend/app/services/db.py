@@ -56,7 +56,10 @@ def query_rows(
 ) -> List[Dict[str, Any]]:
     if not path.is_file():
         return []
-    conn = _connect_ro(path)
+    try:
+        conn = _connect_ro(path)
+    except sqlite3.OperationalError:
+        return []
     conn.row_factory = sqlite3.Row
     try:
         cur = conn.execute(sql, params)

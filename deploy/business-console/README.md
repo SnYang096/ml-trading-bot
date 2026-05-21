@@ -55,9 +55,16 @@ export MLBOT_CONSOLE_BASIC_AUTH_PASSWORD=change-me
 | `MLBOT_CONSOLE_FEATURE_BUS_ROOT` | `live/shared_feature_bus` |
 | `MLBOT_CONSOLE_LIVE_DATA_ROOT` | `live/highcap/data` |
 | `MLBOT_CONSOLE_ENGINE_DATA_ROOT` | `data` |
-| `MLBOT_CONSOLE_MAX_OHLCV_DAYS` | `180` |
+| `MLBOT_CONSOLE_MAX_OHLCV_DAYS` | `180` (intraday stitch window) |
+| `MLBOT_CONSOLE_LIVE_STORAGE_BARS_ROOT` | `live/highcap/data/bars` |
+| `MLBOT_CONSOLE_STITCH_LIVE_STORAGE` | `1` (set `0` to use bus-only) |
+| `MLBOT_CONSOLE_MACRO_SPOT_KLINE_ROOT` | `live/highcap/data/macro/spot_klines` |
+| `MLBOT_CONSOLE_DAILY_OHLCV_START` | `2017-01-01` |
+| `MLBOT_CONSOLE_MAX_DAILY_OHLCV_DAYS` | `3650` |
 
-K-line bar count is limited by **feature-bus** `bars_1min` parquet rows (`quant-feature-bus --max-rows`, should be ≥ `warmup-days × 1440`), not by the console UI.
+**2h / 15min / 1min** default to **stitched** OHLCV: `live/highcap/data/bars/<SYMBOL>/YYYY-MM-DD.parquet` (history, up to `MLBOT_CONSOLE_MAX_OHLCV_DAYS`) **+** `shared_feature_bus/bars_1min` (recent tail; bus `--max-rows` ~3000 is enough). Overlapping minutes use the bus row.
+
+**1d (daily)** uses `live/highcap/data/macro/spot_klines` (Binance Vision ZIP cache from `prepare_spot_weekly_ema_seed.py`), default from `2017-01-01`, up to `MLBOT_CONSOLE_MAX_DAILY_OHLCV_DAYS` (default 3650). Recent days are merged from `bars_1min` when Vision cache lags.
 | `MLBOT_CONSOLE_MAP_POLL_SECONDS` | `10` |
 | `MLBOT_CONSOLE_GRAFANA_URL` | `http://127.0.0.1:3000` |
 

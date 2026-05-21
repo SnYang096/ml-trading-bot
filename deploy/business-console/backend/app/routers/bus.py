@@ -41,6 +41,11 @@ def bus_ohlcv(
             end=end,
             max_days=SETTINGS.max_ohlcv_days,
             full_range=full_range and not from_ and not to,
+            live_storage_bars_root=SETTINGS.live_storage_bars_root,
+            stitch_live_storage=SETTINGS.stitch_live_storage,
+            macro_kline_root=SETTINGS.macro_spot_kline_root,
+            daily_ohlcv_start=SETTINGS.daily_ohlcv_start,
+            max_daily_ohlcv_days=SETTINGS.max_daily_ohlcv_days,
         )
     except OhlcvWindowError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

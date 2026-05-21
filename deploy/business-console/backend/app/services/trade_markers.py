@@ -92,6 +92,22 @@ def _append(
     out.append(payload)
 
 
+def _ts_in_chart_window(
+    ts: int,
+    *,
+    start_ts: Optional[int],
+    end_ts: Optional[int],
+    since_ts: Optional[int],
+) -> bool:
+    if since_ts is not None and ts <= since_ts:
+        return False
+    if start_ts is not None and ts < start_ts:
+        return False
+    if end_ts is not None and ts > end_ts:
+        return False
+    return True
+
+
 def trend_markers(
     db_path: Path,
     symbol: str,
@@ -99,6 +115,7 @@ def trend_markers(
     start_ts: Optional[int] = None,
     end_ts: Optional[int] = None,
     since_ts: Optional[int] = None,
+    include_open_orders: bool = False,
 ) -> List[Dict[str, Any]]:
     sym = symbol.upper()
     out: List[Dict[str, Any]] = []
@@ -208,16 +225,28 @@ def trend_markers(
         status = str(row.get("status") or "").lower()
         filled_qty = _f(row.get("filled_quantity")) or 0.0
         is_filled = status in {"filled", "partially_filled"} or filled_qty > 0
-        if not is_filled and status not in {"open", "pending", "new", "submitted"}:
+        if not is_filled and status not in {
+            "open",
+            "pending",
+            "new",
+            "submitted",
+            "shadow",
+        }:
             continue
         ft = _parse_ts(row.get("filled_at")) or _parse_ts(row.get("created_at"))
         if ft is None:
             continue
-        if since_ts is not None and ft <= since_ts:
-            continue
-        if start_ts is not None and ft < start_ts:
-            continue
-        if end_ts is not None and ft > end_ts:
+        if is_filled:
+            if not _ts_in_chart_window(
+                ft, start_ts=start_ts, end_ts=end_ts, since_ts=since_ts
+            ):
+                continue
+        elif not include_open_orders:
+            if not _ts_in_chart_window(
+                ft, start_ts=start_ts, end_ts=end_ts, since_ts=since_ts
+            ):
+                continue
+        elif since_ts is not None and ft <= since_ts:
             continue
         side_raw = str(row.get("side") or "").upper()
         side = "long" if side_raw in {"BUY", "LONG"} else "short"
@@ -248,6 +277,7 @@ def spot_markers(
     start_ts: Optional[int] = None,
     end_ts: Optional[int] = None,
     since_ts: Optional[int] = None,
+    include_open_orders: bool = False,
 ) -> List[Dict[str, Any]]:
     sym = symbol.upper()
     out: List[Dict[str, Any]] = []
@@ -263,19 +293,25 @@ def spot_markers(
         status = str(row.get("status") or "").lower()
         filled_qty = _f(row.get("filled_quantity")) or 0.0
         if status not in {"filled", "closed", "partially_filled"} and filled_qty <= 0:
-            if status not in {"submitted", "open", "pending", "new"}:
+            if status not in {"submitted", "open", "pending", "new", "shadow"}:
                 continue
         ts = _parse_ts(row.get("updated_at")) or _parse_ts(row.get("created_at"))
         if ts is None:
             continue
-        if since_ts is not None and ts <= since_ts:
-            continue
-        if start_ts is not None and ts < start_ts:
-            continue
-        if end_ts is not None and ts > end_ts:
+        is_filled = status in {"filled", "closed"} or filled_qty > 0
+        if is_filled:
+            if not _ts_in_chart_window(
+                ts, start_ts=start_ts, end_ts=end_ts, since_ts=since_ts
+            ):
+                continue
+        elif not include_open_orders:
+            if not _ts_in_chart_window(
+                ts, start_ts=start_ts, end_ts=end_ts, since_ts=since_ts
+            ):
+                continue
+        elif since_ts is not None and ts <= since_ts:
             continue
         side = str(row.get("side") or "buy").lower()
-        is_filled = status in {"filled", "closed"} or filled_qty > 0
         event = "entry" if side == "buy" else "exit"
         _append(
             out,
@@ -303,6 +339,7 @@ def multi_leg_markers(
     start_ts: Optional[int] = None,
     end_ts: Optional[int] = None,
     since_ts: Optional[int] = None,
+    include_open_orders: bool = False,
 ) -> List[Dict[str, Any]]:
     sym = symbol.upper()
     out: List[Dict[str, Any]] = []
@@ -321,11 +358,17 @@ def multi_leg_markers(
         ts = _parse_ts(row.get("filled_at")) or _parse_ts(row.get("created_at"))
         if ts is None:
             continue
-        if since_ts is not None and ts <= since_ts:
-            continue
-        if start_ts is not None and ts < start_ts:
-            continue
-        if end_ts is not None and ts > end_ts:
+        if is_filled:
+            if not _ts_in_chart_window(
+                ts, start_ts=start_ts, end_ts=end_ts, since_ts=since_ts
+            ):
+                continue
+        elif not include_open_orders:
+            if not _ts_in_chart_window(
+                ts, start_ts=start_ts, end_ts=end_ts, since_ts=since_ts
+            ):
+                continue
+        elif since_ts is not None and ts <= since_ts:
             continue
         purpose = str(row.get("purpose") or "").lower()
         if any(x in purpose for x in ("exit", "close", "stop", "reduce")):
@@ -405,6 +448,31 @@ def _filter_pending(markers: List[Dict[str, Any]], include_pending: bool) -> Lis
     return [m for m in markers if str(m.get("status") or "filled").lower() != "pending"]
 
 
+def align_pending_markers_to_candles(
+    markers: List[Dict[str, Any]],
+    candle_times: List[int],
+) -> List[Dict[str, Any]]:
+    """Pin pending markers to visible bars (LWC ignores markers outside series range)."""
+    if not candle_times:
+        return markers
+    first_t = int(candle_times[0])
+    last_t = int(candle_times[-1])
+    out: List[Dict[str, Any]] = []
+    for m in markers:
+        if str(m.get("status") or "filled").lower() != "pending":
+            out.append(m)
+            continue
+        item = dict(m)
+        t = int(item["time"])
+        if t < first_t or t > last_t:
+            detail = dict(item.get("detail") or {})
+            detail["order_time"] = t
+            item["detail"] = detail
+            item["time"] = last_t
+        out.append(item)
+    return out
+
+
 def collect_markers(
     *,
     trend_db: Path,
@@ -419,6 +487,7 @@ def collect_markers(
 ) -> List[Dict[str, Any]]:
     merged: List[Dict[str, Any]] = []
     scope_set = {s.strip().lower() for s in scopes if s.strip()}
+    open_orders = bool(include_pending)
     if "trend" in scope_set and trend_db.is_file():
         merged.extend(
             trend_markers(
@@ -427,6 +496,7 @@ def collect_markers(
                 start_ts=start_ts,
                 end_ts=end_ts,
                 since_ts=since_ts,
+                include_open_orders=open_orders,
             )
         )
     if "spot" in scope_set and spot_db.is_file():
@@ -437,6 +507,7 @@ def collect_markers(
                 start_ts=start_ts,
                 end_ts=end_ts,
                 since_ts=since_ts,
+                include_open_orders=open_orders,
             )
         )
     if "multi_leg" in scope_set and multi_leg_db.is_file():
@@ -447,6 +518,7 @@ def collect_markers(
                 start_ts=start_ts,
                 end_ts=end_ts,
                 since_ts=since_ts,
+                include_open_orders=open_orders,
             )
         )
     merged.sort(key=lambda m: m["time"])

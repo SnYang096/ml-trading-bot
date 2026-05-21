@@ -510,7 +510,11 @@ async function refreshBundle() {
       ? ` · ${meta.range_start.slice(0, 10)}→${meta.range_end.slice(0, 10)}`
       : "";
   const clipHint = meta.range_clipped ? ` · clipped ${meta.max_ohlcv_days || ""}d` : "";
-  const busRows = meta.bars_1min_rows ? ` · 1m=${meta.bars_1min_rows}` : "";
+  const busRows = meta.bars_1min_rows ? ` · bus1m=${meta.bars_1min_rows}` : "";
+  const histRows = meta.live_storage_1m_rows
+    ? ` · hist1m=${meta.live_storage_1m_rows}`
+    : "";
+  const srcHint = meta.ohlcv_source ? ` · ${meta.ohlcv_source}` : "";
   const featCap =
     selectedFeatureColumns.length > MAX_FEATURE_SUBCHARTS
       ? ` · 附图限${MAX_FEATURE_SUBCHARTS}列`
@@ -518,6 +522,8 @@ async function refreshBundle() {
   setStatus(
     `${symbol} ${timeframe} · ${candles.length} bars · ${(data.markers || []).length} markers` +
       busRows +
+      histRows +
+      srcHint +
       rangeHint +
       clipHint +
       formatOverlayStatus(data.overlays || {}) +

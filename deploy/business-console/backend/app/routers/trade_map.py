@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from typing import List, Optional
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
+
+logger = logging.getLogger(__name__)
 
 from app.config import SETTINGS
 from app.responses import ok
@@ -15,7 +18,7 @@ from app.services.feature_overlay import (
 from app.services.marker_detail import marker_detail
 from app.services.ohlcv_reader import OhlcvWindowError
 from app.services.signal_overview import build_signal_overview
-from app.services.trade_markers import collect_markers
+from app.services.trade_markers import align_pending_markers_to_candles, collect_markers
 from app.services.universe import load_universe_symbols
 
 router = APIRouter(tags=["trade-map"])
@@ -93,6 +96,11 @@ def trade_map_ohlcv(
             end=end,
             max_days=SETTINGS.max_ohlcv_days,
             full_range=full_range and not from_ and not to,
+            live_storage_bars_root=SETTINGS.live_storage_bars_root,
+            stitch_live_storage=SETTINGS.stitch_live_storage,
+            macro_kline_root=SETTINGS.macro_spot_kline_root,
+            daily_ohlcv_start=SETTINGS.daily_ohlcv_start,
+            max_daily_ohlcv_days=SETTINGS.max_daily_ohlcv_days,
         )
     except OhlcvWindowError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -108,16 +116,37 @@ def trade_map_markers(
     since: Optional[str] = Query(None),
     include_pending: bool = Query(False),
 ) -> dict:
+    mk = _marker_kwargs(
+        from_=from_, to=to, since=since, include_pending=include_pending
+    )
     markers = collect_markers(
         trend_db=SETTINGS.trend_order_db,
         spot_db=SETTINGS.spot_order_db,
         multi_leg_db=SETTINGS.multi_leg_db,
         symbol=symbol,
         scopes=_scopes_list(scopes),
-        **_marker_kwargs(
-            from_=from_, to=to, since=since, include_pending=include_pending
-        ),
+        **mk,
     )
+    if include_pending and not from_ and not to:
+        try:
+            ohlcv = ohlcv_reader.fetch_ohlcv(
+                SETTINGS.feature_bus_root,
+                symbol,
+                "2h",
+                max_days=SETTINGS.max_ohlcv_days,
+                full_range=True,
+                live_storage_bars_root=SETTINGS.live_storage_bars_root,
+                stitch_live_storage=SETTINGS.stitch_live_storage,
+                macro_kline_root=SETTINGS.macro_spot_kline_root,
+                daily_ohlcv_start=SETTINGS.daily_ohlcv_start,
+                max_daily_ohlcv_days=SETTINGS.max_daily_ohlcv_days,
+            )
+            times = [
+                int(c["time"]) for c in ohlcv.get("candles") or [] if c.get("time") is not None
+            ]
+            markers = align_pending_markers_to_candles(markers, times)
+        except OhlcvWindowError:
+            pass
     return ok(markers, meta={"count": len(markers)})
 
 
@@ -156,9 +185,17 @@ def trade_map_bundle(
             end=end,
             max_days=SETTINGS.max_ohlcv_days,
             full_range=full_range and not from_ and not to,
+            live_storage_bars_root=SETTINGS.live_storage_bars_root,
+            stitch_live_storage=SETTINGS.stitch_live_storage,
+            macro_kline_root=SETTINGS.macro_spot_kline_root,
+            daily_ohlcv_start=SETTINGS.daily_ohlcv_start,
+            max_daily_ohlcv_days=SETTINGS.max_daily_ohlcv_days,
         )
     except OhlcvWindowError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("trade_map bundle ohlcv failed symbol=%s tf=%s", symbol, timeframe)
+        raise HTTPException(status_code=500, detail=f"ohlcv: {exc}") from exc
     mk = _marker_kwargs(
         from_=from_, to=to, since=since, include_pending=include_pending
     )
@@ -174,6 +211,9 @@ def trade_map_bundle(
         scopes=_scopes_list(scopes),
         **mk,
     )
+    if include_pending and ohlcv.get("candles"):
+        candle_times = [int(c["time"]) for c in ohlcv["candles"] if c.get("time") is not None]
+        markers = align_pending_markers_to_candles(markers, candle_times)
     cols = _feature_columns_list(feature_columns, overlay_weekly_ema=overlay_weekly_ema)
     overlays: dict = {}
     if cols:
@@ -201,6 +241,8 @@ def trade_map_bundle(
             "poll_seconds": SETTINGS.map_poll_seconds,
             "degraded_ohlc": ohlcv.get("degraded_ohlc", False),
             "bars_1min_rows": ohlcv.get("bars_1min_rows"),
+            "live_storage_1m_rows": ohlcv.get("live_storage_1m_rows"),
+            "ohlcv_source": ohlcv.get("source"),
             "range_start": ohlcv.get("range_start"),
             "range_end": ohlcv.get("range_end"),
             "range_clipped": ohlcv.get("range_clipped", False),

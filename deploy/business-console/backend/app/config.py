@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 
@@ -34,6 +35,11 @@ class ConsoleSettings:
     spot_ledger_db: Path
     multi_leg_db: Path
     max_ohlcv_days: int
+    live_storage_bars_root: Path
+    stitch_live_storage: bool
+    macro_spot_kline_root: Path
+    daily_ohlcv_start: date
+    max_daily_ohlcv_days: int
     map_poll_seconds: float
     grafana_url: str
     rolling_backtest_url: str
@@ -105,6 +111,28 @@ class ConsoleSettings:
                 )
             ),
             max_ohlcv_days=int(os.getenv("MLBOT_CONSOLE_MAX_OHLCV_DAYS", "180")),
+            live_storage_bars_root=Path(
+                os.getenv(
+                    "MLBOT_CONSOLE_LIVE_STORAGE_BARS_ROOT",
+                    str(live_data / "bars"),
+                )
+            ),
+            stitch_live_storage=os.getenv(
+                "MLBOT_CONSOLE_STITCH_LIVE_STORAGE", "1"
+            ).strip().lower()
+            not in ("0", "false", "off", "no"),
+            macro_spot_kline_root=Path(
+                os.getenv(
+                    "MLBOT_CONSOLE_MACRO_SPOT_KLINE_ROOT",
+                    str(live_data / "macro" / "spot_klines"),
+                )
+            ),
+            daily_ohlcv_start=date.fromisoformat(
+                os.getenv("MLBOT_CONSOLE_DAILY_OHLCV_START", "2017-01-01")
+            ),
+            max_daily_ohlcv_days=int(
+                os.getenv("MLBOT_CONSOLE_MAX_DAILY_OHLCV_DAYS", "3650")
+            ),
             map_poll_seconds=float(
                 os.getenv("MLBOT_CONSOLE_MAP_POLL_SECONDS", "10")
             ),

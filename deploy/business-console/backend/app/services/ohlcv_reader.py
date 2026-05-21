@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
+
+from app.services.live_storage_bars import load_live_storage_bars_1min
+from app.services.macro_spot_daily import MacroSpotDailyLoader
 
 # UI key -> pandas resample rule (canonical source: bars_1min)
 class OhlcvWindowError(ValueError):
@@ -144,6 +148,132 @@ def resample_ohlcv(df: pd.DataFrame, timeframe: str) -> Tuple[pd.DataFrame, bool
     return out, degraded
 
 
+def _daily_index_to_ohlcv(daily: pd.DataFrame) -> pd.DataFrame:
+    if daily.empty:
+        return pd.DataFrame()
+    out = daily.copy()
+    out.index.name = "timestamp"
+    out = out.reset_index()
+    out["timestamp"] = pd.to_datetime(out["timestamp"], utc=True)
+    return out.sort_values("timestamp").reset_index(drop=True)
+
+
+def _merge_recent_daily_from_bus(
+    macro_df: pd.DataFrame,
+    feature_bus_root: Path,
+    symbol: str,
+    *,
+    end_ts: pd.Timestamp,
+) -> pd.DataFrame:
+    """Append/overwrite tail daily bars from bars_1min when Vision cache lags."""
+    bus_start = end_ts - pd.Timedelta(days=120)
+    bus = load_bars_1min(feature_bus_root, symbol, start=bus_start, end=end_ts)
+    if bus.empty:
+        return macro_df
+    bus_daily, _ = resample_ohlcv(bus, "1d")
+    if bus_daily.empty:
+        return macro_df
+    bus_daily = bus_daily.set_index("timestamp").sort_index()
+    if macro_df.empty:
+        return _daily_index_to_ohlcv(bus_daily)
+    macro_idx = macro_df.set_index("timestamp").sort_index()
+    combined = pd.concat([macro_idx, bus_daily])
+    combined = combined[~combined.index.duplicated(keep="last")].sort_index()
+    return _daily_index_to_ohlcv(combined.reset_index())
+
+
+def _resolve_daily_window(
+    *,
+    start: Optional[pd.Timestamp],
+    end: Optional[pd.Timestamp],
+    daily_start: date,
+    max_daily_days: int,
+    full_range: bool,
+) -> Tuple[pd.Timestamp, pd.Timestamp, bool]:
+    if end is not None:
+        end_ts = _utc_ts(end)
+    else:
+        end_ts = pd.Timestamp.now(tz="UTC")
+    clipped = False
+    if start is not None:
+        start_ts = _utc_ts(start)
+    elif full_range:
+        start_ts = pd.Timestamp(daily_start, tz="UTC")
+        span = (end_ts - start_ts).total_seconds() / 86400.0
+        if span > float(max_daily_days):
+            start_ts = end_ts - pd.Timedelta(days=float(max_daily_days))
+            clipped = True
+    else:
+        start_ts = end_ts - pd.Timedelta(days=float(max_daily_days))
+    span = (end_ts - start_ts).total_seconds() / 86400.0
+    if start is not None and end is not None and span > float(max_daily_days) + 1e-6:
+        raise OhlcvWindowError(
+            f"range {span:.1f}d exceeds max_daily_ohlcv_days={max_daily_days}"
+        )
+    return start_ts, end_ts, clipped
+
+
+def fetch_ohlcv_daily_macro(
+    feature_bus_root: Path,
+    macro_kline_root: Path,
+    symbol: str,
+    *,
+    start: Optional[pd.Timestamp] = None,
+    end: Optional[pd.Timestamp] = None,
+    daily_start: date = date(2017, 1, 1),
+    max_daily_days: int = 3650,
+    full_range: bool = True,
+) -> Dict[str, Any]:
+    """1d OHLCV from Vision spot_klines (years), tail merged from bars_1min."""
+    path = _bars_path(feature_bus_root, symbol)
+    _, _, bars_1min_rows = bars_1min_bounds(path)
+    start_ts, end_ts, clipped = _resolve_daily_window(
+        start=start,
+        end=end,
+        daily_start=daily_start,
+        max_daily_days=max_daily_days,
+        full_range=full_range and start is None and end is None,
+    )
+    loader = MacroSpotDailyLoader(macro_kline_root)
+    daily = loader.load_symbol_daily(
+        symbol,
+        start_date=start_ts.date(),
+        end_date=end_ts.date(),
+    )
+    macro_df = _daily_index_to_ohlcv(daily)
+    merged = _merge_recent_daily_from_bus(
+        macro_df, feature_bus_root, symbol, end_ts=end_ts
+    )
+    if merged.empty:
+        return fetch_ohlcv(
+            feature_bus_root,
+            symbol,
+            "1d",
+            start=start,
+            end=end,
+            max_days=max(180, int(max_daily_days)),
+            full_range=full_range,
+        )
+    merged = merged[
+        (merged["timestamp"] >= start_ts) & (merged["timestamp"] <= end_ts)
+    ]
+    return {
+        "symbol": symbol.upper(),
+        "timeframe": "1d",
+        "candles": ohlcv_to_candles(merged),
+        "degraded_ohlc": False,
+        "source": "macro_spot_klines",
+        "source_mtime": None,
+        "row_count": len(merged),
+        "bars_1min_rows": bars_1min_rows,
+        "range_start": start_ts.isoformat(),
+        "range_end": end_ts.isoformat(),
+        "range_clipped": clipped,
+        "max_ohlcv_days": max_daily_days,
+        "daily_ohlcv_start": daily_start.isoformat(),
+    }
+
+
 def ohlcv_to_candles(df: pd.DataFrame) -> List[Dict[str, Any]]:
     if df.empty:
         return []
@@ -172,6 +302,25 @@ def ohlcv_to_candles(df: pd.DataFrame) -> List[Dict[str, Any]]:
     return rows
 
 
+def stitch_live_storage_and_bus(
+    history: pd.DataFrame,
+    bus: pd.DataFrame,
+) -> pd.DataFrame:
+    """Merge archive 1m with bus tail; bus wins on duplicate timestamps."""
+    if history.empty:
+        return bus.reset_index(drop=True) if not bus.empty else history
+    if bus.empty:
+        return history.reset_index(drop=True)
+    out = pd.concat([history, bus], ignore_index=True)
+    out["timestamp"] = pd.to_datetime(out["timestamp"], utc=True)
+    out = (
+        out.drop_duplicates(subset=["timestamp"], keep="last")
+        .sort_values("timestamp")
+        .reset_index(drop=True)
+    )
+    return out
+
+
 def _resolve_window(
     path: Path,
     *,
@@ -179,6 +328,7 @@ def _resolve_window(
     end: Optional[pd.Timestamp],
     max_days: int,
     full_range: bool,
+    calendar_span: bool = False,
 ) -> Tuple[pd.Timestamp, pd.Timestamp, bool, int]:
     """Return (start_ts, end_ts, clipped_to_max_days, bars_1min_rows_in_file)."""
     file_start, file_end, row_count = bars_1min_bounds(path)
@@ -194,11 +344,14 @@ def _resolve_window(
     if start is not None:
         start_ts = _utc_ts(start)
     elif full_range or not explicit:
-        start_ts = file_start if file_start is not None else end_ts - pd.Timedelta(days=max_days)
-        span_days = (end_ts - start_ts).total_seconds() / 86400.0
-        if span_days > float(max_days):
+        if calendar_span:
             start_ts = end_ts - pd.Timedelta(days=float(max_days))
-            clipped = True
+        else:
+            start_ts = file_start if file_start is not None else end_ts - pd.Timedelta(days=max_days)
+            span_days = (end_ts - start_ts).total_seconds() / 86400.0
+            if span_days > float(max_days):
+                start_ts = end_ts - pd.Timedelta(days=float(max_days))
+                clipped = True
     else:
         start_ts = end_ts - pd.Timedelta(days=max_days)
 
@@ -219,16 +372,53 @@ def fetch_ohlcv(
     end: Optional[pd.Timestamp] = None,
     max_days: int = 180,
     full_range: bool = True,
+    live_storage_bars_root: Optional[Path] = None,
+    stitch_live_storage: bool = True,
+    macro_kline_root: Optional[Path] = None,
+    daily_ohlcv_start: Optional[date] = None,
+    max_daily_ohlcv_days: int = 3650,
 ) -> Dict[str, Any]:
+    tf = str(timeframe).strip()
+    if tf == "1d" and macro_kline_root is not None and Path(macro_kline_root).is_dir():
+        return fetch_ohlcv_daily_macro(
+            feature_bus_root,
+            Path(macro_kline_root),
+            symbol,
+            start=start,
+            end=end,
+            daily_start=daily_ohlcv_start or date(2017, 1, 1),
+            max_daily_days=max_daily_ohlcv_days,
+            full_range=full_range,
+        )
     path = _bars_path(feature_bus_root, symbol)
+    bars_root = Path(live_storage_bars_root) if live_storage_bars_root else None
+    do_stitch = bool(
+        stitch_live_storage
+        and bars_root is not None
+        and bars_root.is_dir()
+        and start is None
+        and end is None
+    )
     start_ts, end_ts, clipped, bars_1min_rows = _resolve_window(
         path,
         start=start,
         end=end,
         max_days=max_days,
         full_range=full_range and start is None and end is None,
+        calendar_span=do_stitch,
     )
-    raw = load_bars_1min(feature_bus_root, symbol, start=start_ts, end=end_ts)
+    bus_df = load_bars_1min(feature_bus_root, symbol, start=start_ts, end=end_ts)
+    live_storage_rows = 0
+    if do_stitch:
+        hist = load_live_storage_bars_1min(
+            bars_root, symbol, start=start_ts, end=end_ts
+        )
+        live_storage_rows = len(hist)
+        raw = stitch_live_storage_and_bus(hist, bus_df)
+        source = "live_storage+bars_1min"
+    else:
+        raw = bus_df
+        source = "bars_1min"
     resampled, degraded = resample_ohlcv(raw, timeframe)
     mtime = path.stat().st_mtime if path.is_file() else None
     return {
@@ -236,10 +426,11 @@ def fetch_ohlcv(
         "timeframe": timeframe,
         "candles": ohlcv_to_candles(resampled),
         "degraded_ohlc": degraded,
-        "source": "bars_1min",
+        "source": source,
         "source_mtime": mtime,
         "row_count": len(resampled),
         "bars_1min_rows": bars_1min_rows,
+        "live_storage_1m_rows": live_storage_rows,
         "range_start": start_ts.isoformat(),
         "range_end": end_ts.isoformat(),
         "range_clipped": clipped,

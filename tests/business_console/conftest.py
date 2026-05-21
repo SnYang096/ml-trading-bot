@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -245,6 +246,11 @@ def console_settings(
         spot_ledger_db=tmp_path / "spot_accum_ledger.db",
         multi_leg_db=multi_leg_db,
         max_ohlcv_days=7,
+        live_storage_bars_root=tmp_path / "bars",
+        stitch_live_storage=True,
+        macro_spot_kline_root=tmp_path / "macro" / "spot_klines",
+        daily_ohlcv_start=date(2017, 1, 1),
+        max_daily_ohlcv_days=3650,
         map_poll_seconds=10.0,
         grafana_url="http://test-grafana:3000",
         rolling_backtest_url="http://test-backtest/",
