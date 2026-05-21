@@ -139,7 +139,15 @@
       const strat = (m.strategy || m.scope || "").toLowerCase();
       const leg =
         (m.detail && (m.detail.leg_label || m.detail.leg_id)) || "";
-      const legTag = leg ? `:${String(leg).replace(/.*_/, "")}` : "";
+      let legToken = "";
+      if (leg) {
+        const parts = String(leg).split("_").filter(Boolean);
+        legToken = parts[parts.length - 1] || "";
+        if (legToken.toLowerCase() === String(m.event || "").toLowerCase()) {
+          legToken = parts[parts.length - 2] || "";
+        }
+      }
+      const legTag = legToken ? `:${legToken}` : "";
       const baseText = `${strat}:${m.event}${legTag}${pending ? ":pending" : ""}`;
       const aboveBar = role === "exit" || role === "tp";
       return {

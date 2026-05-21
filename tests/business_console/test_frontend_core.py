@@ -25,6 +25,7 @@ const Core = ctx.globalThis.MLBotTradeMapCore;
 const markers = [
   { id: 'trend:orders:1', time: 1, scope: 'trend', event: 'entry', side: 'long', status: 'filled' },
   { id: 'spot:spot_orders:2', time: 2, scope: 'spot', event: 'exit', side: 'long', status: 'pending', pnl_usdt: -1 },
+  { id: 'multi_leg:orders:3', time: 3, scope: 'multi_leg', strategy: 'chop_grid', event: 'tp', side: 'short', status: 'pending', detail: { leg_id: 'BNBUSDT_grid_L1_tp' } },
 ];
 const lwc = Core.markersToLwc(markers);
 const scopes = Core.scopesFromLayers({ trend: true, spot: false, multiLeg: true, pending: false });
@@ -76,6 +77,7 @@ console.log(JSON.stringify({
   mergedLen: merged.length,
   mergedFirst: merged[0].time,
   mergedLast: merged[1].time,
+  tpText: Core.markersToLwc(markers)[2].text,
 }));
 """
 
@@ -93,7 +95,7 @@ def test_trade_map_core_node():
     )
     out = json.loads(proc.stdout.strip())
     assert out["scopes"] == "trend,multi_leg"
-    assert out["lwcCount"] == 2
+    assert out["lwcCount"] == 3
     assert out["pendingShape"] == "circle"
     assert out["spacing"] == 4
     assert out["vis"] == 320
@@ -113,3 +115,4 @@ def test_trade_map_core_node():
     assert out["mergedLen"] == 2
     assert out["mergedFirst"] == 100
     assert out["mergedLast"] == 200
+    assert out["tpText"] == "chop_grid:tp:L1:pending"

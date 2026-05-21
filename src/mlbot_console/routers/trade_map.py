@@ -171,7 +171,9 @@ def trade_map_markers(
                 live_root=SETTINGS.live_root,
             )
             times = [
-                int(c["time"]) for c in ohlcv.get("candles") or [] if c.get("time") is not None
+                int(c["time"])
+                for c in ohlcv.get("candles") or []
+                if c.get("time") is not None
             ]
             markers = align_markers_to_candles(markers, times)
         except OhlcvWindowError:
@@ -228,11 +230,15 @@ def trade_map_bundle(
     try:
         tf = assert_trade_map_timeframe(timeframe)
         if ohlcv_mode != "none":
-            ohlcv_start_raw = ohlcv_from if ohlcv_mode == "tail" and ohlcv_from else from_
+            ohlcv_start_raw = (
+                ohlcv_from if ohlcv_mode == "tail" and ohlcv_from else from_
+            )
             ohlcv_end_raw = ohlcv_to if ohlcv_mode == "tail" and ohlcv_to else to
             start, end, use_full = resolve_trade_map_window(
                 tf,
-                start=pd.Timestamp(ohlcv_start_raw, tz="UTC") if ohlcv_start_raw else None,
+                start=(
+                    pd.Timestamp(ohlcv_start_raw, tz="UTC") if ohlcv_start_raw else None
+                ),
                 end=pd.Timestamp(ohlcv_end_raw, tz="UTC") if ohlcv_end_raw else None,
                 full_range=full_range and ohlcv_mode == "full",
             )
@@ -261,7 +267,9 @@ def trade_map_bundle(
     except OhlcvWindowError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        logger.exception("trade_map bundle ohlcv failed symbol=%s tf=%s", symbol, timeframe)
+        logger.exception(
+            "trade_map bundle ohlcv failed symbol=%s tf=%s", symbol, timeframe
+        )
         raise HTTPException(status_code=500, detail=f"ohlcv: {exc}") from exc
     mk = _marker_kwargs(
         from_=from_, to=to, since=since, include_pending=include_pending
@@ -278,16 +286,33 @@ def trade_map_bundle(
     marker_counts = marker_scope_counts(markers)
     # Tail poll returns only a few bars; aligning to that slice collapses all markers.
     if ohlcv_mode == "full" and ohlcv.get("candles"):
-        candle_times = [int(c["time"]) for c in ohlcv["candles"] if c.get("time") is not None]
+        candle_times = [
+            int(c["time"]) for c in ohlcv["candles"] if c.get("time") is not None
+        ]
         markers = align_markers_to_candles(markers, candle_times)
+    current_time = None
+    current_price = None
+    candles_for_current = ohlcv.get("candles") or []
+    if candles_for_current:
+        last_candle = candles_for_current[-1]
+        current_time = (
+            int(last_candle["time"]) if last_candle.get("time") is not None else None
+        )
+        try:
+            current_price = float(last_candle.get("close"))
+        except (TypeError, ValueError):
+            current_price = None
     trade_links, _ = collect_trade_links(
         multi_leg_db=SETTINGS.multi_leg_db,
         trend_db=SETTINGS.trend_order_db,
+        spot_db=SETTINGS.spot_order_db,
         symbol=symbol,
         scopes=_scopes_list(scopes),
         start_ts=mk.get("start_ts"),
         end_ts=mk.get("end_ts"),
         since_ts=mk.get("since_ts"),
+        current_time=current_time,
+        current_price=current_price,
     )
     cols = _feature_columns_list(feature_columns, overlay_weekly_ema=overlay_weekly_ema)
     overlays: dict = {}

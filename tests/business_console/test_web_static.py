@@ -25,6 +25,7 @@ def test_trade_map_html_served(client):
     assert "statusClock" in body
     assert "side-panels" not in body
     assert "eligibilityPanel" not in body
+    assert 'id="layerMultiLeg" checked' in body
 
 
 def test_orders_html_served(client):

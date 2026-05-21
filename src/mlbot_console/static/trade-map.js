@@ -11,6 +11,7 @@ let chart;
 let candleSeries;
 /** @type {Map<string, import('lightweight-charts').ISeriesApi<'Line'>>} */
 const mainOverlaySeries = new Map();
+const mainOverlayData = new Map();
 let pollTimer;
 let markerById = new Map();
 let lastRawMarkers = [];
@@ -310,10 +311,23 @@ function clearMainOverlaySeries() {
     chart.removeSeries(series);
   }
   mainOverlaySeries.clear();
+  mainOverlayData.clear();
 }
 
-function applyMainOverlays(mainOverlays) {
-  clearMainOverlaySeries();
+function mergeOverlayPoints(existing, incoming) {
+  const byTime = new Map();
+  for (const p of existing || []) {
+    if (p && p.time != null) byTime.set(Number(p.time), p);
+  }
+  for (const p of incoming || []) {
+    if (p && p.time != null) byTime.set(Number(p.time), p);
+  }
+  return [...byTime.values()].sort((a, b) => a.time - b.time);
+}
+
+function applyMainOverlays(mainOverlays, opts = {}) {
+  const merge = !!opts.merge;
+  if (!merge) clearMainOverlaySeries();
   const emaOn = document.getElementById("mainEma1200")?.checked;
   const wkOn = document.getElementById("mainWeeklyEma200")?.checked;
   const want = [];
@@ -322,20 +336,24 @@ function applyMainOverlays(mainOverlays) {
   for (const key of want) {
     const spec = (mainOverlays || {})[key];
     if (!spec?.available || !spec.points?.length) continue;
-    const line = chart.addLineSeries({
-      color: spec.color || "#888",
-      lineWidth: 2,
-      priceLineVisible: false,
-      lastValueVisible: true,
-      title: spec.label || key,
-    });
-    line.setData(
-      spec.points.map((p) => ({
+    let line = mainOverlaySeries.get(key);
+    if (!line) {
+      line = chart.addLineSeries({
+        color: spec.color || "#888",
+        lineWidth: 2,
+        priceLineVisible: false,
+        lastValueVisible: true,
+        title: spec.label || key,
+      });
+      mainOverlaySeries.set(key, line);
+    }
+    const next = spec.points.map((p) => ({
         time: p.time,
         value: p.value,
-      }))
-    );
-    mainOverlaySeries.set(key, line);
+      }));
+    const points = merge ? mergeOverlayPoints(mainOverlayData.get(key) || [], next) : next;
+    mainOverlayData.set(key, points);
+    line.setData(points);
   }
 }
 
@@ -672,9 +690,47 @@ function formatOverlayStatus(overlays) {
 }
 
 function applyMarkers(rawMarkers) {
-  lastRawMarkers = rawMarkers || [];
+  lastRawMarkers = alignMarkersToLoadedCandles(rawMarkers || []);
   markerById = new Map(lastRawMarkers.map((m) => [m.id, m]));
   candleSeries.setMarkers(Core.markersToLwc(lastRawMarkers, selectedMarkerId));
+}
+
+function nearestLoadedCandleTime(rawTime) {
+  const t = Number(rawTime);
+  if (!Number.isFinite(t) || !lastCandles.length) return t;
+  let best = Number(lastCandles[0].time);
+  let bestDist = Math.abs(best - t);
+  for (const c of lastCandles) {
+    const ct = Number(c.time);
+    if (!Number.isFinite(ct)) continue;
+    const dist = Math.abs(ct - t);
+    if (dist < bestDist) {
+      best = ct;
+      bestDist = dist;
+    }
+  }
+  return best;
+}
+
+function alignMarkersToLoadedCandles(markers) {
+  if (!lastCandles.length) return markers || [];
+  const times = lastCandles.map((c) => Number(c.time)).filter(Number.isFinite);
+  if (!times.length) return markers || [];
+  const first = times[0];
+  const last = times[times.length - 1];
+  const timeSet = new Set(times);
+  return (markers || []).map((m) => {
+    const t = Number(m.time);
+    if (!Number.isFinite(t) || timeSet.has(t)) return m;
+    const out = { ...m };
+    const detail = { ...(out.detail || {}) };
+    if (detail.order_time == null) detail.order_time = t;
+    out.detail = detail;
+    if (t < first) out.time = first;
+    else if (t > last) out.time = last;
+    else out.time = nearestLoadedCandleTime(t);
+    return out;
+  });
 }
 
 function clearTradeLinks() {
@@ -701,6 +757,8 @@ function clipLinkToCandles(link, candles) {
   if (t0 > last) t0 = last;
   if (t1 < first) t1 = first;
   if (t1 > last) t1 = last;
+  t0 = nearestLoadedCandleTime(t0);
+  t1 = nearestLoadedCandleTime(t1);
   if (t1 <= t0) t1 = Math.min(last, t0 + Core.barDurationSec(document.getElementById("timeframeSelect")?.value || "2h"));
   out.entry_time = t0;
   out.exit_time = t1;
@@ -1089,6 +1147,10 @@ async function refreshBundle(opts = {}) {
   const scopes = scopesParam();
   const pending = layersState().pending;
   const featParam = Core.featureColumnsParam(selectedFeatureColumns);
+  const mainOl = Core.mainOverlaysQueryParam(
+    document.getElementById("mainEma1200")?.checked,
+    document.getElementById("mainWeeklyEma200")?.checked
+  );
   if (mode === "full") {
     setStatusLoading();
     if (opts.resetMarkerRange) {
@@ -1106,7 +1168,8 @@ async function refreshBundle(opts = {}) {
 
   if (mode === "poll") {
     q.set("include_ohlcv", "tail");
-    q.set("include_features", "false");
+    q.set("include_features", mainOl ? "true" : "false");
+    if (mainOl) q.set("main_overlays", mainOl);
     const lastT = lastCandles.length ? lastCandles[lastCandles.length - 1].time : null;
     if (lastT != null) {
       const barSec = Core.barDurationSec(timeframe);
@@ -1128,10 +1191,6 @@ async function refreshBundle(opts = {}) {
       q.set("full_range", "false");
     }
     if (featParam) q.set("feature_columns", featParam);
-    const mainOl = Core.mainOverlaysQueryParam(
-      document.getElementById("mainEma1200")?.checked,
-      document.getElementById("mainWeeklyEma200")?.checked
-    );
     if (mainOl) q.set("main_overlays", mainOl);
   }
 
@@ -1146,6 +1205,7 @@ async function refreshBundle(opts = {}) {
     );
     lastCandles = merged;
     candleSeries.setData(merged);
+    applyMainOverlays(data.main_overlays || {}, { merge: true });
     ohlcvLoadedTo = meta.range_end || new Date().toISOString();
   } else if (mode !== "poll") {
     const candles = Core.sanitizeCandlesForLwc(data.ohlcv?.candles || []);

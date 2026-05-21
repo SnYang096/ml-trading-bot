@@ -22,7 +22,6 @@ from mlbot_console.services.trade_markers import (
     STRATEGY_COLORS,
     _marker_id,
     _parse_ts,
-    _ts_in_chart_window,
 )
 
 
@@ -97,6 +96,20 @@ def _link_overlaps_window(
     if end_ts is not None and entry_ts > end_ts:
         return False
     return True
+
+
+def _current_link_endpoint(
+    *,
+    current_time: Optional[int],
+    current_price: Optional[float],
+    entry_ts: int,
+    entry_px: float,
+) -> Optional[Tuple[int, float]]:
+    if current_time is None or current_price is None:
+        return None
+    if current_time < entry_ts:
+        return None
+    return int(current_time), float(current_price)
 
 
 def multi_leg_trade_links(
@@ -247,6 +260,8 @@ def trend_trade_links(
     start_ts: Optional[int] = None,
     end_ts: Optional[int] = None,
     since_ts: Optional[int] = None,
+    current_time: Optional[int] = None,
+    current_price: Optional[float] = None,
 ) -> List[Dict[str, Any]]:
     if not db_path.is_file():
         return []
@@ -266,10 +281,6 @@ def trend_trade_links(
         except (TypeError, ValueError):
             entry_px = None
         if entry_ts is None or entry_px is None or entry_px != entry_px:
-            continue
-        if not _ts_in_chart_window(
-            entry_ts, start_ts=start_ts, end_ts=end_ts, since_ts=since_ts
-        ):
             continue
         exit_ts = _parse_ts(row.get("exit_time"))
         try:
@@ -294,7 +305,158 @@ def trend_trade_links(
                 status="closed",
                 exit_kind="exit",
             )
-    return links
+        else:
+            status = str(row.get("status") or "").lower()
+            if status in {"closed", "exited", "flat"}:
+                continue
+            endpoint = _current_link_endpoint(
+                current_time=current_time,
+                current_price=current_price,
+                entry_ts=int(entry_ts),
+                entry_px=entry_px,
+            )
+            if endpoint is None:
+                continue
+            curr_ts, curr_px = endpoint
+            _append_link(
+                links,
+                strategy=strat,
+                leg="",
+                entry_time=int(entry_ts),
+                entry_price=entry_px,
+                exit_time=curr_ts,
+                exit_price=curr_px,
+                entry_marker_id=entry_mid,
+                exit_marker_id=None,
+                status="open",
+                exit_kind="current",
+            )
+    op_sql = """
+        SELECT po.operation_id, po.operation_type, po.operation_time, po.price,
+               p.position_id, p.side, p.exit_time, p.exit_price, p.status, p.strategy_id
+        FROM position_operations po
+        JOIN positions p ON p.position_id = po.position_id
+        WHERE p.symbol = ?
+        ORDER BY po.operation_time ASC
+    """
+    for row in query_rows(db_path, op_sql, (sym,)):
+        op_type = str(row.get("operation_type") or "").lower()
+        if "add" not in op_type:
+            continue
+        add_ts = _parse_ts(row.get("operation_time"))
+        add_px = _price(row)
+        if add_ts is None or add_px is None:
+            continue
+        exit_ts = _parse_ts(row.get("exit_time"))
+        try:
+            exit_px = float(row.get("exit_price"))
+        except (TypeError, ValueError):
+            exit_px = None
+        status = "closed"
+        exit_kind = "exit"
+        if exit_ts is None or exit_px is None:
+            endpoint = _current_link_endpoint(
+                current_time=current_time,
+                current_price=current_price,
+                entry_ts=int(add_ts),
+                entry_px=add_px,
+            )
+            if endpoint is None:
+                continue
+            exit_ts, exit_px = endpoint
+            status = "open"
+            exit_kind = "current"
+        strat = str(row.get("strategy_id") or "trend").lower()
+        op_id = str(row.get("operation_id") or "")
+        pid = str(row.get("position_id") or "")
+        _append_link(
+            links,
+            strategy=strat,
+            leg="add",
+            entry_time=int(add_ts),
+            entry_price=add_px,
+            exit_time=int(exit_ts),
+            exit_price=float(exit_px),
+            entry_marker_id=_marker_id("trend", "position_operations", op_id),
+            exit_marker_id=(
+                _marker_id("trend", "positions", f"{pid}:exit")
+                if status == "closed"
+                else None
+            ),
+            status=status,
+            exit_kind=exit_kind,
+        )
+    return [
+        lk
+        for lk in links
+        if _link_overlaps_window(
+            lk, start_ts=start_ts, end_ts=end_ts, since_ts=since_ts
+        )
+    ]
+
+
+def spot_trade_links(
+    db_path: Path,
+    symbol: str,
+    *,
+    start_ts: Optional[int] = None,
+    end_ts: Optional[int] = None,
+    since_ts: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    if not db_path.is_file():
+        return []
+    sym = symbol.upper()
+    sql = """
+        SELECT order_id, created_at, updated_at, symbol, side, order_type,
+               quantity, price, status, filled_quantity, filled_quote_usdt
+        FROM spot_orders
+        WHERE symbol = ?
+        ORDER BY COALESCE(updated_at, created_at) ASC
+    """
+    open_buys: List[Dict[str, Any]] = []
+    links: List[Dict[str, Any]] = []
+    for row in query_rows(db_path, sql, (sym,)):
+        status = str(row.get("status") or "").lower()
+        filled_qty = float(row.get("filled_quantity") or 0)
+        if status not in {"filled", "closed", "partially_filled"} and filled_qty <= 0:
+            continue
+        ts = _parse_ts(row.get("updated_at")) or _parse_ts(row.get("created_at"))
+        px = _price(row)
+        if ts is None or px is None:
+            continue
+        side = str(row.get("side") or "").lower()
+        if side == "buy":
+            open_buys.append(row | {"_ts": ts, "_px": px})
+            continue
+        if side != "sell" or not open_buys:
+            continue
+        entry = open_buys.pop(0)
+        entry_ts = int(entry["_ts"])
+        entry_px = float(entry["_px"])
+        _append_link(
+            links,
+            strategy="spot_accum_simple",
+            leg="",
+            entry_time=entry_ts,
+            entry_price=entry_px,
+            exit_time=int(ts),
+            exit_price=float(px),
+            entry_marker_id=_marker_id(
+                "spot", "spot_orders", str(entry.get("order_id") or "")
+            ),
+            exit_marker_id=_marker_id(
+                "spot", "spot_orders", str(row.get("order_id") or "")
+            ),
+            status="closed",
+            exit_kind="sell",
+        )
+    return [
+        lk
+        for lk in links
+        if _link_overlaps_window(
+            lk, start_ts=start_ts, end_ts=end_ts, since_ts=since_ts
+        )
+    ]
 
 
 def collect_trade_links(
@@ -306,6 +468,9 @@ def collect_trade_links(
     end_ts: Optional[int] = None,
     since_ts: Optional[int] = None,
     trend_db: Optional[Path] = None,
+    spot_db: Optional[Path] = None,
+    current_time: Optional[int] = None,
+    current_price: Optional[float] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     scope_set = {s.strip().lower() for s in scopes if s.strip()}
     merged: List[Dict[str, Any]] = []
@@ -324,6 +489,18 @@ def collect_trade_links(
         merged.extend(
             trend_trade_links(
                 trend_db,
+                symbol,
+                start_ts=start_ts,
+                end_ts=end_ts,
+                since_ts=since_ts,
+                current_time=current_time,
+                current_price=current_price,
+            )
+        )
+    if "spot" in scope_set and spot_db is not None and spot_db.is_file():
+        merged.extend(
+            spot_trade_links(
+                spot_db,
                 symbol,
                 start_ts=start_ts,
                 end_ts=end_ts,
