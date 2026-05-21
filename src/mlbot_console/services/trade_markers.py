@@ -23,6 +23,7 @@ def _leg_label_from_order_id(order_id: str) -> str:
         return ""
     return f"{m.group(1)}{m.group(2)}"
 
+
 # Visual tokens aligned with scripts/event_backtest/reporting/trading_map.py
 # Exchange / OMS statuses that count as still-open working orders (shown when Pending is on).
 _OPEN_ORDER_STATUSES = frozenset(
@@ -252,7 +253,8 @@ def trend_markers(
 
     op_sql = """
         SELECT po.operation_id, po.position_id, po.operation_type,
-               po.operation_time, po.size, po.price, po.reason
+               po.operation_time, po.size, po.price, po.reason,
+               p.side AS position_side, p.strategy_id
         FROM position_operations po
         JOIN positions p ON p.position_id = po.position_id
         WHERE p.symbol = ?
@@ -271,6 +273,12 @@ def trend_markers(
         op_type = str(row.get("operation_type") or "").lower()
         is_add = "add" in op_type
         event = "entry" if is_add or "open" in op_type or "entry" in op_type else "exit"
+        position_side = str(row.get("position_side") or "long").lower()
+        side = (
+            position_side
+            if event == "entry"
+            else ("short" if position_side == "long" else "long")
+        )
         _append(
             out,
             seen,
@@ -279,10 +287,10 @@ def trend_markers(
             key=str(row.get("operation_id")),
             symbol=sym,
             event=event,
-            side="long",
+            side=side,
             price=_f(row.get("price")),
             qty=_f(row.get("size")),
-            strategy="unknown",
+            strategy=str(row.get("strategy_id") or "unknown").lower(),
             is_add=is_add,
             extra={
                 "time": ot,
@@ -292,11 +300,13 @@ def trend_markers(
         )
 
     ord_sql = """
-        SELECT order_id, symbol, side, status, filled_at, created_at,
-               average_price, filled_quantity, position_id
-        FROM orders
-        WHERE symbol = ?
-        ORDER BY COALESCE(filled_at, created_at) ASC
+        SELECT o.order_id, o.symbol AS symbol, o.side AS side, o.status,
+               o.filled_at, o.created_at, o.average_price, o.filled_quantity, o.position_id,
+               p.side AS position_side, p.strategy_id
+        FROM orders o
+        LEFT JOIN positions p ON p.position_id = o.position_id
+        WHERE o.symbol = ?
+        ORDER BY COALESCE(o.filled_at, o.created_at) ASC
     """
     for row in query_rows(db_path, ord_sql, (sym,)):
         status = str(row.get("status") or "").lower()
@@ -320,7 +330,22 @@ def trend_markers(
         elif since_ts is not None and ft <= since_ts:
             continue
         side_raw = str(row.get("side") or "").upper()
-        side = "long" if side_raw in {"BUY", "LONG"} else "short"
+        position_side = str(row.get("position_side") or "").lower()
+        if position_side in {"long", "short"}:
+            event = (
+                "entry"
+                if (position_side == "long" and side_raw in {"BUY", "LONG"})
+                or (position_side == "short" and side_raw in {"SELL", "SHORT"})
+                else "exit"
+            )
+            side = (
+                position_side
+                if event == "entry"
+                else ("short" if position_side == "long" else "long")
+            )
+        else:
+            event = "entry"
+            side = "long" if side_raw in {"BUY", "LONG"} else "short"
         _append(
             out,
             seen,
@@ -328,11 +353,11 @@ def trend_markers(
             source="orders",
             key=str(row.get("order_id")),
             symbol=sym,
-            event="entry",
+            event=event,
             side=side,
             price=_f(row.get("average_price")),
             qty=filled_qty or None,
-            strategy="unknown",
+            strategy=str(row.get("strategy_id") or "unknown").lower(),
             status="filled" if is_filled else "pending",
             extra={"time": ft, "order_id": row.get("order_id")},
         )
@@ -529,7 +554,9 @@ def multi_leg_markers(
     return out
 
 
-def _filter_pending(markers: List[Dict[str, Any]], include_pending: bool) -> List[Dict[str, Any]]:
+def _filter_pending(
+    markers: List[Dict[str, Any]], include_pending: bool
+) -> List[Dict[str, Any]]:
     if include_pending:
         return markers
     return [m for m in markers if str(m.get("status") or "filled").lower() != "pending"]

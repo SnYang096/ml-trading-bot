@@ -20,7 +20,14 @@ def _is_all_symbols(symbol: str) -> bool:
 
 
 def _row_time(row: Dict[str, Any]) -> int:
-    for key in ("filled_at", "updated_at", "created_at", "operation_time"):
+    for key in (
+        "filled_at",
+        "updated_at",
+        "created_at",
+        "operation_time",
+        "entry_time",
+        "exit_time",
+    ):
         ts = _parse_ts(row.get(key))
         if ts is not None:
             return ts
@@ -50,7 +57,7 @@ def _normalize(
     side = str(row.get("side") or "")
     filled_qty = float(row.get("filled_quantity") or 0)
     t = _row_time(row)
-    source = {
+    source = str(row.get("_marker_source") or "").strip() or {
         "trend": "orders",
         "spot": "spot_orders",
         "multi_leg": "multi_leg_orders",
@@ -87,6 +94,116 @@ def _normalize(
     return item
 
 
+def _position_action_side(position_side: str, event: str) -> str:
+    side = str(position_side or "long").lower()
+    ev = str(event or "entry").lower()
+    if ev == "exit":
+        return "sell" if side == "long" else "buy"
+    return "buy" if side == "long" else "sell"
+
+
+def _trend_position_event_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        pid = str(row.get("position_id") or "")
+        sym = str(row.get("symbol") or "").upper()
+        pos_side = str(row.get("side") or "long").lower()
+        strat = row.get("strategy_id")
+        entry_ts = _parse_ts(row.get("entry_time"))
+        if entry_ts is not None:
+            out.append(
+                _normalize(
+                    "trend",
+                    {
+                        "order_id": f"{pid}:entry",
+                        "symbol": sym,
+                        "side": _position_action_side(pos_side, "entry"),
+                        "status": "filled",
+                        "order_type": "position_entry",
+                        "quantity": None,
+                        "price": row.get("entry_price"),
+                        "average_price": row.get("entry_price"),
+                        "filled_quantity": None,
+                        "created_at": row.get("entry_time"),
+                        "strategy_id": strat,
+                        "_marker_source": "positions",
+                    },
+                )
+            )
+        exit_ts = _parse_ts(row.get("exit_time"))
+        if exit_ts is not None:
+            out.append(
+                _normalize(
+                    "trend",
+                    {
+                        "order_id": f"{pid}:exit",
+                        "symbol": sym,
+                        "side": _position_action_side(pos_side, "exit"),
+                        "status": "closed",
+                        "order_type": "position_exit",
+                        "quantity": None,
+                        "price": row.get("exit_price"),
+                        "average_price": row.get("exit_price"),
+                        "filled_quantity": None,
+                        "created_at": row.get("exit_time"),
+                        "strategy_id": strat,
+                        "_marker_source": "positions",
+                    },
+                )
+            )
+    return out
+
+
+def _trend_operation_rows(
+    db_path: Path, symbol: str, limit: int
+) -> List[Dict[str, Any]]:
+    where = "" if _is_all_symbols(symbol) else "WHERE p.symbol = ?"
+    params: tuple[Any, ...] = (
+        (int(limit),) if _is_all_symbols(symbol) else (symbol.upper(), int(limit))
+    )
+    sql = f"""
+        SELECT po.operation_id, po.position_id, po.operation_type,
+               po.operation_time, po.size, po.price, po.reason,
+               p.symbol, p.side, p.strategy_id
+        FROM position_operations po
+        JOIN positions p ON p.position_id = po.position_id
+        {where}
+        ORDER BY po.operation_time DESC
+        LIMIT ?
+    """
+    out: List[Dict[str, Any]] = []
+    for row in query_rows(db_path, sql, params):
+        op_type = str(row.get("operation_type") or "").lower()
+        event = (
+            "exit"
+            if any(x in op_type for x in ("close", "reduce", "exit"))
+            else "entry"
+        )
+        out.append(
+            _normalize(
+                "trend",
+                {
+                    "order_id": str(row.get("operation_id") or ""),
+                    "symbol": row.get("symbol"),
+                    "side": _position_action_side(
+                        str(row.get("side") or "long"), event
+                    ),
+                    "status": "filled",
+                    "order_type": f"position_{op_type or 'operation'}",
+                    "quantity": row.get("size"),
+                    "price": row.get("price"),
+                    "average_price": row.get("price"),
+                    "filled_quantity": row.get("size"),
+                    "created_at": row.get("operation_time"),
+                    "operation_time": row.get("operation_time"),
+                    "strategy_id": row.get("strategy_id"),
+                    "_marker_source": "position_operations",
+                },
+            )
+        )
+    return out
+
+
 def trend_orders(
     db_path: Path,
     symbol: str,
@@ -96,10 +213,12 @@ def trend_orders(
 ) -> List[Dict[str, Any]]:
     if _is_all_symbols(symbol):
         sql = """
-            SELECT order_id, symbol, side, status, order_type, quantity, price,
-                   filled_quantity, average_price, created_at, updated_at, filled_at,
-                   position_id
-            FROM orders
+            SELECT o.order_id, o.symbol AS symbol, o.side AS side, o.status, o.order_type,
+                   o.quantity, o.price, o.filled_quantity, o.average_price,
+                   o.created_at, o.updated_at, o.filled_at,
+                   o.position_id, p.strategy_id
+            FROM orders o
+            LEFT JOIN positions p ON p.position_id = o.position_id
             ORDER BY COALESCE(filled_at, created_at) DESC
             LIMIT ?
         """
@@ -107,19 +226,36 @@ def trend_orders(
     else:
         sym = symbol.upper()
         sql = """
-            SELECT order_id, symbol, side, status, order_type, quantity, price,
-                   filled_quantity, average_price, created_at, updated_at, filled_at,
-                   position_id
-            FROM orders
-            WHERE symbol = ?
+            SELECT o.order_id, o.symbol AS symbol, o.side AS side, o.status, o.order_type,
+                   o.quantity, o.price, o.filled_quantity, o.average_price,
+                   o.created_at, o.updated_at, o.filled_at,
+                   o.position_id, p.strategy_id
+            FROM orders o
+            LEFT JOIN positions p ON p.position_id = o.position_id
+            WHERE o.symbol = ?
             ORDER BY COALESCE(filled_at, created_at) DESC
             LIMIT ?
         """
         rows = query_rows(db_path, sql, (sym, int(limit)))
+    pos_sql = """
+        SELECT position_id, symbol, side, entry_time, exit_time,
+               entry_price, exit_price, realized_pnl, status, strategy_id
+        FROM positions
+    """
+    pos_params: tuple[Any, ...] = ()
+    if not _is_all_symbols(symbol):
+        pos_sql += " WHERE symbol = ?"
+        pos_params = (symbol.upper(),)
+    pos_sql += " ORDER BY COALESCE(exit_time, entry_time) DESC LIMIT ?"
+    pos_rows = query_rows(db_path, pos_sql, (*pos_params, int(limit)))
     out = [_normalize("trend", r) for r in rows]
+    out.extend(_trend_position_event_rows(pos_rows))
+    out.extend(_trend_operation_rows(db_path, symbol, int(limit)))
     if status:
         st = status.lower()
         out = [r for r in out if r["status"] == st]
+    out.sort(key=lambda r: r.get("time") or 0, reverse=True)
+    out = out[: int(limit)]
     return out
 
 
@@ -214,13 +350,9 @@ def collect_orders(
     scope_set = {s.strip().lower() for s in scopes if s.strip()}
     per_scope = max(int(limit), 1)
     if "trend" in scope_set and trend_db.is_file():
-        merged.extend(
-            trend_orders(trend_db, symbol, status=status, limit=per_scope)
-        )
+        merged.extend(trend_orders(trend_db, symbol, status=status, limit=per_scope))
     if "spot" in scope_set and spot_db.is_file():
-        merged.extend(
-            spot_orders_list(spot_db, symbol, status=status, limit=per_scope)
-        )
+        merged.extend(spot_orders_list(spot_db, symbol, status=status, limit=per_scope))
     if "multi_leg" in scope_set and multi_leg_db.is_file():
         merged.extend(
             multi_leg_orders_list(multi_leg_db, symbol, status=status, limit=per_scope)

@@ -1,0 +1,33 @@
+# =============================================================================
+# SRB · non_rolling — 整段静态 holdout 全周期研究（典型 ``--stage full``）
+# -----------------------------------------------------------------------------
+# 覆写 dates / rolling / output；其余与同目录 research_roll.features_on.yaml 一致。
+# 全周期 run 的 report.json 含 comparison / deploy_gate。
+
+extends: research_roll.features_on.yaml
+
+dates:
+  start_date: "2022-01-01"
+  end_date: "2026-05-01"
+  nonrolling_validation_months: 12
+  nonrolling_test_months: 0
+
+rolling:
+  mode: non_rolling
+  time_split_policy: static_holdout
+
+comparison:
+  min_trades: 0
+  sharpe_adopt_ratio: 0.7
+  sharpe_reject_floor: 0.0
+
+deploy_gate:
+  trigger_sharpe_improve: 0.05
+  trigger_drift_level: HIGH
+  min_sharpe_change: 0.03
+  require_adopt: true
+  min_trades: 0
+  require_human_confirm: true
+
+output:
+  history_dir: results/srb/validate_static.full_study

@@ -6,6 +6,37 @@ def test_trend_orders_list(trend_db):
     assert len(rows) >= 1
     assert rows[0]["scope"] == "trend"
     assert "order_id" in rows[0]
+    position_rows = [r for r in rows if str(r["order_id"]).startswith("p1:")]
+    assert {r["order_type"] for r in position_rows} >= {
+        "position_entry",
+        "position_exit",
+    }
+    exit_row = next(r for r in position_rows if r["order_type"] == "position_exit")
+    assert exit_row["side"] == "sell"
+    assert exit_row["strategy"] == "tpc"
+    assert exit_row["marker_id"] == "trend:positions:p1:exit"
+
+
+def test_trend_orders_include_position_operations_with_strategy(trend_db):
+    import sqlite3
+
+    conn = sqlite3.connect(trend_db)
+    conn.execute(
+        """
+        INSERT INTO position_operations VALUES (
+            'op_add_orders', 'p1', 'add', '2024-01-01T12:00:00+00:00',
+            0.2, 102.0, 'scale in'
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    rows = trend_orders(trend_db, "ETHUSDT", limit=50)
+    op_row = next(r for r in rows if r["order_id"] == "op_add_orders")
+    assert op_row["order_type"] == "position_add"
+    assert op_row["strategy"] == "tpc"
+    assert op_row["marker_id"] == "trend:position_operations:op_add_orders"
 
 
 def test_trend_orders_all_symbols(trend_db):

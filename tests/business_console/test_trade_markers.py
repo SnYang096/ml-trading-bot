@@ -19,6 +19,53 @@ def test_trend_markers_entry_exit(trend_db):
     assert exit_m["strategy"] == "tpc"
 
 
+def test_trend_order_markers_inherit_position_strategy(trend_db):
+    import sqlite3
+
+    conn = sqlite3.connect(trend_db)
+    conn.execute(
+        """
+        INSERT INTO orders VALUES (
+            'ord_filled_p1', 'ETHUSDT', 'SELL', 'filled', 'market',
+            0.1, 105.0,
+            '2024-01-01T14:00:00+00:00', '2024-01-01T14:00:00+00:00',
+            '2024-01-01T14:00:00+00:00', 105.0, 0.1, 'p1'
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    markers = trend_markers(trend_db, "ETHUSDT")
+    order_marker = next(m for m in markers if m["id"] == "trend:orders:ord_filled_p1")
+    assert order_marker["strategy"] == "tpc"
+    assert order_marker["event"] == "exit"
+    assert order_marker["side"] == "short"
+
+
+def test_trend_operation_markers_inherit_position_strategy(trend_db):
+    import sqlite3
+
+    conn = sqlite3.connect(trend_db)
+    conn.execute(
+        """
+        INSERT INTO position_operations VALUES (
+            'op_add_marker', 'p1', 'add', '2024-01-01T12:00:00+00:00',
+            0.2, 102.0, 'scale in'
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    markers = trend_markers(trend_db, "ETHUSDT")
+    op_marker = next(
+        m for m in markers if m["id"] == "trend:position_operations:op_add_marker"
+    )
+    assert op_marker["strategy"] == "tpc"
+    assert op_marker["is_add"] is True
+
+
 def test_spot_markers_buy(spot_db):
     markers = spot_markers(spot_db, "ETHUSDT")
     filled = [m for m in markers if m.get("status") == "filled"]
