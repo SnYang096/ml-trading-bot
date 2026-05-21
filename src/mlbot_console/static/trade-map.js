@@ -35,6 +35,9 @@ const MAX_FEATURE_SUBCHARTS = 8;
 /** Loaded OHLCV window (ISO); null → use per-TF initial window. */
 let ohlcvLoadedFrom = null;
 let ohlcvLoadedTo = null;
+/** Marker DB query window (wider than sparse candles). */
+let markerQueryFromIso = null;
+let lastMarkerCounts = null;
 let historyLoadInFlight = false;
 let historyExhausted = false;
 let historyLoadTimer = null;
@@ -135,6 +138,14 @@ function setStatusFromBundle(symbol, timeframe, candles, markers, meta, overlays
     `${candles.length} bars`,
     `${markers.length} markers`,
   ];
+  if (lastMarkerCounts?.total != null && lastMarkerCounts.total > markers.length) {
+    parts[2] = `${markers.length}/${lastMarkerCounts.total} markers`;
+    const scopes = [];
+    if (lastMarkerCounts.trend) scopes.push(`B${lastMarkerCounts.trend}`);
+    if (lastMarkerCounts.spot) scopes.push(`A${lastMarkerCounts.spot}`);
+    if (lastMarkerCounts.multi_leg) scopes.push(`C${lastMarkerCounts.multi_leg}`);
+    if (scopes.length) parts.push(`db:${scopes.join(",")}`);
+  }
   if (meta.bars_1min_rows) parts.push(`bus1m=${meta.bars_1min_rows}`);
   if (meta.live_storage_1m_rows) parts.push(`hist1m=${meta.live_storage_1m_rows}`);
   if (meta.ohlcv_source) parts.push(meta.ohlcv_source);
@@ -328,7 +339,13 @@ function applyMainOverlays(mainOverlays) {
 function resetOhlcvLoadedRange() {
   ohlcvLoadedFrom = null;
   ohlcvLoadedTo = null;
+  markerQueryFromIso = null;
+  lastMarkerCounts = null;
   historyExhausted = false;
+}
+
+function resetMarkerQueryRange() {
+  markerQueryFromIso = initialOhlcvRangeIso().from;
 }
 
 function initialOhlcvRangeIso() {
@@ -355,7 +372,7 @@ function initialOhlcvRangeIso() {
 
 function markerRangeParams() {
   const to = new Date().toISOString();
-  const from = ohlcvLoadedFrom || initialOhlcvRangeIso().from;
+  const from = markerQueryFromIso || initialOhlcvRangeIso().from;
   return { from, to, full_range: "false" };
 }
 
@@ -414,7 +431,13 @@ async function loadMoreHistory() {
     lastCandles = merged;
     candleSeries.setData(merged);
     applyLoadedOhlcvRange(meta, merged);
-    applyMarkers(data.markers || []);
+    if (
+      markerQueryFromIso == null ||
+      new Date(newFromIso).getTime() < new Date(markerQueryFromIso).getTime()
+    ) {
+      markerQueryFromIso = newFromIso;
+    }
+    await refreshMarkersOnly();
     applyTradeLinks(data.trade_links || []);
   } finally {
     historyLoadInFlight = false;
@@ -1016,6 +1039,24 @@ async function showMarkerDetail(markerId) {
   }
 }
 
+async function refreshMarkersOnly() {
+  const symbol = document.getElementById("symbolSelect").value;
+  const timeframe = document.getElementById("timeframeSelect").value;
+  const q = new URLSearchParams({
+    symbol,
+    timeframe,
+    scopes: scopesParam(),
+    include_pending: String(layersState().pending),
+    include_ohlcv: "none",
+    include_features: "false",
+    ...markerRangeParams(),
+  });
+  const { data, meta } = await Shell.api(`/api/trade-map/bundle?${q}`);
+  lastMarkerCounts = meta.marker_counts || null;
+  applyMarkers(data.markers || []);
+  applyTradeLinks(data.trade_links || []);
+}
+
 async function refreshBundle(opts = {}) {
   const mode = opts.mode || "full";
   const symbol = document.getElementById("symbolSelect").value;
@@ -1024,7 +1065,10 @@ async function refreshBundle(opts = {}) {
   const scopes = scopesParam();
   const pending = layersState().pending;
   const featParam = Core.featureColumnsParam(selectedFeatureColumns);
-  if (mode === "full") setStatusLoading();
+  if (mode === "full") {
+    setStatusLoading();
+    resetMarkerQueryRange();
+  }
 
   const q = new URLSearchParams({
     symbol,
@@ -1062,6 +1106,7 @@ async function refreshBundle(opts = {}) {
   }
 
   const { data, meta } = await Shell.api(`/api/trade-map/bundle?${q}`);
+  lastMarkerCounts = meta.marker_counts || null;
   const pageUrl = new URL(window.location.href);
 
   if (mode === "poll" && data.ohlcv?.candles?.length) {
@@ -1126,6 +1171,7 @@ function bindControls() {
   const rerunAll = async () => {
     chartFitPending = true;
     resetOhlcvLoadedRange();
+    resetMarkerQueryRange();
     saveLayout();
     await loadFeatureColumns();
     rerun();
@@ -1154,10 +1200,12 @@ function bindControls() {
       if (id === "symbolSelect") {
         Shell.setSymbol(document.getElementById("symbolSelect").value);
         resetOhlcvLoadedRange();
+        resetMarkerQueryRange();
         chartFitPending = true;
       }
       if (id === "timeframeSelect") {
         resetOhlcvLoadedRange();
+        resetMarkerQueryRange();
         chartFitPending = true;
       }
       if (id.startsWith("layer")) renderFeaturePicker();

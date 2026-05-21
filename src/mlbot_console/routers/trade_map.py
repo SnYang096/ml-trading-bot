@@ -28,7 +28,11 @@ from mlbot_console.services.ohlcv_reader import (
 )
 from mlbot_console.services.signal_overview import build_signal_overview
 from mlbot_console.services.trade_links import collect_trade_links
-from mlbot_console.services.trade_markers import align_pending_markers_to_candles, collect_markers
+from mlbot_console.services.trade_markers import (
+    align_markers_to_candles,
+    collect_markers,
+    marker_scope_counts,
+)
 from mlbot_console.services.universe import load_universe_symbols
 
 router = APIRouter(tags=["trade-map"])
@@ -169,7 +173,7 @@ def trade_map_markers(
             times = [
                 int(c["time"]) for c in ohlcv.get("candles") or [] if c.get("time") is not None
             ]
-            markers = align_pending_markers_to_candles(markers, times)
+            markers = align_markers_to_candles(markers, times)
         except OhlcvWindowError:
             pass
     return ok(markers, meta={"count": len(markers)})
@@ -262,10 +266,7 @@ def trade_map_bundle(
     mk = _marker_kwargs(
         from_=from_, to=to, since=since, include_pending=include_pending
     )
-    if mk.get("start_ts") is None and ohlcv.get("range_start"):
-        mk["start_ts"] = _parse_ts_param(str(ohlcv["range_start"]))
-    if mk.get("end_ts") is None and ohlcv.get("range_end"):
-        mk["end_ts"] = _parse_ts_param(str(ohlcv["range_end"]))
+    # Keep client from/to for marker DB query; do not narrow to sparse OHLCV span.
     markers = collect_markers(
         trend_db=SETTINGS.trend_order_db,
         spot_db=SETTINGS.spot_order_db,
@@ -274,9 +275,10 @@ def trade_map_bundle(
         scopes=_scopes_list(scopes),
         **mk,
     )
-    if include_pending and ohlcv.get("candles"):
+    marker_counts = marker_scope_counts(markers)
+    if ohlcv.get("candles"):
         candle_times = [int(c["time"]) for c in ohlcv["candles"] if c.get("time") is not None]
-        markers = align_pending_markers_to_candles(markers, candle_times)
+        markers = align_markers_to_candles(markers, candle_times)
     trade_links, _ = collect_trade_links(
         multi_leg_db=SETTINGS.multi_leg_db,
         symbol=symbol,
@@ -357,6 +359,7 @@ def trade_map_bundle(
             "macro_rows": ohlcv.get("macro_rows"),
             "expected_bars": ohlcv.get("expected_bars"),
             "data_sparse": ohlcv.get("data_sparse"),
+            "marker_counts": marker_counts,
         },
     )
 

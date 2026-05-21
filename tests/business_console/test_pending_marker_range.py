@@ -52,5 +52,9 @@ def test_align_pending_to_last_candle():
         }
     ]
     out = align_pending_markers_to_candles(markers, candle_times)
-    assert out[0]["time"] == 300
+    assert out[0]["time"] == 100
     assert out[0]["detail"]["order_time"] == 50
+
+    markers_late = [{**markers[0], "time": 999}]
+    out_late = align_pending_markers_to_candles(markers_late, candle_times)
+    assert out_late[0]["time"] == 300

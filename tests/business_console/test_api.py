@@ -62,8 +62,10 @@ def test_trade_map_bundle(client):
     )
     assert r.status_code == 200
     data = r.json()["data"]
+    meta = r.json()["meta"]
     assert data["ohlcv"]["source"] == "bars_1min"
     assert len(data["ohlcv"]["candles"]) >= 1
+    assert meta["marker_counts"]["total"] >= 2
     assert len(data["markers"]) >= 2
     assert "weekly_ema_200_position" in data["overlays"]
     assert data["overlays"]["weekly_ema_200_position"]["available"] is True

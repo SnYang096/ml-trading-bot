@@ -535,29 +535,58 @@ def _filter_pending(markers: List[Dict[str, Any]], include_pending: bool) -> Lis
     return [m for m in markers if str(m.get("status") or "filled").lower() != "pending"]
 
 
+def _nearest_candle_time(candle_times: List[int], t: int) -> int:
+    return min(candle_times, key=lambda x: abs(int(x) - t))
+
+
+def align_markers_to_candles(
+    markers: List[Dict[str, Any]],
+    candle_times: List[int],
+) -> List[Dict[str, Any]]:
+    """Pin markers onto visible bars (LWC drops markers outside series times)."""
+    if not candle_times:
+        return markers
+    times = sorted(int(t) for t in candle_times)
+    first_t, last_t = times[0], times[-1]
+    out: List[Dict[str, Any]] = []
+    for m in markers:
+        item = dict(m)
+        t = int(item["time"])
+        if first_t <= t <= last_t:
+            out.append(item)
+            continue
+        detail = dict(item.get("detail") or {})
+        detail["order_time"] = t
+        item["detail"] = detail
+        pending = str(item.get("status") or "filled").lower() == "pending"
+        if pending:
+            item["time"] = last_t if t > last_t else first_t
+        else:
+            item["time"] = _nearest_candle_time(times, t)
+            if item["time"] < first_t:
+                item["time"] = first_t
+            elif item["time"] > last_t:
+                item["time"] = last_t
+        out.append(item)
+    return out
+
+
 def align_pending_markers_to_candles(
     markers: List[Dict[str, Any]],
     candle_times: List[int],
 ) -> List[Dict[str, Any]]:
-    """Pin pending markers to visible bars (LWC ignores markers outside series range)."""
-    if not candle_times:
-        return markers
-    first_t = int(candle_times[0])
-    last_t = int(candle_times[-1])
-    out: List[Dict[str, Any]] = []
+    """Backward-compatible alias."""
+    return align_markers_to_candles(markers, candle_times)
+
+
+def marker_scope_counts(markers: List[Dict[str, Any]]) -> Dict[str, int]:
+    counts: Dict[str, int] = {"trend": 0, "spot": 0, "multi_leg": 0}
     for m in markers:
-        if str(m.get("status") or "filled").lower() != "pending":
-            out.append(m)
-            continue
-        item = dict(m)
-        t = int(item["time"])
-        if t < first_t or t > last_t:
-            detail = dict(item.get("detail") or {})
-            detail["order_time"] = t
-            item["detail"] = detail
-            item["time"] = last_t
-        out.append(item)
-    return out
+        scope = str(m.get("scope") or "").lower()
+        if scope in counts:
+            counts[scope] += 1
+    counts["total"] = len(markers)
+    return counts
 
 
 def collect_markers(
