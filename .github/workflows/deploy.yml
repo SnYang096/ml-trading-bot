@@ -673,6 +673,7 @@ jobs:
             deploy/business-console \
             deploy/systemd/quant-business-console.service \
             src/mlbot_console \
+            src/live_data_stream \
             src/time_series_model \
             live/highcap/universe.yaml \
             config/strategies; do
@@ -684,6 +685,7 @@ jobs:
               deploy/business-console \
               deploy/systemd/quant-business-console.service \
               src/mlbot_console \
+              src/live_data_stream \
               src/time_series_model \
               live/highcap/universe.yaml \
               config/strategies
