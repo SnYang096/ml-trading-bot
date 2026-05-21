@@ -20,8 +20,17 @@
 
   async function api(path) {
     const r = await fetch(path);
-    const j = await r.json();
-    if (!j.ok) throw new Error(j.error?.message || r.statusText || "API error");
+    const text = await r.text();
+    let j;
+    try {
+      j = JSON.parse(text);
+    } catch (_) {
+      const snippet = String(text || r.statusText || "").slice(0, 120);
+      throw new Error(
+        r.ok ? `Invalid JSON from ${path}` : `${r.status} ${path}: ${snippet}`
+      );
+    }
+    if (!j.ok) throw new Error(j.error?.message || j.detail || r.statusText || "API error");
     return j;
   }
 

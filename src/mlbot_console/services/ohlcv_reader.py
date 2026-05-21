@@ -70,6 +70,30 @@ def resolve_trade_map_window(
     return end_ts - pd.Timedelta(days=float(days)), end_ts, False
 
 
+def resolve_macro_kline_root(
+    primary: Path,
+    *,
+    live_data_root: Optional[Path] = None,
+    live_root: Optional[Path] = None,
+) -> Tuple[Path, bool]:
+    """First existing macro spot_klines directory (Vision 1d ZIP cache)."""
+    candidates: List[Path] = [Path(primary)]
+    if live_data_root is not None:
+        candidates.append(Path(live_data_root) / "macro" / "spot_klines")
+    if live_root is not None:
+        candidates.append(Path(live_root) / "data" / "macro" / "spot_klines")
+        candidates.append(Path(live_root) / "macro" / "spot_klines")
+    seen: set[str] = set()
+    for cand in candidates:
+        key = str(cand.resolve()) if cand.exists() else str(cand)
+        if key in seen:
+            continue
+        seen.add(key)
+        if cand.is_dir():
+            return cand, True
+    return Path(primary), False
+
+
 def cap_window_to_max_days(
     start: Optional[pd.Timestamp],
     end: Optional[pd.Timestamp],
@@ -237,9 +261,10 @@ def _merge_recent_daily_from_bus(
     symbol: str,
     *,
     end_ts: pd.Timestamp,
+    merge_start: Optional[pd.Timestamp] = None,
 ) -> pd.DataFrame:
     """Append/overwrite tail daily bars from bars_1min when Vision cache lags."""
-    bus_start = end_ts - pd.Timedelta(days=120)
+    bus_start = merge_start if merge_start is not None else end_ts - pd.Timedelta(days=120)
     bus = load_bars_1min(feature_bus_root, symbol, start=bus_start, end=end_ts)
     if bus.empty:
         return macro_df
@@ -296,6 +321,8 @@ def fetch_ohlcv_daily_macro(
     daily_start: date = date(2017, 1, 1),
     max_daily_days: int = 3650,
     full_range: bool = True,
+    live_data_root: Optional[Path] = None,
+    live_root: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """1d OHLCV from Vision spot_klines (years), tail merged from bars_1min."""
     path = _bars_path(feature_bus_root, symbol)
@@ -307,30 +334,43 @@ def fetch_ohlcv_daily_macro(
         max_daily_days=max_daily_days,
         full_range=full_range and start is None and end is None,
     )
-    loader = MacroSpotDailyLoader(macro_kline_root)
-    daily = loader.load_symbol_daily(
-        symbol,
-        start_date=start_ts.date(),
-        end_date=end_ts.date(),
+    macro_root, macro_ok = resolve_macro_kline_root(
+        macro_kline_root,
+        live_data_root=live_data_root,
+        live_root=live_root,
     )
-    macro_df = _daily_index_to_ohlcv(daily)
+    macro_rows = 0
+    macro_df = pd.DataFrame()
+    if macro_ok:
+        loader = MacroSpotDailyLoader(macro_root)
+        daily = loader.load_symbol_daily(
+            symbol,
+            start_date=start_ts.date(),
+            end_date=end_ts.date(),
+        )
+        macro_df = _daily_index_to_ohlcv(daily)
+        macro_rows = len(macro_df)
     merged = _merge_recent_daily_from_bus(
-        macro_df, feature_bus_root, symbol, end_ts=end_ts
+        macro_df, feature_bus_root, symbol, end_ts=end_ts, merge_start=start_ts
     )
     if merged.empty:
-        return fetch_ohlcv(
+        fallback = fetch_ohlcv(
             feature_bus_root,
             symbol,
             "1d",
-            start=start,
-            end=end,
+            start=start_ts,
+            end=end_ts,
             max_days=max(180, int(max_daily_days)),
-            full_range=full_range,
+            full_range=False,
         )
+        fallback["macro_kline_root"] = str(macro_root)
+        fallback["macro_available"] = macro_ok
+        fallback["macro_rows"] = macro_rows
+        return fallback
     merged = merged[
         (merged["timestamp"] >= start_ts) & (merged["timestamp"] <= end_ts)
     ]
-    return _macro_daily_payload(
+    payload = _macro_daily_payload(
         symbol=symbol,
         timeframe="1d",
         merged=merged,
@@ -341,6 +381,10 @@ def fetch_ohlcv_daily_macro(
         max_daily_days=max_daily_days,
         daily_start=daily_start,
     )
+    payload["macro_kline_root"] = str(macro_root)
+    payload["macro_available"] = macro_ok
+    payload["macro_rows"] = macro_rows
+    return payload
 
 
 def _macro_daily_payload(
@@ -382,6 +426,8 @@ def fetch_ohlcv_weekly_macro(
     daily_start: date = date(2017, 1, 1),
     max_daily_days: int = 3650,
     full_range: bool = True,
+    live_data_root: Optional[Path] = None,
+    live_root: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """1w OHLCV: Vision daily macro resampled to calendar weeks."""
     daily = fetch_ohlcv_daily_macro(
@@ -393,6 +439,8 @@ def fetch_ohlcv_weekly_macro(
         daily_start=daily_start,
         max_daily_days=max_daily_days,
         full_range=full_range,
+        live_data_root=live_data_root,
+        live_root=live_root,
     )
     if not daily.get("candles"):
         out = dict(daily)
@@ -522,30 +570,38 @@ def fetch_ohlcv(
     macro_kline_root: Optional[Path] = None,
     daily_ohlcv_start: Optional[date] = None,
     max_daily_ohlcv_days: int = 3650,
+    live_data_root: Optional[Path] = None,
+    live_root: Optional[Path] = None,
 ) -> Dict[str, Any]:
     tf = str(timeframe).strip()
-    macro_root = Path(macro_kline_root) if macro_kline_root is not None else None
-    if macro_root is not None and macro_root.is_dir() and tf in ("1d", "1w"):
+    if tf in ("1d", "1w"):
+        macro_primary = (
+            Path(macro_kline_root) if macro_kline_root is not None else Path(".")
+        )
         if tf == "1w":
             return fetch_ohlcv_weekly_macro(
                 feature_bus_root,
-                macro_root,
+                macro_primary,
                 symbol,
                 start=start,
                 end=end,
                 daily_start=daily_ohlcv_start or date(2017, 1, 1),
                 max_daily_days=max_daily_ohlcv_days,
                 full_range=full_range,
+                live_data_root=live_data_root,
+                live_root=live_root,
             )
         return fetch_ohlcv_daily_macro(
             feature_bus_root,
-            macro_root,
+            macro_primary,
             symbol,
             start=start,
             end=end,
             daily_start=daily_ohlcv_start or date(2017, 1, 1),
             max_daily_days=max_daily_ohlcv_days,
             full_range=full_range,
+            live_data_root=live_data_root,
+            live_root=live_root,
         )
     path = _bars_path(feature_bus_root, symbol)
     bars_root = Path(live_storage_bars_root) if live_storage_bars_root else None

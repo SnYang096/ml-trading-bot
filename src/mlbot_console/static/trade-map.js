@@ -138,6 +138,8 @@ function setStatusFromBundle(symbol, timeframe, candles, markers, meta, overlays
   if (meta.bars_1min_rows) parts.push(`bus1m=${meta.bars_1min_rows}`);
   if (meta.live_storage_1m_rows) parts.push(`hist1m=${meta.live_storage_1m_rows}`);
   if (meta.ohlcv_source) parts.push(meta.ohlcv_source);
+  if (meta.macro_rows != null) parts.push(`macro=${meta.macro_rows}`);
+  if (meta.macro_available === false) parts.push("macro_missing");
   if (meta.range_start && meta.range_end) {
     parts.push(`${meta.range_start.slice(0, 10)}→${meta.range_end.slice(0, 10)}`);
   }

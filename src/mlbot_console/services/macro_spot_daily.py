@@ -103,17 +103,28 @@ class MacroSpotDailyLoader:
         start_date: date,
         end_date: date,
     ) -> pd.DataFrame:
+        """Load Vision 1d ZIPs on disk (monthly + daily), then clip to [start, end]."""
         sym = normalize_symbol(symbol)
         frames: List[pd.DataFrame] = []
-        y0, m0 = start_date.year, start_date.month
-        y1, m1 = end_date.year, end_date.month
-        for year, month in _month_list(y0, m0, y1, m1):
-            zp = self._monthly_zip_path(sym, year, month)
-            if zp.is_file() and zp.stat().st_size > 64:
+        monthly_dir = self.kline_root / sym / "monthly" / "1d"
+        if monthly_dir.is_dir():
+            for zp in sorted(monthly_dir.glob(f"{sym}-1d-*.zip")):
+                if zp.stat().st_size <= 64:
+                    continue
                 try:
                     frames.append(parse_kline_zip_bytes(zp.read_bytes()))
                 except (OSError, ValueError, zipfile.BadZipFile):
                     continue
+        else:
+            y0, m0 = start_date.year, start_date.month
+            y1, m1 = end_date.year, end_date.month
+            for year, month in _month_list(y0, m0, y1, m1):
+                zp = self._monthly_zip_path(sym, year, month)
+                if zp.is_file() and zp.stat().st_size > 64:
+                    try:
+                        frames.append(parse_kline_zip_bytes(zp.read_bytes()))
+                    except (OSError, ValueError, zipfile.BadZipFile):
+                        continue
         cur = start_date
         while cur <= end_date:
             zp = self._daily_zip_path(sym, cur)

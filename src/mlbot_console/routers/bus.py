@@ -50,6 +50,8 @@ def bus_ohlcv(
             macro_kline_root=SETTINGS.macro_spot_kline_root,
             daily_ohlcv_start=SETTINGS.daily_ohlcv_start,
             max_daily_ohlcv_days=SETTINGS.max_daily_ohlcv_days,
+            live_data_root=SETTINGS.live_data_root,
+            live_root=SETTINGS.live_root,
         )
     except OhlcvWindowError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

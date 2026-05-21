@@ -122,6 +122,8 @@ def trade_map_ohlcv(
             macro_kline_root=SETTINGS.macro_spot_kline_root,
             daily_ohlcv_start=SETTINGS.daily_ohlcv_start,
             max_daily_ohlcv_days=SETTINGS.max_daily_ohlcv_days,
+            live_data_root=SETTINGS.live_data_root,
+            live_root=SETTINGS.live_root,
         )
     except OhlcvWindowError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -161,6 +163,8 @@ def trade_map_markers(
                 macro_kline_root=SETTINGS.macro_spot_kline_root,
                 daily_ohlcv_start=SETTINGS.daily_ohlcv_start,
                 max_daily_ohlcv_days=SETTINGS.max_daily_ohlcv_days,
+                live_data_root=SETTINGS.live_data_root,
+                live_root=SETTINGS.live_root,
             )
             times = [
                 int(c["time"]) for c in ohlcv.get("candles") or [] if c.get("time") is not None
@@ -247,6 +251,8 @@ def trade_map_bundle(
                 macro_kline_root=SETTINGS.macro_spot_kline_root,
                 daily_ohlcv_start=SETTINGS.daily_ohlcv_start,
                 max_daily_ohlcv_days=SETTINGS.max_daily_ohlcv_days,
+                live_data_root=SETTINGS.live_data_root,
+                live_root=SETTINGS.live_root,
             )
     except OhlcvWindowError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -305,14 +311,26 @@ def trade_map_bundle(
             feat_start = pd.Timestamp(str(ohlcv["range_start"]))
         if feat_end is None and ohlcv.get("range_end"):
             feat_end = pd.Timestamp(str(ohlcv["range_end"]))
-        main_ol = load_main_chart_overlays(
-            SETTINGS.feature_bus_root,
-            symbol,
-            ohlcv["candles"],
-            main_keys,
-            start=feat_start,
-            end=feat_end,
-        )
+        try:
+            main_ol = load_main_chart_overlays(
+                SETTINGS.feature_bus_root,
+                symbol,
+                ohlcv["candles"],
+                main_keys,
+                start=feat_start,
+                end=feat_end,
+            )
+        except Exception as exc:
+            logger.exception("main_chart_overlays failed symbol=%s", symbol)
+            main_ol = {
+                k: {
+                    "available": False,
+                    "key": k,
+                    "error": str(exc),
+                    "points": [],
+                }
+                for k in main_keys
+            }
     return ok(
         {
             "ohlcv": ohlcv,
@@ -334,6 +352,9 @@ def trade_map_bundle(
             "main_overlays": main_keys,
             "full_range": use_full,
             "include_ohlcv": ohlcv_mode,
+            "macro_kline_root": ohlcv.get("macro_kline_root"),
+            "macro_available": ohlcv.get("macro_available"),
+            "macro_rows": ohlcv.get("macro_rows"),
         },
     )
 

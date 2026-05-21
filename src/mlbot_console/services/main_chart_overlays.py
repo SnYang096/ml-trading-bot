@@ -58,17 +58,39 @@ def _resolve_position_column(df: pd.DataFrame, candidates: List[str]) -> Optiona
     return None
 
 
+def _parquet_columns_to_read(path: Any, want: List[str]) -> List[str]:
+    try:
+        import pyarrow.parquet as pq
+
+        names = set(pq.read_schema(path).names)
+    except (ImportError, OSError, ValueError):
+        return want
+    cols = ["timestamp"]
+    for w in want:
+        if w in names:
+            cols.append(w)
+    return list(dict.fromkeys(cols))
+
+
 def _load_source_features(
     feature_bus_root: Any,
     symbol: str,
     *,
     start: Optional[pd.Timestamp],
     end: Optional[pd.Timestamp],
+    position_columns: Optional[List[str]] = None,
 ) -> pd.DataFrame:
     path = _resolve_feature_path(feature_bus_root, symbol, SOURCE_FEATURE_TF)
     if path is None:
         return pd.DataFrame()
-    df = pd.read_parquet(path)
+    want = ["timestamp", "close"]
+    if position_columns:
+        want.extend(position_columns)
+    read_cols = _parquet_columns_to_read(path, want)
+    try:
+        df = pd.read_parquet(path, columns=read_cols)
+    except (OSError, ValueError, KeyError):
+        df = pd.read_parquet(path)
     if df.empty or "timestamp" not in df.columns:
         return pd.DataFrame()
     df = df.copy()
@@ -150,15 +172,25 @@ def load_main_chart_overlays(
     if not requested or not candles:
         return out
 
+    all_pos_cols: List[str] = []
+    for key in requested:
+        all_pos_cols.extend(_OVERLAY_SPECS[key]["position_columns"])
+        for alias in _OVERLAY_SPECS[key]["position_columns"]:
+            all_pos_cols.extend(COLUMN_ALIASES.get(alias, []))
     feat = _load_source_features(
-        feature_bus_root, symbol, start=start, end=end
+        feature_bus_root,
+        symbol,
+        start=start,
+        end=end,
+        position_columns=all_pos_cols,
     )
     path = _resolve_feature_path(feature_bus_root, symbol, SOURCE_FEATURE_TF)
     for key in requested:
         spec = _OVERLAY_SPECS[key]
-        candidates = list(spec["position_columns"])
-        for alias in spec["position_columns"]:
-            candidates.extend(COLUMN_ALIASES.get(alias, []))
+        candidates: List[str] = []
+        for name in spec["position_columns"]:
+            candidates.append(name)
+            candidates.extend(COLUMN_ALIASES.get(name, []))
         pos_col = _resolve_position_column(feat, candidates)
         entry = out[key]
         entry["path"] = str(path) if path else None
