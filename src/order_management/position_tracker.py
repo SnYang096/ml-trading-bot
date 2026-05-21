@@ -17,7 +17,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.order_management.models import OrderSide, OrderType
+from src.order_management.models import (
+    OrderSide,
+    OrderType,
+    Position,
+    PositionSide,
+    PositionStatus,
+)
 from src.time_series_model.live.metrics_exporter import METRICS
 from src.time_series_model.live.position_logic import enforce_position
 
@@ -61,6 +67,7 @@ class PositionTracker:
         """
         self._positions[position_id] = pos
         self._persist_state()
+        self._persist_position_record(position_id, pos)
         logger.info(
             "[%s] 记录持仓: %s side=%s entry=%.4f sl=%.4f",
             self.symbol,
@@ -197,6 +204,7 @@ class PositionTracker:
             # trailing SL 更新时同步交易所挂单（仅在未触发退出时）
             if close_reason is None:
                 self._maybe_sync_exchange_sl(pid, pos)
+                self._persist_position_record(pid, pos)
 
             if close_reason:
                 close_decisions[pid] = (str(close_reason), float(exit_price))
@@ -312,6 +320,12 @@ class PositionTracker:
                 reason,
                 qty,
             )
+            self._persist_position_record(
+                position_id,
+                pos,
+                status=PositionStatus.CLOSED,
+                exit_reason=reason,
+            )
             try:
                 METRICS.record_strategy_event(
                     scope="trend",
@@ -349,6 +363,13 @@ class PositionTracker:
         pos["_exchange_close_reason"] = reason
         if exit_price is not None:
             pos["_exchange_exit_price"] = float(exit_price)
+        self._persist_position_record(
+            position_id,
+            pos,
+            status=PositionStatus.CLOSED,
+            exit_price=exit_price,
+            exit_reason=reason,
+        )
         logger.info(
             "[%s] 交易所关闭同步: %s reason=%s exit=%.6f",
             self.symbol,
@@ -549,6 +570,7 @@ class PositionTracker:
             return
         if new_sl <= 0:
             return
+        self._persist_position_record(pid, pos)
 
         old_sl_raw = pos.get("_exchange_sl_price")
         if old_sl_raw is not None:
@@ -642,7 +664,92 @@ class PositionTracker:
             )
         pos["_exchange_sl_order_id"] = new_order.order_id
         pos["_exchange_sl_price"] = new_sl
+        self._persist_position_record(pid, pos)
         self._persist_state()
+
+    def _storage(self) -> Any:
+        if self.order_manager is None:
+            return None
+        attrs = getattr(self.order_manager, "__dict__", {})
+        if isinstance(attrs, dict) and "storage" in attrs:
+            return attrs.get("storage")
+        return None
+
+    @staticmethod
+    def _as_dt(value: Any) -> datetime:
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value)
+            except ValueError:
+                pass
+        return datetime.now(timezone.utc)
+
+    def _persist_position_record(
+        self,
+        position_id: str,
+        pos: Dict[str, Any],
+        *,
+        status: PositionStatus = PositionStatus.OPEN,
+        exit_price: Optional[float] = None,
+        exit_reason: Optional[str] = None,
+    ) -> None:
+        """Best-effort mirror of the in-memory software stop into SQLite."""
+        storage = self._storage()
+        if storage is None:
+            return
+        side_raw = str(pos.get("side") or "").upper()
+        side = PositionSide.LONG if side_raw in {"LONG", "BUY"} else PositionSide.SHORT
+        try:
+            entry_price = float(pos.get("entry_price") or 0.0)
+        except (TypeError, ValueError):
+            entry_price = 0.0
+        try:
+            qty = float(pos.get("qty") or 0.0)
+        except (TypeError, ValueError):
+            qty = 0.0
+        if not position_id or qty <= 0:
+            return
+        try:
+            existing = storage.get_position(position_id)
+        except Exception:
+            existing = None
+        record = existing or Position(
+            position_id=position_id,
+            symbol=self.symbol,
+            side=side,
+            entry_time=self._as_dt(pos.get("entry_time")),
+        )
+        record.symbol = self.symbol
+        record.side = side
+        record.entry_price = entry_price
+        record.initial_size = record.initial_size or qty
+        record.current_size = 0.0 if status == PositionStatus.CLOSED else qty
+        record.total_cost = entry_price * (record.initial_size or qty)
+        record.status = status
+        record.stop_loss_price = pos.get("stop_loss_price")
+        record.take_profit_price = pos.get("take_profit_price")
+        record.strategy_id = str(pos.get("archetype") or "") or record.strategy_id
+        record.archetype = str(pos.get("archetype") or "") or record.archetype
+        record.add_count = int(pos.get("_add_position_seq") or record.add_count or 0)
+        record.parent_position_id = pos.get("_parent_pid") or record.parent_position_id
+        if status == PositionStatus.CLOSED:
+            record.exit_time = datetime.now(timezone.utc)
+            record.exit_price = exit_price
+            record.exit_reason = exit_reason
+        try:
+            if existing is None:
+                storage.create_position(record)
+            else:
+                storage.update_position(record)
+        except Exception:
+            logger.debug(
+                "[%s] persist position record skipped: %s",
+                self.symbol,
+                position_id,
+                exc_info=True,
+            )
 
     @staticmethod
     def _resolve_now(features: Dict[str, Any]) -> datetime:

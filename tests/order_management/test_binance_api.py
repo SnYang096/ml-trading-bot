@@ -474,6 +474,43 @@ def test_place_stop_market_accepts_explicit_hedge_protection_params(binance_api)
     assert "reduceOnly" not in params
 
 
+def test_place_stop_market_close_position_omits_amount(binance_api):
+    """Binance closePosition conditionals must not send quantity."""
+    binance_api.hedge_mode = True
+
+    binance_api.place_order(
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.STOP_MARKET,
+        quantity=0.1,
+        stop_price=49000.0,
+        close_position=True,
+    )
+
+    args, kwargs = binance_api.exchange.create_order.call_args
+    assert args[3] is None
+    assert kwargs["params"]["closePosition"] is True
+    assert kwargs["params"]["positionSide"] == "LONG"
+
+
+def test_open_algo_order_maps_trigger_price_to_stop_price(binance_api):
+    row = binance_api._open_algo_order_from_binance_rest(
+        {
+            "algoId": "123",
+            "symbol": "ETHUSDT",
+            "side": "BUY",
+            "orderType": "STOP_MARKET",
+            "algoStatus": "NEW",
+            "triggerPrice": "2450.5",
+            "positionSide": "SHORT",
+            "closePosition": True,
+        }
+    )
+
+    assert row["stop_price"] == "2450.5"
+    assert row["info"]["closePosition"] is True
+
+
 def test_place_stop_order_no_stop_price(binance_api):
     """测试下止损单未指定止损价格"""
     with pytest.raises(ValueError, match="止损单需要指定止损价格"):

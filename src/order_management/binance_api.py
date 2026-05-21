@@ -685,6 +685,7 @@ class BinanceAPI:
             "type": (o.get("orderType") or o.get("type") or "algo").lower(),
             "status": (o.get("algoStatus") or o.get("status") or "open").lower(),
             "quantity": float(o.get("quantity") or o.get("origQty") or 0),
+            "stop_price": o.get("triggerPrice") or o.get("stopPrice"),
             "price": None,
             "filled": 0.0,
             "remaining": float(o.get("quantity") or o.get("origQty") or 0),
@@ -1051,8 +1052,9 @@ class BinanceAPI:
                 params["stopPrice"] = stop_price
                 if order_type == OrderType.STOP_MARKET:
                     params["type"] = "STOP_MARKET"
+                amount = None if close_position else quantity
                 order = self.exchange.create_order(
-                    ccxt_sym, ccxt_type, ccxt_side, quantity, price, params=params
+                    ccxt_sym, ccxt_type, ccxt_side, amount, price, params=params
                 )
             elif order_type in [OrderType.TAKE_PROFIT, OrderType.TAKE_PROFIT_MARKET]:
                 if stop_price is None:
@@ -1060,8 +1062,9 @@ class BinanceAPI:
                 params["stopPrice"] = stop_price
                 if order_type == OrderType.TAKE_PROFIT_MARKET:
                     params["type"] = "TAKE_PROFIT_MARKET"
+                amount = None if close_position else quantity
                 order = self.exchange.create_order(
-                    ccxt_sym, ccxt_type, ccxt_side, quantity, price, params=params
+                    ccxt_sym, ccxt_type, ccxt_side, amount, price, params=params
                 )
             else:
                 raise ValueError(f"不支持的订单类型: {order_type}")
@@ -1169,6 +1172,7 @@ class BinanceAPI:
                 "filled": order.get("filled", 0),
                 "remaining": order.get("remaining", 0),
                 "average_price": order.get("average"),
+                "created_at": self._normalize_timestamp(order.get("timestamp")),
                 "timestamp": self._normalize_timestamp(order.get("timestamp")),
                 "update_time": self._normalize_timestamp(info.get("updateTime")),
                 "reject_reason": info.get("rejectReason") or info.get("r"),

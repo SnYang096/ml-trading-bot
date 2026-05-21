@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
+from src.order_management.storage import Storage
 from src.time_series_model.core.constitution.runtime_state import AddPositionRecord
 from src.time_series_model.core.trade_intent import TradeIntent
 from src.time_series_model.core.constitution.violation import ConstitutionViolation
@@ -368,6 +369,28 @@ class TestPositionTrackerIntegration:
             assert pos["_exchange_sl_price"] is not None
         # 必须有持仓被记录
         assert len(positions) == 1
+
+    def test_execute_persists_software_stop_to_storage(self, tmp_path):
+        """开仓成功后 SQLite positions 也能看到软件 SL。"""
+        ex, om, ce, pt = _make_executor(trade_size=0.001)
+        om.storage = Storage(str(tmp_path / "orders.db"))
+        ep = {"rr_constraints": {"stop_loss_r": 2.0, "take_profit_r": None}}
+        intent = TradeIntent(
+            action="LONG",
+            symbol="BTCUSDT",
+            archetype="bpc",
+            execution_profile=ep,
+            position_id="BTCUSDT:software-sl",
+        )
+
+        with patch("src.order_management.trade_executor.enforce_before_order"):
+            result = ex.execute(intent=intent, features=_make_features())
+
+        assert result is True
+        stored = om.storage.get_position("BTCUSDT:software-sl")
+        assert stored is not None
+        assert stored.stop_loss_price is not None
+        assert stored.status.value == "open"
 
 
 class TestAddPositionLivePath:
