@@ -256,6 +256,7 @@ def console_settings(
         rolling_backtest_url="http://test-backtest/",
         basic_auth_user=None,
         basic_auth_password=None,
+        strategies_root=PROJECT_ROOT / "config" / "strategies",
     )
 
 

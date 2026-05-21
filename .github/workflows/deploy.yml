@@ -666,7 +666,8 @@ jobs:
         run: |
           tar czf mlbot-business-console.tgz \
             -C deploy business-console systemd/quant-business-console.service \
-            -C .. live/highcap/universe.yaml
+            -C .. live/highcap/universe.yaml \
+            -C .. config/strategies
 
       - name: 📤 Upload business console bundle
         uses: appleboy/scp-action@v0.1.7

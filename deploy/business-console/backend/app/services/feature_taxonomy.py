@@ -1,34 +1,39 @@
-"""Load strategy×stage feature taxonomy from repo archetype YAML."""
+"""Load strategy×stage feature taxonomy from archetype YAML."""
 
 from __future__ import annotations
 
-import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from app.config import SETTINGS
+from app.services.feature_stage_taxonomy import build_console_feature_taxonomy
 
-_REPO = SETTINGS.repo_root
-if str(_REPO) not in sys.path:
-    sys.path.insert(0, str(_REPO))
-
-from src.time_series_model.live.feature_stage_taxonomy import (  # noqa: E402
-    build_console_feature_taxonomy,
-)
+_EMPTY_TAXONOMY: Dict[str, Any] = {
+    "strategies": [],
+    "index": {},
+    "stage_order": [],
+    "stage_labels": {},
+    "account_layer_labels": {},
+}
 
 
 def strategies_config_root() -> Path:
-    return _REPO / "config" / "strategies"
+    return SETTINGS.strategies_root
 
 
 @lru_cache(maxsize=1)
 def get_feature_taxonomy() -> Dict[str, Any]:
-    return build_console_feature_taxonomy(strategies_config_root())
+    root = strategies_config_root()
+    if not root.is_dir():
+        return dict(_EMPTY_TAXONOMY)
+    try:
+        return build_console_feature_taxonomy(root)
+    except Exception:
+        return dict(_EMPTY_TAXONOMY)
 
 
 def lookup_column_meta(column: str) -> Optional[Dict[str, str]]:
-    """Best match for a bus column (exact name, or strip _f suffix)."""
     tax = get_feature_taxonomy()
     index: Dict[str, List[Dict[str, str]]] = tax.get("index") or {}
     col = str(column or "").strip()

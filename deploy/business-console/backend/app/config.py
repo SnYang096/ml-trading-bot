@@ -45,6 +45,7 @@ class ConsoleSettings:
     rolling_backtest_url: str
     basic_auth_user: str | None
     basic_auth_password: str | None
+    strategies_root: Path
 
     @classmethod
     def from_env(cls) -> "ConsoleSettings":
@@ -142,6 +143,12 @@ class ConsoleSettings:
             rolling_backtest_url=os.getenv("MLBOT_CONSOLE_ROLLING_BACKTEST_URL", ""),
             basic_auth_user=os.getenv("MLBOT_CONSOLE_BASIC_AUTH_USER") or None,
             basic_auth_password=os.getenv("MLBOT_CONSOLE_BASIC_AUTH_PASSWORD") or None,
+            strategies_root=Path(
+                os.getenv(
+                    "MLBOT_CONSOLE_STRATEGIES_ROOT",
+                    str(root / "config" / "strategies"),
+                )
+            ),
         )
 
 

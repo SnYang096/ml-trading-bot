@@ -131,6 +131,7 @@ def test_markers_missing_db(client, tmp_path, monkeypatch):
         rolling_backtest_url="",
         basic_auth_user=None,
         basic_auth_password=None,
+        strategies_root=tmp_path / "strategies",
     )
     monkeypatch.setattr("app.routers.trade_map.SETTINGS", settings)
     c = TestClient(app)
