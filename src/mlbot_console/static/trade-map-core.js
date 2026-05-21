@@ -66,9 +66,10 @@
       const isExit = m.event === "exit";
       const pending = (m.status || "filled").toLowerCase() === "pending";
       const selected = selectedId && m.id === selectedId;
+      const strat = (m.strategy || m.scope || "").toLowerCase();
       const purpose = (m.detail && m.detail.purpose) || "";
-      const purposeTag = purpose ? `:${purpose}` : "";
-      const baseText = `${m.scope}:${m.event}${purposeTag}${pending ? ":pending" : ""}`;
+      const purposeTag = purpose && purpose !== strat ? `:${purpose}` : "";
+      const baseText = `${strat}:${m.event}${purposeTag}${pending ? ":pending" : ""}`;
       return {
         time: m.time,
         position: isExit ? "aboveBar" : "belowBar",
@@ -189,8 +190,13 @@
     return layers[key] !== false;
   }
 
-  /** Heuristic fallback when column is not in archetype taxonomy index. */
+  /** Account layer when strategy slug is unknown. */
   function classifyFeatureColumn(column) {
+    return inferStrategyIdFromColumn(column).account_layer;
+  }
+
+  /** Map feature column name -> { strategy, account_layer } when not in YAML index. */
+  function inferStrategyIdFromColumn(column) {
     const lc = String(column || "").toLowerCase();
     if (
       lc.includes("weekly_ema") ||
@@ -198,35 +204,40 @@
       lc.includes("can_buy") ||
       lc.includes("spot_accum")
     ) {
-      return "spot";
+      return { strategy: "spot_accum_simple", account_layer: "spot" };
+    }
+    if (lc.startsWith("tpc_")) return { strategy: "tpc", account_layer: "trend" };
+    if (lc.startsWith("fer_")) return { strategy: "fer", account_layer: "trend" };
+    if (lc.startsWith("me_")) return { strategy: "me", account_layer: "trend" };
+    if (lc.startsWith("srb_")) return { strategy: "srb", account_layer: "trend" };
+    if (lc.startsWith("bpc_") && !lc.includes("chop")) {
+      return { strategy: "bpc", account_layer: "trend" };
     }
     if (
-      lc.startsWith("tpc_") ||
-      lc.startsWith("fer_") ||
-      lc.startsWith("me_") ||
-      lc.startsWith("srb_") ||
-      (lc.startsWith("bpc_") && !lc.includes("chop")) ||
+      lc.startsWith("chop_") ||
+      (lc.includes("semantic_chop") && !lc.startsWith("tpc_")) ||
+      lc.includes("grid") ||
+      lc.includes("vol_clustering")
+    ) {
+      return { strategy: "chop_grid", account_layer: "multi_leg" };
+    }
+    if (
+      lc.startsWith("vpin") ||
+      lc === "trend_confidence" ||
+      lc.startsWith("box_pos_60")
+    ) {
+      return { strategy: "trend_scalp", account_layer: "multi_leg" };
+    }
+    if (
       lc.includes("trend_div") ||
-      lc.includes("trend_") ||
       lc.startsWith("ema_1200") ||
       lc.startsWith("macd_atr") ||
       lc.startsWith("box_pos_120") ||
       lc.startsWith("box_breakout")
     ) {
-      return "trend";
+      return { strategy: "tpc", account_layer: "trend" };
     }
-    if (
-      lc.startsWith("chop_") ||
-      lc.includes("semantic_chop") ||
-      lc.startsWith("vpin") ||
-      lc.includes("grid") ||
-      lc.includes("vol_clustering") ||
-      lc === "trend_confidence" ||
-      lc.startsWith("box_pos_60")
-    ) {
-      return "multi_leg";
-    }
-    return "shared";
+    return { strategy: "shared", account_layer: "shared" };
   }
 
   function lookupFeatureMeta(column) {
@@ -234,14 +245,16 @@
     const idx = taxonomyIndex();
     const hits = idx[col] || (col.endsWith("_f") ? idx[col.slice(0, -2)] : null);
     if (hits && hits.length) return hits[0];
-    const layer = classifyFeatureColumn(col);
+    const inferred = inferStrategyIdFromColumn(col);
+    const layer = inferred.account_layer;
     const layerMeta = ACCOUNT_LAYER_META[layer] || ACCOUNT_LAYER_META.shared;
+    const sm = strategyMeta(inferred.strategy);
     return {
       column: col,
       account_layer: layer,
       account_layer_title: layerMeta.title,
-      strategy: layer === "shared" ? "shared" : "unknown",
-      strategy_title: "未在 archetype 登记",
+      strategy: inferred.strategy,
+      strategy_title: sm.title || inferred.strategy,
       stage: "other",
       stage_title: "其他",
     };
@@ -426,6 +439,24 @@
     return items;
   }
 
+  function presetColumnsForStrategy(strategyId, available, maxCols) {
+    const sid = String(strategyId || "").toLowerCase();
+    const avail = new Set(available || []);
+    const picks = [];
+    if (featureTaxonomy && featureTaxonomy.strategies) {
+      const strat = featureTaxonomy.strategies.find((s) => s.id === sid);
+      if (strat) {
+        for (const stage of ["prefilter", "regime", "gate", "entry", "direction", "evidence"]) {
+          for (const c of (strat.stages && strat.stages[stage]) || []) {
+            if (avail.has(c) && !picks.includes(c)) picks.push(c);
+            if (picks.length >= maxCols) return picks;
+          }
+        }
+      }
+    }
+    return picks;
+  }
+
   function presetColumnsForAccountLayer(layerId, available, maxCols) {
     const avail = new Set(available || []);
     const picks = [];
@@ -569,7 +600,9 @@
     groupFeatureColumns,
     groupFeatureColumnsByStrategy,
     orderFeaturePaneItems,
+    presetColumnsForStrategy,
     presetColumnsForAccountLayer,
+    inferStrategyIdFromColumn,
     defaultVisibleBarCount,
     visibleLogicalRange,
     sanitizeCandlesForLwc,

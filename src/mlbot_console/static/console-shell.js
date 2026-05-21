@@ -153,6 +153,17 @@
     return `<span class="scope-badge scope-${escHtml(id)}">${escHtml(label)}</span>`;
   }
 
+  function strategyBadge(strategy, scope) {
+    const sid = String(strategy || "")
+      .trim()
+      .toLowerCase();
+    if (!sid || sid === "unknown" || sid === "shared") {
+      return scopeBadge(scope);
+    }
+    const label = sid.replace(/_/g, " ");
+    return `<span class="strategy-badge strategy-${escHtml(sid)}" title="${escHtml(sid)}">${escHtml(label)}</span>`;
+  }
+
   function statusBadge(status) {
     const st = String(status || "").toLowerCase();
     return `<span class="status-badge status-${escHtml(st)}">${escHtml(status || "—")}</span>`;
@@ -243,7 +254,7 @@
           ? `<td>${esc(r.symbol || "")}</td>`
           : "";
         return `<tr data-idx="${i}" data-marker-id="${esc(mid)}" data-symbol="${esc(r.symbol || "")}">
-          <td>${scopeBadge(r.scope)}</td>
+          <td>${scopeBadge(r.scope)} ${strategyBadge(r.strategy, r.scope)}</td>
           ${symCell}
           <td>${esc(formatOrderTime(r.time))}</td>
           <td class="${sideClass(r.side)}">${esc(r.side || "")}</td>
@@ -289,6 +300,7 @@
     formatOrderTime,
     escHtml,
     scopeBadge,
+    strategyBadge,
     statusBadge,
     renderOrderDetailHtml,
     buildOrdersTableRows,

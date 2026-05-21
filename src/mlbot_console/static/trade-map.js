@@ -723,11 +723,29 @@ function bindFeaturePanel() {
       if (action === "preset-default" || action.startsWith("preset-")) {
         const key =
           action === "preset-default" ? "default" : action.replace("preset-", "");
-        let picks = Core.presetColumnsForAccountLayer(
-          key,
-          availableFeatureColumns,
-          MAX_FEATURE_SUBCHARTS
-        );
+        const strategyPresets = new Set([
+          "tpc",
+          "bpc",
+          "me",
+          "srb",
+          "chop_grid",
+          "trend_scalp",
+          "spot_accum_simple",
+        ]);
+        let picks = [];
+        if (strategyPresets.has(key)) {
+          picks = Core.presetColumnsForStrategy(
+            key,
+            availableFeatureColumns,
+            MAX_FEATURE_SUBCHARTS
+          );
+        } else {
+          picks = Core.presetColumnsForAccountLayer(
+            key,
+            availableFeatureColumns,
+            MAX_FEATURE_SUBCHARTS
+          );
+        }
         if (!picks.length) {
           const preset = Core.FEATURE_PRESETS[key] || Core.FEATURE_PRESETS.default;
           for (const name of preset) {

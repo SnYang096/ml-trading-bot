@@ -15,7 +15,7 @@ from time_series_model.live.live_feature_plan import (
     _load_yaml,
 )
 
-# Production strategies shown on Trade Map (B / A / C account layers).
+# Default strategy slugs when constitution is unavailable (tests / offline).
 CONSOLE_STRATEGIES: Tuple[Dict[str, str], ...] = (
     {"id": "tpc", "account_layer": "trend", "title": "TPC"},
     {"id": "bpc", "account_layer": "trend", "title": "BPC"},
@@ -152,6 +152,8 @@ def extract_strategy_stage_columns(archetypes_dir: Path) -> Dict[str, List[str]]
 
 def build_console_feature_taxonomy(
     strategies_root: str | Path,
+    *,
+    strategies: Optional[List[Dict[str, str]]] = None,
 ) -> Dict[str, Any]:
     """
     Build taxonomy from locked archetype YAML under config/strategies/<slug>/archetypes/.
@@ -163,8 +165,9 @@ def build_console_feature_taxonomy(
     root = Path(strategies_root)
     strategies_out: List[Dict[str, Any]] = []
     index: Dict[str, List[Dict[str, str]]] = {}
+    registry = list(strategies) if strategies else list(CONSOLE_STRATEGIES)
 
-    for meta in CONSOLE_STRATEGIES:
+    for meta in registry:
         sid = meta["id"]
         arch = root / sid / "archetypes"
         if not arch.is_dir():

@@ -7,6 +7,7 @@ from fastapi import APIRouter
 
 from mlbot_console.config import SETTINGS
 from mlbot_console.responses import ok
+from mlbot_console.services.strategy_registry import get_console_strategies
 from mlbot_console.services.universe import load_universe_symbols
 
 router = APIRouter(tags=["constitution"])
@@ -28,6 +29,7 @@ def constitution_summary() -> dict:
             "enabled_archetypes": ra.get("enabled_archetypes") or [],
             "multi_leg_strategies": multi.get("strategies") or [],
             "spot_strategies": spot.get("strategies") or [],
+            "console_strategies": get_console_strategies(),
             "symbols": load_universe_symbols(SETTINGS.universe_yaml),
         }
     )

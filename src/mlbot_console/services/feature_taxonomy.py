@@ -6,6 +6,7 @@ from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
 from mlbot_console.config import SETTINGS
+from mlbot_console.services.strategy_registry import get_console_strategies
 from time_series_model.live.feature_stage_taxonomy import build_console_feature_taxonomy
 
 _EMPTY_TAXONOMY: Dict[str, Any] = {
@@ -23,7 +24,9 @@ def get_feature_taxonomy() -> Dict[str, Any]:
     if not root.is_dir():
         return dict(_EMPTY_TAXONOMY)
     try:
-        return build_console_feature_taxonomy(root)
+        return build_console_feature_taxonomy(
+            root, strategies=get_console_strategies()
+        )
     except Exception:
         return dict(_EMPTY_TAXONOMY)
 

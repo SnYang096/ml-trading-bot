@@ -642,6 +642,24 @@ main {
 .scope-badge.scope-trend { color: #58a6ff; }
 .scope-badge.scope-spot { color: #7ee787; }
 .scope-badge.scope-multi_leg { color: #73bf69; }
+.strategy-badge {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 0.62rem;
+  font-weight: 600;
+  background: #21262d;
+  color: #c9d1d9;
+  text-transform: lowercase;
+}
+.strategy-badge.strategy-tpc { color: #58a6ff; }
+.strategy-badge.strategy-bpc { color: #79c0ff; }
+.strategy-badge.strategy-me { color: #d2a8ff; }
+.strategy-badge.strategy-srb { color: #ffa657; }
+.strategy-badge.strategy-chop_grid { color: #73bf69; }
+.strategy-badge.strategy-trend_scalp { color: #ca8a04; }
+.strategy-badge.strategy-spot_accum_simple { color: #7ee787; }
 .status-badge {
   display: inline-block;
   padding: 1px 6px;
