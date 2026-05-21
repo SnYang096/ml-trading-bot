@@ -30,8 +30,33 @@ const lwc = Core.markersToLwc(markers);
 const scopes = Core.scopesFromLayers({ trend: true, spot: false, multiLeg: true, pending: false });
 const grafana = Core.resolveLinkUrl({ id: "grafana", url: "http://host.docker.internal:3000/" });
 const spacing = Core.barSpacingForCount(500);
-const grouped = Core.groupFeatureColumns(["weekly_ema_200_position", "vpin_x"]);
-console.log(JSON.stringify({ scopes, lwcCount: lwc.length, pendingShape: lwc[1].shape, grafana, spacing, groupCount: grouped.length }));
+Core.setFeatureTaxonomy({
+  strategies: [
+    { id: "tpc", account_layer: "trend", title: "TPC", stages: { prefilter: ["tpc_pullback_depth"], gate: ["tpc_semantic_chop"] } },
+    { id: "spot_accum_simple", account_layer: "spot", title: "Spot", stages: { prefilter: ["weekly_ema_200_position"] } },
+  ],
+  index: {
+    "tpc_pullback_depth": [{ column: "tpc_pullback_depth", account_layer: "trend", account_layer_title: "B·Trend", strategy: "tpc", strategy_title: "TPC", stage: "prefilter", stage_title: "Prefilter" }],
+    "weekly_ema_200_position": [{ column: "weekly_ema_200_position", account_layer: "spot", account_layer_title: "A·Spot", strategy: "spot_accum_simple", strategy_title: "Spot", stage: "prefilter", stage_title: "Prefilter" }],
+  },
+  stage_order: ["prefilter", "gate"],
+  stage_labels: { prefilter: "Prefilter", gate: "Gate" },
+});
+const grouped = Core.groupFeatureColumns(["weekly_ema_200_position", "tpc_pullback_depth"]);
+const plan = Core.orderFeaturePaneItems(
+  ["tpc_pullback_depth", "weekly_ema_200_position"],
+  { trend: true, spot: true, multiLeg: true }
+);
+const meta = Core.lookupFeatureMeta("tpc_pullback_depth");
+const hit = Core.findMarkerByTime(markers, 1, 7200);
+const sel = Core.markersToLwc(markers, "trend:orders:1");
+console.log(JSON.stringify({
+  scopes, lwcCount: lwc.length, pendingShape: lwc[1].shape, grafana, spacing,
+  groupTitles: grouped.map((g) => g[0]),
+  planTypes: plan.map((p) => p.type),
+  metaStage: meta.stage,
+  hitId: hit && hit.id, selColor: sel[0].color,
+}));
 """
 
 
@@ -51,4 +76,9 @@ def test_trade_map_core_node():
     assert out["lwcCount"] == 2
     assert out["pendingShape"] == "circle"
     assert out["spacing"] == 2
-    assert out["groupCount"] >= 1
+    assert "B·Trend › TPC › Prefilter" in out["groupTitles"][0]
+    assert "Prefilter" in out["groupTitles"][1]
+    assert out["metaStage"] == "prefilter"
+    assert "header" in out["planTypes"] and "feature" in out["planTypes"]
+    assert out["hitId"] == "trend:orders:1"
+    assert out["selColor"] == "#ffeb3b"

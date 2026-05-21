@@ -14,6 +14,18 @@ def test_bus_feature_columns(client):
     assert "weekly_ema_200_position" in data["columns"]
     assert "regime_score" in data["columns"]
     assert "weekly_ema_200_position" in data["defaults"]
+    assert "taxonomy" in data
+    assert data["taxonomy"]["strategies"]
+    meta = data["column_meta"].get("weekly_ema_200_position")
+    assert meta and meta[0]["stage"] == "prefilter"
+
+
+def test_bus_feature_taxonomy_endpoint(client):
+    r = client.get("/api/bus/features/taxonomy")
+    assert r.status_code == 200
+    tax = r.json()["data"]
+    assert any(s["id"] == "tpc" for s in tax["strategies"])
+    assert "tpc_pullback_depth" in tax["index"]
 
 
 def test_bundle_multi_feature_overlays(client):

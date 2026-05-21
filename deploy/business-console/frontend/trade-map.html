@@ -9,56 +9,68 @@
 </head>
 <body class="page-trade-map">
   <header class="toolbar">
-    <h1>业务控制台</h1>
-    <nav class="app-nav" id="appNav"></nav>
-    <nav class="ext-links" id="extLinks"></nav>
+    <div class="toolbar-row-controls">
+      <h1>业务控制台</h1>
+      <nav class="app-nav" id="appNav"></nav>
+      <nav class="ext-links" id="extLinks"></nav>
 
-    <div class="module module-data">
-      <span class="module-label">数据</span>
-      <label>Symbol
-        <select id="symbolSelect"></select>
-      </label>
-      <label>周期
-        <select id="timeframeSelect">
-          <option value="2h" selected>2h</option>
-          <option value="15min">15min</option>
-          <option value="1min">1min</option>
-          <option value="1d">1d</option>
-        </select>
-      </label>
-    </div>
+      <div class="module module-data">
+        <span class="module-label">数据</span>
+        <label>Symbol
+          <select id="symbolSelect"></select>
+        </label>
+        <label>周期
+          <select id="timeframeSelect">
+            <option value="2h" selected>2h</option>
+            <option value="15min">15min</option>
+            <option value="1min">1min</option>
+            <option value="1d">1d</option>
+          </select>
+        </label>
+      </div>
 
-    <div class="module module-accounts" title="账户层 A/B/C：控制主图成交标记">
-      <span class="module-label">账户层</span>
-      <label><input type="checkbox" id="layerTrend" checked /> B·Trend</label>
-      <label><input type="checkbox" id="layerSpot" checked /> A·Spot</label>
-      <label><input type="checkbox" id="layerMultiLeg" /> C·Multi-leg</label>
-      <label><input type="checkbox" id="layerPending" /> Pending</label>
-    </div>
+      <div class="module module-accounts" title="账户层 A/B/C：控制主图成交标记">
+        <span class="module-label">账户层</span>
+        <label><input type="checkbox" id="layerTrend" checked /> B·Trend</label>
+        <label><input type="checkbox" id="layerSpot" checked /> A·Spot</label>
+        <label><input type="checkbox" id="layerMultiLeg" /> C·Multi-leg</label>
+        <label><input type="checkbox" id="layerPending" /> Pending</label>
+      </div>
 
-    <div class="module module-subcharts">
-      <span class="module-label">附图</span>
-      <label class="chk-pill"><input type="checkbox" id="paneVolume" /> 成交量</label>
-      <div class="feature-panel-wrap">
-        <button type="button" id="featurePanelBtn" class="feature-panel-btn" aria-expanded="false">
-          特征 <span id="featurePickerHint" class="feature-count-badge">…</span>
-        </button>
-        <div id="featurePanel" class="feature-panel hidden" role="dialog" aria-label="特征列选择">
-          <div class="feature-panel-head">
-            <input type="search" id="featureSearch" class="feature-search" placeholder="搜索特征列…" autocomplete="off" />
+      <div class="module module-subcharts">
+        <span class="module-label">附图</span>
+        <label class="chk-pill"><input type="checkbox" id="paneVolume" /> 成交量</label>
+        <div class="feature-panel-wrap">
+          <button type="button" id="featurePanelBtn" class="feature-panel-btn" aria-expanded="false">
+            特征 <span id="featurePickerHint" class="feature-count-badge">…</span>
+          </button>
+          <div id="featurePanel" class="feature-panel hidden" role="dialog" aria-label="特征列选择">
+            <div class="feature-panel-head">
+              <input type="search" id="featureSearch" class="feature-search" placeholder="搜索特征列…" autocomplete="off" />
             <div class="feature-panel-actions">
-              <button type="button" class="btn-ghost" data-feature-action="preset-default">推荐</button>
+              <button type="button" class="btn-ghost" data-feature-action="preset-spot">A·Spot</button>
+              <button type="button" class="btn-ghost" data-feature-action="preset-trend">B·Trend</button>
+              <button type="button" class="btn-ghost" data-feature-action="preset-multi_leg">C·Multi</button>
               <button type="button" class="btn-ghost" data-feature-action="clear">清空</button>
             </div>
+            </div>
+            <div id="featureSelectedChips" class="feature-chips"></div>
+            <div id="featureColumnList" class="feature-column-list">加载中…</div>
           </div>
-          <div id="featureSelectedChips" class="feature-chips"></div>
-          <div id="featureColumnList" class="feature-column-list">加载中…</div>
         </div>
       </div>
-    </div>
 
-    <button id="refreshBtn" type="button">刷新</button>
-    <span id="statusLine" class="status">—</span>
+      <button id="ordersDockToggle" type="button" class="orders-dock-toggle" aria-pressed="false">订单表</button>
+      <button id="refreshBtn" type="button">刷新</button>
+    </div>
+    <div class="toolbar-row-status">
+      <div id="statusGrid" class="status-grid" title="—">
+        <span id="statusPrimary" class="status-part">—</span>
+        <span id="statusMeta" class="status-part"></span>
+        <span id="statusFeatures" class="status-part status-features"></span>
+      </div>
+      <span id="statusClock" class="status-clock">--:--:--</span>
+    </div>
   </header>
 
   <main class="trade-map-main">
@@ -73,6 +85,31 @@
         <pre id="detailBody"></pre>
       </section>
     </div>
+    <section id="ordersDock" class="orders-dock hidden" aria-label="订单列表">
+      <div class="orders-dock-head">
+        <span>订单 <span id="ordersDockCount" class="muted"></span></span>
+        <span class="muted">点击行与 K 线标记联动</span>
+      </div>
+      <div class="orders-table-wrap">
+        <table id="ordersDockTable" class="orders-table">
+          <thead>
+            <tr>
+              <th>层</th>
+              <th class="orders-th-symbol hidden">交易对</th>
+              <th>时间</th>
+              <th>方向</th>
+              <th>状态</th>
+              <th>数量</th>
+              <th>价格</th>
+              <th>订单号</th>
+            </tr>
+          </thead>
+          <tbody id="ordersDockBody">
+            <tr><td colspan="7" class="muted">展开订单表后加载</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
   </main>
   <script src="/static/console-shell.js"></script>
   <script src="/static/trade-map-core.js"></script>

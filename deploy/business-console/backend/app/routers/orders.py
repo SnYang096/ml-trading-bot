@@ -17,7 +17,7 @@ def _scopes_list(scopes: str) -> List[str]:
 
 @router.get("/api/orders/list")
 def orders_list(
-    symbol: str = Query(...),
+    symbol: str = Query("*"),
     scopes: str = Query("trend,spot"),
     status: Optional[str] = Query(None),
     limit: int = Query(100, ge=1, le=500),
@@ -31,7 +31,8 @@ def orders_list(
         status=status,
         limit=limit,
     )
-    return ok(rows, meta={"count": len(rows), "symbol": symbol.upper()})
+    sym_meta = "ALL" if str(symbol).strip().upper() in {"", "*", "ALL", "__ALL__"} else symbol.upper()
+    return ok(rows, meta={"count": len(rows), "symbol": sym_meta})
 
 
 @router.get("/api/trend/orders")

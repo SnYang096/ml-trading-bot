@@ -9,6 +9,7 @@ from app.config import SETTINGS
 from app.responses import ok
 from app.services import ohlcv_reader
 from app.services.feature_overlay import list_feature_columns
+from app.services.feature_taxonomy import get_feature_taxonomy
 from app.services.ohlcv_reader import OhlcvWindowError
 
 router = APIRouter(tags=["bus"])
@@ -59,3 +60,9 @@ def bus_feature_columns(
 ) -> dict:
     data = list_feature_columns(SETTINGS.feature_bus_root, symbol, timeframe)
     return ok(data)
+
+
+@router.get("/api/bus/features/taxonomy")
+def bus_feature_taxonomy() -> dict:
+    """Strategy × pipeline stage feature map from archetype YAML (read-only)."""
+    return ok(get_feature_taxonomy())

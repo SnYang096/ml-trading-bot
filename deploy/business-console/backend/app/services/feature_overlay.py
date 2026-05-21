@@ -110,34 +110,51 @@ def list_feature_columns(
     feature_bus_root: Path,
     symbol: str,
     timeframe: str,
+    *,
+    include_taxonomy: bool = True,
 ) -> Dict[str, Any]:
     path = _resolve_feature_path(feature_bus_root, symbol, timeframe)
     if path is None:
-        return {
+        out: Dict[str, Any] = {
             "available": False,
             "columns": [],
             "defaults": list(DEFAULT_SUBCHART_COLUMNS),
             "path": None,
             "timeframe_dir": None,
         }
+        if include_taxonomy:
+            from app.services.feature_taxonomy import enrich_columns_with_taxonomy
+
+            out.update(enrich_columns_with_taxonomy([]))
+        return out
     df = pd.read_parquet(path)
     if df.empty or "timestamp" not in df.columns:
-        return {
+        out = {
             "available": False,
             "columns": [],
             "defaults": list(DEFAULT_SUBCHART_COLUMNS),
             "path": str(path),
             "timeframe_dir": path.parent.name,
         }
+        if include_taxonomy:
+            from app.services.feature_taxonomy import enrich_columns_with_taxonomy
+
+            out.update(enrich_columns_with_taxonomy([]))
+        return out
     columns = _numeric_columns(df)
     defaults = _default_columns_for_parquet(columns)
-    return {
+    out = {
         "available": True,
         "columns": columns,
         "defaults": defaults,
         "path": str(path),
         "timeframe_dir": path.parent.name,
     }
+    if include_taxonomy:
+        from app.services.feature_taxonomy import enrich_columns_with_taxonomy
+
+        out.update(enrich_columns_with_taxonomy(columns))
+    return out
 
 
 def load_feature_overlay(

@@ -11,8 +11,13 @@ let chart;
 let candleSeries;
 let pollTimer;
 let markerById = new Map();
+let lastRawMarkers = [];
+let lastCandles = [];
+let selectedMarkerId = null;
+let ordersDockOpen = false;
 let chartFitPending = true;
 let timeSyncBound = false;
+let clockTimer = null;
 
 /** @type {Map<string, { chart, series, refSeries?, label, kind, host }>} */
 const subcharts = new Map();
@@ -25,6 +30,7 @@ const MAX_FEATURE_SUBCHARTS = 8;
 const defaultLayout = () => ({
   volume: false,
   features: ["weekly_ema_200_position"],
+  ordersDock: false,
 });
 
 function loadLayout() {
@@ -40,6 +46,7 @@ function saveLayout() {
   const layout = {
     volume: document.getElementById("paneVolume").checked,
     features: [...selectedFeatureColumns],
+    ordersDock: ordersDockOpen,
   };
   localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
   Shell.setScopesState(layersState());
@@ -48,6 +55,8 @@ function saveLayout() {
 function applyLayoutToControls(layout) {
   document.getElementById("paneVolume").checked = !!layout.volume;
   selectedFeatureColumns = Array.isArray(layout.features) ? [...layout.features] : [];
+  ordersDockOpen = !!layout.ordersDock;
+  applyOrdersDockVisibility();
 }
 
 function applyScopesFromStorage() {
@@ -72,8 +81,52 @@ function scopesParam() {
   return Core.scopesFromLayers(layersState());
 }
 
+function tickClock() {
+  const el = document.getElementById("statusClock");
+  if (el) el.textContent = new Date().toLocaleTimeString();
+}
+
+function setStatusLoading() {
+  document.getElementById("statusPrimary").textContent = "加载中…";
+  document.getElementById("statusMeta").textContent = "";
+  document.getElementById("statusFeatures").textContent = "";
+  document.getElementById("statusGrid").title = "加载中…";
+}
+
+function setStatusFromBundle(symbol, timeframe, candles, markers, meta, overlays) {
+  const deg = meta.degraded_ohlc;
+  const parts = [
+    `${symbol} ${timeframe}`,
+    `${candles.length} bars`,
+    `${markers.length} markers`,
+  ];
+  if (meta.bars_1min_rows) parts.push(`bus1m=${meta.bars_1min_rows}`);
+  if (meta.live_storage_1m_rows) parts.push(`hist1m=${meta.live_storage_1m_rows}`);
+  if (meta.ohlcv_source) parts.push(meta.ohlcv_source);
+  if (meta.range_start && meta.range_end) {
+    parts.push(`${meta.range_start.slice(0, 10)}→${meta.range_end.slice(0, 10)}`);
+  }
+  if (meta.range_clipped) parts.push(`clipped ${meta.max_ohlcv_days || ""}d`);
+  if (deg) parts.push("OHLC degraded");
+  const feat = formatOverlayStatus(overlays);
+  const featCap =
+    selectedFeatureColumns.length > MAX_FEATURE_SUBCHARTS
+      ? `附图限${MAX_FEATURE_SUBCHARTS}列`
+      : "";
+
+  document.getElementById("statusPrimary").textContent = parts.slice(0, 3).join(" · ");
+  document.getElementById("statusMeta").textContent = parts.slice(3).join(" · ");
+  document.getElementById("statusFeatures").textContent =
+    (feat ? feat.replace(/^ · /, "") : "特征:未选") + (featCap || "");
+  const full = [...parts, feat.replace(/^ · /, ""), featCap].filter(Boolean).join(" · ");
+  document.getElementById("statusGrid").title = full;
+}
+
 function setStatus(msg) {
-  document.getElementById("statusLine").textContent = msg;
+  document.getElementById("statusPrimary").textContent = msg;
+  document.getElementById("statusMeta").textContent = "";
+  document.getElementById("statusFeatures").textContent = "";
+  document.getElementById("statusGrid").title = msg;
 }
 
 function chartBaseOptions() {
@@ -130,6 +183,13 @@ function initMainChart() {
   });
   resize();
   bindTimeScaleSync();
+  chart.subscribeClick((param) => {
+    if (!param || param.time === undefined) return;
+    const tf = document.getElementById("timeframeSelect")?.value || "2h";
+    const tol = Core.timeframeToleranceSec(tf);
+    const hit = Core.findMarkerByTime(lastRawMarkers, param.time, tol);
+    if (hit?.id) selectMarker(hit.id);
+  });
 }
 
 function resizeAllSubcharts() {
@@ -165,18 +225,80 @@ function bindTimeScaleSync() {
 function destroySubchart(id) {
   const pane = subcharts.get(id);
   if (!pane) return;
-  pane.chart.remove();
-  const hostEl = document.getElementById(`subchart-${id}`);
+  if (pane.chart) pane.chart.remove();
+  const hostEl = document.getElementById(subchartDomId(id));
   if (hostEl) hostEl.remove();
   subcharts.delete(id);
 }
 
-function ensureSubchartHost(id, label) {
-  let host = document.getElementById(`subchart-${id}`);
+function subchartDomId(id) {
+  return `subchart-${String(id).replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+}
+
+function clearStrategyChrome() {
+  document
+    .querySelectorAll(".subchart-strategy-header, .subchart-stage-header, .subchart-strategy-gap")
+    .forEach((el) => {
+      el.remove();
+    });
+}
+
+function headerDomKey(item) {
+  if (item.headerKind === "layer") return `hdr-layer-${item.strategy}`;
+  if (item.headerKind === "stage") {
+    return `hdr-stage-${item.accountLayer}-${item.strategy}-${item.stage}`;
+  }
+  return `hdr-strat-${item.accountLayer}-${item.strategy}`;
+}
+
+function ensureSubchartHeader(item) {
+  const domId = subchartDomId(headerDomKey(item));
+  let el = document.getElementById(domId);
+  if (!el) {
+    el = document.createElement("div");
+    el.id = domId;
+    el.className =
+      item.headerKind === "stage" ? "subchart-stage-header" : "subchart-strategy-header";
+    if (item.accountLayer) el.dataset.accountLayer = item.accountLayer;
+    if (item.strategy) el.dataset.strategy = item.strategy;
+    if (item.stage) el.dataset.stage = item.stage;
+    if (item.headerKind) el.dataset.headerKind = item.headerKind;
+    el.textContent = item.title;
+    document.getElementById("subchartStack").appendChild(el);
+  }
+  return el;
+}
+
+function ensureStrategyGap(gapId) {
+  const domId = subchartDomId(gapId);
+  let el = document.getElementById(domId);
+  if (!el) {
+    el = document.createElement("div");
+    el.id = domId;
+    el.className = "subchart-strategy-gap";
+    el.setAttribute("aria-hidden", "true");
+    document.getElementById("subchartStack").appendChild(el);
+  }
+  return el;
+}
+
+function reorderSubchartStackDom(orderedDomIds) {
+  const stack = document.getElementById("subchartStack");
+  if (!stack) return;
+  for (const domId of orderedDomIds) {
+    const el = document.getElementById(domId);
+    if (el) stack.appendChild(el);
+  }
+}
+
+function ensureSubchartHost(id, label, strategyId) {
+  const domId = subchartDomId(id);
+  let host = document.getElementById(domId);
   if (!host) {
     host = document.createElement("div");
-    host.id = `subchart-${id}`;
+    host.id = domId;
     host.className = "subchart-pane";
+    if (strategyId) host.dataset.strategy = strategyId;
     const caption = document.createElement("span");
     caption.className = "subchart-label";
     caption.textContent = label;
@@ -194,9 +316,9 @@ function ensureVolumePane(show, candles) {
   }
   let pane = subcharts.get(id);
   if (!pane) {
-    const host = ensureSubchartHost(id, "成交量");
+    const host = ensureSubchartHost(id, "成交量", "shared");
     const inner = document.createElement("div");
-    inner.style.cssText = "position:absolute;inset:0;top:18px;";
+    inner.className = "subchart-pane-inner";
     host.appendChild(inner);
     const c = LightweightCharts.createChart(inner, {
       ...chartBaseOptions(),
@@ -222,9 +344,15 @@ function ensureFeaturePane(column, overlay, colorIndex) {
   }
   let pane = subcharts.get(id);
   if (!pane) {
-    const host = ensureSubchartHost(id, column);
+    const meta = Core.lookupFeatureMeta(column);
+    const label =
+      meta.strategy_title && meta.stage_title
+        ? `${meta.strategy_title}·${meta.stage_title}`
+        : column;
+    const host = ensureSubchartHost(id, label, meta.account_layer || meta.strategy);
+    host.title = column;
     const inner = document.createElement("div");
-    inner.style.cssText = "position:absolute;inset:0;top:18px;";
+    inner.className = "subchart-pane-inner";
     host.appendChild(inner);
     const c = LightweightCharts.createChart(inner, {
       ...chartBaseOptions(),
@@ -264,17 +392,36 @@ function ensureFeaturePane(column, overlay, colorIndex) {
 }
 
 function syncSubcharts(candles, overlays) {
-  ensureVolumePane(document.getElementById("paneVolume").checked, candles);
+  const showVol = document.getElementById("paneVolume").checked;
+  ensureVolumePane(showVol, candles);
   const wantFeatures = new Set(selectedFeatureColumns);
   for (const id of [...subcharts.keys()]) {
     if (id.startsWith("feat:") && !wantFeatures.has(id.slice(5))) destroySubchart(id);
   }
+  clearStrategyChrome();
+
   const colsForPanes = selectedFeatureColumns.slice(0, MAX_FEATURE_SUBCHARTS);
-  let idx = 0;
-  for (const col of colsForPanes) {
-    ensureFeaturePane(col, overlays?.[col], idx);
-    idx += 1;
+  const panePlan = Core.orderFeaturePaneItems(colsForPanes, layersState());
+  const domOrder = [];
+  if (showVol) domOrder.push(subchartDomId("volume"));
+
+  let colorIdx = 0;
+  for (const item of panePlan) {
+    if (item.type === "gap") {
+      ensureStrategyGap(item.id);
+      domOrder.push(subchartDomId(item.id));
+    } else if (item.type === "header") {
+      ensureSubchartHeader(item);
+      domOrder.push(subchartDomId(headerDomKey(item)));
+    } else if (item.type === "feature") {
+      const fid = `feat:${item.column}`;
+      ensureFeaturePane(item.column, overlays?.[item.column], colorIdx);
+      colorIdx += 1;
+      domOrder.push(subchartDomId(fid));
+    }
   }
+  reorderSubchartStackDom(domOrder);
+
   requestAnimationFrame(() => {
     resizeAllSubcharts();
     if (subcharts.size) fitFeatureSubcharts();
@@ -292,9 +439,118 @@ function formatOverlayStatus(overlays) {
   return ` · 特征:${parts.join(",")}`;
 }
 
-function applyMarkers(lwcMarkers) {
-  markerById = new Map(lwcMarkers.map((m) => [m.id, m._raw]));
-  candleSeries.setMarkers(lwcMarkers);
+function applyMarkers(rawMarkers) {
+  lastRawMarkers = rawMarkers || [];
+  const lwc = Core.markersToLwc(lastRawMarkers, selectedMarkerId);
+  markerById = new Map(lwc.map((m) => [m.id, m._raw]));
+  candleSeries.setMarkers(lwc);
+}
+
+function scrollChartToMarker(markerTime) {
+  if (!chart || !lastCandles.length) return;
+  const idx = Core.scrollIndexForTime(lastCandles, markerTime);
+  if (idx < 0) return;
+  const pad = 15;
+  const from = Math.max(0, idx - pad);
+  const to = Math.min(lastCandles.length - 1, idx + pad);
+  chart.timeScale().setVisibleLogicalRange({ from, to });
+}
+
+function highlightOrdersTableRow(markerId) {
+  const tbody = document.getElementById("ordersDockBody");
+  if (!tbody) return;
+  tbody.querySelectorAll("tr[data-marker-id]").forEach((tr) => {
+    const mid = tr.getAttribute("data-marker-id") || "";
+    tr.classList.toggle("selected", !!markerId && mid === markerId);
+    if (markerId && mid === markerId) {
+      tr.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  });
+}
+
+function selectMarker(markerId, { scrollChart = true, showDetail = true } = {}) {
+  selectedMarkerId = markerId || null;
+  applyMarkers(lastRawMarkers);
+  highlightOrdersTableRow(selectedMarkerId);
+  if (selectedMarkerId && scrollChart) {
+    const raw = markerById.get(selectedMarkerId);
+    if (raw?.time != null) scrollChartToMarker(raw.time);
+  }
+  if (selectedMarkerId && showDetail) {
+    showMarkerDetail(selectedMarkerId);
+  }
+}
+
+function applyOrdersDockVisibility() {
+  const dock = document.getElementById("ordersDock");
+  const btn = document.getElementById("ordersDockToggle");
+  if (!dock || !btn) return;
+  dock.classList.toggle("hidden", !ordersDockOpen);
+  btn.classList.toggle("active", ordersDockOpen);
+  btn.setAttribute("aria-pressed", ordersDockOpen ? "true" : "false");
+}
+
+function toggleOrdersDock(forceOpen) {
+  ordersDockOpen = forceOpen ?? !ordersDockOpen;
+  applyOrdersDockVisibility();
+  saveLayout();
+  if (ordersDockOpen) {
+    refreshOrdersList().catch((e) => setStatus(String(e)));
+  }
+  requestAnimationFrame(() => {
+    const el = document.getElementById("chart");
+    if (chart && el) {
+      chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
+      resizeAllSubcharts();
+    }
+  });
+}
+
+async function refreshOrdersList() {
+  if (!ordersDockOpen) return;
+  const symbol = document.getElementById("symbolSelect").value;
+  const tbody = document.getElementById("ordersDockBody");
+  const countEl = document.getElementById("ordersDockCount");
+  const showSym = Shell.isAllSymbols(symbol);
+  document.querySelectorAll(".orders-th-symbol").forEach((th) => {
+    th.classList.toggle("hidden", !showSym);
+  });
+  const colspan = Shell.ordersTableColspan(showSym);
+  const q = new URLSearchParams({
+    symbol,
+    scopes: scopesParam(),
+    limit: "500",
+  });
+  try {
+    const { data, meta } = await Shell.api(`/api/orders/list?${q}`);
+    const rows = data || [];
+    countEl.textContent = `(${meta.count ?? rows.length})`;
+    if (!rows.length) {
+      tbody.innerHTML = `<tr><td colspan="${colspan}" class="muted">无订单</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = Shell.buildOrdersTableRows(rows, {
+      showSymbol: showSym,
+      escHtml,
+    });
+    tbody.querySelectorAll("tr[data-idx]").forEach((tr) => {
+      tr.addEventListener("click", () => {
+        tbody.querySelectorAll("tr").forEach((x) => x.classList.remove("selected"));
+        tr.classList.add("selected");
+        const mid = tr.getAttribute("data-marker-id");
+        if (mid) selectMarker(mid);
+        else {
+          selectedMarkerId = null;
+          highlightOrdersTableRow(null);
+          applyMarkers(lastRawMarkers);
+        }
+      });
+    });
+    highlightOrdersTableRow(selectedMarkerId);
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="${colspan}" class="muted">${escHtml(String(e))}</td></tr>`;
+    countEl.textContent = "";
+  }
 }
 
 function escHtml(s) {
@@ -326,10 +582,11 @@ function renderSelectedChips() {
     return;
   }
   el.innerHTML = selectedFeatureColumns
-    .map(
-      (col) =>
-        `<span class="feature-chip">${escHtml(col)}<button type="button" data-remove-col="${escHtml(col)}" aria-label="移除">×</button></span>`
-    )
+    .map((col) => {
+      const m = Core.lookupFeatureMeta(col);
+      const tag = `${m.account_layer_title || ""} › ${m.strategy_title || ""} › ${m.stage_title || ""}`;
+      return `<span class="feature-chip"><span class="feature-chip-strategy" data-strategy="${escHtml(m.account_layer || "")}">${escHtml(tag)}</span>${escHtml(col)}<button type="button" data-remove-col="${escHtml(col)}" aria-label="移除">×</button></span>`;
+    })
     .join("");
   el.querySelectorAll("[data-remove-col]").forEach((btn) => {
     btn.addEventListener("click", (ev) => {
@@ -355,19 +612,23 @@ function renderFeaturePicker() {
     list.innerHTML = '<p class="muted">无匹配列</p>';
     return;
   }
-  const groups = Core.groupFeatureColumns(filtered);
+  const groups = Core.groupFeatureColumnsByStrategy(filtered, layersState());
   list.innerHTML = groups
-    .map(([title, cols]) => {
+    .map(([title, cols, meta]) => {
       const items = cols
         .map((col) => {
           const on = selectedFeatureColumns.includes(col);
-          return `<label class="feature-item${on ? " selected" : ""}">
+          const m = Core.lookupFeatureMeta(col);
+          return `<label class="feature-item${on ? " selected" : ""}" data-account-layer="${escHtml(m.account_layer || "")}" data-stage="${escHtml(m.stage || "")}">
             <input type="checkbox" data-feature-col="${escHtml(col)}" ${on ? "checked" : ""} />
             <span>${escHtml(col)}</span>
           </label>`;
         })
         .join("");
-      return `<section class="feature-group"><h4 class="feature-group-title">${escHtml(title)} (${cols.length})</h4><div class="feature-grid">${items}</div></section>`;
+      const dataAttrs = meta
+        ? ` data-account-layer="${escHtml(meta.layer || "")}" data-strategy="${escHtml(meta.strategy || "")}" data-stage="${escHtml(meta.stage || "")}"`
+        : "";
+      return `<section class="feature-group"${dataAttrs}><h4 class="feature-group-title">${escHtml(title)} <span class="strategy-hint">(${cols.length})</span></h4><div class="feature-grid">${items}</div></section>`;
     })
     .join("");
   list.querySelectorAll("input[data-feature-col]").forEach((inp) => {
@@ -408,21 +669,39 @@ function bindFeaturePanel() {
         setSelectedFeatures([]);
         return;
       }
-      if (action === "preset-default") {
-        const picks = [];
-        for (const name of Core.FEATURE_PRESETS.default) {
-          if (availableFeatureColumns.includes(name)) picks.push(name);
-        }
-        const fromApi = availableFeatureColumns.filter((c) =>
-          String(c).toLowerCase().includes("weekly_ema")
+      if (action === "preset-default" || action.startsWith("preset-")) {
+        const key =
+          action === "preset-default" ? "default" : action.replace("preset-", "");
+        let picks = Core.presetColumnsForAccountLayer(
+          key,
+          availableFeatureColumns,
+          MAX_FEATURE_SUBCHARTS
         );
-        for (const c of fromApi) {
-          if (!picks.includes(c)) picks.push(c);
+        if (!picks.length) {
+          const preset = Core.FEATURE_PRESETS[key] || Core.FEATURE_PRESETS.default;
+          for (const name of preset) {
+            if (availableFeatureColumns.includes(name)) picks.push(name);
+          }
+        }
+        if (key === "default" || key === "spot") {
+          for (const c of availableFeatureColumns) {
+            if (String(c).toLowerCase().includes("weekly_ema") && !picks.includes(c)) {
+              picks.push(c);
+            }
+          }
         }
         if (!picks.length && availableFeatureColumns.length) {
           picks.push(availableFeatureColumns[0]);
         }
-        setSelectedFeatures(picks.slice(0, MAX_FEATURE_SUBCHARTS));
+        if (action.startsWith("preset-") && action !== "preset-default") {
+          const merged = [...selectedFeatureColumns];
+          for (const c of picks) {
+            if (!merged.includes(c)) merged.push(c);
+          }
+          setSelectedFeatures(merged.slice(0, MAX_FEATURE_SUBCHARTS));
+        } else {
+          setSelectedFeatures(picks.slice(0, MAX_FEATURE_SUBCHARTS));
+        }
       }
     });
   });
@@ -436,6 +715,7 @@ async function loadFeatureColumns() {
       `/api/bus/features/columns?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`
     );
     availableFeatureColumns = data.columns || [];
+    Core.setFeatureTaxonomy(data.taxonomy || null);
     const defaults = data.defaults || [];
     selectedFeatureColumns = selectedFeatureColumns.filter((c) =>
       availableFeatureColumns.includes(c)
@@ -476,7 +756,7 @@ async function refreshBundle() {
   const scopes = scopesParam();
   const pending = layersState().pending;
   const featParam = Core.featureColumnsParam(selectedFeatureColumns);
-  setStatus("加载中…");
+  setStatusLoading();
   const q = new URLSearchParams({
     symbol,
     timeframe,
@@ -496,44 +776,29 @@ async function refreshBundle() {
   }
   const { data, meta } = await Shell.api(`/api/trade-map/bundle?${q}`);
   const candles = data.ohlcv?.candles || [];
+  lastCandles = candles;
   candleSeries.setData(candles);
-  applyMarkers(Core.markersToLwc(data.markers || []));
+  const markers = data.markers || [];
+  applyMarkers(markers);
   if (chartFitPending) {
     applyChartViewport(candles.length);
     chartFitPending = false;
   }
   syncSubcharts(candles, data.overlays || {});
 
-  const deg = meta.degraded_ohlc || data.ohlcv?.degraded_ohlc;
-  const rangeHint =
-    meta.range_start && meta.range_end
-      ? ` · ${meta.range_start.slice(0, 10)}→${meta.range_end.slice(0, 10)}`
-      : "";
-  const clipHint = meta.range_clipped ? ` · clipped ${meta.max_ohlcv_days || ""}d` : "";
-  const busRows = meta.bars_1min_rows ? ` · bus1m=${meta.bars_1min_rows}` : "";
-  const histRows = meta.live_storage_1m_rows
-    ? ` · hist1m=${meta.live_storage_1m_rows}`
-    : "";
-  const srcHint = meta.ohlcv_source ? ` · ${meta.ohlcv_source}` : "";
-  const featCap =
-    selectedFeatureColumns.length > MAX_FEATURE_SUBCHARTS
-      ? ` · 附图限${MAX_FEATURE_SUBCHARTS}列`
-      : "";
-  setStatus(
-    `${symbol} ${timeframe} · ${candles.length} bars · ${(data.markers || []).length} markers` +
-      busRows +
-      histRows +
-      srcHint +
-      rangeHint +
-      clipHint +
-      formatOverlayStatus(data.overlays || {}) +
-      (featCap || "") +
-      (deg ? " · OHLC degraded" : "") +
-      ` · ${new Date().toLocaleTimeString()}`
-  );
+  setStatusFromBundle(symbol, timeframe, candles, markers, meta, data.overlays || {});
+  tickClock();
+
+  if (ordersDockOpen) {
+    await refreshOrdersList();
+  }
+
   const markerId = pageUrl.searchParams.get("marker_id");
   if (markerId && markerById.has(markerId)) {
-    showMarkerDetail(markerId);
+    selectMarker(markerId, { scrollChart: true, showDetail: true });
+  } else if (selectedMarkerId && !markerById.has(selectedMarkerId)) {
+    selectedMarkerId = null;
+    highlightOrdersTableRow(null);
   }
 }
 
@@ -572,20 +837,18 @@ function bindControls() {
         return;
       }
       if (id === "symbolSelect") Shell.setSymbol(document.getElementById("symbolSelect").value);
+      if (id.startsWith("layer")) renderFeaturePicker();
+      if (ordersDockOpen) refreshOrdersList().catch(() => {});
       rerunAll();
     })
   );
   document.getElementById("detailCloseBtn").addEventListener("click", () => {
     document.getElementById("detailPanel").classList.add("hidden");
   });
-  Shell.bindSymbolPersist("symbolSelect");
-
-  chart.subscribeClick((param) => {
-    if (!param || param.time === undefined) return;
-    const markers = candleSeries.markers?.() || [];
-    const hit = markers.find((m) => m.time === param.time);
-    if (hit?.id) showMarkerDetail(hit.id);
+  document.getElementById("ordersDockToggle").addEventListener("click", () => {
+    toggleOrdersDock();
   });
+  Shell.bindSymbolPersist("symbolSelect");
 }
 
 (async () => {
@@ -608,6 +871,9 @@ function bindControls() {
       }
     }
     await loadFeatureColumns();
+    tickClock();
+    if (clockTimer) clearInterval(clockTimer);
+    clockTimer = setInterval(tickClock, 1000);
     await refreshBundle();
     startPoll();
   } catch (e) {

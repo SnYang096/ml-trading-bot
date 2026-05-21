@@ -4,6 +4,13 @@
 (function (root) {
   const SYMBOL_KEY = "mlbot_console_symbol";
   const SCOPES_KEY = "mlbot_console_scopes";
+  const SYMBOL_ALL = "*";
+
+  const SCOPE_LABELS = {
+    trend: "B·Trend",
+    spot: "A·Spot",
+    multi_leg: "C·Multi-leg",
+  };
 
   const PAGES = [
     { id: "signals", href: "/signals", label: "策略信号" },
@@ -22,8 +29,21 @@
     return localStorage.getItem(SYMBOL_KEY) || "";
   }
 
+  function isAllSymbols(sym) {
+    const s = String(sym || "").trim();
+    return !s || s === SYMBOL_ALL || s.toUpperCase() === "ALL";
+  }
+
   function setSymbol(sym) {
-    if (sym) localStorage.setItem(SYMBOL_KEY, sym);
+    if (sym && !isAllSymbols(sym)) localStorage.setItem(SYMBOL_KEY, sym);
+  }
+
+  function escHtml(s) {
+    return String(s ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
   }
 
   function getScopesDefault() {
@@ -88,11 +108,18 @@
     }
   }
 
-  async function loadSymbols(selectId, preferred) {
+  async function loadSymbols(selectId, preferred, options) {
+    const opts = options || {};
     const sel = document.getElementById(selectId);
     if (!sel) return;
     const { data } = await api("/api/trade-map/symbols");
     sel.innerHTML = "";
+    if (opts.includeAll) {
+      const allOpt = document.createElement("option");
+      allOpt.value = SYMBOL_ALL;
+      allOpt.textContent = "全部";
+      sel.appendChild(allOpt);
+    }
     const list = data.length ? data : [{ symbol: "ETHUSDT" }];
     for (const row of list) {
       const sym = row.symbol || row;
@@ -104,16 +131,131 @@
     const saved = preferred || getSymbol();
     if (saved && [...sel.options].some((o) => o.value === saved)) {
       sel.value = saved;
+    } else if (opts.includeAll) {
+      sel.value = SYMBOL_ALL;
     } else if (list[0]) {
       sel.value = list[0].symbol || "ETHUSDT";
     }
-    setSymbol(sel.value);
+    if (!isAllSymbols(sel.value)) setSymbol(sel.value);
   }
 
   function bindSymbolPersist(selectId) {
     const sel = document.getElementById(selectId);
     if (!sel) return;
-    sel.addEventListener("change", () => setSymbol(sel.value));
+    sel.addEventListener("change", () => {
+      if (!isAllSymbols(sel.value)) setSymbol(sel.value);
+    });
+  }
+
+  function scopeBadge(scope) {
+    const id = String(scope || "");
+    const label = SCOPE_LABELS[id] || id;
+    return `<span class="scope-badge scope-${escHtml(id)}">${escHtml(label)}</span>`;
+  }
+
+  function statusBadge(status) {
+    const st = String(status || "").toLowerCase();
+    return `<span class="status-badge status-${escHtml(st)}">${escHtml(status || "—")}</span>`;
+  }
+
+  function sideClass(side) {
+    const s = String(side || "").toLowerCase();
+    if (s === "buy" || s === "long") return "side-long";
+    if (s === "sell" || s === "short") return "side-short";
+    return "";
+  }
+
+  function tryParseJson(value) {
+    if (value == null || value === "") return null;
+    if (typeof value === "object") return value;
+    if (typeof value !== "string") return value;
+    try {
+      return JSON.parse(value);
+    } catch (_) {
+      return value;
+    }
+  }
+
+  function prettyJson(value) {
+    const v = tryParseJson(value);
+    if (v == null) return "";
+    if (typeof v === "string") return v;
+    return JSON.stringify(v, null, 2);
+  }
+
+  function formatDetailValue(value) {
+    if (value == null || value === "") return "—";
+    if (typeof value === "number") return Number.isFinite(value) ? String(value) : "—";
+    if (typeof value === "object") return prettyJson(value);
+    const s = String(value);
+    if ((s.startsWith("{") && s.endsWith("}")) || (s.startsWith("[") && s.endsWith("]"))) {
+      const parsed = tryParseJson(s);
+      if (typeof parsed === "object") return prettyJson(parsed);
+    }
+    return s;
+  }
+
+  function renderOrderDetailHtml(order, markerDetail) {
+    const o = order || {};
+    const rows = [
+      ["账户层", SCOPE_LABELS[o.scope] || o.scope],
+      ["交易对", o.symbol],
+      ["方向", o.side],
+      ["状态", o.status],
+      ["类型", o.order_type],
+      ["数量", o.filled_quantity ?? o.quantity],
+      ["价格", o.average_price ?? o.price],
+      ["策略", o.strategy],
+      ["成交时间", formatOrderTime(o.time)],
+      ["创建", o.created_at],
+      ["成交", o.filled_at],
+      ["订单号", o.order_id],
+      ["标记 ID", o.marker_id],
+    ];
+    let html = '<div class="order-detail-card">';
+    html += '<dl class="order-detail-dl">';
+    for (const [label, val] of rows) {
+      if (val == null || val === "") continue;
+      html += `<dt>${escHtml(label)}</dt><dd class="${sideClass(o.side)}">${escHtml(formatDetailValue(val))}</dd>`;
+    }
+    html += "</dl>";
+    if (markerDetail) {
+      html += '<details class="order-detail-block"><summary>标记 / 数据库</summary>';
+      html += `<pre class="order-json-pre">${escHtml(prettyJson(markerDetail))}</pre>`;
+      html += "</details>";
+    }
+    html += '<details class="order-detail-block"><summary>原始 JSON</summary>';
+    html += `<pre class="order-json-pre">${escHtml(prettyJson(o))}</pre>`;
+    html += "</details></div>";
+    return html;
+  }
+
+  function buildOrdersTableRows(rows, options) {
+    const opts = options || {};
+    const showSymbol = opts.showSymbol !== false;
+    const esc = opts.escHtml || escHtml;
+    return (rows || [])
+      .map((r, i) => {
+        const mid = r.marker_id || "";
+        const symCell = showSymbol
+          ? `<td>${esc(r.symbol || "")}</td>`
+          : "";
+        return `<tr data-idx="${i}" data-marker-id="${esc(mid)}" data-symbol="${esc(r.symbol || "")}">
+          <td>${scopeBadge(r.scope)}</td>
+          ${symCell}
+          <td>${esc(formatOrderTime(r.time))}</td>
+          <td class="${sideClass(r.side)}">${esc(r.side || "")}</td>
+          <td>${statusBadge(r.status)}</td>
+          <td>${esc(String(r.filled_quantity ?? r.quantity ?? ""))}</td>
+          <td>${esc(String(r.average_price ?? r.price ?? ""))}</td>
+          <td class="id-cell" title="${esc(r.order_id || "")}">${esc(r.order_id || "")}</td>
+        </tr>`;
+      })
+      .join("");
+  }
+
+  function ordersTableColspan(showSymbol) {
+    return showSymbol ? 8 : 7;
   }
 
   function formatOrderTime(ts) {
@@ -124,6 +266,8 @@
 
   root.MLBotConsole = {
     api,
+    SYMBOL_ALL,
+    isAllSymbols,
     getSymbol,
     setSymbol,
     getScopesDefault,
@@ -133,5 +277,11 @@
     loadSymbols,
     bindSymbolPersist,
     formatOrderTime,
+    escHtml,
+    scopeBadge,
+    statusBadge,
+    renderOrderDetailHtml,
+    buildOrdersTableRows,
+    ordersTableColspan,
   };
 })(typeof globalThis !== "undefined" ? globalThis : window);

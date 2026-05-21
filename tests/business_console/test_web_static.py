@@ -16,7 +16,13 @@ def test_trade_map_html_served(client):
     assert "featurePanelBtn" in body
     assert "featureSearch" in body
     assert "subchartStack" in body
+    assert 'data-feature-action="preset-trend"' in body
+    assert 'data-feature-action="preset-spot"' in body
     assert "marker-detail-drawer" in body
+    assert "ordersDock" in body
+    assert "ordersDockToggle" in body
+    assert "statusGrid" in body
+    assert "statusClock" in body
     assert "side-panels" not in body
     assert "eligibilityPanel" not in body
 
@@ -28,6 +34,8 @@ def test_orders_html_served(client):
     assert "订单" in body
     assert "orders-page.js" in body
     assert "ordersTable" in body
+    assert "ordersThSymbol" in body
+    assert "order-detail-body" in body
     assert "appNav" in body
 
 

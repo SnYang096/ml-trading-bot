@@ -140,9 +140,9 @@ Spot  eligibility 已在 `decision_chain_debug` 打日志；CMS 可解析最近 
 | **交易地图** | 在 K 线上叠加**成功开仓/平仓**（及可选 pending），多空有向箭头，平仓有区分图标 |
 | **按账户层筛选** | Trend / Multi-leg / Spot 可勾选显示（默认可叠层或分色） |
 | **实时更新** | 新 bar、新成交后标记自动追加/刷新，无需整页重载（SSE 或 WebSocket + 图表 `setData` / `setMarkers`） |
-| **订单列表（同页）** | Trade Map 右侧 **表格**展示当前 symbol、当前图层（Trend/Spot/Multi-leg）下的 `orders` / `spot_orders` / `multi_leg_orders`；点击行打开标记详情，与 K 线标记 `marker_id` 对齐 |
+| **订单列表（同页）** | Trade Map **可折叠底栏**（工具栏「订单表」开关，默认收起）：`GET /api/orders/list`；点击行 ↔ K 线标记 `marker_id` 双向联动（选中高亮、滚图、标记详情抽屉） |
 
-> **说明**：§4.3 / §4.5 中的「订单列表」在 **P1 MVP 仅实现了 Trade Map 主图**；列表视图在 **P2+** 以 Trade Map **同页侧栏** 交付（`/api/orders/list`），完整分页/筛选的独立 Trend/Spot 页仍可按 §4.3 分期扩展。
+> **布局**：顶栏两行（控件 + 固定高度状态，避免长字符串撑出横向滚动）；主图+附图占满剩余高度；订单表仅在展开时占 `~32vh`。独立全屏订单页仍为 `/orders`。
 
 **与滚动回测地图的差异**：
 
@@ -223,10 +223,21 @@ Spot  eligibility 已在 `decision_chain_debug` 打日志；CMS 可解析最近 
 ```
   ├─ [数据] Symbol + 周期
   ├─ [账户层 A/B/C] → 主图 markers
-  ├─ [附图] 成交量 + 特征列多选
+  ├─ [附图] 成交量 + 特征列多选（按账户层策略分组）
   ├─ [侧栏] Spot 资格（可选）
   └─ 标记详情（点击主图）
 ```
+
+**附图 · 特征列分组**（archetype 真值 + `trade-map-core.js`）：
+
+- **数据源**：`config/strategies/<slug>/archetypes/*.yaml` 由 `src/time_series_model/live/feature_stage_taxonomy.py` 解析；API `GET /api/bus/features/columns` 附带 `taxonomy` / `column_meta`，`GET /api/bus/features/taxonomy` 可单独拉全表。
+- **分组维度**：`账户层 (B/A/C)` → `策略 (TPC/BPC/ME/SRB/Spot/Chop Grid/Trend Scalp)` → **管线阶段**：
+  - B 系统：`Prefilter` → `Direction` → `Gate` → `Entry` → `Evidence` → `Execution`
+  - A 层：主要为 `Prefilter`（`weekly_ema_200_position`）+ `Execution`（deploy 约束，无 gate/entry 列）
+  - C 层：`Regime`（`entry_feature` 如 `bpc_semantic_chop` / `trend_confidence`）+ `Prefilter` 规则（如 `box_pos_60`）
+- 特征面板 checklist 标题形如 **`B·Trend › TPC › Gate`**；已选 chip 同格式。Bus 中未出现在任何 archetype 的列归入 **未归类**（启发式兜底）。
+- 附图 DOM：`成交量` → 账户层标题 → 策略标题 → **阶段小标题** → 特征 pane；层/策略间 **gap** 分隔。
+- 快捷预设 **A·Spot / B·Trend / C·Multi**：从各层 archetype 的 prefilter/regime/gate/entry 列中自动挑选（上限 8 条附图）。
 
 **订单** `/orders`：
 
@@ -241,7 +252,7 @@ Spot  eligibility 已在 `decision_chain_debug` 打日志；CMS 可解析最近 
 | 账户层标记 | 交易地图·主图 | 三库成交 |
 | 成交量 / 特征列 | 交易地图·附图 | bus Parquet |
 | Spot / Trend / Multi-leg 信号 | **策略信号页·表格** | `GET /api/trade-map/signals` |
-| 订单列表 | **订单页** | `/api/orders/list` |
+| 订单列表 | **Trade Map 底栏**（可折叠）+ **订单页** `/orders` | `/api/orders/list` |
 
 布局：`mlbot_trade_map_layout_v1`（附图）；`mlbot_console_symbol` / `mlbot_console_scopes`（跨页）。
 

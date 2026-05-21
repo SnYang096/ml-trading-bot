@@ -8,6 +8,12 @@ from typing import Any, Dict, List, Optional
 from app.services.db import query_rows
 from app.services.trade_markers import _marker_id, _parse_ts
 
+_ALL_SYMBOLS = frozenset({"", "*", "ALL", "__ALL__"})
+
+
+def _is_all_symbols(symbol: str) -> bool:
+    return str(symbol or "").strip().upper() in _ALL_SYMBOLS
+
 
 def _row_time(row: Dict[str, Any]) -> int:
     for key in ("filled_at", "updated_at", "created_at", "operation_time"):
@@ -62,17 +68,28 @@ def trend_orders(
     status: Optional[str] = None,
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
-    sym = symbol.upper()
-    sql = """
-        SELECT order_id, symbol, side, status, order_type, quantity, price,
-               filled_quantity, average_price, created_at, updated_at, filled_at,
-               position_id
-        FROM orders
-        WHERE symbol = ?
-        ORDER BY COALESCE(filled_at, created_at) DESC
-        LIMIT ?
-    """
-    rows = query_rows(db_path, sql, (sym, int(limit)))
+    if _is_all_symbols(symbol):
+        sql = """
+            SELECT order_id, symbol, side, status, order_type, quantity, price,
+                   filled_quantity, average_price, created_at, updated_at, filled_at,
+                   position_id
+            FROM orders
+            ORDER BY COALESCE(filled_at, created_at) DESC
+            LIMIT ?
+        """
+        rows = query_rows(db_path, sql, (int(limit),))
+    else:
+        sym = symbol.upper()
+        sql = """
+            SELECT order_id, symbol, side, status, order_type, quantity, price,
+                   filled_quantity, average_price, created_at, updated_at, filled_at,
+                   position_id
+            FROM orders
+            WHERE symbol = ?
+            ORDER BY COALESCE(filled_at, created_at) DESC
+            LIMIT ?
+        """
+        rows = query_rows(db_path, sql, (sym, int(limit)))
     out = [_normalize("trend", r) for r in rows]
     if status:
         st = status.lower()
@@ -87,16 +104,26 @@ def spot_orders_list(
     status: Optional[str] = None,
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
-    sym = symbol.upper()
-    sql = """
-        SELECT order_id, symbol, side, status, order_type, quantity, price,
-               filled_quantity, filled_quote_usdt, created_at, updated_at
-        FROM spot_orders
-        WHERE symbol = ?
-        ORDER BY COALESCE(updated_at, created_at) DESC
-        LIMIT ?
-    """
-    rows = query_rows(db_path, sql, (sym, int(limit)))
+    if _is_all_symbols(symbol):
+        sql = """
+            SELECT order_id, symbol, side, status, order_type, quantity, price,
+                   filled_quantity, filled_quote_usdt, created_at, updated_at
+            FROM spot_orders
+            ORDER BY COALESCE(updated_at, created_at) DESC
+            LIMIT ?
+        """
+        rows = query_rows(db_path, sql, (int(limit),))
+    else:
+        sym = symbol.upper()
+        sql = """
+            SELECT order_id, symbol, side, status, order_type, quantity, price,
+                   filled_quantity, filled_quote_usdt, created_at, updated_at
+            FROM spot_orders
+            WHERE symbol = ?
+            ORDER BY COALESCE(updated_at, created_at) DESC
+            LIMIT ?
+        """
+        rows = query_rows(db_path, sql, (sym, int(limit)))
     out = [_normalize("spot", r) for r in rows]
     if status:
         st = status.lower()
@@ -111,17 +138,28 @@ def multi_leg_orders_list(
     status: Optional[str] = None,
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
-    sym = symbol.upper()
-    sql = """
-        SELECT local_order_id AS order_id, symbol, side, status, order_type, purpose,
-               quantity, price, filled_quantity, average_price, created_at, filled_at,
-               strategy
-        FROM multi_leg_orders
-        WHERE symbol = ?
-        ORDER BY COALESCE(filled_at, created_at) DESC
-        LIMIT ?
-    """
-    rows = query_rows(db_path, sql, (sym, int(limit)))
+    if _is_all_symbols(symbol):
+        sql = """
+            SELECT local_order_id AS order_id, symbol, side, status, order_type, purpose,
+                   quantity, price, filled_quantity, average_price, created_at, filled_at,
+                   strategy
+            FROM multi_leg_orders
+            ORDER BY COALESCE(filled_at, created_at) DESC
+            LIMIT ?
+        """
+        rows = query_rows(db_path, sql, (int(limit),))
+    else:
+        sym = symbol.upper()
+        sql = """
+            SELECT local_order_id AS order_id, symbol, side, status, order_type, purpose,
+                   quantity, price, filled_quantity, average_price, created_at, filled_at,
+                   strategy
+            FROM multi_leg_orders
+            WHERE symbol = ?
+            ORDER BY COALESCE(filled_at, created_at) DESC
+            LIMIT ?
+        """
+        rows = query_rows(db_path, sql, (sym, int(limit)))
     out = []
     for r in rows:
         item = _normalize("multi_leg", r)
