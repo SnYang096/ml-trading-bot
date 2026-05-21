@@ -81,6 +81,24 @@ def _append_link(
     )
 
 
+def _link_overlaps_window(
+    link: Dict[str, Any],
+    *,
+    start_ts: Optional[int],
+    end_ts: Optional[int],
+    since_ts: Optional[int],
+) -> bool:
+    entry_ts = int(link.get("entry_time") or 0)
+    exit_ts = int(link.get("exit_time") or entry_ts)
+    if since_ts is not None and max(entry_ts, exit_ts) <= since_ts:
+        return False
+    if start_ts is not None and exit_ts < start_ts:
+        return False
+    if end_ts is not None and entry_ts > end_ts:
+        return False
+    return True
+
+
 def multi_leg_trade_links(
     db_path: Path,
     symbol: str,
@@ -212,6 +230,13 @@ def multi_leg_trade_links(
                     exit_kind="market_exit",
                 )
 
+    links = [
+        lk
+        for lk in links
+        if _link_overlaps_window(
+            lk, start_ts=start_ts, end_ts=end_ts, since_ts=since_ts
+        )
+    ]
     return links, []
 
 

@@ -1117,11 +1117,15 @@ async function refreshBundle(opts = {}) {
   } else {
     q.set("include_ohlcv", "full");
     q.set("include_features", "true");
-    if (!ohlcvLoadedFrom || mode === "full") {
+    if (!ohlcvLoadedFrom || opts.resetOhlcvRange) {
       const init = initialOhlcvRangeIso();
       q.set("from", init.from);
       q.set("to", init.to);
       q.set("full_range", init.full_range || "false");
+    } else {
+      q.set("from", ohlcvLoadedFrom);
+      q.set("to", new Date().toISOString());
+      q.set("full_range", "false");
     }
     if (featParam) q.set("feature_columns", featParam);
     const mainOl = Core.mainOverlaysQueryParam(

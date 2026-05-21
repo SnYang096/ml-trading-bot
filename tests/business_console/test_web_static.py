@@ -59,6 +59,8 @@ def test_trade_map_js_layer_toggle_does_not_reset_history(client):
     body = r.text
     assert "resetChartRangeIds" in body
     assert "opts.resetMarkerRange" in body
+    assert '!ohlcvLoadedFrom || mode === "full"' not in body
+    assert "!ohlcvLoadedFrom || opts.resetOhlcvRange" in body
     idx = body.find('"mainEma1200"')
     assert idx >= 0
     block = body[idx : idx + 1200]
