@@ -45,6 +45,33 @@ def _exclude_statuses(
     return [r for r in rows if str(r.get("status") or "").lower() not in blocked]
 
 
+def _first_positive_price(*values: Any) -> Optional[float]:
+    for value in values:
+        if value is None:
+            continue
+        try:
+            num = float(value)
+        except (TypeError, ValueError):
+            continue
+        if num == num and num > 0:
+            return num
+    return None
+
+
+def _stop_loss_hint(row: Dict[str, Any]) -> str:
+    order_type = str(row.get("order_type") or "").lower()
+    status = str(row.get("status") or "").lower()
+    if "stop" not in order_type:
+        return ""
+    if status == "rejected":
+        return "挂单失败"
+    if status in {"pending", "open", "new", "submitted"}:
+        return "挂单中"
+    if status in {"filled", "closed"}:
+        return "已成交"
+    return ""
+
+
 def _normalize(
     scope: str,
     row: Dict[str, Any],
@@ -76,6 +103,14 @@ def _normalize(
         "filled_quantity": filled_qty,
         "average_price": row.get("average_price"),
         "stop_price": row.get("stop_price"),
+        "stop_loss_price": _first_positive_price(
+            row.get("stop_price")
+            if "stop" in str(row.get("order_type") or "").lower()
+            else None,
+            row.get("stop_loss_price"),
+        ),
+        "take_profit_price": _first_positive_price(row.get("take_profit_price")),
+        "stop_loss_hint": _stop_loss_hint(row),
         "created_at": row.get("created_at"),
         "filled_at": row.get("filled_at"),
         "updated_at": row.get("updated_at"),
@@ -126,6 +161,8 @@ def _trend_position_event_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any
                         "filled_quantity": None,
                         "created_at": row.get("entry_time"),
                         "strategy_id": strat,
+                        "stop_loss_price": row.get("stop_loss_price"),
+                        "take_profit_price": row.get("take_profit_price"),
                         "_marker_source": "positions",
                     },
                 )
@@ -164,6 +201,7 @@ def _trend_operation_rows(
     sql = f"""
         SELECT po.operation_id, po.position_id, po.operation_type,
                po.operation_time, po.size, po.price, po.reason,
+               po.stop_loss_price, po.take_profit_price,
                p.symbol, p.side, p.strategy_id
         FROM position_operations po
         JOIN positions p ON p.position_id = po.position_id
@@ -197,6 +235,8 @@ def _trend_operation_rows(
                     "created_at": row.get("operation_time"),
                     "operation_time": row.get("operation_time"),
                     "strategy_id": row.get("strategy_id"),
+                    "stop_loss_price": row.get("stop_loss_price"),
+                    "take_profit_price": row.get("take_profit_price"),
                     "_marker_source": "position_operations",
                 },
             )
@@ -231,9 +271,10 @@ def trend_orders(
     if _is_all_symbols(symbol):
         sql = f"""
             SELECT o.order_id, o.symbol AS symbol, o.side AS side, o.status, o.order_type,
-                   o.quantity, o.price, o.filled_quantity, o.average_price,
+                   o.quantity, o.price, o.stop_price, o.filled_quantity, o.average_price,
                    o.created_at, o.updated_at, o.filled_at,
-                   o.position_id, p.strategy_id
+                   o.position_id, p.strategy_id,
+                   p.stop_loss_price, p.take_profit_price
             FROM orders o
             LEFT JOIN positions p ON p.position_id = o.position_id
             WHERE 1=1{status_clause}
@@ -245,9 +286,10 @@ def trend_orders(
         sym = symbol.upper()
         sql = f"""
             SELECT o.order_id, o.symbol AS symbol, o.side AS side, o.status, o.order_type,
-                   o.quantity, o.price, o.filled_quantity, o.average_price,
+                   o.quantity, o.price, o.stop_price, o.filled_quantity, o.average_price,
                    o.created_at, o.updated_at, o.filled_at,
-                   o.position_id, p.strategy_id
+                   o.position_id, p.strategy_id,
+                   p.stop_loss_price, p.take_profit_price
             FROM orders o
             LEFT JOIN positions p ON p.position_id = o.position_id
             WHERE o.symbol = ?{status_clause}
@@ -257,7 +299,8 @@ def trend_orders(
         rows = query_rows(db_path, sql, (sym, *status_params, int(limit)))
     pos_sql = """
         SELECT position_id, symbol, side, entry_time, exit_time,
-               entry_price, exit_price, realized_pnl, status, strategy_id
+               entry_price, exit_price, realized_pnl, status, strategy_id,
+               stop_loss_price, take_profit_price
         FROM positions
     """
     pos_params: tuple[Any, ...] = ()

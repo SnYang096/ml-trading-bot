@@ -547,6 +547,28 @@ main {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.poll-toast {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  z-index: 1200;
+  max-width: min(420px, calc(100vw - 28px));
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid #30363d;
+  background: rgba(22, 27, 34, 0.92);
+  color: #8b949e;
+  font-size: 0.8rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.poll-toast.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
 .page-orders main.orders-main {
   display: flex;
   flex: 1;

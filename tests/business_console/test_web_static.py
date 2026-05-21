@@ -36,6 +36,7 @@ def test_orders_html_served(client):
     assert "orders-page.js" in body
     assert "ordersTable" in body
     assert "ordersThSymbol" in body
+    assert "止损价" in body
     assert "order-detail-body" in body
     assert "appNav" in body
 

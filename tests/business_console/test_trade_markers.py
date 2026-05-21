@@ -27,7 +27,7 @@ def test_trend_order_markers_inherit_position_strategy(trend_db):
         """
         INSERT INTO orders VALUES (
             'ord_filled_p1', 'ETHUSDT', 'SELL', 'filled', 'market',
-            0.1, 105.0,
+            0.1, 105.0, NULL,
             '2024-01-01T14:00:00+00:00', '2024-01-01T14:00:00+00:00',
             '2024-01-01T14:00:00+00:00', 105.0, 0.1, 'p1'
         )
@@ -51,7 +51,7 @@ def test_trend_operation_markers_inherit_position_strategy(trend_db):
         """
         INSERT INTO position_operations VALUES (
             'op_add_marker', 'p1', 'add', '2024-01-01T12:00:00+00:00',
-            0.2, 102.0, 'scale in'
+            0.2, 102.0, 'scale in', NULL, NULL
         )
         """
     )

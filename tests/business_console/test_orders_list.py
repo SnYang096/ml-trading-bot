@@ -6,6 +6,9 @@ def test_trend_orders_list(trend_db):
     assert len(rows) >= 1
     assert rows[0]["scope"] == "trend"
     assert "order_id" in rows[0]
+    entry_row = next(r for r in rows if r["order_type"] == "position_entry")
+    assert entry_row["stop_loss_price"] == 98.5
+    assert entry_row["take_profit_price"] == 106.0
     position_rows = [r for r in rows if str(r["order_id"]).startswith("p1:")]
     assert {r["order_type"] for r in position_rows} >= {
         "position_entry",
@@ -25,7 +28,7 @@ def test_trend_orders_include_position_operations_with_strategy(trend_db):
         """
         INSERT INTO position_operations VALUES (
             'op_add_orders', 'p1', 'add', '2024-01-01T12:00:00+00:00',
-            0.2, 102.0, 'scale in'
+            0.2, 102.0, 'scale in', NULL, NULL
         )
         """
     )
@@ -47,7 +50,7 @@ def test_trend_orders_all_symbols(trend_db):
         """
         INSERT INTO orders VALUES (
             'ord_btc', 'BTCUSDT', 'BUY', 'filled', 'limit',
-            0.01, 50000.0,
+            0.01, 50000.0, NULL,
             '2024-01-02T10:00:00+00:00', '2024-01-02T09:00:00+00:00',
             '2024-01-02T10:00:00+00:00', 50000.0, 0.01, NULL
         )
@@ -80,6 +83,8 @@ def test_trend_orders_join_survives_positions_created_at_column(tmp_path):
             realized_pnl REAL,
             status TEXT,
             strategy_id TEXT,
+            stop_loss_price REAL,
+            take_profit_price REAL,
             created_at TEXT,
             updated_at TEXT
         );
@@ -90,7 +95,9 @@ def test_trend_orders_join_survives_positions_created_at_column(tmp_path):
             operation_time TEXT,
             size REAL,
             price REAL,
-            reason TEXT
+            reason TEXT,
+            stop_loss_price REAL,
+            take_profit_price REAL
         );
         CREATE TABLE orders (
             order_id TEXT PRIMARY KEY,
@@ -100,6 +107,7 @@ def test_trend_orders_join_survives_positions_created_at_column(tmp_path):
             order_type TEXT,
             quantity REAL,
             price REAL,
+            stop_price REAL,
             filled_at TEXT,
             created_at TEXT,
             updated_at TEXT,
@@ -114,7 +122,7 @@ def test_trend_orders_join_survives_positions_created_at_column(tmp_path):
         INSERT INTO positions VALUES (
             'p_bnb', 'BNBUSDT', 'long',
             '2024-01-01T10:00:00+00:00', NULL,
-            600.0, NULL, 0.0, 'open', 'tpc',
+            600.0, NULL, 0.0, 'open', 'tpc', NULL, NULL,
             '2024-01-01T10:00:00+00:00', '2024-01-01T10:00:00+00:00'
         )
         """
@@ -123,7 +131,7 @@ def test_trend_orders_join_survives_positions_created_at_column(tmp_path):
         """
         INSERT INTO orders VALUES (
             'ord_bnb', 'BNBUSDT', 'BUY', 'filled', 'limit',
-            0.1, 601.0,
+            0.1, 601.0, NULL,
             '2024-01-01T11:00:00+00:00', '2024-01-01T10:30:00+00:00',
             '2024-01-01T11:00:00+00:00', 601.0, 0.1, 'p_bnb'
         )
@@ -137,6 +145,29 @@ def test_trend_orders_join_survives_positions_created_at_column(tmp_path):
     assert any(r["strategy"] == "tpc" for r in rows)
 
 
+def test_trend_orders_expose_stop_loss_from_stop_market_row(trend_db):
+    import sqlite3
+
+    conn = sqlite3.connect(trend_db)
+    conn.execute(
+        """
+        INSERT INTO orders VALUES (
+            'ord_sl_rej', 'ETHUSDT', 'SELL', 'rejected', 'stop_market',
+            0.1, 2100.0, 2095.5,
+            '2024-01-03T10:00:00+00:00', '2024-01-03T09:00:00+00:00',
+            '2024-01-03T10:00:00+00:00', NULL, 0.0, NULL
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    rows = trend_orders(trend_db, "ETHUSDT", limit=50)
+    sl_row = next(r for r in rows if r["order_id"] == "ord_sl_rej")
+    assert sl_row["stop_loss_price"] == 2095.5
+    assert sl_row["stop_loss_hint"] == "挂单失败"
+
+
 def test_trend_orders_exclude_rejected_leaves_filled_visible(trend_db):
     import sqlite3
 
@@ -146,7 +177,7 @@ def test_trend_orders_exclude_rejected_leaves_filled_visible(trend_db):
             """
             INSERT INTO orders VALUES (
                 ?, 'ETHUSDT', 'BUY', 'rejected', 'stop_market',
-                0.0, 100.0,
+                0.0, 100.0, NULL,
                 '2024-01-02T10:00:00+00:00', '2024-01-02T09:00:00+00:00',
                 '2024-01-02T10:00:00+00:00', NULL, 0.0, NULL
             )

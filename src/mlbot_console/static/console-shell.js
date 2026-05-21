@@ -226,6 +226,7 @@
       ["数量", o.filled_quantity ?? o.quantity],
       ["价格", o.average_price ?? o.price],
       ["止盈价", formatTpPrice(o)],
+      ["止损价", formatSlPrice(o)],
       ["用途", o.purpose ?? o.order_type],
       ["策略", o.strategy],
       ["成交时间", formatOrderTime(o.time)],
@@ -271,6 +272,7 @@
           <td>${esc(String(r.filled_quantity ?? r.quantity ?? ""))}</td>
           <td>${esc(String(r.average_price ?? r.price ?? ""))}</td>
           <td>${esc(formatTpPrice(r))}</td>
+          <td>${esc(formatSlPrice(r))}</td>
           <td class="id-cell" title="${esc(r.order_id || "")}">${esc(r.order_id || "")}</td>
         </tr>`;
       })
@@ -278,7 +280,7 @@
   }
 
   function formatTpPrice(row) {
-    const v = row?.take_profit_price ?? row?.stop_price;
+    const v = row?.take_profit_price;
     if (v == null || v === "") return "—";
     const n = Number(v);
     if (!Number.isFinite(n)) return "—";
@@ -286,8 +288,17 @@
     return `${n}${hint}`;
   }
 
+  function formatSlPrice(row) {
+    const v = row?.stop_loss_price;
+    if (v == null || v === "") return "—";
+    const n = Number(v);
+    if (!Number.isFinite(n)) return "—";
+    const hint = row?.stop_loss_hint ? ` (${row.stop_loss_hint})` : "";
+    return `${n}${hint}`;
+  }
+
   function ordersTableColspan(showSymbol) {
-    return showSymbol ? 9 : 8;
+    return showSymbol ? 10 : 9;
   }
 
   function formatOrderTime(ts) {
@@ -317,5 +328,6 @@
     buildOrdersTableRows,
     ordersTableColspan,
     formatTpPrice,
+    formatSlPrice,
   };
 })(typeof globalThis !== "undefined" ? globalThis : window);

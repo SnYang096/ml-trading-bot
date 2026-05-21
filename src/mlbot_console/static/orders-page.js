@@ -7,7 +7,10 @@ const Shell = globalThis.MLBotConsole;
 const POLL_MS = 15000;
 
 let pollTimer;
+let pollToastTimer;
 let lastOrderRows = [];
+let lastRowsSignature = "";
+let selectedRowIdx = -1;
 
 function layersState() {
   return {
@@ -23,7 +26,39 @@ function scopesParam() {
 }
 
 function setStatus(msg) {
-  document.getElementById("statusLine").textContent = msg;
+  const el = document.getElementById("statusLine");
+  if (el) el.textContent = msg;
+}
+
+function showPollToast(msg, autoHideMs = 0) {
+  let el = document.getElementById("pollToast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "pollToast";
+    el.className = "poll-toast";
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.classList.add("visible");
+  if (pollToastTimer) clearTimeout(pollToastTimer);
+  if (autoHideMs > 0) {
+    pollToastTimer = setTimeout(() => el.classList.remove("visible"), autoHideMs);
+  }
+}
+
+function rowsSignature(rows) {
+  return (rows || [])
+    .map((r) =>
+      [
+        r.order_id,
+        r.status,
+        r.time,
+        r.filled_quantity,
+        r.take_profit_price,
+        r.stop_loss_price,
+      ].join("|")
+    )
+    .join("\n");
 }
 
 function persistScopes() {
@@ -84,6 +119,7 @@ function bindOrdersTable(rows) {
       tbody.querySelectorAll("tr").forEach((x) => x.classList.remove("selected"));
       tr.classList.add("selected");
       const idx = Number(tr.getAttribute("data-idx"));
+      selectedRowIdx = idx;
       const row = rows[idx];
       const mid = tr.getAttribute("data-marker-id");
       showOrderDetail(row, mid || null);
@@ -94,7 +130,8 @@ function bindOrdersTable(rows) {
   }
 }
 
-async function refreshOrders() {
+async function refreshOrders(opts = {}) {
+  const silent = !!opts.silent;
   const symbol = symbolFilterValue();
   if (!Shell.isAllSymbols(symbol)) Shell.setSymbol(symbol);
   persistScopes();
@@ -104,7 +141,8 @@ async function refreshOrders() {
   const countEl = document.getElementById("ordersCount");
   const colspan = Shell.ordersTableColspan(showSymbolColumn());
   updateOrdersTableHead();
-  setStatus("加载中…");
+  if (silent) showPollToast("刷新中…");
+  else setStatus("加载中…");
   const q = new URLSearchParams({
     symbol,
     scopes,
@@ -120,14 +158,24 @@ async function refreshOrders() {
   try {
     const { data, meta } = await Shell.api(`/api/orders/list?${q}`);
     const rows = data || [];
-    lastOrderRows = rows;
-    countEl.textContent = `(${meta.count ?? rows.length})`;
+    const sig = rowsSignature(rows);
     const symLabel = Shell.isAllSymbols(symbol) ? "全部" : symbol;
+    const timeLabel = new Date().toLocaleTimeString();
+    const toastMsg = `${symLabel} · ${rows.length} 条 · ${scopes} · ${timeLabel}`;
+    if (silent && sig === lastRowsSignature && rows.length) {
+      countEl.textContent = `(${meta.count ?? rows.length})`;
+      showPollToast(toastMsg, 2500);
+      return;
+    }
+    lastOrderRows = rows;
+    lastRowsSignature = sig;
+    countEl.textContent = `(${meta.count ?? rows.length})`;
     if (!rows.length) {
       tbody.innerHTML = `<tr><td colspan="${colspan}" class="muted">无订单</td></tr>`;
       document.getElementById("orderDetailBody").innerHTML =
         '<p class="muted">选择一行查看详情</p>';
-      setStatus(`${symLabel} · 0 条 · ${new Date().toLocaleTimeString()}`);
+      if (!silent) setStatus(`${symLabel} · 0 条 · ${timeLabel}`);
+      showPollToast(toastMsg, 2500);
       return;
     }
     tbody.innerHTML = Shell.buildOrdersTableRows(rows, {
@@ -135,7 +183,18 @@ async function refreshOrders() {
       escHtml: Shell.escHtml,
     });
     bindOrdersTable(rows);
-    setStatus(`${symLabel} · ${rows.length} 条 · ${scopes} · ${new Date().toLocaleTimeString()}`);
+    if (
+      selectedRowIdx >= 0 &&
+      selectedRowIdx < rows.length &&
+      tbody.querySelector(`tr[data-idx="${selectedRowIdx}"]`)
+    ) {
+      const tr = tbody.querySelector(`tr[data-idx="${selectedRowIdx}"]`);
+      tr.classList.add("selected");
+      const mid = tr.getAttribute("data-marker-id");
+      showOrderDetail(rows[selectedRowIdx], mid || null);
+    }
+    if (!silent) setStatus(toastMsg);
+    showPollToast(toastMsg, 2500);
   } catch (e) {
     tbody.innerHTML = `<tr><td colspan="${colspan}" class="muted">${Shell.escHtml(String(e))}</td></tr>`;
     countEl.textContent = "";
@@ -144,7 +203,7 @@ async function refreshOrders() {
 }
 
 function bindControls() {
-  const rerun = () => refreshOrders().catch((e) => setStatus(String(e)));
+  const rerun = () => refreshOrders({ silent: false }).catch((e) => setStatus(String(e)));
   [
     "symbolSelect",
     "statusFilter",
@@ -162,7 +221,10 @@ function bindControls() {
 
 function startPoll() {
   if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(() => refreshOrders().catch(() => {}), POLL_MS);
+  pollTimer = setInterval(
+    () => refreshOrders({ silent: true }).catch((e) => showPollToast(String(e), 4000)),
+    POLL_MS
+  );
 }
 
 (async () => {
