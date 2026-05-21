@@ -36,7 +36,9 @@ const clean = Core.sanitizeCandlesForLwc([
   { time: 100, open: 1, high: 2, low: 0.5, close: 1.5 },
   { time: 100, open: 9, high: 9, low: 9, close: 9 },
   { time: 200, open: 2, high: 3, low: 1, close: 2.5, volume: 10 },
+  { time: 300, open: 2100, high: 9000, low: -3200, close: 2100 },
 ]);
+const pr = Core.priceRangeForVisibleCandles(clean, { from: 2, to: 3 });
 Core.setFeatureTaxonomy({
   strategies: [
     { id: "tpc", account_layer: "trend", title: "TPC", stages: { prefilter: ["tpc_pullback_depth"], gate: ["tpc_semantic_chop"] } },
@@ -60,6 +62,7 @@ const sel = Core.markersToLwc(markers, "trend:orders:1");
 console.log(JSON.stringify({
   scopes, lwcCount: lwc.length, pendingShape: lwc[1].shape, grafana, spacing,
   vis, range, cleanLen: clean.length, cleanTime: clean[1].time,
+  prMin: pr && pr.minValue, prMax: pr && pr.maxValue,
   groupTitles: grouped.map((g) => g[0]),
   planTypes: plan.map((p) => p.type),
   metaStage: meta.stage,
@@ -86,8 +89,10 @@ def test_trade_map_core_node():
     assert out["spacing"] == 4
     assert out["vis"] == 320
     assert out["range"] == {"from": 1841, "to": 2160}
-    assert out["cleanLen"] == 2
+    assert out["cleanLen"] == 3
     assert out["cleanTime"] == 200
+    assert out["prMin"] is not None and out["prMin"] > 2000
+    assert out["prMax"] is not None and out["prMax"] < 2500
     assert "B·Trend › TPC › Prefilter" in out["groupTitles"][0]
     assert "Prefilter" in out["groupTitles"][1]
     assert out["metaStage"] == "prefilter"

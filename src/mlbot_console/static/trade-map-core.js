@@ -458,6 +458,29 @@
     return { from: Math.max(0, n - vis), to: n - 1 };
   }
 
+  function clampCandleOhlc(open, high, low, close) {
+    let o = open;
+    let h = high;
+    let l = low;
+    let c = close;
+    if (!Number.isFinite(o)) o = c;
+    if (!Number.isFinite(h)) h = Math.max(o, c);
+    if (!Number.isFinite(l)) l = Math.min(o, c);
+    if (l < 0) l = Math.min(o, c);
+    if (h < l) {
+      const t = h;
+      h = l;
+      l = t;
+    }
+    const ref = Math.max(Math.abs(c), Math.abs(o), 1);
+    const wickCap = Math.max(ref * 0.35, 5);
+    if (h > c + wickCap * 8) h = Math.max(o, c);
+    if (l < c - wickCap * 8) l = Math.min(o, c);
+    if (h < Math.max(o, c)) h = Math.max(o, c);
+    if (l > Math.min(o, c)) l = Math.min(o, c);
+    return { open: o, high: h, low: l, close: c };
+  }
+
   function sanitizeCandlesForLwc(candles) {
     if (!Array.isArray(candles) || !candles.length) return [];
     const out = [];
@@ -465,22 +488,44 @@
     for (const raw of candles) {
       const time = Number(raw?.time);
       const close = Number(raw?.close);
-      if (!Number.isFinite(time) || !Number.isFinite(close)) continue;
+      if (!Number.isFinite(time) || !Number.isFinite(close) || close <= 0) continue;
       if (lastT != null && time <= lastT) continue;
       lastT = time;
-      let open = Number(raw?.open);
-      let high = Number(raw?.high);
-      let low = Number(raw?.low);
-      if (!Number.isFinite(open)) open = close;
-      if (!Number.isFinite(high)) high = Math.max(open, close);
-      if (!Number.isFinite(low)) low = Math.min(open, close);
-      const c = { time, open, high, low, close };
+      const ohlc = clampCandleOhlc(
+        Number(raw?.open),
+        Number(raw?.high),
+        Number(raw?.low),
+        close
+      );
+      const c = { time, ...ohlc };
       if (raw?.volume != null && Number.isFinite(Number(raw.volume))) {
         c.volume = Number(raw.volume);
       }
       out.push(c);
     }
     return out;
+  }
+
+  /** Min/max price for bars in the visible logical index window (for autoscale). */
+  function priceRangeForVisibleCandles(candles, logicalRange) {
+    if (!Array.isArray(candles) || !candles.length || !logicalRange) return null;
+    const from = Math.max(0, Math.floor(Number(logicalRange.from)));
+    const to = Math.min(candles.length - 1, Math.ceil(Number(logicalRange.to)));
+    if (to < from) return null;
+    let minV = Infinity;
+    let maxV = -Infinity;
+    for (let i = from; i <= to; i++) {
+      const c = candles[i];
+      if (!c) continue;
+      const lo = Number(c.low);
+      const hi = Number(c.high);
+      if (Number.isFinite(lo)) minV = Math.min(minV, lo);
+      if (Number.isFinite(hi)) maxV = Math.max(maxV, hi);
+    }
+    if (!Number.isFinite(minV) || !Number.isFinite(maxV)) return null;
+    const span = Math.max(maxV - minV, maxV * 0.0005);
+    const pad = Math.max(span * 0.06, maxV * 0.001);
+    return { minValue: minV - pad, maxValue: maxV + pad };
   }
 
   /** Bar spacing in px for the *visible* window (not full history length). */
@@ -526,6 +571,8 @@
     defaultVisibleBarCount,
     visibleLogicalRange,
     sanitizeCandlesForLwc,
+    clampCandleOhlc,
+    priceRangeForVisibleCandles,
     barSpacingForCount,
     DEFAULT_VISIBLE_BARS,
     FEATURE_PRESETS,

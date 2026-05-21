@@ -140,7 +140,10 @@ function chartBaseOptions() {
       minBarSpacing: 0.5,
       rightOffset: 8,
     },
-    rightPriceScale: { borderColor: "#30363d" },
+    rightPriceScale: {
+      borderColor: "#30363d",
+      scaleMargins: { top: 0.08, bottom: 0.12 },
+    },
     handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true },
     handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true },
   };
@@ -158,6 +161,7 @@ function applyChartViewport(barCount) {
   if (range) {
     chart.timeScale().setVisibleLogicalRange(range);
     syncSubchartsToMainRange();
+    chart.priceScale("right").applyOptions({ autoScale: true });
   }
 }
 
@@ -179,6 +183,17 @@ function initMainChart() {
     borderVisible: false,
     wickUpColor: "#26a69a",
     wickDownColor: "#ef5350",
+    autoscaleInfoProvider: (original) => {
+      const range = chart.timeScale().getVisibleLogicalRange();
+      const custom = Core.priceRangeForVisibleCandles(lastCandles, range);
+      if (custom) {
+        return {
+          priceRange: custom,
+          margins: { above: 10, below: 10 },
+        };
+      }
+      return original();
+    },
   });
   candleSeries.setMarkers([]);
 
@@ -232,6 +247,7 @@ function bindTimeScaleSync() {
     for (const pane of subcharts.values()) {
       pane.chart.timeScale().setVisibleLogicalRange(range);
     }
+    chart.priceScale("right").applyOptions({ autoScale: true });
   });
 }
 
