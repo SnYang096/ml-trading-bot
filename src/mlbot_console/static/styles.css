@@ -654,5 +654,5 @@ main {
 .orders-table th.hidden,
 .orders-table td.hidden { display: none; }
 .page-trade-map main.trade-map-main {
-  height: calc(100vh - 88px);
+  height: calc(100vh - 112px);
 }

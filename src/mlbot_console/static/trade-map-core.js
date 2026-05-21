@@ -74,7 +74,6 @@
         shape: pending ? "circle" : markerShape(m, isExit),
         text: selected ? `★ ${baseText}` : baseText,
         id: m.id,
-        _raw: m,
       };
     });
   }
@@ -442,15 +441,56 @@
     return picks;
   }
 
-  /** Tighter spacing => more bars visible on screen. */
+  const DEFAULT_VISIBLE_BARS = 320;
+
+  /** How many bars to show by default (tail window); avoids fitContent squashing 2k+ bars to 0px. */
+  function defaultVisibleBarCount(barCount, cap) {
+    const n = Math.max(0, Number(barCount) || 0);
+    if (n <= 0) return 0;
+    const limit = Number(cap) > 0 ? Number(cap) : DEFAULT_VISIBLE_BARS;
+    return Math.min(n, Math.max(30, limit));
+  }
+
+  function visibleLogicalRange(barCount, visibleBars) {
+    const n = Math.max(0, Number(barCount) || 0);
+    if (n <= 0) return null;
+    const vis = defaultVisibleBarCount(n, visibleBars);
+    return { from: Math.max(0, n - vis), to: n - 1 };
+  }
+
+  function sanitizeCandlesForLwc(candles) {
+    if (!Array.isArray(candles) || !candles.length) return [];
+    const out = [];
+    let lastT = null;
+    for (const raw of candles) {
+      const time = Number(raw?.time);
+      const close = Number(raw?.close);
+      if (!Number.isFinite(time) || !Number.isFinite(close)) continue;
+      if (lastT != null && time <= lastT) continue;
+      lastT = time;
+      let open = Number(raw?.open);
+      let high = Number(raw?.high);
+      let low = Number(raw?.low);
+      if (!Number.isFinite(open)) open = close;
+      if (!Number.isFinite(high)) high = Math.max(open, close);
+      if (!Number.isFinite(low)) low = Math.min(open, close);
+      const c = { time, open, high, low, close };
+      if (raw?.volume != null && Number.isFinite(Number(raw.volume))) {
+        c.volume = Number(raw.volume);
+      }
+      out.push(c);
+    }
+    return out;
+  }
+
+  /** Bar spacing in px for the *visible* window (not full history length). */
   function barSpacingForCount(barCount) {
     const n = Math.max(0, Number(barCount) || 0);
-    if (n > 800) return 1;
-    if (n > 400) return 2;
-    if (n > 200) return 3;
-    if (n > 80) return 4;
-    if (n > 30) return 5;
-    return 6;
+    if (n > 600) return 3;
+    if (n > 300) return 4;
+    if (n > 120) return 5;
+    if (n > 50) return 6;
+    return 8;
   }
 
   const FEATURE_PRESETS = {
@@ -483,7 +523,11 @@
     groupFeatureColumnsByStrategy,
     orderFeaturePaneItems,
     presetColumnsForAccountLayer,
+    defaultVisibleBarCount,
+    visibleLogicalRange,
+    sanitizeCandlesForLwc,
     barSpacingForCount,
+    DEFAULT_VISIBLE_BARS,
     FEATURE_PRESETS,
     ACCOUNT_LAYER_ORDER,
     STAGE_ORDER,

@@ -30,6 +30,13 @@ const lwc = Core.markersToLwc(markers);
 const scopes = Core.scopesFromLayers({ trend: true, spot: false, multiLeg: true, pending: false });
 const grafana = Core.resolveLinkUrl({ id: "grafana", url: "http://host.docker.internal:3000/" });
 const spacing = Core.barSpacingForCount(500);
+const vis = Core.defaultVisibleBarCount(2161);
+const range = Core.visibleLogicalRange(2161);
+const clean = Core.sanitizeCandlesForLwc([
+  { time: 100, open: 1, high: 2, low: 0.5, close: 1.5 },
+  { time: 100, open: 9, high: 9, low: 9, close: 9 },
+  { time: 200, open: 2, high: 3, low: 1, close: 2.5, volume: 10 },
+]);
 Core.setFeatureTaxonomy({
   strategies: [
     { id: "tpc", account_layer: "trend", title: "TPC", stages: { prefilter: ["tpc_pullback_depth"], gate: ["tpc_semantic_chop"] } },
@@ -52,6 +59,7 @@ const hit = Core.findMarkerByTime(markers, 1, 7200);
 const sel = Core.markersToLwc(markers, "trend:orders:1");
 console.log(JSON.stringify({
   scopes, lwcCount: lwc.length, pendingShape: lwc[1].shape, grafana, spacing,
+  vis, range, cleanLen: clean.length, cleanTime: clean[1].time,
   groupTitles: grouped.map((g) => g[0]),
   planTypes: plan.map((p) => p.type),
   metaStage: meta.stage,
@@ -75,7 +83,11 @@ def test_trade_map_core_node():
     assert out["scopes"] == "trend,multi_leg"
     assert out["lwcCount"] == 2
     assert out["pendingShape"] == "circle"
-    assert out["spacing"] == 2
+    assert out["spacing"] == 4
+    assert out["vis"] == 320
+    assert out["range"] == {"from": 1841, "to": 2160}
+    assert out["cleanLen"] == 2
+    assert out["cleanTime"] == 200
     assert "B·Trend › TPC › Prefilter" in out["groupTitles"][0]
     assert "Prefilter" in out["groupTitles"][1]
     assert out["metaStage"] == "prefilter"

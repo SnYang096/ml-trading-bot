@@ -147,13 +147,27 @@ function chartBaseOptions() {
 }
 
 function applyChartViewport(barCount) {
-  const spacing = Core.barSpacingForCount(barCount);
+  const visible = Core.defaultVisibleBarCount(barCount);
+  const spacing = Core.barSpacingForCount(visible);
   chart.timeScale().applyOptions({
     barSpacing: spacing,
     minBarSpacing: 0.5,
     rightOffset: 8,
   });
-  chart.timeScale().fitContent();
+  const range = Core.visibleLogicalRange(barCount);
+  if (range) {
+    chart.timeScale().setVisibleLogicalRange(range);
+    syncSubchartsToMainRange();
+  }
+}
+
+function syncSubchartsToMainRange() {
+  if (!chart) return;
+  const range = chart.timeScale().getVisibleLogicalRange();
+  if (!range) return;
+  for (const pane of subcharts.values()) {
+    pane.chart.timeScale().setVisibleLogicalRange(range);
+  }
 }
 
 function initMainChart() {
@@ -181,6 +195,13 @@ function initMainChart() {
     resize();
     resizeAllSubcharts();
   });
+  if (typeof ResizeObserver !== "undefined") {
+    const ro = new ResizeObserver(() => {
+      resize();
+      resizeAllSubcharts();
+    });
+    ro.observe(el);
+  }
   resize();
   bindTimeScaleSync();
   chart.subscribeClick((param) => {
@@ -199,14 +220,6 @@ function resizeAllSubcharts() {
     const h = pane.host.clientHeight;
     if (w > 0 && h > 0) {
       pane.chart.applyOptions({ width: w, height: h });
-    }
-  }
-}
-
-function fitFeatureSubcharts() {
-  for (const pane of subcharts.values()) {
-    if (pane.kind === "feature") {
-      pane.chart.timeScale().fitContent();
     }
   }
 }
@@ -387,7 +400,7 @@ function ensureFeaturePane(column, overlay, colorIndex) {
   }
   requestAnimationFrame(() => {
     resizeAllSubcharts();
-    pane.chart.timeScale().fitContent();
+    syncSubchartsToMainRange();
   });
 }
 
@@ -424,7 +437,7 @@ function syncSubcharts(candles, overlays) {
 
   requestAnimationFrame(() => {
     resizeAllSubcharts();
-    if (subcharts.size) fitFeatureSubcharts();
+    syncSubchartsToMainRange();
   });
 }
 
@@ -441,9 +454,8 @@ function formatOverlayStatus(overlays) {
 
 function applyMarkers(rawMarkers) {
   lastRawMarkers = rawMarkers || [];
-  const lwc = Core.markersToLwc(lastRawMarkers, selectedMarkerId);
-  markerById = new Map(lwc.map((m) => [m.id, m._raw]));
-  candleSeries.setMarkers(lwc);
+  markerById = new Map(lastRawMarkers.map((m) => [m.id, m]));
+  candleSeries.setMarkers(Core.markersToLwc(lastRawMarkers, selectedMarkerId));
 }
 
 function scrollChartToMarker(markerTime) {
@@ -775,7 +787,7 @@ async function refreshBundle() {
     q.set("full_range", "false");
   }
   const { data, meta } = await Shell.api(`/api/trade-map/bundle?${q}`);
-  const candles = data.ohlcv?.candles || [];
+  const candles = Core.sanitizeCandlesForLwc(data.ohlcv?.candles || []);
   lastCandles = candles;
   candleSeries.setData(candles);
   const markers = data.markers || [];
