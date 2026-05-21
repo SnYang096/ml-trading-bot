@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pandas as pd
 
-from app.services.ohlcv_reader import bars_1min_bounds, fetch_ohlcv, load_bars_1min
+from mlbot_console.services.ohlcv_reader import (
+    bars_1min_bounds,
+    fetch_ohlcv,
+    load_bars_1min,
+)
 
 
 def test_full_range_loads_all_fixture_bars(bus_root):

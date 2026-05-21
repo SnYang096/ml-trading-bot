@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from app.services.db import query_one
+from mlbot_console.services.db import query_one
 
 
 def parse_marker_id(marker_id: str) -> Optional[Dict[str, str]]:

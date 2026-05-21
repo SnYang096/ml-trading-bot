@@ -10,8 +10,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from app.services.macro_spot_daily import MacroSpotDailyLoader
-from app.services.ohlcv_reader import fetch_ohlcv
+from mlbot_console.services.macro_spot_daily import MacroSpotDailyLoader
+from mlbot_console.services.ohlcv_reader import fetch_ohlcv
 
 
 def _write_monthly_zip(dest: Path, rows: list[list]) -> None:

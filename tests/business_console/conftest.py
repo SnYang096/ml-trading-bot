@@ -1,4 +1,4 @@
-"""Pytest fixtures for business console (deploy/business-console/backend)."""
+"""Pytest fixtures for business console (src/mlbot_console)."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-BACKEND_ROOT = PROJECT_ROOT / "deploy" / "business-console" / "backend"
-if str(BACKEND_ROOT) not in sys.path:
-    sys.path.insert(0, str(BACKEND_ROOT))
+SRC_ROOT = PROJECT_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 
 
 @pytest.fixture
@@ -225,7 +225,7 @@ def multi_leg_db(tmp_path: Path) -> Path:
 def console_settings(
     bus_root, trend_db, spot_db, multi_leg_db, tmp_path
 ) -> "ConsoleSettings":
-    from app.config import ConsoleSettings
+    from mlbot_console.config import ConsoleSettings
 
     universe = tmp_path / "universe.yaml"
     universe.write_text(
@@ -264,17 +264,17 @@ def console_settings(
 def client(console_settings, monkeypatch):
     from fastapi.testclient import TestClient
 
-    from app.main import app
+    from mlbot_console.main import app
 
     for mod in (
-        "app.config",
-        "app.routers.trade_map",
-        "app.routers.bus",
-        "app.routers.health",
-        "app.routers.constitution",
-        "app.routers.spot",
-        "app.routers.orders",
-        "app.routers.links",
+        "mlbot_console.config",
+        "mlbot_console.routers.trade_map",
+        "mlbot_console.routers.bus",
+        "mlbot_console.routers.health",
+        "mlbot_console.routers.constitution",
+        "mlbot_console.routers.spot",
+        "mlbot_console.routers.orders",
+        "mlbot_console.routers.links",
     ):
         monkeypatch.setattr(f"{mod}.SETTINGS", console_settings)
     return TestClient(app)

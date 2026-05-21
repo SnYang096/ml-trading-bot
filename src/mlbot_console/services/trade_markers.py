@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
-from app.services.db import query_rows
+from mlbot_console.services.db import query_rows
 
 # Visual tokens aligned with scripts/event_backtest/reporting/trading_map.py
 STRATEGY_COLORS: Dict[str, str] = {

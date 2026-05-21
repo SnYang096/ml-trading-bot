@@ -6,10 +6,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from app.services import ohlcv_reader
-from app.services.ohlcv_reader import bars_1min_bounds
-from app.services.spot_eligibility import spot_eligibility_summary
-from app.services.trade_markers import collect_markers
+from mlbot_console.services import ohlcv_reader
+from mlbot_console.services.ohlcv_reader import bars_1min_bounds
+from mlbot_console.services.spot_eligibility import spot_eligibility_summary
+from mlbot_console.services.trade_markers import collect_markers
 
 SCOPE_LABELS: Dict[str, str] = {
     "trend": "B·Trend",

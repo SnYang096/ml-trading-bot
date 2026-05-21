@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from app.services.trade_markers import collect_markers, spot_markers, trend_markers
+from mlbot_console.services.trade_markers import (
+    collect_markers,
+    spot_markers,
+    trend_markers,
+)
 
 
 def test_trend_markers_entry_exit(trend_db):

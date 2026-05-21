@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.config import SETTINGS
-from app.responses import ok
-from app.services import ohlcv_reader
-from app.services.db import db_status
-from app.services.universe import load_universe_symbols
+from mlbot_console.config import SETTINGS
+from mlbot_console.responses import ok
+from mlbot_console.services import ohlcv_reader
+from mlbot_console.services.db import db_status
+from mlbot_console.services.universe import load_universe_symbols
 
 router = APIRouter(tags=["health"])
 

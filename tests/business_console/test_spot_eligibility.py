@@ -1,4 +1,4 @@
-from app.services.spot_eligibility import spot_eligibility_summary
+from mlbot_console.services.spot_eligibility import spot_eligibility_summary
 
 
 def test_spot_eligibility_blockers(bus_root, spot_db):

@@ -169,7 +169,7 @@ def _extract_features_from_prefilter(cfg: Dict[str, Any]) -> Set[str]:
 
 def _extract_features_from_direction(cfg: Dict[str, Any]) -> Set[str]:
     """Extract feature columns referenced in direction.yaml direction_rules."""
-    from src.time_series_model.live.direction_rule_ops import (
+    from time_series_model.live.direction_rule_ops import (
         parse_dual_rule,
         parse_signal_match_position_band_rule,
         parse_single_position_band_rule,

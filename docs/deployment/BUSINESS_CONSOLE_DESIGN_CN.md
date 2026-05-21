@@ -166,7 +166,7 @@ Spot  eligibility 已在 `decision_chain_debug` 打日志；CMS 可解析最近 
 | **1min** | `1min` | 同上（直通 1m） | — |
 | **日线** | `1d` | `live/highcap/data/macro/spot_klines`（Vision 日 K，默认自 2017） | 尾部与 `bars_1min` 重采样合并；不受 `max_rows`/180d 1m 窗口限制；周线 seed 仍为附图 |
 
-实现：`deploy/business-console/backend/app/services/ohlcv_reader.py`；API：`GET /api/bus/ohlcv`、`GET /api/trade-map/bundle`（`source: bars_1min`）。
+实现：`src/mlbot_console/services/ohlcv_reader.py`；API：`GET /api/bus/ohlcv`、`GET /api/trade-map/bundle`（`source: bars_1min`）。
 
 **OHLC 列约定**：Parquet 行须映射为 `{ time, open, high, low, close, volume? }`（UTC 秒或毫秒，与 Lightweight Charts 一致）。若 feature 表仅有 `close`，则 `open/high/low` 用 `close` 填充并打 `meta.degraded_ohlc=true`（前端灰字提示）。
 
@@ -314,8 +314,8 @@ Spot  eligibility 已在 `decision_chain_debug` 打日志；CMS 可解析最近 
 ### 5.1 组件
 
 ```
-deploy/business-console/
-  docker-compose.business-console.yml   # 可选，与 monitoring 并列
+src/mlbot_console/          # FastAPI app + static UI（业务代码）
+deploy/business-console/    # Dockerfile、compose、run_console.sh
   backend/                            # FastAPI 推荐（与仓库 Python 3.12 一致）
     app/
       main.py

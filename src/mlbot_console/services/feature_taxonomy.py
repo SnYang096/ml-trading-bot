@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from app.config import SETTINGS
-from app.services.feature_stage_taxonomy import build_console_feature_taxonomy
+from mlbot_console.config import SETTINGS
+from time_series_model.live.feature_stage_taxonomy import build_console_feature_taxonomy
 
 _EMPTY_TAXONOMY: Dict[str, Any] = {
     "strategies": [],
@@ -18,13 +17,9 @@ _EMPTY_TAXONOMY: Dict[str, Any] = {
 }
 
 
-def strategies_config_root() -> Path:
-    return SETTINGS.strategies_root
-
-
 @lru_cache(maxsize=1)
 def get_feature_taxonomy() -> Dict[str, Any]:
-    root = strategies_config_root()
+    root = SETTINGS.strategies_root
     if not root.is_dir():
         return dict(_EMPTY_TAXONOMY)
     try:

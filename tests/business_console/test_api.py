@@ -9,7 +9,7 @@ import pytest
 
 pytest.importorskip("fastapi")
 
-from app.config import ConsoleSettings
+from mlbot_console.config import ConsoleSettings
 
 
 def test_health(client):
@@ -104,7 +104,7 @@ def test_bus_ohlcv_window_error(client):
 
 
 def test_markers_missing_db(client, tmp_path, monkeypatch):
-    from app.main import app
+    from mlbot_console.main import app
     from fastapi.testclient import TestClient
 
     settings = ConsoleSettings(
@@ -133,7 +133,7 @@ def test_markers_missing_db(client, tmp_path, monkeypatch):
         basic_auth_password=None,
         strategies_root=tmp_path / "strategies",
     )
-    monkeypatch.setattr("app.routers.trade_map.SETTINGS", settings)
+    monkeypatch.setattr("mlbot_console.routers.trade_map.SETTINGS", settings)
     c = TestClient(app)
     r = c.get(
         "/api/trade-map/markers",
@@ -150,7 +150,7 @@ def test_basic_auth_required(console_settings):
 
     replace(console_settings, basic_auth_user="tester", basic_auth_password="secret")
 
-    from app.auth import BasicAuthMiddleware
+    from mlbot_console.auth import BasicAuthMiddleware
     from starlette.applications import Starlette
     from starlette.responses import PlainTextResponse
     from starlette.routing import Route

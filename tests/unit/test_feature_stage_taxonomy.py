@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.time_series_model.live.feature_stage_taxonomy import (
+from time_series_model.live.feature_stage_taxonomy import (
     build_console_feature_taxonomy,
     extract_strategy_stage_columns,
 )

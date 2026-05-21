@@ -1,4 +1,4 @@
-from app.services.trade_markers import collect_markers, multi_leg_markers
+from mlbot_console.services.trade_markers import collect_markers, multi_leg_markers
 
 
 def test_multi_leg_markers(multi_leg_db):

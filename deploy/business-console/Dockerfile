@@ -1,15 +1,18 @@
-# Build context: deploy/business-console (CI extracts to /opt/quant-engine/business-console)
+# Build context: repository root (see docker-compose.yml)
 FROM python:3.12-slim
 
 WORKDIR /app
-COPY requirements.txt /tmp/requirements.txt
+
+COPY deploy/business-console/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
-COPY backend /app/backend
-COPY frontend /app/frontend
+COPY src/mlbot_console /app/src/mlbot_console
+COPY src/time_series_model /app/src/time_series_model
+COPY config/strategies /app/config/strategies
 
-ENV PYTHONPATH=/app/backend
+ENV PYTHONPATH=/app/src
 ENV MLBOT_CONSOLE_PORT=8800
+ENV MLBOT_CONSOLE_STRATEGIES_ROOT=/app/config/strategies
 
 EXPOSE 8800
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8800"]
+CMD ["python", "-m", "uvicorn", "mlbot_console.main:app", "--host", "0.0.0.0", "--port", "8800"]

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from app.services.trade_markers import (
+from mlbot_console.services.trade_markers import (
     align_pending_markers_to_candles,
     collect_markers,
 )

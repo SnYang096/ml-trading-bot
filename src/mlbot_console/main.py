@@ -8,9 +8,9 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.auth import BasicAuthMiddleware
-from app.config import SETTINGS
-from app.routers import bus, constitution, health, links, orders, spot, trade_map
+from mlbot_console.auth import BasicAuthMiddleware
+from mlbot_console.config import SETTINGS
+from mlbot_console.routers import bus, constitution, health, links, orders, spot, trade_map
 
 app = FastAPI(
     title="MLBot Business Console",
@@ -33,7 +33,7 @@ app.include_router(spot.router)
 app.include_router(orders.router)
 app.include_router(links.router)
 
-_FRONTEND = Path(__file__).resolve().parents[2] / "frontend"
+_FRONTEND = Path(__file__).resolve().parent / "static"
 if _FRONTEND.is_dir():
     app.mount("/static", StaticFiles(directory=str(_FRONTEND)), name="static")
 

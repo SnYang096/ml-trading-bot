@@ -21,7 +21,7 @@
 #   quant-macro-seed-prepare — oneshot：Vision spot 1d → weekly EMA200 seed（不阻塞 bus）
 #   quant-macro-seed-prepare.timer — 每日刷新最近日 K + 重算 seed（trend/spot/多腿共用 bus 列时读同一份 parquet）
 #   quant-feature-bus — 唯一行情 WS + warmup(≈180d)+GapFiller 补数 + 特征 + FeatureBus；`--skip-macro-warmup` 只读已有 seed
-#   quant-trend-fattail — 方向性趋势 / fat-tail 账户，只读 bus。
+#   quant-trend-swing — 方向性趋势 / swing 账户，只读 bus。
 #   quant-hedge-multileg — Hedge 多腿账户；`MLBOT_MULTI_LEG_SKIP_HEDGE_ON_START=1` 可临时跳过。
 #   quant-spot-accum — 现货吸筹 A 层（spot_accum_simple）；需 BINANCE_SPOT_* Secrets，只读 feature-bus。
 #     symbols 基底默认与 trend 同源：`live/{universe}/universe.yaml` keys（runner 不传 `--symbols`）；
@@ -30,10 +30,10 @@
 #   /opt/quant-engine/live/shared_feature_bus → /app/live/shared_feature_bus  (feature bus parquet)
 #   /opt/quant-engine/live/highcap/data       → /app/live/highcap/data       (live storage / state / logs)
 #   /opt/quant-engine/data                    → /app/data                    (parquet_data 等)
-#   /opt/quant-engine/live/binance_mainnet.env → 通过 --env-file 注入（quant-trend-fattail / quant-hedge-multileg；feature-bus 无此文件）。
+#   /opt/quant-engine/live/binance_mainnet.env → 通过 --env-file 注入（quant-trend-swing / quant-hedge-multileg；feature-bus 无此文件）。
 #   /opt/quant-engine/monitoring → CI 解压 deploy/monitoring，docker compose 拉起 Grafana :3000、Prometheus :9091、sqlite-web :8871-8873；
 #   /opt/quant-engine/business-console → CI 解压 deploy/business-console，docker compose 拉起 Trade Map :8800（127.0.0.1，SSH 隧道/VPN）；
-#   指标端口：quant-feature-bus 9192→9090，quant-trend-fattail 9190→9090，quant-hedge-multileg 9191→9090，quant-spot-accum 9193→9090。
+#   指标端口：quant-feature-bus 9192→9090，quant-trend-swing 9190→9090，quant-hedge-multileg 9191→9090，quant-spot-accum 9193→9090。
 #   注意：Prometheus 运行在 Docker 内，不能抓取只绑定宿主 127.0.0.1 的端口；端口发布需对 docker bridge 可达。
 #   切勿挂 /opt/quant-engine/live → /app/live，会顶掉镜像内 highcap/config 与 scripts。
 # =============================================================
@@ -70,6 +70,9 @@ on:
       - 'deploy/monitoring/**'
       - 'deploy/business-console/**'
       - 'deploy/systemd/quant-business-console.service'
+      - 'src/mlbot_console/**'
+      - 'src/time_series_model/live/**'
+      - 'config/strategies/**'
       - 'live/highcap/universe.yaml'
 
 # 同一时间只允许一个部署
@@ -401,9 +404,9 @@ jobs:
             WantedBy=multi-user.target
             EOF
 
-            sudo tee /etc/systemd/system/quant-trend-fattail.service >/dev/null <<'EOF'
+            sudo tee /etc/systemd/system/quant-trend-swing.service >/dev/null <<'EOF'
             [Unit]
-            Description=Quant directional trend/fattail bus consumer
+            Description=Quant directional trend/swing bus consumer
             After=docker.service network-online.target quant-feature-bus.service
             Requires=docker.service
             Wants=quant-feature-bus.service
@@ -418,8 +421,8 @@ jobs:
             Environment=MLBOT_FEATURE_BUS_BARS_LOOKBACK=240
             Environment=MLBOT_LIVE_WARMUP_DAYS=0
             Environment=MLBOT_LIVE_STORAGE_BASE=data/live_storage
-            ExecStartPre=-/usr/bin/docker rm -f quant-trend-fattail
-            ExecStart=/usr/bin/docker run --rm --name quant-trend-fattail \
+            ExecStartPre=-/usr/bin/docker rm -f quant-trend-swing
+            ExecStart=/usr/bin/docker run --rm --name quant-trend-swing \
               --memory=1024m --memory-swap=1024m \
               -p 9190:9090 \
               --env-file /opt/quant-engine/live/binance_mainnet.env \
@@ -435,7 +438,7 @@ jobs:
               -v /opt/quant-engine/data:/app/data \
               quant-engine:latest \
               bash live/scripts/start_live.sh highcap
-            ExecStop=/usr/bin/docker stop quant-trend-fattail
+            ExecStop=/usr/bin/docker stop quant-trend-swing
 
             [Install]
             WantedBy=multi-user.target
@@ -511,13 +514,13 @@ jobs:
             WantedBy=multi-user.target
             EOF
 
-            sudo sed -i 's/^            //' /etc/systemd/system/quant-warmup-prepare.service /etc/systemd/system/quant-macro-seed-prepare.service /etc/systemd/system/quant-macro-seed-prepare.timer /etc/systemd/system/quant-feature-bus.service /etc/systemd/system/quant-trend-fattail.service /etc/systemd/system/quant-hedge-multileg.service /etc/systemd/system/quant-spot-accum.service
+            sudo sed -i 's/^            //' /etc/systemd/system/quant-warmup-prepare.service /etc/systemd/system/quant-macro-seed-prepare.service /etc/systemd/system/quant-macro-seed-prepare.timer /etc/systemd/system/quant-feature-bus.service /etc/systemd/system/quant-trend-swing.service /etc/systemd/system/quant-hedge-multileg.service /etc/systemd/system/quant-spot-accum.service
             sudo systemctl daemon-reload
             sudo systemctl disable --now quant-engine quant-multi-leg 2>/dev/null || true
             sudo rm -f /etc/systemd/system/quant-engine.service /etc/systemd/system/quant-multi-leg.service
             sudo systemctl daemon-reload
             docker rm -f quant-engine quant-multi-leg 2>/dev/null || true
-            sudo systemctl enable quant-warmup-prepare quant-macro-seed-prepare quant-macro-seed-prepare.timer quant-feature-bus quant-trend-fattail quant-hedge-multileg
+            sudo systemctl enable quant-warmup-prepare quant-macro-seed-prepare quant-macro-seed-prepare.timer quant-feature-bus quant-trend-swing quant-hedge-multileg
             if [ -f /opt/quant-engine/live/binance_spot_mainnet.env ]; then
               sudo systemctl enable quant-spot-accum
               echo "✅ quant-spot-accum enabled (binance_spot_mainnet.env present)"
@@ -531,7 +534,7 @@ jobs:
             # 开机顺序仍由 systemd：warmup oneshot → feature-bus Requires → consumers。
             # 部署时先停三容器再排队 warmup；warmup 可能数十分钟，勿在 CI 内同步等待（占用 Actions/Runner）。
             # --no-block：仅保证任务提交成功；失败需在主机 journalctl 查看。
-            sudo systemctl stop quant-spot-accum quant-trend-fattail quant-hedge-multileg quant-feature-bus || true
+            sudo systemctl stop quant-spot-accum quant-trend-swing quant-hedge-multileg quant-feature-bus || true
             if printf '%s' "${SKIP_WARMUP_PREPARE:-no}" | grep -qi '^yes$\|^true$\|^1$'; then
               echo "=== ⏭️ 跳过 quant-warmup-prepare — skip_warmup_prepare 已勾选 ==="
               st=$(sudo systemctl is-active quant-warmup-prepare 2>/dev/null || true)
@@ -551,7 +554,7 @@ jobs:
             fi
             # Requires=warmup：bus/consumers restart jobs 会在 warmup 成功完成后才实际拉起容器。
             sudo systemctl restart --no-block quant-feature-bus || true
-            sudo systemctl restart --no-block quant-trend-fattail || true
+            sudo systemctl restart --no-block quant-trend-swing || true
             sudo systemctl restart --no-block quant-hedge-multileg || true
             if [ -f /opt/quant-engine/live/binance_spot_mainnet.env ]; then
               sudo systemctl restart --no-block quant-spot-accum || true
@@ -562,7 +565,7 @@ jobs:
             sleep 5
             sudo systemctl list-jobs --no-pager 2>/dev/null || true
             docker ps -a --filter name=quant --format 'table {{.Names}}\t{{.Status}}\t{{.State}}' || true
-            for svc in quant-warmup-prepare quant-macro-seed-prepare quant-macro-seed-prepare.timer quant-feature-bus quant-trend-fattail quant-hedge-multileg quant-spot-accum; do
+            for svc in quant-warmup-prepare quant-macro-seed-prepare quant-macro-seed-prepare.timer quant-feature-bus quant-trend-swing quant-hedge-multileg quant-spot-accum; do
               st=$(sudo systemctl is-active "$svc" 2>/dev/null || true)
               echo "   $svc: ${st:-unknown}"
             done
@@ -576,7 +579,7 @@ jobs:
             echo ""
             echo "=== 📊 部署统计 ==="
             echo "Image: $IMAGE_FULL"
-            echo "TrendFattail: $(docker ps --filter name=quant-trend-fattail --format '{{.Status}}')"
+            echo "TrendSwing: $(docker ps --filter name=quant-trend-swing --format '{{.Status}}')"
             echo "FeatureBus: $(docker ps --filter name=quant-feature-bus --format '{{.Status}}')"
             echo "HedgeMultileg: $(docker ps --filter name=quant-hedge-multileg --format '{{.Status}}')"
             echo "SpotAccum: $(docker ps --filter name=quant-spot-accum --format '{{.Status}}')"
@@ -629,7 +632,7 @@ jobs:
                 quant-account-market \
                 quant-feature-bus \
                 quant-live-architecture \
-                quant-trend-fattail-symbol \
+                quant-trend-swing-symbol \
                 quant-hedge-multileg-symbol \
                 quant-hedge-multileg \
                 quant-strategy-explorer \
@@ -660,12 +663,14 @@ jobs:
             echo ""
             echo "Grafana 默认 http://<主机>:3000 （compose 内 admin/admin，上线后请改密）；Prometheus :9091。"
             echo "SQLite 只读浏览器 sqlite-web：8871=live_monitor / 8872=order_management / 8873=multi_leg_order_management（无登录，勿对公网暴露）。"
-            echo "Metrics: 宿主 9192=feature-bus / 9190=trend-fattail / 9191=hedge-multileg / 9193=spot-accum（Prometheus 经 host.docker.internal，见 deploy/monitoring/prometheus.yml）。"
+            echo "Metrics: 宿主 9192=feature-bus / 9190=trend-swing / 9191=hedge-multileg / 9193=spot-accum（Prometheus 经 host.docker.internal，见 deploy/monitoring/prometheus.yml）。"
 
       - name: 📦 Pack business console (Trade Map)
         run: |
           tar czf mlbot-business-console.tgz \
             -C deploy business-console systemd/quant-business-console.service \
+            -C .. src/mlbot_console \
+            -C .. src/time_series_model \
             -C .. live/highcap/universe.yaml \
             -C .. config/strategies
 

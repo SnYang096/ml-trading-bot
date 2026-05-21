@@ -1,4 +1,4 @@
-from app.services.orders_list import collect_orders, trend_orders
+from mlbot_console.services.orders_list import collect_orders, trend_orders
 
 
 def test_trend_orders_list(trend_db):

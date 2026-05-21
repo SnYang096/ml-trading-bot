@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query
 
-from app.config import SETTINGS
-from app.responses import ok
-from app.services.spot_eligibility import spot_eligibility_summary
+from mlbot_console.config import SETTINGS
+from mlbot_console.responses import ok
+from mlbot_console.services.spot_eligibility import spot_eligibility_summary
 
 router = APIRouter(tags=["spot"])
 

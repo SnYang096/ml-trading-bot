@@ -5,9 +5,9 @@ from pathlib import Path
 import yaml
 from fastapi import APIRouter
 
-from app.config import SETTINGS
-from app.responses import ok
-from app.services.universe import load_universe_symbols
+from mlbot_console.config import SETTINGS
+from mlbot_console.responses import ok
+from mlbot_console.services.universe import load_universe_symbols
 
 router = APIRouter(tags=["constitution"])
 

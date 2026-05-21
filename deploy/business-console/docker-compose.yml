@@ -7,8 +7,8 @@
 services:
   business-console:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: deploy/business-console/Dockerfile
     image: mlbot-business-console:latest
     container_name: mlbot-business-console
     restart: unless-stopped

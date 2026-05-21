@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.config import SETTINGS
-from app.responses import ok
+from mlbot_console.config import SETTINGS
+from mlbot_console.responses import ok
 
 router = APIRouter(tags=["links"])
 

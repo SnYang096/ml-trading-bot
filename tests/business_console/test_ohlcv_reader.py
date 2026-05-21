@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from app.services.ohlcv_reader import (
+from mlbot_console.services.ohlcv_reader import (
     OhlcvWindowError,
     fetch_ohlcv,
     load_bars_1min,

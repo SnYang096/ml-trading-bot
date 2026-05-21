@@ -4,9 +4,9 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Query
 
-from app.config import SETTINGS
-from app.responses import ok
-from app.services.orders_list import collect_orders, multi_leg_orders_list, spot_orders_list, trend_orders
+from mlbot_console.config import SETTINGS
+from mlbot_console.responses import ok
+from mlbot_console.services.orders_list import collect_orders, multi_leg_orders_list, spot_orders_list, trend_orders
 
 router = APIRouter(tags=["orders"])
 

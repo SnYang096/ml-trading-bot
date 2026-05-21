@@ -8,18 +8,18 @@ from fastapi import APIRouter, HTTPException, Query
 
 logger = logging.getLogger(__name__)
 
-from app.config import SETTINGS
-from app.responses import ok
-from app.services import ohlcv_reader
-from app.services.feature_overlay import (
+from mlbot_console.config import SETTINGS
+from mlbot_console.responses import ok
+from mlbot_console.services import ohlcv_reader
+from mlbot_console.services.feature_overlay import (
     DEFAULT_SUBCHART_COLUMNS,
     load_feature_overlays,
 )
-from app.services.marker_detail import marker_detail
-from app.services.ohlcv_reader import OhlcvWindowError
-from app.services.signal_overview import build_signal_overview
-from app.services.trade_markers import align_pending_markers_to_candles, collect_markers
-from app.services.universe import load_universe_symbols
+from mlbot_console.services.marker_detail import marker_detail
+from mlbot_console.services.ohlcv_reader import OhlcvWindowError
+from mlbot_console.services.signal_overview import build_signal_overview
+from mlbot_console.services.trade_markers import align_pending_markers_to_candles, collect_markers
+from mlbot_console.services.universe import load_universe_symbols
 
 router = APIRouter(tags=["trade-map"])
 

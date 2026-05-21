@@ -10,9 +10,9 @@ import pytest
 
 CORE_JS = (
     Path(__file__).resolve().parents[2]
-    / "deploy"
-    / "business-console"
-    / "frontend"
+    / "src"
+    / "mlbot_console"
+    / "static"
     / "trade-map-core.js"
 )
 NODE_SCRIPT = """

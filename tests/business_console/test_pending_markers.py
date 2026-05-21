@@ -1,4 +1,4 @@
-from app.services.trade_markers import collect_markers
+from mlbot_console.services.trade_markers import collect_markers
 
 
 def test_pending_excluded_by_default(trend_db, spot_db, multi_leg_db):

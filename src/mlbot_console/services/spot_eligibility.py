@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from app.services.db import query_one, query_rows
-from app.services.feature_overlay import load_feature_overlay
+from mlbot_console.services.db import query_one, query_rows
+from mlbot_console.services.feature_overlay import load_feature_overlay
 
 
 def _pending_spot_orders(spot_db: Path, symbol: str) -> List[Dict[str, Any]]:

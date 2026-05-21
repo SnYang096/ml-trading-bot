@@ -6,8 +6,9 @@ After=network.target
 Type=simple
 User=quant
 WorkingDirectory=/opt/quant-engine
-Environment=PYTHONPATH=/opt/quant-engine/business-console/backend
+Environment=PYTHONPATH=/opt/quant-engine/src
 Environment=MLBOT_CONSOLE_PORT=8800
+Environment=MLBOT_CONSOLE_STRATEGIES_ROOT=/opt/quant-engine/config/strategies
 Environment=MLBOT_CONSOLE_FEATURE_BUS_ROOT=/opt/quant-engine/live/shared_feature_bus
 Environment=MLBOT_CONSOLE_LIVE_DATA_ROOT=/opt/quant-engine/live/highcap/data
 Environment=MLBOT_CONSOLE_ENGINE_DATA_ROOT=/opt/quant-engine/data
@@ -16,7 +17,7 @@ Environment=MLBOT_CONSOLE_GRAFANA_URL=http://127.0.0.1:3000
 # Optional Basic Auth (uncomment):
 # Environment=MLBOT_CONSOLE_BASIC_AUTH_USER=admin
 # Environment=MLBOT_CONSOLE_BASIC_AUTH_PASSWORD=change-me
-ExecStart=/usr/bin/python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8800
+ExecStart=/usr/bin/python3 -m uvicorn mlbot_console.main:app --host 127.0.0.1 --port 8800
 Restart=on-failure
 RestartSec=5
 

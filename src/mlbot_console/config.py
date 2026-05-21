@@ -9,15 +9,12 @@ from pathlib import Path
 
 
 def _repo_root() -> Path:
-    """Best-effort repo root; production paths come from MLBOT_CONSOLE_* env."""
+    """Repo root: src/mlbot_console/config.py → parents[2]."""
     p = Path(__file__).resolve()
-    if len(p.parents) > 4:
-        cand = p.parents[4]
-        if (cand / "src").is_dir() or (cand / "live").is_dir():
-            return cand
-    if len(p.parents) > 2:
-        return p.parents[2]
-    return p.parent
+    cand = p.parents[2]
+    if (cand / "config").is_dir() or (cand / "src").is_dir():
+        return cand
+    return p.parents[1]
 
 
 @dataclass(frozen=True)

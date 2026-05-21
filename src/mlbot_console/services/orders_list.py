@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from app.services.db import query_rows
-from app.services.trade_markers import _marker_id, _parse_ts
+from mlbot_console.services.db import query_rows
+from mlbot_console.services.trade_markers import _marker_id, _parse_ts
 
 _ALL_SYMBOLS = frozenset({"", "*", "ALL", "__ALL__"})
 

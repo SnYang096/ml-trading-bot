@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from app.services.ohlcv_reader import fetch_ohlcv, stitch_live_storage_and_bus
+from mlbot_console.services.ohlcv_reader import fetch_ohlcv, stitch_live_storage_and_bus
 
 
 @pytest.fixture

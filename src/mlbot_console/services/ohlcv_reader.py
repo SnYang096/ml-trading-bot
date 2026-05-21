@@ -9,8 +9,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
-from app.services.live_storage_bars import load_live_storage_bars_1min
-from app.services.macro_spot_daily import MacroSpotDailyLoader
+from mlbot_console.services.live_storage_bars import load_live_storage_bars_1min
+from mlbot_console.services.macro_spot_daily import MacroSpotDailyLoader
 
 # UI key -> pandas resample rule (canonical source: bars_1min)
 class OhlcvWindowError(ValueError):

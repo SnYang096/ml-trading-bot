@@ -5,12 +5,12 @@ from typing import Optional
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
 
-from app.config import SETTINGS
-from app.responses import ok
-from app.services import ohlcv_reader
-from app.services.feature_overlay import list_feature_columns
-from app.services.feature_taxonomy import get_feature_taxonomy
-from app.services.ohlcv_reader import OhlcvWindowError
+from mlbot_console.config import SETTINGS
+from mlbot_console.responses import ok
+from mlbot_console.services import ohlcv_reader
+from mlbot_console.services.feature_overlay import list_feature_columns
+from mlbot_console.services.feature_taxonomy import get_feature_taxonomy
+from mlbot_console.services.ohlcv_reader import OhlcvWindowError
 
 router = APIRouter(tags=["bus"])
 

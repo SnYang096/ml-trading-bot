@@ -23,18 +23,18 @@ def _free_port() -> int:
 @pytest.fixture
 def live_server(console_settings, monkeypatch):
     for mod in (
-        "app.config",
-        "app.routers.trade_map",
-        "app.routers.bus",
-        "app.routers.health",
-        "app.routers.constitution",
-        "app.routers.spot",
-        "app.routers.links",
+        "mlbot_console.config",
+        "mlbot_console.routers.trade_map",
+        "mlbot_console.routers.bus",
+        "mlbot_console.routers.health",
+        "mlbot_console.routers.constitution",
+        "mlbot_console.routers.spot",
+        "mlbot_console.routers.links",
     ):
         monkeypatch.setattr(f"{mod}.SETTINGS", console_settings)
 
     import uvicorn
-    from app.main import app
+    from mlbot_console.main import app
 
     port = _free_port()
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")

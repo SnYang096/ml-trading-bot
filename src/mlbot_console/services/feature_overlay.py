@@ -123,7 +123,7 @@ def list_feature_columns(
             "timeframe_dir": None,
         }
         if include_taxonomy:
-            from app.services.feature_taxonomy import enrich_columns_with_taxonomy
+            from mlbot_console.services.feature_taxonomy import enrich_columns_with_taxonomy
 
             out.update(enrich_columns_with_taxonomy([]))
         return out
@@ -137,7 +137,7 @@ def list_feature_columns(
             "timeframe_dir": path.parent.name,
         }
         if include_taxonomy:
-            from app.services.feature_taxonomy import enrich_columns_with_taxonomy
+            from mlbot_console.services.feature_taxonomy import enrich_columns_with_taxonomy
 
             out.update(enrich_columns_with_taxonomy([]))
         return out
@@ -151,7 +151,7 @@ def list_feature_columns(
         "timeframe_dir": path.parent.name,
     }
     if include_taxonomy:
-        from app.services.feature_taxonomy import enrich_columns_with_taxonomy
+        from mlbot_console.services.feature_taxonomy import enrich_columns_with_taxonomy
 
         out.update(enrich_columns_with_taxonomy(columns))
     return out

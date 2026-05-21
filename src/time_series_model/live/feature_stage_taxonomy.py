@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from src.time_series_model.live.live_feature_plan import (
+from time_series_model.live.live_feature_plan import (
     _extract_features_from_direction,
     _extract_features_from_entry_filters,
     _extract_features_from_evidence,

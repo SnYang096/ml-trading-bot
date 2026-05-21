@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from app.services.db import query_rows
+from mlbot_console.services.db import query_rows
 
 
 def test_query_rows_on_wal_db(trend_db):
