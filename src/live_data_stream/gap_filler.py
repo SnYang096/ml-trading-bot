@@ -242,8 +242,11 @@ class GapFiller:
         # 转换符号格式（BTCUSDT -> BTC/USDT:USDT）
         ccxt_symbol = self._convert_symbol(symbol)
 
-        # 生成需要下载的时间戳列表
-        time_range = pd.date_range(start_time, end_time, freq=timeframe)
+        # Pandas treats "m" as month-end; ccxt uses "1m" for one minute.
+        pandas_freq = (
+            timeframe.replace("m", "min") if timeframe.endswith("m") else timeframe
+        )
+        time_range = pd.date_range(start_time, end_time, freq=pandas_freq)
 
         # 下载数据
         df = self.data_gap_filler.download_missing_bars(

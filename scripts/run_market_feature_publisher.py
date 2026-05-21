@@ -16,7 +16,7 @@ import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Optional
 
 import pandas as pd
 
@@ -31,6 +31,7 @@ from src.live_data_stream.feature_bus import (  # noqa: E402
     FeatureBusWriter,
     effective_max_rows_for_warmup,
 )
+from src.live_data_stream.auto_gap_fill import auto_gap_fill_loop  # noqa: E402
 from src.live_data_stream.websocket_client import (  # noqa: E402
     BinanceTick,
     BinanceWebSocketClient,
@@ -208,6 +209,30 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--fast-bar-threshold-pct", type=float, default=0.03)
     p.add_argument("--fast-bar-bucket-seconds", type=int, default=10)
     p.add_argument("--use-futures", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument(
+        "--auto-gap-fill-interval-minutes",
+        type=float,
+        default=float(os.getenv("MLBOT_AUTO_GAP_FILL_INTERVAL_MINUTES", "60")),
+        help="Background large-gap repair interval. Set <=0 to disable.",
+    )
+    p.add_argument(
+        "--auto-gap-fill-lookback-hours",
+        type=float,
+        default=float(os.getenv("MLBOT_AUTO_GAP_FILL_LOOKBACK_HOURS", "48")),
+        help="How far back to scan live 1m bars for large gaps.",
+    )
+    p.add_argument(
+        "--auto-gap-fill-min-gap-minutes",
+        type=float,
+        default=float(os.getenv("MLBOT_AUTO_GAP_FILL_MIN_GAP_MINUTES", "60")),
+        help="Minimum 1m bar gap size repaired by the background filler.",
+    )
+    p.add_argument(
+        "--auto-gap-fill-initial-delay-seconds",
+        type=float,
+        default=float(os.getenv("MLBOT_AUTO_GAP_FILL_INITIAL_DELAY_SECONDS", "300")),
+        help="Delay after feature-bus startup before first background gap scan.",
+    )
     p.add_argument(
         "--macro-kline-root",
         default="live/highcap/data/macro/spot_klines",
@@ -437,6 +462,27 @@ async def async_main() -> None:
         for listener in manager.listeners.values():
             listener.last_feature_compute_time = now
     await manager.start_all()
+    auto_gap_task: Optional[asyncio.Task] = None
+    if args.auto_gap_fill_interval_minutes > 0 and manager.gap_filler is not None:
+        logger.info(
+            "auto-gap-fill: enabled interval=%.1fmin lookback=%.1fh min_gap=%.1fmin",
+            args.auto_gap_fill_interval_minutes,
+            args.auto_gap_fill_lookback_hours,
+            args.auto_gap_fill_min_gap_minutes,
+        )
+        auto_gap_task = asyncio.create_task(
+            auto_gap_fill_loop(
+                manager.storage_manager,
+                manager.gap_filler,
+                symbols,
+                interval_seconds=args.auto_gap_fill_interval_minutes * 60.0,
+                lookback_hours=args.auto_gap_fill_lookback_hours,
+                min_gap_minutes=args.auto_gap_fill_min_gap_minutes,
+                initial_delay_seconds=args.auto_gap_fill_initial_delay_seconds,
+            )
+        )
+    else:
+        logger.info("auto-gap-fill: disabled")
 
     ws_client = BinanceWebSocketClient(symbols=symbols, use_futures=args.use_futures)
 
@@ -461,6 +507,10 @@ async def async_main() -> None:
         _set_ws_connected(1)
         await ws_client.run(stop_event)
     finally:
+        if auto_gap_task is not None:
+            auto_gap_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await auto_gap_task
         metrics_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await metrics_task
