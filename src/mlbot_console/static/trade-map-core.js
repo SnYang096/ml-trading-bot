@@ -68,7 +68,10 @@
       const selected = selectedId && m.id === selectedId;
       const strat = (m.strategy || m.scope || "").toLowerCase();
       const purpose = (m.detail && m.detail.purpose) || "";
-      const purposeTag = purpose && purpose !== strat ? `:${purpose}` : "";
+      const purposeLc = String(purpose).toLowerCase();
+      const eventLc = String(m.event || "").toLowerCase();
+      const purposeTag =
+        purpose && purposeLc !== strat && purposeLc !== eventLc ? `:${purpose}` : "";
       const baseText = `${strat}:${m.event}${purposeTag}${pending ? ":pending" : ""}`;
       return {
         time: m.time,

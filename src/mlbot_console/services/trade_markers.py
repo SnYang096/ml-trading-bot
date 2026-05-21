@@ -9,6 +9,19 @@ from typing import Any, Dict, List, Optional, Set
 from mlbot_console.services.db import query_rows
 
 # Visual tokens aligned with scripts/event_backtest/reporting/trading_map.py
+# Exchange / OMS statuses that count as still-open working orders (shown when Pending is on).
+_OPEN_ORDER_STATUSES = frozenset(
+    {
+        "open",
+        "pending",
+        "new",
+        "submitted",
+        "shadow",
+        "partially_filled",
+        "partial_filled",
+    }
+)
+
 STRATEGY_COLORS: Dict[str, str] = {
     "tpc": "#3274D9",
     "bpc": "#3274D9",
@@ -266,13 +279,7 @@ def trend_markers(
         status = str(row.get("status") or "").lower()
         filled_qty = _f(row.get("filled_quantity")) or 0.0
         is_filled = status in {"filled", "partially_filled"} or filled_qty > 0
-        if not is_filled and status not in {
-            "open",
-            "pending",
-            "new",
-            "submitted",
-            "shadow",
-        }:
+        if not is_filled and status not in _OPEN_ORDER_STATUSES:
             continue
         ft = _parse_ts(row.get("filled_at")) or _parse_ts(row.get("created_at"))
         if ft is None:
@@ -334,7 +341,7 @@ def spot_markers(
         status = str(row.get("status") or "").lower()
         filled_qty = _f(row.get("filled_quantity")) or 0.0
         if status not in {"filled", "closed", "partially_filled"} and filled_qty <= 0:
-            if status not in {"submitted", "open", "pending", "new", "shadow"}:
+            if status not in _OPEN_ORDER_STATUSES:
                 continue
         ts = _parse_ts(row.get("updated_at")) or _parse_ts(row.get("created_at"))
         if ts is None:
@@ -397,8 +404,11 @@ def multi_leg_markers(
         status = str(row.get("status") or "").lower()
         filled_qty = _f(row.get("filled_quantity")) or 0.0
         is_filled = status in {"filled", "closed"} or filled_qty > 0
-        if not is_filled and not include_open_orders:
-            continue
+        if not is_filled:
+            if not include_open_orders:
+                continue
+            if status not in _OPEN_ORDER_STATUSES:
+                continue
         ts = _parse_ts(row.get("filled_at")) or _parse_ts(row.get("created_at"))
         if ts is None:
             continue
@@ -432,6 +442,7 @@ def multi_leg_markers(
                 "time": ts,
                 "purpose": purpose,
                 "order_type": order_type,
+                "order_status": status,
                 "local_order_id": row.get("local_order_id"),
                 "leg_id": row.get("leg_id"),
                 "take_profit_price": tp_price,
