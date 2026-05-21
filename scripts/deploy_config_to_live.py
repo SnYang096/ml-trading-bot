@@ -96,6 +96,7 @@ def _normalize_deploy_strategy(slug: str) -> str:
 # archetypes 下全部 yaml/json 等文件。
 ARCHETYPE_FILES = [
     "README.md",
+    "regime.yaml",
     "gate.yaml",
     "evidence.yaml",
     "entry_filters.yaml",

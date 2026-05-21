@@ -78,6 +78,11 @@ feature_pipeline:
     # ========== SR 相关 ==========
     - sr_strength_max_f  # 输出包含 sr_strength_max 和 dist_to_nearest_sr
 
+    # ========== Box structure (regime layer 依赖) ==========
+    # regime.yaml 用 box_pos_120 + box_breakout_up/down 判断"非箱体中部"，
+    # 避免在 box mid 区域反复扫单。
+    - box_structure_f
+
     # ========== 订单流 ==========
     - vpin_features_f
     - volume_ratio_pct_f      # 自包含：内部计算 volume/rolling_mean 再转百分位

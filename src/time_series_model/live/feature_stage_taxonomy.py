@@ -123,7 +123,15 @@ def extract_strategy_stage_columns(archetypes_dir: Path) -> Dict[str, List[str]]
     if pre_path.is_file():
         pre = _load_yaml(pre_path)
         stages["prefilter"] |= _extract_features_from_prefilter_full(pre)
+        # 多 leg 引擎仍在 prefilter.yaml 内嵌 regime: block (different schema)
         stages["regime"] |= _extract_features_from_multileg_regime(pre)
+
+    # B-system trend / spot 单 leg：独立 archetypes/regime.yaml (rules schema 与 prefilter 一致)
+    regime_path = d / "regime.yaml"
+    if regime_path.is_file():
+        stages["regime"] |= _extract_features_from_prefilter_full(
+            _load_yaml(regime_path)
+        )
 
     gate_path = d / "gate.yaml"
     if gate_path.is_file():

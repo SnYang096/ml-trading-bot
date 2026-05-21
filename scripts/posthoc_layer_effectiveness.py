@@ -249,6 +249,7 @@ def analyze_strategy(
     )
 
     strat_cfg = config_root / strategy / "archetypes"
+    regime_cfg = _load_yaml(strat_cfg / "regime.yaml")
     prefilter_cfg = _load_yaml(strat_cfg / "prefilter.yaml")
     gate_cfg = _load_yaml(strat_cfg / "gate.yaml")
     entry_cfg = _load_yaml(strat_cfg / "entry_filters.yaml")
@@ -256,10 +257,43 @@ def analyze_strategy(
     scopes = _scopes(df)
     stats: List[EffectStat] = []
     missing_features: Dict[str, Dict[str, List[str]]] = {
+        "regime": {},
         "prefilter": {},
         "gate": {},
         "entry_filter": {},
     }
+    locked_features_missing: Dict[str, Dict[str, List[str]]] = {
+        "regime": {},
+        "prefilter": {},
+        "gate": {},
+        "entry_filter": {},
+    }
+
+    # Regime — 与 Prefilter 同 rules schema，复用 evaluator
+    regime_rules = regime_cfg.get("rules", []) or []
+    rg_flags: List[pd.Series] = []
+    for i, rule in enumerate(regime_rules):
+        name = str(rule.get("id") or rule.get("feature") or f"regime_rule_{i+1}")
+        feats = _collect_prefilter_features(rule)
+        miss = sorted({f for f in feats if f not in df.columns})
+        if miss:
+            missing_features["regime"][name] = miss
+            if bool(rule.get("locked", False)):
+                locked_features_missing["regime"][name] = miss
+        flag = _eval_prefilter_predicate(rule, df)
+        rg_flags.append(flag)
+        for scope_name, scope_mask in scopes.items():
+            stats.append(
+                _build_stat(
+                    strategy,
+                    "regime",
+                    scope_name,
+                    name,
+                    "allow",
+                    flag[scope_mask],
+                    success[scope_mask],
+                )
+            )
 
     # Prefilter
     pre_rules = prefilter_cfg.get("rules", []) or []
@@ -270,6 +304,8 @@ def analyze_strategy(
         miss = sorted({f for f in feats if f not in df.columns})
         if miss:
             missing_features["prefilter"][name] = miss
+            if bool(rule.get("locked", False)):
+                locked_features_missing["prefilter"][name] = miss
         flag = _eval_prefilter_predicate(rule, df)
         pre_flags.append(flag)
         for scope_name, scope_mask in scopes.items():
@@ -318,6 +354,8 @@ def analyze_strategy(
         miss = sorted({f for f in feats if f not in df.columns})
         if miss:
             missing_features["gate"][name] = miss
+            if bool(rule.get("locked", False)):
+                locked_features_missing["gate"][name] = miss
         deny = _eval_gate_when(rule.get("when", {}) or {}, df)
         gate_deny_flags.append(deny)
         for scope_name, scope_mask in scopes.items():
@@ -360,6 +398,8 @@ def analyze_strategy(
         miss = sorted({f for f in feats if f not in df.columns})
         if miss:
             missing_features["entry_filter"][name] = miss
+            if bool(filt.get("locked", False)):
+                locked_features_missing["entry_filter"][name] = miss
         fpass = _eval_entry_filter(filt, df)
         entry_pass_any |= fpass
         for scope_name, scope_mask in scopes.items():
@@ -392,6 +432,7 @@ def analyze_strategy(
         "predictions_path": str(pred_path),
         "n_rows": int(len(df)),
         "missing_features": missing_features,
+        "locked_features_missing": locked_features_missing,
         "stats": [asdict(s) for s in stats],
     }
 
@@ -476,12 +517,18 @@ def _write_markdown(report: List[Dict[str, Any]], out_md: Path) -> None:
         lines.append(f"## {strat['strategy']}")
         lines.append(f"- predictions: `{strat['predictions_path']}`")
         lines.append(f"- rows: `{strat['n_rows']}`")
-        for layer in ("prefilter", "gate", "entry_filter"):
+        for layer in ("regime", "prefilter", "gate", "entry_filter"):
             missing = strat.get("missing_features", {}).get(layer, {})
             if missing:
                 lines.append(f"- missing {layer} features:")
                 for name, feats in missing.items():
                     lines.append(f"  - {name}: {', '.join(feats)}")
+        for layer in ("regime", "prefilter", "gate", "entry_filter"):
+            locked_missing = strat.get("locked_features_missing", {}).get(layer, {})
+            if locked_missing:
+                lines.append(f"- **locked** {layer} rules with missing features:")
+                for name, feats in locked_missing.items():
+                    lines.append(f"  - **{name}**: {', '.join(feats)}")
         for scope in ("all", "bull_ema1200", "bear_ema1200"):
             lines.append(f"- {scope}:")
             for layer, layer_key in (
@@ -517,6 +564,14 @@ def main() -> int:
     parser.add_argument("--results-root", default="results")
     parser.add_argument("--config-root", default="config/strategies")
     parser.add_argument("--out-dir", default="")
+    parser.add_argument(
+        "--strict-locked-features",
+        action="store_true",
+        help=(
+            "Pre-deploy contract: 任何 locked 规则缺特征则 BLOCKED（非零退出码）。"
+            "regime/prefilter/gate/entry 任一层有 locked rule missing → 阻断。"
+        ),
+    )
     args = parser.parse_args()
 
     strategies = [s.strip() for s in str(args.strategies).split(",") if s.strip()]
@@ -542,6 +597,31 @@ def main() -> int:
     _write_markdown(report, out_md)
     print(f"saved: {out_json}")
     print(f"saved: {out_md}")
+
+    if args.strict_locked_features:
+        blockers: List[str] = []
+        for strat in report:
+            locked_missing = strat.get("locked_features_missing", {}) or {}
+            for layer, by_rule in locked_missing.items():
+                if not by_rule:
+                    continue
+                for rule_name, feats in by_rule.items():
+                    blockers.append(
+                        f"{strat['strategy']}/{layer}/{rule_name}: missing {feats}"
+                    )
+        if blockers:
+            blocked_path = out_dir / "BLOCKED.txt"
+            blocked_path.write_text(
+                "Pre-deploy contract failed (locked features missing):\n\n"
+                + "\n".join(f"- {b}" for b in blockers)
+                + "\n",
+                encoding="utf-8",
+            )
+            print("BLOCKED — locked-feature contract violated:")
+            for b in blockers:
+                print(f"  - {b}")
+            print(f"  see {blocked_path}")
+            return 2
     return 0
 
 

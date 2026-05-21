@@ -1,9 +1,13 @@
 """
-Archetype Loader - 三层配置加载器
+Archetype Loader - 多层配置加载器
 
 从 config/strategies/{strategy}/archetypes/ 加载：
-- gate.yaml: Gate 规则 (硬 veto)
+- regime.yaml: Regime 数据空间约束（EMA 带通 / chop 上限 / box 空间 + allowed_sides 多空掩码）
+- prefilter.yaml: Prefilter 策略入场形态 (archetype 成立前提)
+- direction.yaml: Direction 多空检测（在 regime allowed_sides 范围内）
+- gate.yaml: Gate 规则 (硬 veto，仅执行风险)
 - evidence.yaml: Evidence 规则 (软调整)
+- entry_filters.yaml: Entry 订单流确认
 - execution.yaml: Execution 约束 (RR/持仓)
 """
 
@@ -490,19 +494,95 @@ class PrefilterConfig:
 
 
 # =============================================================================
+# Regime Config
+# =============================================================================
+
+_DEFAULT_ALLOWED_REGIMES: Tuple[str, ...] = ("bull", "bear", "neutral")
+_DEFAULT_ALLOWED_SIDES: Tuple[str, ...] = ("long", "short")
+
+
+@dataclass
+class RegimeConfig(PrefilterConfig):
+    """
+    Regime 配置 - 数据空间约束 + 多空掩码。
+
+    职责（区分 Prefilter）:
+        - Prefilter 描述 archetype 入场形态（结构条件，策略语义）
+        - Regime 描述这段策略允许的数据空间（EMA 带、chop 上限、box 状态）
+          以及方向掩码（allowed_sides），是 A/B/C 系统共用的慢变量层。
+
+    规则评估复用 PrefilterConfig 的逻辑（threshold rules），但语义上独立：
+        - 不满足 regime → reject_reason = "regime_..."
+        - 不满足 prefilter → reject_reason = "prefilter_..."
+    """
+
+    allowed_regimes: List[str] = field(
+        default_factory=lambda: list(_DEFAULT_ALLOWED_REGIMES)
+    )
+    allowed_sides: List[str] = field(
+        default_factory=lambda: list(_DEFAULT_ALLOWED_SIDES)
+    )
+
+    @classmethod
+    def from_yaml(cls, path: Path) -> "RegimeConfig":
+        """从 regime.yaml 加载（缺失文件 → 全开放默认值）"""
+        if not path.exists():
+            return cls()
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return cls(
+            rules=list(raw.get("rules") or []),
+            allowed_regimes=list(
+                raw.get("allowed_regimes") or list(_DEFAULT_ALLOWED_REGIMES)
+            ),
+            allowed_sides=list(
+                raw.get("allowed_sides") or list(_DEFAULT_ALLOWED_SIDES)
+            ),
+        )
+
+    def evaluate(self, features: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+        """评估 regime 阈值规则；reject_reason 以 'regime_' 前缀替代 'prefilter_'"""
+        passed, reason = super().evaluate(features)
+        if not passed and reason and reason.startswith("prefilter_"):
+            reason = "regime_" + reason[len("prefilter_") :]
+        return passed, reason
+
+    def allows_side(self, direction: int) -> bool:
+        """direction: +1=long / -1=short / 0=neutral。0 视为无方向，不拦截。"""
+        if direction > 0:
+            return "long" in self.allowed_sides
+        if direction < 0:
+            return "short" in self.allowed_sides
+        return True
+
+    @property
+    def is_empty(self) -> bool:
+        """所有字段为默认值（无规则、无方向限制）"""
+        return (
+            not self.rules
+            and tuple(self.allowed_regimes) == _DEFAULT_ALLOWED_REGIMES
+            and tuple(self.allowed_sides) == _DEFAULT_ALLOWED_SIDES
+        )
+
+
+# =============================================================================
 # Strategy Archetype
 # =============================================================================
 
 
 @dataclass
 class StrategyArchetype:
-    """策略 Archetype - 组合 Prefilter / Gate / Evidence / Execution 四层配置"""
+    """策略 Archetype - 组合 Regime / Prefilter / Gate / Evidence / Execution 配置。
+
+    Layer order at runtime（live + vector backtest 一致）:
+        Regime → Prefilter → Direction → Gate → Entry filters → Evidence → Execution
+    """
 
     name: str
     gate: GateConfig
     evidence: EvidenceConfig
     execution: ExecutionConfig
     prefilter: PrefilterConfig = field(default_factory=PrefilterConfig)
+    regime: RegimeConfig = field(default_factory=RegimeConfig)
 
     # ==========================================================================
     # 向后兼容属性 (兼容旧的 ExecutionArchetype 接口)
@@ -574,11 +654,6 @@ class StrategyArchetype:
         """兼容旧接口：返回 evidence_rules 格式"""
         # 返回空列表，因为新架构使用 compute_evidence_score
         return []
-
-    @property
-    def regime(self) -> str:
-        """兼容旧接口：返回 regime"""
-        return "ANY"  # 新架构不再使用 regime 分流
 
     def apply_gate(
         self,
@@ -767,6 +842,7 @@ def load_strategy_archetype(
         evidence=EvidenceConfig.from_yaml(arch_dir / "evidence.yaml"),
         execution=ExecutionConfig.from_yaml(arch_dir / "execution.yaml"),
         prefilter=PrefilterConfig.from_yaml(arch_dir / "prefilter.yaml"),
+        regime=RegimeConfig.from_yaml(arch_dir / "regime.yaml"),
     )
 
 

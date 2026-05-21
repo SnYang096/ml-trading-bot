@@ -124,6 +124,63 @@ def list_strategy_runs(history_dir: Path, strategy: str) -> List[str]:
     return sorted([p.name for p in strat_dir.iterdir() if p.is_dir()])
 
 
+def _find_latest_labeled_parquet(history_dir: Path, strategy: str) -> Path | None:
+    """搜索 history_dir/<strategy>/<run_id>/.../features_labeled.parquet 的最新文件。"""
+    runs = list_strategy_runs(history_dir, strategy)
+    for run_id in reversed(runs):
+        for candidate in (history_dir / strategy / run_id).rglob(
+            "features_labeled.parquet"
+        ):
+            if candidate.is_file():
+                return candidate
+    return None
+
+
+def build_parquet_plateau_case(
+    *,
+    strategy: str,
+    template: str,
+    prod_prefilter: Path,
+    tcfg: Dict[str, Any],
+    history_dir: Path,
+    labeled_parquet: Path | None,
+) -> CaseParams:
+    """search_mode=parquet_plateau 时调用 locked_prefilter_parquet_tune 出 1 个候选案例。"""
+    from scripts.locked_prefilter_parquet_tune import (
+        suggest_locked_prefilter_params_parquet,
+    )
+
+    if labeled_parquet is None:
+        labeled_parquet = _find_latest_labeled_parquet(history_dir, strategy)
+    if labeled_parquet is None or not labeled_parquet.exists():
+        raise SystemExit(
+            "search_mode=parquet_plateau 需要 features_labeled.parquet：\n"
+            "  - 显式 --labeled-parquet 指定，或\n"
+            f"  - 在 {history_dir}/{strategy}/<run_id>/ 下先跑一次普通管线生成。"
+        )
+
+    prefilter_gates = {
+        "label_col": tcfg.get("label_col"),
+        "min_pass_rate": tcfg.get("min_pass_rate", 0.01),
+    }
+    norm_params, meta = suggest_locked_prefilter_params_parquet(
+        prod_prefilter_path=prod_prefilter,
+        labeled_parquet_path=labeled_parquet,
+        template=template,
+        tcfg=tcfg,
+        prefilter_gates=prefilter_gates,
+    )
+    print(
+        f"   📦 parquet_plateau: labeled={labeled_parquet} "
+        f"n_rows={meta.get('n_rows')} baseline_bad={meta.get('baseline_bad_rate'):.4f} "
+        f"label_col={meta.get('label_col')}"
+    )
+    print(f"   📦 plateau-suggested params: {norm_params}")
+    return CaseParams(
+        mode=template, custom_params={k: float(v) for k, v in norm_params.items()}
+    )
+
+
 def build_override_prefilter(
     prod_prefilter_path: Path,
     params: CaseParams,
@@ -333,6 +390,12 @@ def main() -> int:
         default="results/locked_tuning",
         help="where tuning summary files are saved",
     )
+    p.add_argument(
+        "--labeled-parquet",
+        default="",
+        help="Optional features_labeled.parquet for search_mode=parquet_plateau "
+        "(auto-discovered from latest run dir if omitted)",
+    )
     args = p.parse_args()
 
     cfg_path = Path(args.config)
@@ -387,9 +450,26 @@ def main() -> int:
 
     strict_bindings = bool(tcfg.get("writeback_strict", True))
     generic_search_space = tcfg.get("search_space", {}) or {}
+    search_mode = str(tcfg.get("search_mode") or "").strip().lower()
 
     cases: List[CaseParams] = []
-    if (
+    # search_mode=parquet_plateau：跳过笛卡尔网格，直接走标注 parquet 上的
+    # plateau coordinate search 出一个候选（与 locked_prefilter_parquet_tune 对接）。
+    if search_mode in ("parquet_plateau", "plateau_parquet"):
+        labeled_pq = Path(args.labeled_parquet) if args.labeled_parquet else None
+        if labeled_pq is not None and not labeled_pq.is_absolute():
+            labeled_pq = (PROJECT_ROOT / labeled_pq).resolve()
+        cases = [
+            build_parquet_plateau_case(
+                strategy=args.strategy,
+                template=template,
+                prod_prefilter=prod_prefilter,
+                tcfg=tcfg,
+                history_dir=history_dir,
+                labeled_parquet=labeled_pq,
+            )
+        ]
+    elif (
         isinstance(generic_search_space, dict)
         and generic_search_space
         and resolved_writeback

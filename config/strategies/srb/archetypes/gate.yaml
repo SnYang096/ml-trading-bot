@@ -13,22 +13,8 @@ schema:
     selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
     min_gate_score: 0.0
     alert_threshold: 0.25
-hard_gates:
-- id: gate_srb_tpc_semantic_chop_high
-  tag: HARD_SRB_TPC_SEMANTIC_CHOP
-  phase: hard_gate
-  priority: 6
-  reason: SRB 借用 TPC soft phase：同品种 tpc_semantic_chop 高 → 相对近期偏来回扫，不做 SR 突破延续
-  when:
-    tpc_semantic_chop:
-      value_gt: 0.4
-  then:
-    action: deny
-  comment: 本轮与 BPC/ME/TPC 对齐：高 chop 拒单（>0.40）；暂不使用 SR 统计兜底门
-  locked: true
-  frozen: true
-  promote_never_disable: true
-  lock_reason: 波动区过滤（标准），减少 SR 附近 chop 开仓
+# NOTE: gate_srb_tpc_semantic_chop_high 已迁移至 archetypes/regime.yaml。
+hard_gates: []
 guardrails: []
 system_safety:
 - id: gate_srb_vol_persistence_mid

@@ -1980,6 +1980,89 @@ def _eval_when_vectorized(
     return result
 
 
+def _apply_regime_vectorized(
+    df: pd.DataFrame,
+    arch_name: str,
+    strategies_root: str,
+) -> int:
+    """从 regime.yaml 评估 regime 慢变量阈值 + allowed_sides 掩码 (向量化)。
+
+    Regime layer 与 Prefilter 解耦：
+        - Regime 是 A/B/C 共用的数据空间约束 (EMA 带 / chop 上限 / box 状态)
+        - allowed_sides 控制策略允许的方向 (牛市禁空 / 熊市禁多 / 单向策略)
+    在 Direction 之后、Prefilter 之前执行；不满足时 entry_direction → 0。
+
+    Returns:
+        通过 regime 的行数
+    """
+    import operator as _op
+
+    _RG_OPS = {
+        ">=": _op.ge,
+        ">": _op.gt,
+        "<=": _op.le,
+        "<": _op.lt,
+        "==": _op.eq,
+        "!=": _op.ne,
+    }
+
+    rg_path = Path(strategies_root) / arch_name / "archetypes" / "regime.yaml"
+    if not rg_path.exists():
+        return len(df)
+
+    raw = yaml.safe_load(rg_path.read_text(encoding="utf-8")) or {}
+    rules = raw.get("rules") or []
+    allowed_sides = raw.get("allowed_sides") or ["long", "short"]
+    if not rules and set(allowed_sides) == {"long", "short"}:
+        return len(df)
+
+    reject_mask = pd.Series(False, index=df.index)
+    reject_detail: Dict[str, int] = {}
+
+    for rule in rules:
+        feat = rule.get("feature")
+        op_str = rule.get("operator")
+        val = rule.get("value")
+        if not feat or not op_str:
+            continue
+        if feat not in df.columns:
+            print(f"   ⚠️  Regime: feature '{feat}' not in columns — ALL bars rejected!")
+            reject_mask[:] = True
+            reject_detail[f"{feat}(MISSING)"] = len(df)
+            continue
+        op_func = _RG_OPS.get(op_str)
+        if op_func is None:
+            continue
+        fail_mask = ~op_func(df[feat], val)
+        n_rej = int(fail_mask.sum())
+        if n_rej > 0:
+            reject_mask |= fail_mask
+            reject_detail[f"regime:{feat}{op_str}{val}"] = n_rej
+
+    if "long" not in allowed_sides:
+        long_mask = df["entry_direction"] > 0
+        n_long = int(long_mask.sum())
+        if n_long > 0:
+            reject_mask |= long_mask
+            reject_detail[f"regime:disallow_long"] = n_long
+    if "short" not in allowed_sides:
+        short_mask = df["entry_direction"] < 0
+        n_short = int(short_mask.sum())
+        if n_short > 0:
+            reject_mask |= short_mask
+            reject_detail[f"regime:disallow_short"] = n_short
+
+    df.loc[reject_mask, "entry_direction"] = 0.0
+    n_pass = int((~reject_mask).sum())
+    print(
+        f"   🌐 Regime: {n_pass} pass / {len(df)} total"
+        f" (allowed_sides={list(allowed_sides)})"
+    )
+    for desc, cnt in reject_detail.items():
+        print(f"      {desc}: {cnt} reject")
+    return n_pass
+
+
 def _apply_prefilter_vectorized(
     df: pd.DataFrame,
     arch_name: str,
@@ -1987,8 +2070,8 @@ def _apply_prefilter_vectorized(
 ) -> int:
     """从 prefilter.yaml 评估 prefilter (向量化), 将不满足的 bar 的 entry_direction 设为 0。
 
-    语义: archetype 成立的前置环境条件, 不满足时不应产生信号。
-    在 Direction 之后、Gate 之前执行。
+    语义: archetype 入场形态结构。Regime → Prefilter → Direction (已就绪) →
+    Gate → Entry filter 顺序，详见 GenericLiveStrategy.decide。
 
     Returns:
         通过 prefilter 的行数
@@ -3409,6 +3492,14 @@ def _run_pcm_mode(args) -> int:  # noqa: C901
                 f"可用方向相关列: {available_cols}"
             )
             return 1
+
+        # Regime 过滤 (慢变量数据空间 + allowed_sides 多空掩码)
+        _n_before_rg = int((df["entry_direction"] != 0).sum())
+        _apply_regime_vectorized(df, arch_name, strategies_root)
+        _n_after_rg = int((df["entry_direction"] != 0).sum())
+        _funnel["reject_regime"] = (
+            _funnel.get("reject_regime", 0) + _n_before_rg - _n_after_rg
+        )
 
         # Prefilter 过滤 (在 gate 之前)
         _n_before_pf = int((df["entry_direction"] != 0).sum())
@@ -5663,6 +5754,16 @@ def main() -> int:
 
     # 保存原始方向（gate/entry_filter 前），用于 --export-signals
     df["_orig_direction"] = df["entry_direction"].copy()
+
+    # Regime 过滤 (慢变量数据空间 + allowed_sides 多空掩码)
+    _n_before_rg = int((df["entry_direction"] != 0).sum())
+    _apply_regime_vectorized(df, args.strategy, args.strategies_root)
+    _n_after_rg = int((df["entry_direction"] != 0).sum())
+    if _n_before_rg > _n_after_rg:
+        print(
+            f"   🌐 Regime: {_n_before_rg} → {_n_after_rg} "
+            f"(rejected {_n_before_rg - _n_after_rg})"
+        )
 
     # Prefilter 过滤 (在 gate 之前)
     _n_before_pf = int((df["entry_direction"] != 0).sum())

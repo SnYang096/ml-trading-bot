@@ -13,22 +13,8 @@ schema:
     selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
     min_gate_score: 0.0
     alert_threshold: 0.25
+# NOTE: gate_me_semantic_chop_high 已迁移至 archetypes/regime.yaml。
 hard_gates:
-- id: gate_me_semantic_chop_high
-  tag: HARD_ME_SEMANTIC_CHOP
-  phase: hard_gate
-  priority: 6
-  reason: ME 专用：同品种 tpc_semantic_chop 过高 → 拒开仓；低值放行（与 TPC/BPC/SRB 对齐）
-  when:
-    tpc_semantic_chop:
-      value_gt: 0.4
-  then:
-    action: deny
-  comment: deny iff tpc_semantic_chop>0.40（放行 <=0.40）。阈值可扫 0.25/0.30/0.35/0.40
-  locked: true
-  frozen: true
-  promote_never_disable: true
-  lock_reason: 高 chop 拒单；低 chop 放行；与 TPC/BPC/SRB 对齐
 - id: gate_me_late_long_above_ema1200
   tag: HARD_ME_LATE_LONG_EMA1200
   phase: hard_gate

@@ -1,0 +1,47 @@
+# TPC Regime — 慢变量数据空间约束 + 多空掩码
+# A/B/C 共用慢变量层；与 BPC/ME/SRB 同源 chop + box 约束。
+# 详见 docs/strategy/regime_layer.md (TODO) + Tier-0 季度 plateau 校准。
+
+allowed_regimes:
+  - bull
+  - bear
+  - neutral
+
+allowed_sides:
+  - long
+  - short
+
+rules:
+  # ── Chop 上限 (从 gate.yaml 迁移；TPC/BPC/ME/SRB 共用同一阈值) ──
+  - feature: tpc_semantic_chop
+    operator: "<="
+    value: 0.40
+    locked: true
+    lock_reason: Regime 慢变量 — 高 chop 不交易（与 BPC/ME/SRB 同源 chop 口径）
+
+  # ── Box 状态 ──
+  # 不在 box 中部反复扫单；只允许 box 边缘 (≤0.15 或 ≥0.85) 或已 breakout 的 bar。
+  # 历史 (20260425)：TPC inside_box_no_breakout n=154, R=-425（本规则发源地）。
+  - any_of:
+      - feature: box_pos_120
+        operator: "<="
+        value: 0.15
+      - feature: box_pos_120
+        operator: ">="
+        value: 0.85
+      - feature: box_breakout_up
+        operator: ">="
+        value: 0.5
+      - feature: box_breakout_down
+        operator: ">="
+        value: 0.5
+    rationale: 非箱体中部约束 — TPC 不在 box mid 反复扫单
+    locked: true
+    lock_reason: Regime 慢变量 — 只在 box 边缘或已突破时入场
+
+last_calibration:
+  timestamp: null
+  data_source: null
+  plateau_overlap: null
+  notes: |
+    初始引入：从历史 gate.yaml 迁移现存阈值；首轮 Tier-0 calibrate 之前保持现值。

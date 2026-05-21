@@ -1,0 +1,52 @@
+# SRB · pre-deploy replay — 见 bpc/research/pre_deploy_replay.yaml 注释。
+extends: validate_static.constrained.yaml
+
+comparison:
+  min_trades: 0
+deploy_gate:
+  min_trades: 0
+validation:
+  primary_backtest: full_exec
+
+threshold_calibration:
+  enable_model_training: false
+  prefilter:
+    optimize: false
+    locked_threshold_tuning:
+      enabled: false
+  gate:
+    optimize: false
+  entry_filter:
+    optimize: false
+  execution_opt:
+    enabled: false
+  direction_tuning:
+    enabled: false
+
+shap_feature_selection:
+  enabled: false
+
+contract_checks:
+  locked_features:
+    enabled: true
+    on_missing: BLOCKED
+  regime_yaml:
+    required: true
+  plateau_stability:
+    enabled: true
+    on_drift_outside_plateau: ALERT
+
+event_backtest:
+  enabled: true
+  promote: false
+  validation_window: test
+  validation_gate:
+    enabled: true
+    min_event_trades: 0
+    min_event_sharpe_r: 0.0
+    min_event_total_r: 0.0
+    max_event_drawdown_r: 30.0
+    downgrade_to: ALERT
+
+output:
+  history_dir: results/srb/pre_deploy_replay

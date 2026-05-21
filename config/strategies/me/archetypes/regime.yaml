@@ -1,0 +1,46 @@
+# ME Regime — 慢变量数据空间约束 + 多空掩码
+# A/B/C 共用慢变量层；与 BPC/TPC/SRB 同源 chop + box 约束。
+# 注：ME 当前多空都做（ME-Short 实验已结束）；未来若拆单向再改 allowed_sides。
+
+allowed_regimes:
+  - bull
+  - bear
+  - neutral
+
+allowed_sides:
+  - long
+  - short
+
+rules:
+  # ── Chop 上限 (从 gate.yaml 迁移；与 BPC/TPC/SRB 同源) ──
+  - feature: tpc_semantic_chop
+    operator: "<="
+    value: 0.40
+    locked: true
+    lock_reason: Regime 慢变量 — 高 chop 不做动量扩张（与 BPC/TPC/SRB 同源）
+
+  # ── Box 状态 ──
+  # ME 是动量扩张策略；box 中部往返扫单同样恶化（与趋势策略一致结论）。
+  - any_of:
+      - feature: box_pos_120
+        operator: "<="
+        value: 0.15
+      - feature: box_pos_120
+        operator: ">="
+        value: 0.85
+      - feature: box_breakout_up
+        operator: ">="
+        value: 0.5
+      - feature: box_breakout_down
+        operator: ">="
+        value: 0.5
+    rationale: 非箱体中部约束 — 动量扩张不在 box mid 触发
+    locked: true
+    lock_reason: Regime 慢变量 — 只在 box 边缘或已突破时入场
+
+last_calibration:
+  timestamp: null
+  data_source: null
+  plateau_overlap: null
+  notes: |
+    初始引入：从历史 gate.yaml 迁移现存阈值；首轮 Tier-0 calibrate 之前保持现值。

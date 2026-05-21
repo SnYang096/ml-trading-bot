@@ -1,0 +1,68 @@
+# BPC · pre-deploy replay
+#
+# 上线前最后一道闸门：模拟实盘条件，全部参数硬锁，不再做任何 SHAP / 训练 / 阈值优化。
+# Tier-0 (regime.yaml) / Prefilter / Gate / Entry / Execution 都视为已 calibrated 状态：
+#   - locked-feature contract 严格校验：缺特征直接 BLOCKED
+#   - 平摊高原稳定性合约：以 last_calibration 的 plateau range 为基准检查漂移
+#
+# 跑法：pipeline run --config pre_deploy_replay.yaml
+# 报告位置：results/bpc/pre_deploy_replay/
+#
+# 上线流程：通过本阶段 → 写 docs/decisions/pre_deploy/ → 部署 deploy_config_to_live.py
+
+extends: validate_static.constrained.yaml
+
+# 上线模拟下不再因为 trade 数少而过滤 / 报错
+comparison:
+  min_trades: 0
+
+deploy_gate:
+  min_trades: 0
+
+validation:
+  primary_backtest: full_exec
+
+# 关键差异：所有优化全部关闭（包括 Gate/Entry）
+threshold_calibration:
+  enable_model_training: false
+  prefilter:
+    optimize: false
+    locked_threshold_tuning:
+      enabled: false
+  gate:
+    optimize: false
+  entry_filter:
+    optimize: false
+  execution_opt:
+    enabled: false
+  direction_tuning:
+    enabled: false
+
+shap_feature_selection:
+  enabled: false
+
+# Pre-deploy 必须开 locked-feature contract + regime 健康检查
+contract_checks:
+  locked_features:
+    enabled: true
+    on_missing: BLOCKED   # 缺 locked feature → 直接终止，不允许进入回测
+  regime_yaml:
+    required: true        # 必须存在 archetypes/regime.yaml
+  plateau_stability:
+    enabled: true         # 验证 prefilter/gate/entry 阈值是否仍落在原 plateau 范围内
+    on_drift_outside_plateau: ALERT  # 漂移出 plateau → 不阻断，但记录 ALERT
+
+event_backtest:
+  enabled: true
+  promote: false
+  validation_window: test
+  validation_gate:
+    enabled: true
+    min_event_trades: 0
+    min_event_sharpe_r: 0.0
+    min_event_total_r: 0.0
+    max_event_drawdown_r: 30.0
+    downgrade_to: ALERT
+
+output:
+  history_dir: results/bpc/pre_deploy_replay

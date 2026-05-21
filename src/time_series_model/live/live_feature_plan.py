@@ -153,17 +153,31 @@ def _extract_features_from_entry_filters(cfg: Dict[str, Any]) -> Set[str]:
 
 
 def _extract_features_from_prefilter(cfg: Dict[str, Any]) -> Set[str]:
-    """Extract feature columns referenced in prefilter.yaml rules."""
+    """Extract feature columns referenced in prefilter.yaml rules.
+
+    Handles both flat rules ({feature, operator, value}) and OR groups
+    ({any_of: [...]}). Same schema is reused by regime.yaml.
+    """
     features: Set[str] = set()
     rules = cfg.get("rules")
     if not isinstance(rules, list):
         return features
+
+    def _walk(rule: Any) -> None:
+        if isinstance(rule, dict):
+            feat = rule.get("feature")
+            if feat:
+                features.add(str(feat))
+            for sub in rule.get("any_of") or []:
+                _walk(sub)
+            for sub in rule.get("all_of") or []:
+                _walk(sub)
+        elif isinstance(rule, list):
+            for sub in rule:
+                _walk(sub)
+
     for rule in rules:
-        if not isinstance(rule, dict):
-            continue
-        feat = rule.get("feature")
-        if feat:
-            features.add(str(feat))
+        _walk(rule)
     return features
 
 
@@ -235,6 +249,11 @@ def extract_features_from_archetypes(
     """
     d = Path(archetypes_dir)
     feature_columns: Set[str] = set()
+
+    # 0. Regime (慢变量数据空间，与 prefilter 同 rules schema，复用 extractor)
+    regime_path = d / "regime.yaml"
+    if regime_path.exists():
+        feature_columns |= _extract_features_from_prefilter(_load_yaml(regime_path))
 
     # 1. Prefilter
     prefilter_path = d / "prefilter.yaml"

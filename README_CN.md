@@ -303,6 +303,40 @@ mlbot pipeline run --all \
   --stage fast_month --month 2024-09
 ```
 
+### 3.5) Regime 层（A/B/C 共用慢变量）& Pre-deploy Replay（上线前最后闸门）
+
+> 设计：`archetypes/regime.yaml` 是 **A/B/C 系统共用的慢变量数据空间**（EMA 带 / `tpc_semantic_chop` 上限 / box 状态 + `allowed_sides` 多空掩码），其阈值由 **Tier-0 季度 plateau 校准** 维护，不在常规 calibrate_roll / research_roll 中调整。`pre_deploy_replay` 是上线前最后一道闸门：**所有优化全关**，只做 locked-feature contract + plateau 稳定性合约检查。
+
+```bash
+# ── A. Tier-0 季度 regime 阈值校准（默认 dry-run，仅生成 proposal.json + 决策日志）─────
+#    扫 features_labeled.parquet 上 tpc_semantic_chop 的 plateau，与 regime.yaml 中
+#    last_calibration 比较：重叠 → ADOPT；不重叠 → ALERT（保留旧值待人工复核）
+python scripts/regime_threshold_calibrate.py \
+  --strategies bpc,tpc,me,srb \
+  --labeled-parquet results/<latest-run>/features_labeled.parquet \
+  --policy keep_if_no_overlap
+#    确认 docs/decisions/regime_thresholds/<ts>.md 后再加 --apply 原子写回 4 个 regime.yaml
+
+# ── B. Pre-deploy replay：把 prefilter/gate/entry/execution 全部冻结再跑一遍 ─────────
+mlbot pipeline run --all \
+  --config config/strategies/tpc/research/pre_deploy_replay.yaml \
+  --stage rolling_sim --skip-shap 2>&1 | tee log.tpc.predeploy.txt
+# BPC / ME / SRB 同理：替换 strategy 名即可
+
+# ── C. Locked-feature contract（任何 locked 规则缺特征 → 退出码 2 + BLOCKED.txt）─────
+python scripts/posthoc_layer_effectiveness.py \
+  --strategies bpc,tpc,me,srb --strict-locked-features
+
+# ── D. Regime 边际效应 / bull-bear × long-short 拆解 ────────────────────────────────
+python scripts/regime_ablation_report.py --strategies bpc,tpc,me,srb
+
+# ── E. 日常 / 周度 regime 漂移监控（feature 中位数是否漂出 plateau）──────────────────
+python scripts/regime_drift_monitor.py \
+  --strategies bpc,tpc,me,srb \
+  --window-parquet results/<recent>/features_labeled.parquet
+# 退出码非零 = 至少一个策略 ALERT；可挂到 cron 触发 Tier-0 校准
+```
+
 ### 4) 事件回测（Event Backtest）
 
 > 用真实 1min bar 逐笔触发信号，与实盘时序严格对齐；支持 execution 参数 grid search。

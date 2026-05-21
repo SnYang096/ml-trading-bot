@@ -29,21 +29,9 @@ hard_gates:
   disabled: true
   disabled_reason: 'optimization_no_valid_threshold: No threshold meets basic lift/pass_rate requirements'
   lock_reason: VPIN 知情交易活跃度：信息不对称过高时入场胜率下降
-- id: gate_bpc_semantic_chop_high
-  tag: HARD_BPC_SEMANTIC_CHOP
-  phase: hard_gate
-  priority: 6
-  reason: BPC 专用：同品种 tpc_semantic_chop 过高 → 拒开仓；低分位放行（与 TPC/ME/SRB 同构）
-  when:
-    tpc_semantic_chop:
-      value_gt: 0.4
-  then:
-    action: deny
-  comment: deny iff tpc_semantic_chop>0.40（放行 <=0.40）。阈值可扫 0.25/0.30/0.35/0.40
-  locked: true
-  frozen: true
-  promote_never_disable: true
-  lock_reason: 高 chop 拒单；低 chop 放行；与 TPC/ME/SRB 对齐
+# NOTE: gate_bpc_semantic_chop_high 已迁移至 archetypes/regime.yaml
+#       （regime 层是 A/B/C 共用的慢变量层，chop 上限是数据空间约束）。
+#       Tier-0 季度 plateau 校准统一在 regime_threshold_calibrate 中处理。
 guardrails: []
 system_safety:
 - id: gate_vol_persistence_vol_persistence

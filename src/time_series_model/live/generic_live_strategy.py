@@ -998,6 +998,27 @@ class GenericLiveStrategy:
             )
             return []
 
+        # ── 0a. Regime check (慢变量数据空间: EMA 带 / chop 上限 / box 状态) ──
+        # Regime 与 Prefilter 解耦：Regime 是 A/B/C 共用慢变量层，
+        # Prefilter 是策略 archetype 入场形态。
+        if self.archetype and not self.archetype.regime.is_empty:
+            rg_passed, rg_reason = self.archetype.regime.evaluate(features)
+            funnel["regime"] = rg_passed
+            if not rg_passed:
+                logger.debug(f"❌ Regime denied: {rg_reason}")
+                funnel["regime_reason"] = rg_reason
+                self._last_funnel = funnel
+                record_fer_entry_eval(
+                    strategy=self.strategy_name,
+                    symbol=symbol,
+                    signal_ts=_sig_ts,
+                    outcome="regime_deny",
+                    funnel=funnel,
+                    features=features,
+                )
+                return []
+            logger.debug("✅ Regime passed")
+
         # ── 0. Prefilter 前置条件检查 ──
         if self.archetype and self.archetype.prefilter.rules:
             pf_passed, pf_reason = self.archetype.prefilter.evaluate(features)
@@ -1063,6 +1084,23 @@ class GenericLiveStrategy:
                 symbol=symbol,
                 signal_ts=_sig_ts,
                 outcome="no_direction",
+                funnel=funnel,
+                features=features,
+            )
+            return []
+
+        # Regime allowed_sides 掩码（牛市禁空 / 熊市禁多 / 单向策略）
+        if self.archetype and not self.archetype.regime.allows_side(direction):
+            funnel["regime_side_block"] = True
+            funnel["regime_side_attempted"] = "long" if direction > 0 else "short"
+            funnel["regime_allowed_sides"] = list(self.archetype.regime.allowed_sides)
+            funnel["direction_reason"] = "regime_disallows_side"
+            self._last_funnel = funnel
+            record_fer_entry_eval(
+                strategy=self.strategy_name,
+                symbol=symbol,
+                signal_ts=_sig_ts,
+                outcome="regime_side_deny",
                 funnel=funnel,
                 features=features,
             )
