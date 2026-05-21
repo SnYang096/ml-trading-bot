@@ -10,7 +10,10 @@ from mlbot_console.responses import ok
 from mlbot_console.services import ohlcv_reader
 from mlbot_console.services.feature_overlay import list_feature_columns
 from mlbot_console.services.feature_taxonomy import get_feature_taxonomy
-from mlbot_console.services.ohlcv_reader import OhlcvWindowError
+from mlbot_console.services.ohlcv_reader import (
+    OhlcvWindowError,
+    assert_trade_map_timeframe,
+)
 
 router = APIRouter(tags=["bus"])
 
@@ -58,7 +61,11 @@ def bus_feature_columns(
     symbol: str = Query(...),
     timeframe: str = Query("2h"),
 ) -> dict:
-    data = list_feature_columns(SETTINGS.feature_bus_root, symbol, timeframe)
+    try:
+        tf = assert_trade_map_timeframe(timeframe)
+    except OhlcvWindowError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    data = list_feature_columns(SETTINGS.feature_bus_root, symbol, tf)
     return ok(data)
 
 

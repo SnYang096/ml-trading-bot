@@ -16,7 +16,7 @@ def test_trade_map_html_served(client):
     assert "featurePanelBtn" in body
     assert "featureSearch" in body
     assert "subchartStack" in body
-    assert 'data-feature-action="preset-trend"' in body
+    assert 'data-feature-action="preset-tpc"' in body
     assert 'data-feature-action="preset-spot"' in body
     assert "marker-detail-drawer" in body
     assert "ordersDock" in body

@@ -17,12 +17,82 @@ class OhlcvWindowError(ValueError):
     """Requested time range exceeds configured max window."""
 
 
+# Trade Map UI timeframes (no 1min — too heavy on bars_1min resample).
+TRADE_MAP_TIMEFRAMES = frozenset({"2h", "120T", "15min", "1d", "1w"})
+
+# Default visible window when client does not send from/to (keep payloads small).
+TRADE_MAP_INITIAL_DAYS: Dict[str, int] = {
+    "15min": 14,
+    "2h": 60,
+    "120T": 60,
+    "1d": 120,
+    "1w": 365,
+}
+
+# Extra history loaded when user pans chart toward the past.
+TRADE_MAP_HISTORY_CHUNK_DAYS: Dict[str, int] = {
+    "15min": 7,
+    "2h": 30,
+    "120T": 30,
+    "1d": 90,
+    "1w": 180,
+}
+
+
+def assert_trade_map_timeframe(timeframe: str) -> str:
+    tf = str(timeframe or "").strip()
+    if tf not in TRADE_MAP_TIMEFRAMES:
+        raise OhlcvWindowError(
+            f"unsupported timeframe {timeframe!r}; "
+            f"Trade Map supports {', '.join(sorted(TRADE_MAP_TIMEFRAMES))}"
+        )
+    return tf
+
+
+def resolve_trade_map_window(
+    timeframe: str,
+    *,
+    start: Optional[pd.Timestamp] = None,
+    end: Optional[pd.Timestamp] = None,
+    full_range: bool = False,
+) -> Tuple[Optional[pd.Timestamp], Optional[pd.Timestamp], bool]:
+    """Return (start, end, full_range_for_fetch). Windowed load when start omitted."""
+    assert_trade_map_timeframe(timeframe)
+    if start is not None:
+        end_ts = _utc_ts(end) if end is not None else pd.Timestamp.now(tz="UTC")
+        return _utc_ts(start), end_ts, False
+    if full_range:
+        # end=None → fetch_ohlcv uses parquet file_end (not wall-clock now).
+        return None, _utc_ts(end) if end is not None else None, True
+    tf = str(timeframe).strip()
+    end_ts = _utc_ts(end) if end is not None else pd.Timestamp.now(tz="UTC")
+    days = TRADE_MAP_INITIAL_DAYS.get(tf, TRADE_MAP_INITIAL_DAYS["2h"])
+    return end_ts - pd.Timedelta(days=float(days)), end_ts, False
+
+
+def cap_window_to_max_days(
+    start: Optional[pd.Timestamp],
+    end: Optional[pd.Timestamp],
+    max_days: int,
+) -> Tuple[Optional[pd.Timestamp], Optional[pd.Timestamp]]:
+    """Clip start so explicit windows do not exceed max_ohlcv_days."""
+    if start is None or end is None:
+        return start, end
+    end_ts = _utc_ts(end)
+    start_ts = _utc_ts(start)
+    min_start = end_ts - pd.Timedelta(days=float(max_days))
+    if start_ts < min_start:
+        return min_start, end_ts
+    return start_ts, end_ts
+
+
 TIMEFRAME_RULES: Dict[str, str] = {
     "1min": "1min",
     "15min": "15min",
     "2h": "2h",
     "120T": "2h",
     "1d": "1D",
+    "1w": "1W",
 }
 
 
@@ -152,6 +222,9 @@ def _daily_index_to_ohlcv(daily: pd.DataFrame) -> pd.DataFrame:
     if daily.empty:
         return pd.DataFrame()
     out = daily.copy()
+    if "timestamp" in out.columns:
+        out = out.set_index("timestamp")
+    out.index = pd.to_datetime(out.index, utc=True)
     out.index.name = "timestamp"
     out = out.reset_index()
     out["timestamp"] = pd.to_datetime(out["timestamp"], utc=True)
@@ -257,9 +330,34 @@ def fetch_ohlcv_daily_macro(
     merged = merged[
         (merged["timestamp"] >= start_ts) & (merged["timestamp"] <= end_ts)
     ]
+    return _macro_daily_payload(
+        symbol=symbol,
+        timeframe="1d",
+        merged=merged,
+        start_ts=start_ts,
+        end_ts=end_ts,
+        clipped=clipped,
+        bars_1min_rows=bars_1min_rows,
+        max_daily_days=max_daily_days,
+        daily_start=daily_start,
+    )
+
+
+def _macro_daily_payload(
+    *,
+    symbol: str,
+    timeframe: str,
+    merged: pd.DataFrame,
+    start_ts: pd.Timestamp,
+    end_ts: pd.Timestamp,
+    clipped: bool,
+    bars_1min_rows: int,
+    max_daily_days: int,
+    daily_start: date,
+) -> Dict[str, Any]:
     return {
         "symbol": symbol.upper(),
-        "timeframe": "1d",
+        "timeframe": timeframe,
         "candles": ohlcv_to_candles(merged),
         "degraded_ohlc": False,
         "source": "macro_spot_klines",
@@ -272,6 +370,53 @@ def fetch_ohlcv_daily_macro(
         "max_ohlcv_days": max_daily_days,
         "daily_ohlcv_start": daily_start.isoformat(),
     }
+
+
+def fetch_ohlcv_weekly_macro(
+    feature_bus_root: Path,
+    macro_kline_root: Path,
+    symbol: str,
+    *,
+    start: Optional[pd.Timestamp] = None,
+    end: Optional[pd.Timestamp] = None,
+    daily_start: date = date(2017, 1, 1),
+    max_daily_days: int = 3650,
+    full_range: bool = True,
+) -> Dict[str, Any]:
+    """1w OHLCV: Vision daily macro resampled to calendar weeks."""
+    daily = fetch_ohlcv_daily_macro(
+        feature_bus_root,
+        macro_kline_root,
+        symbol,
+        start=start,
+        end=end,
+        daily_start=daily_start,
+        max_daily_days=max_daily_days,
+        full_range=full_range,
+    )
+    if not daily.get("candles"):
+        out = dict(daily)
+        out["timeframe"] = "1w"
+        return out
+    df = pd.DataFrame(daily["candles"])
+    df["timestamp"] = pd.to_datetime(df["time"], unit="s", utc=True)
+    indexed = df.set_index("timestamp")
+    agg: Dict[str, str] = {}
+    for col, how in (
+        ("open", "first"),
+        ("high", "max"),
+        ("low", "min"),
+        ("close", "last"),
+        ("volume", "sum"),
+    ):
+        if col in indexed.columns:
+            agg[col] = how
+    weekly = indexed.resample("1W").agg(agg).dropna(how="all").reset_index()
+    out = dict(daily)
+    out["timeframe"] = "1w"
+    out["candles"] = ohlcv_to_candles(weekly)
+    out["row_count"] = len(weekly)
+    return out
 
 
 def ohlcv_to_candles(df: pd.DataFrame) -> List[Dict[str, Any]]:
@@ -379,10 +524,22 @@ def fetch_ohlcv(
     max_daily_ohlcv_days: int = 3650,
 ) -> Dict[str, Any]:
     tf = str(timeframe).strip()
-    if tf == "1d" and macro_kline_root is not None and Path(macro_kline_root).is_dir():
+    macro_root = Path(macro_kline_root) if macro_kline_root is not None else None
+    if macro_root is not None and macro_root.is_dir() and tf in ("1d", "1w"):
+        if tf == "1w":
+            return fetch_ohlcv_weekly_macro(
+                feature_bus_root,
+                macro_root,
+                symbol,
+                start=start,
+                end=end,
+                daily_start=daily_ohlcv_start or date(2017, 1, 1),
+                max_daily_days=max_daily_ohlcv_days,
+                full_range=full_range,
+            )
         return fetch_ohlcv_daily_macro(
             feature_bus_root,
-            Path(macro_kline_root),
+            macro_root,
             symbol,
             start=start,
             end=end,

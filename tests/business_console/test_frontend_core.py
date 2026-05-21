@@ -59,6 +59,10 @@ const plan = Core.orderFeaturePaneItems(
 const meta = Core.lookupFeatureMeta("tpc_pullback_depth");
 const hit = Core.findMarkerByTime(markers, 1, 7200);
 const sel = Core.markersToLwc(markers, "trend:orders:1");
+const merged = Core.mergeCandlesByTime(
+  [{ time: 100, open: 1, high: 2, low: 0.5, close: 1 }],
+  [{ time: 200, open: 2, high: 3, low: 1, close: 2 }, { time: 100, open: 9, high: 9, low: 9, close: 9 }]
+);
 console.log(JSON.stringify({
   scopes, lwcCount: lwc.length, pendingShape: lwc[1].shape, grafana, spacing,
   vis, range, cleanLen: clean.length, cleanTime: clean[1].time,
@@ -67,6 +71,11 @@ console.log(JSON.stringify({
   planTypes: plan.map((p) => p.type),
   metaStage: meta.stage,
   hitId: hit && hit.id, selColor: sel[0].color,
+  init2h: Core.tradeMapInitialDays("2h"),
+  chunk1d: Core.tradeMapHistoryChunkDays("1d"),
+  mergedLen: merged.length,
+  mergedFirst: merged[0].time,
+  mergedLast: merged[1].time,
 }));
 """
 
@@ -99,3 +108,8 @@ def test_trade_map_core_node():
     assert "header" in out["planTypes"] and "feature" in out["planTypes"]
     assert out["hitId"] == "trend:orders:1"
     assert out["selColor"] == "#ffeb3b"
+    assert out["init2h"] == 60
+    assert out["chunk1d"] == 90
+    assert out["mergedLen"] == 2
+    assert out["mergedFirst"] == 100
+    assert out["mergedLast"] == 200

@@ -11,10 +11,18 @@ from mlbot_console.services.trade_markers import (
 )
 
 
-def test_take_profit_maps_to_exit_event():
-    assert _multi_leg_event("take_profit", "") == "exit"
-    assert _multi_leg_event("entry", "TAKE_PROFIT_MARKET") == "exit"
-    assert _multi_leg_event("entry", "LIMIT") == "entry"
+def test_take_profit_maps_to_tp_not_exit():
+    assert _multi_leg_event("take_profit", "") == "tp"
+    assert _multi_leg_event("entry", "TAKE_PROFIT_MARKET") == "tp"
+    assert (
+        _multi_leg_event("place", "LIMIT", local_order_id="g_L2", is_filled=False)
+        == "grid"
+    )
+    assert (
+        _multi_leg_event("place", "LIMIT", local_order_id="g_L1", is_filled=True)
+        == "entry"
+    )
+    assert _multi_leg_event("market_exit", "MARKET") == "exit"
 
 
 def test_l1_entry_shows_tp_from_l1_tp_protection_row(multi_leg_db):
@@ -181,7 +189,7 @@ def test_filled_take_profit_marker_is_exit(multi_leg_db):
     markers = multi_leg_markers(multi_leg_db, "BNBUSDT")
     tp = [m for m in markers if m.get("detail", {}).get("purpose") == "take_profit"]
     assert tp
-    assert tp[0]["event"] == "exit"
+    assert tp[0]["event"] == "tp"
     assert tp[0]["side"] == "short"
 
 

@@ -2,11 +2,26 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 from mlbot_console.services.db import query_rows
+
+_LEG_SUFFIX_RE = re.compile(r"_(L|S)(\d+)$", re.I)
+_TP_SUFFIX_RE = re.compile(r"_(L|S)(\d+)_tp$", re.I)
+
+
+def _leg_label_from_order_id(order_id: str) -> str:
+    oid = str(order_id or "")
+    m = _LEG_SUFFIX_RE.search(oid)
+    if not m:
+        m = _TP_SUFFIX_RE.search(oid)
+        if m:
+            return f"{m.group(1)}{m.group(2)}_tp"
+        return ""
+    return f"{m.group(1)}{m.group(2)}"
 
 # Visual tokens aligned with scripts/event_backtest/reporting/trading_map.py
 # Exchange / OMS statuses that count as still-open working orders (shown when Pending is on).
@@ -58,25 +73,33 @@ def _marker_id(scope: str, source: str, key: str) -> str:
     return f"{scope}:{source}:{key}"
 
 
-def _multi_leg_event(purpose: str, order_type: str = "") -> str:
+def _multi_leg_event(
+    purpose: str,
+    order_type: str = "",
+    *,
+    local_order_id: str = "",
+    is_filled: bool = False,
+) -> str:
+    """Map order row to marker event: entry | grid | tp | exit.
+
+    - grid: open resting grid limits (L2/S1/S2 …), not a close
+    - tp: reduce-only take-profit protection (*_tp), not a grid S leg
+    - exit: regime/market flatten only
+    - entry: filled grid leg open
+    """
     p = str(purpose or "").lower()
     ot = str(order_type or "").lower()
-    if any(
-        x in p
-        for x in (
-            "exit",
-            "close",
-            "stop",
-            "reduce",
-            "take_profit",
-            "market_exit",
-        )
-    ):
+    oid = str(local_order_id or "")
+    if "_tp" in oid or "take_profit" in p or "take_profit" in ot or p == "tp":
+        return "tp"
+    if "market_exit" in p:
         return "exit"
-    if "take_profit" in ot or ot in {"take_profit", "take_profit_market"}:
+    if any(x in p for x in ("close", "reduce", "stop")) and "take_profit" not in p:
         return "exit"
-    if p in {"tp"}:
+    if p in {"exit"}:
         return "exit"
+    if not is_filled and (p in {"place", "entry", ""} or "_L" in oid or "_S" in oid):
+        return "grid"
     return "entry"
 
 
@@ -420,11 +443,20 @@ def multi_leg_markers(
             continue
         purpose = str(row.get("purpose") or "")
         order_type = str(row.get("order_type") or "")
-        event = _multi_leg_event(purpose, order_type)
+        local_oid = str(row.get("local_order_id") or "")
+        event = _multi_leg_event(
+            purpose,
+            order_type,
+            local_order_id=local_oid,
+            is_filled=is_filled,
+        )
         side_raw = str(row.get("side") or "").upper()
         side = "long" if side_raw in {"BUY", "LONG"} else "short"
         strat = str(row.get("strategy") or "multi_leg").lower()
         tp_price = _multi_leg_take_profit_price(row)
+        leg_label = _leg_label_from_order_id(local_oid) or _leg_label_from_order_id(
+            str(row.get("leg_id") or "")
+        )
         _append(
             out,
             seen,
@@ -445,6 +477,7 @@ def multi_leg_markers(
                 "order_status": status,
                 "local_order_id": row.get("local_order_id"),
                 "leg_id": row.get("leg_id"),
+                "leg_label": leg_label,
                 "take_profit_price": tp_price,
                 "stop_price": _f(row.get("stop_price")),
             },

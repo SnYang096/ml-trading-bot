@@ -13,23 +13,36 @@
     return parts.join(",") || "trend,spot";
   }
 
-  function markerShape(marker, isExit) {
-    if (isExit) return EXIT_SHAPE;
+  function markerRole(marker) {
+    const ev = String(marker.event || "").toLowerCase();
+    if (ev === "tp") return "tp";
+    if (ev === "grid") return "grid";
+    if (ev === "exit") return "exit";
+    return "entry";
+  }
+
+  function markerShape(marker) {
+    const role = markerRole(marker);
+    if (role === "tp" || role === "exit") return EXIT_SHAPE;
+    if (role === "grid") return "square";
     const side = (marker.side || "long").toLowerCase();
     if (marker.is_add && side === "long") return "diamond";
     if (marker.is_add && side === "short") return "diamond";
     return ENTRY_SHAPES[side] || "arrowUp";
   }
 
-  function markerColor(marker, isExit) {
+  function markerColor(marker) {
     const pending = (marker.status || "filled").toLowerCase() === "pending";
     if (pending) return "#888888";
+    const role = markerRole(marker);
     const side = (marker.side || "long").toLowerCase();
     const pnl = marker.pnl_usdt;
-    if (isExit && pnl != null) {
+    if (role === "exit" && pnl != null) {
       return pnl >= 0 ? "#26a69a" : "#ef5350";
     }
-    if (!isExit) {
+    if (role === "tp") return marker.color || "#73BF69";
+    if (role === "grid") return marker.color || "#73BF69";
+    if (role === "entry") {
       return side === "long" ? "#2e7d32" : "#c62828";
     }
     return marker.color || "#3274D9";
@@ -40,7 +53,64 @@
     if (tf === "1min") return 90;
     if (tf === "15min") return 900;
     if (tf === "1d") return 86400;
+    if (tf === "1w") return 604800;
     return 7200;
+  }
+
+  /** Default OHLCV window (days) — keep in sync with TRADE_MAP_INITIAL_DAYS. */
+  function tradeMapInitialDays(timeframe) {
+    const tf = String(timeframe || "2h");
+    const map = {
+      "15min": 14,
+      "2h": 60,
+      "120T": 60,
+      "1d": 120,
+      "1w": 365,
+    };
+    return map[tf] ?? 60;
+  }
+
+  /** One pan-left prefetch chunk (days). */
+  function tradeMapHistoryChunkDays(timeframe) {
+    const tf = String(timeframe || "2h");
+    const map = {
+      "15min": 7,
+      "2h": 30,
+      "120T": 30,
+      "1d": 90,
+      "1w": 180,
+    };
+    return map[tf] ?? 30;
+  }
+
+  function barDurationSec(timeframe) {
+    const tf = String(timeframe || "2h").toLowerCase();
+    if (tf === "15min") return 900;
+    if (tf === "1d") return 86400;
+    if (tf === "1w") return 604800;
+    return 7200;
+  }
+
+  function mergeCandlesByTime(existing, incoming) {
+    const byTime = new Map();
+    for (const c of existing || []) {
+      if (c && c.time != null) byTime.set(Number(c.time), c);
+    }
+    for (const c of incoming || []) {
+      if (c && c.time != null) byTime.set(Number(c.time), c);
+    }
+    return [...byTime.values()].sort((a, b) => a.time - b.time);
+  }
+
+  function isoFromUnixSec(sec) {
+    return new Date(Number(sec) * 1000).toISOString();
+  }
+
+  function mainOverlaysQueryParam(ema1200, weeklyEma200) {
+    const parts = [];
+    if (ema1200) parts.push("ema_1200");
+    if (weeklyEma200) parts.push("weekly_ema_200");
+    return parts.length ? parts.join(",") : "";
   }
 
   function findMarkerByTime(markers, clickTime, toleranceSec) {
@@ -63,21 +133,20 @@
 
   function markersToLwc(markers, selectedId) {
     return (markers || []).map((m) => {
-      const isExit = m.event === "exit";
+      const role = markerRole(m);
       const pending = (m.status || "filled").toLowerCase() === "pending";
       const selected = selectedId && m.id === selectedId;
       const strat = (m.strategy || m.scope || "").toLowerCase();
-      const purpose = (m.detail && m.detail.purpose) || "";
-      const purposeLc = String(purpose).toLowerCase();
-      const eventLc = String(m.event || "").toLowerCase();
-      const purposeTag =
-        purpose && purposeLc !== strat && purposeLc !== eventLc ? `:${purpose}` : "";
-      const baseText = `${strat}:${m.event}${purposeTag}${pending ? ":pending" : ""}`;
+      const leg =
+        (m.detail && (m.detail.leg_label || m.detail.leg_id)) || "";
+      const legTag = leg ? `:${String(leg).replace(/.*_/, "")}` : "";
+      const baseText = `${strat}:${m.event}${legTag}${pending ? ":pending" : ""}`;
+      const aboveBar = role === "exit" || role === "tp";
       return {
         time: m.time,
-        position: isExit ? "aboveBar" : "belowBar",
-        color: selected ? "#ffeb3b" : markerColor(m, isExit),
-        shape: pending ? "circle" : markerShape(m, isExit),
+        position: aboveBar ? "aboveBar" : "belowBar",
+        color: selected ? "#ffeb3b" : markerColor(m),
+        shape: pending ? "circle" : markerShape(m),
         text: selected ? `★ ${baseText}` : baseText,
         id: m.id,
       };
@@ -586,6 +655,12 @@
     markersToLwc,
     findMarkerByTime,
     timeframeToleranceSec,
+    tradeMapInitialDays,
+    tradeMapHistoryChunkDays,
+    barDurationSec,
+    mergeCandlesByTime,
+    isoFromUnixSec,
+    mainOverlaysQueryParam,
     scrollIndexForTime,
     markerColor,
     markerShape,

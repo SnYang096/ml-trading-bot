@@ -5,8 +5,8 @@ from __future__ import annotations
 from mlbot_console.services.trade_markers import _multi_leg_event, multi_leg_markers
 
 
-def test_multi_leg_event_take_profit_is_exit() -> None:
-    assert _multi_leg_event("take_profit", "LIMIT") == "exit"
+def test_multi_leg_event_take_profit_is_tp() -> None:
+    assert _multi_leg_event("take_profit", "LIMIT") == "tp"
 
 
 def test_multi_leg_markers_carry_strategy_slug(multi_leg_db) -> None:

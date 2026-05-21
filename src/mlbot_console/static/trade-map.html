@@ -23,10 +23,12 @@
           <select id="timeframeSelect">
             <option value="2h" selected>2h</option>
             <option value="15min">15min</option>
-            <option value="1min">1min</option>
             <option value="1d">1d</option>
+            <option value="1w">1w</option>
           </select>
         </label>
+        <label class="chk-pill" title="2h 特征 bus 的 EMA1200 价格线，叠加在当前周期主图"><input type="checkbox" id="mainEma1200" /> EMA1200</label>
+        <label class="chk-pill" title="周线 EMA200 价格线（2h 特征 bus），叠加在当前周期主图"><input type="checkbox" id="mainWeeklyEma200" /> 周线EMA200</label>
       </div>
 
       <div class="module module-accounts" title="账户层 A/B/C：控制主图成交标记">
@@ -34,7 +36,7 @@
         <label><input type="checkbox" id="layerTrend" checked /> B·Trend</label>
         <label><input type="checkbox" id="layerSpot" checked /> A·Spot</label>
         <label><input type="checkbox" id="layerMultiLeg" /> C·Multi-leg</label>
-        <label title="仅显示 open/pending 挂单，不含 expired/canceled"><input type="checkbox" id="layerPending" /> Open</label>
+        <label title="在已成交标记之外，叠加显示 open/pending 网格限价单与 TP 保护单（不含 expired/canceled）"><input type="checkbox" id="layerPending" /> 含挂单</label>
       </div>
 
       <div class="module module-subcharts">

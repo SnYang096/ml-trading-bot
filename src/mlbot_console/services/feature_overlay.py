@@ -14,6 +14,7 @@ FEATURE_DIRS: Dict[str, List[str]] = {
     "15min": ["15min", "120T", "primary"],
     "1min": ["15min", "120T", "primary"],
     "1d": ["240T", "1d", "120T", "primary"],
+    "1w": ["240T", "1d", "120T", "primary"],
 }
 
 # UI / policy name -> parquet column candidates (first hit wins)
@@ -21,6 +22,10 @@ COLUMN_ALIASES: Dict[str, List[str]] = {
     "weekly_ema_200_position": [
         "weekly_ema_200_position",
         "weekly_ema_200_position_f",
+    ],
+    "ema_1200_position": [
+        "ema_1200_position",
+        "ema_1200_position_f",
     ],
 }
 

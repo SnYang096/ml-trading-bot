@@ -31,7 +31,12 @@ def test_trade_map_symbols(client):
 def test_trade_map_bundle_full_range_default(client):
     r = client.get(
         "/api/trade-map/bundle",
-        params={"symbol": "ETHUSDT", "timeframe": "2h", "scopes": "trend"},
+        params={
+            "symbol": "ETHUSDT",
+            "timeframe": "2h",
+            "scopes": "trend",
+            "full_range": "true",
+        },
     )
     assert r.status_code == 200
     body = r.json()
@@ -88,6 +93,61 @@ def test_links(client):
     ids = {x["id"] for x in r.json()["data"]["links"]}
     assert "grafana" in ids
     assert "rolling_backtest" in ids
+
+
+def test_trade_map_bundle_rejects_1min(client):
+    r = client.get(
+        "/api/trade-map/bundle",
+        params={"symbol": "ETHUSDT", "timeframe": "1min", "scopes": "trend"},
+    )
+    assert r.status_code == 400
+
+
+def test_trade_map_bundle_main_overlays(client):
+    r = client.get(
+        "/api/trade-map/bundle",
+        params={
+            "symbol": "ETHUSDT",
+            "timeframe": "15min",
+            "scopes": "trend",
+            "main_overlays": "ema_1200,weekly_ema_200",
+            "from": "2024-01-01T00:00:00Z",
+            "to": "2024-01-02T00:00:00Z",
+        },
+    )
+    assert r.status_code == 200
+    main = r.json()["data"]["main_overlays"]
+    assert main["ema_1200"]["available"] is True
+    assert len(main["ema_1200"]["points"]) >= 1
+    assert main["weekly_ema_200"]["available"] is True
+
+
+def test_trade_map_bundle_windowed_default(client):
+    r = client.get(
+        "/api/trade-map/bundle",
+        params={"symbol": "ETHUSDT", "timeframe": "2h", "scopes": "trend"},
+    )
+    assert r.status_code == 200
+    assert r.json()["meta"]["full_range"] is False
+
+
+def test_trade_map_bundle_ohlcv_none(client):
+    r = client.get(
+        "/api/trade-map/bundle",
+        params={
+            "symbol": "ETHUSDT",
+            "timeframe": "2h",
+            "scopes": "trend",
+            "include_ohlcv": "none",
+            "from": "2024-01-01T00:00:00Z",
+            "to": "2024-01-03T00:00:00Z",
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["data"]["ohlcv"]["candles"] == []
+    assert body["meta"]["include_ohlcv"] == "none"
+    assert len(body["data"]["markers"]) >= 1
 
 
 def test_bus_ohlcv_window_error(client):

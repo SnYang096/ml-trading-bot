@@ -16,8 +16,18 @@ from mlbot_console.services.feature_overlay import (
     load_feature_overlays,
 )
 from mlbot_console.services.marker_detail import marker_detail
-from mlbot_console.services.ohlcv_reader import OhlcvWindowError
+from mlbot_console.services.main_chart_overlays import (
+    load_main_chart_overlays,
+    parse_main_overlay_keys,
+)
+from mlbot_console.services.ohlcv_reader import (
+    OhlcvWindowError,
+    assert_trade_map_timeframe,
+    cap_window_to_max_days,
+    resolve_trade_map_window,
+)
 from mlbot_console.services.signal_overview import build_signal_overview
+from mlbot_console.services.trade_links import collect_trade_links
 from mlbot_console.services.trade_markers import align_pending_markers_to_candles, collect_markers
 from mlbot_console.services.universe import load_universe_symbols
 
@@ -83,19 +93,30 @@ def trade_map_ohlcv(
     timeframe: str = Query("2h"),
     from_: Optional[str] = Query(None, alias="from"),
     to: Optional[str] = Query(None),
-    full_range: bool = Query(True),
+    full_range: bool = Query(False),
 ) -> dict:
-    start = pd.Timestamp(from_, tz="UTC") if from_ else None
-    end = pd.Timestamp(to, tz="UTC") if to else None
     try:
+        tf = assert_trade_map_timeframe(timeframe)
+        start, end, use_full = resolve_trade_map_window(
+            tf,
+            start=pd.Timestamp(from_, tz="UTC") if from_ else None,
+            end=pd.Timestamp(to, tz="UTC") if to else None,
+            full_range=full_range,
+        )
+        max_days = (
+            SETTINGS.max_daily_ohlcv_days
+            if tf in ("1d", "1w")
+            else SETTINGS.max_ohlcv_days
+        )
+        start, end = cap_window_to_max_days(start, end, max_days)
         data = ohlcv_reader.fetch_ohlcv(
             SETTINGS.feature_bus_root,
             symbol,
-            timeframe,
+            tf,
             start=start,
             end=end,
             max_days=SETTINGS.max_ohlcv_days,
-            full_range=full_range and not from_ and not to,
+            full_range=use_full,
             live_storage_bars_root=SETTINGS.live_storage_bars_root,
             stitch_live_storage=SETTINGS.stitch_live_storage,
             macro_kline_root=SETTINGS.macro_spot_kline_root,
@@ -172,25 +193,61 @@ def trade_map_bundle(
     include_pending: bool = Query(False),
     feature_columns: Optional[str] = Query(None),
     overlay_weekly_ema: bool = Query(False),
-    full_range: bool = Query(True),
+    main_overlays: Optional[str] = Query(
+        None,
+        description="Comma-separated: ema_1200, weekly_ema_200 (2h feature bus)",
+    ),
+    full_range: bool = Query(False),
+    include_ohlcv: str = Query(
+        "full",
+        description="full | tail (small OHLCV slice) | none (markers/links only)",
+    ),
+    ohlcv_from: Optional[str] = Query(None, alias="ohlcv_from"),
+    ohlcv_to: Optional[str] = Query(None, alias="ohlcv_to"),
+    include_features: bool = Query(True),
 ) -> dict:
-    start = pd.Timestamp(from_, tz="UTC") if from_ else None
-    end = pd.Timestamp(to, tz="UTC") if to else None
-    try:
-        ohlcv = ohlcv_reader.fetch_ohlcv(
-            SETTINGS.feature_bus_root,
-            symbol,
-            timeframe,
-            start=start,
-            end=end,
-            max_days=SETTINGS.max_ohlcv_days,
-            full_range=full_range and not from_ and not to,
-            live_storage_bars_root=SETTINGS.live_storage_bars_root,
-            stitch_live_storage=SETTINGS.stitch_live_storage,
-            macro_kline_root=SETTINGS.macro_spot_kline_root,
-            daily_ohlcv_start=SETTINGS.daily_ohlcv_start,
-            max_daily_ohlcv_days=SETTINGS.max_daily_ohlcv_days,
+    ohlcv_mode = (include_ohlcv or "full").strip().lower()
+    if ohlcv_mode not in ("full", "tail", "none"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"include_ohlcv must be full|tail|none (got {include_ohlcv!r})",
         )
+    ohlcv: dict = {"candles": []}
+    tf = ""
+    start: Optional[pd.Timestamp] = None
+    end: Optional[pd.Timestamp] = None
+    use_full = False
+    try:
+        tf = assert_trade_map_timeframe(timeframe)
+        if ohlcv_mode != "none":
+            ohlcv_start_raw = ohlcv_from if ohlcv_mode == "tail" and ohlcv_from else from_
+            ohlcv_end_raw = ohlcv_to if ohlcv_mode == "tail" and ohlcv_to else to
+            start, end, use_full = resolve_trade_map_window(
+                tf,
+                start=pd.Timestamp(ohlcv_start_raw, tz="UTC") if ohlcv_start_raw else None,
+                end=pd.Timestamp(ohlcv_end_raw, tz="UTC") if ohlcv_end_raw else None,
+                full_range=full_range and ohlcv_mode == "full",
+            )
+            max_days = (
+                SETTINGS.max_daily_ohlcv_days
+                if tf in ("1d", "1w")
+                else SETTINGS.max_ohlcv_days
+            )
+            start, end = cap_window_to_max_days(start, end, max_days)
+            ohlcv = ohlcv_reader.fetch_ohlcv(
+                SETTINGS.feature_bus_root,
+                symbol,
+                tf,
+                start=start,
+                end=end,
+                max_days=SETTINGS.max_ohlcv_days,
+                full_range=use_full,
+                live_storage_bars_root=SETTINGS.live_storage_bars_root,
+                stitch_live_storage=SETTINGS.stitch_live_storage,
+                macro_kline_root=SETTINGS.macro_spot_kline_root,
+                daily_ohlcv_start=SETTINGS.daily_ohlcv_start,
+                max_daily_ohlcv_days=SETTINGS.max_daily_ohlcv_days,
+            )
     except OhlcvWindowError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -199,9 +256,9 @@ def trade_map_bundle(
     mk = _marker_kwargs(
         from_=from_, to=to, since=since, include_pending=include_pending
     )
-    if not from_ and ohlcv.get("range_start"):
+    if mk.get("start_ts") is None and ohlcv.get("range_start"):
         mk["start_ts"] = _parse_ts_param(str(ohlcv["range_start"]))
-    if not to and ohlcv.get("range_end"):
+    if mk.get("end_ts") is None and ohlcv.get("range_end"):
         mk["end_ts"] = _parse_ts_param(str(ohlcv["range_end"]))
     markers = collect_markers(
         trend_db=SETTINGS.trend_order_db,
@@ -214,9 +271,17 @@ def trade_map_bundle(
     if include_pending and ohlcv.get("candles"):
         candle_times = [int(c["time"]) for c in ohlcv["candles"] if c.get("time") is not None]
         markers = align_pending_markers_to_candles(markers, candle_times)
+    trade_links, _ = collect_trade_links(
+        multi_leg_db=SETTINGS.multi_leg_db,
+        symbol=symbol,
+        scopes=_scopes_list(scopes),
+        start_ts=mk.get("start_ts"),
+        end_ts=mk.get("end_ts"),
+        since_ts=mk.get("since_ts"),
+    )
     cols = _feature_columns_list(feature_columns, overlay_weekly_ema=overlay_weekly_ema)
     overlays: dict = {}
-    if cols:
+    if cols and include_features and ohlcv_mode != "none" and ohlcv.get("candles"):
         overlay_start = start
         overlay_end = end
         if overlay_start is None and ohlcv.get("range_start"):
@@ -226,16 +291,35 @@ def trade_map_bundle(
         overlays = load_feature_overlays(
             SETTINGS.feature_bus_root,
             symbol,
-            timeframe,
+            tf,
             cols,
             start=overlay_start,
             end=overlay_end,
+        )
+    main_keys = parse_main_overlay_keys(main_overlays)
+    main_ol: dict = {}
+    if main_keys and include_features and ohlcv.get("candles"):
+        feat_start = start
+        feat_end = end
+        if feat_start is None and ohlcv.get("range_start"):
+            feat_start = pd.Timestamp(str(ohlcv["range_start"]))
+        if feat_end is None and ohlcv.get("range_end"):
+            feat_end = pd.Timestamp(str(ohlcv["range_end"]))
+        main_ol = load_main_chart_overlays(
+            SETTINGS.feature_bus_root,
+            symbol,
+            ohlcv["candles"],
+            main_keys,
+            start=feat_start,
+            end=feat_end,
         )
     return ok(
         {
             "ohlcv": ohlcv,
             "markers": markers,
+            "trade_links": trade_links,
             "overlays": overlays,
+            "main_overlays": main_ol,
         },
         meta={
             "poll_seconds": SETTINGS.map_poll_seconds,
@@ -247,6 +331,9 @@ def trade_map_bundle(
             "range_end": ohlcv.get("range_end"),
             "range_clipped": ohlcv.get("range_clipped", False),
             "feature_columns": cols,
+            "main_overlays": main_keys,
+            "full_range": use_full,
+            "include_ohlcv": ohlcv_mode,
         },
     )
 
@@ -256,6 +343,10 @@ def trade_map_signals(
     timeframe: str = Query("2h"),
     lookback_days: int = Query(7, ge=1, le=90),
 ) -> dict:
+    try:
+        tf = assert_trade_map_timeframe(timeframe)
+    except OhlcvWindowError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     symbols = load_universe_symbols(SETTINGS.universe_yaml)
     rows = build_signal_overview(
         symbols,
@@ -263,7 +354,7 @@ def trade_map_signals(
         trend_db=SETTINGS.trend_order_db,
         spot_db=SETTINGS.spot_order_db,
         multi_leg_db=SETTINGS.multi_leg_db,
-        timeframe=timeframe,
+        timeframe=tf,
         lookback_days=lookback_days,
     )
-    return ok(rows, meta={"count": len(rows), "timeframe": timeframe})
+    return ok(rows, meta={"count": len(rows), "timeframe": tf})

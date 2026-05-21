@@ -5,10 +5,12 @@
 const Core = globalThis.MLBotTradeMapCore;
 const Shell = globalThis.MLBotConsole;
 const POLL_MS = 10000;
-const LAYOUT_KEY = "mlbot_trade_map_layout_v1";
+const LAYOUT_KEY = "mlbot_trade_map_layout_v2";
 
 let chart;
 let candleSeries;
+/** @type {Map<string, import('lightweight-charts').ISeriesApi<'Line'>>} */
+const mainOverlaySeries = new Map();
 let pollTimer;
 let markerById = new Map();
 let lastRawMarkers = [];
@@ -22,14 +24,26 @@ let clockTimer = null;
 /** @type {Map<string, { chart, series, refSeries?, label, kind, host }>} */
 const subcharts = new Map();
 
+/** @type {import('lightweight-charts').ISeriesApi<'Line'>[]} */
+let tradeLinkSeries = [];
+
 let availableFeatureColumns = [];
 let selectedFeatureColumns = [];
 let featureSearchQuery = "";
 const MAX_FEATURE_SUBCHARTS = 8;
 
+/** Loaded OHLCV window (ISO); null → use per-TF initial window. */
+let ohlcvLoadedFrom = null;
+let ohlcvLoadedTo = null;
+let historyLoadInFlight = false;
+let historyExhausted = false;
+let historyLoadTimer = null;
+
 const defaultLayout = () => ({
   volume: false,
   features: ["weekly_ema_200_position"],
+  mainEma1200: false,
+  mainWeeklyEma200: false,
   ordersDock: false,
   hideExpired: true,
   hideCanceled: true,
@@ -48,6 +62,8 @@ function saveLayout() {
   const layout = {
     volume: document.getElementById("paneVolume").checked,
     features: [...selectedFeatureColumns],
+    mainEma1200: !!document.getElementById("mainEma1200")?.checked,
+    mainWeeklyEma200: !!document.getElementById("mainWeeklyEma200")?.checked,
     ordersDock: ordersDockOpen,
     hideExpired: document.getElementById("hideExpired")?.checked ?? true,
     hideCanceled: document.getElementById("hideCanceled")?.checked ?? true,
@@ -58,6 +74,10 @@ function saveLayout() {
 
 function applyLayoutToControls(layout) {
   document.getElementById("paneVolume").checked = !!layout.volume;
+  const ema1200 = document.getElementById("mainEma1200");
+  const wkEma = document.getElementById("mainWeeklyEma200");
+  if (ema1200) ema1200.checked = !!layout.mainEma1200;
+  if (wkEma) wkEma.checked = !!layout.mainWeeklyEma200;
   selectedFeatureColumns = Array.isArray(layout.features) ? [...layout.features] : [];
   ordersDockOpen = !!layout.ordersDock;
   const hideExp = document.getElementById("hideExpired");
@@ -266,6 +286,138 @@ function resizeAllSubcharts() {
   }
 }
 
+function clearMainOverlaySeries() {
+  for (const [, series] of mainOverlaySeries) {
+    chart.removeSeries(series);
+  }
+  mainOverlaySeries.clear();
+}
+
+function applyMainOverlays(mainOverlays) {
+  clearMainOverlaySeries();
+  const emaOn = document.getElementById("mainEma1200")?.checked;
+  const wkOn = document.getElementById("mainWeeklyEma200")?.checked;
+  const want = [];
+  if (emaOn) want.push("ema_1200");
+  if (wkOn) want.push("weekly_ema_200");
+  for (const key of want) {
+    const spec = (mainOverlays || {})[key];
+    if (!spec?.available || !spec.points?.length) continue;
+    const line = chart.addLineSeries({
+      color: spec.color || "#888",
+      lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: true,
+      title: spec.label || key,
+    });
+    line.setData(
+      spec.points.map((p) => ({
+        time: p.time,
+        value: p.value,
+      }))
+    );
+    mainOverlaySeries.set(key, line);
+  }
+}
+
+function resetOhlcvLoadedRange() {
+  ohlcvLoadedFrom = null;
+  ohlcvLoadedTo = null;
+  historyExhausted = false;
+}
+
+function initialOhlcvRangeIso() {
+  const pageUrl = new URL(window.location.href);
+  const fromUrl = pageUrl.searchParams.get("from");
+  const toUrl = pageUrl.searchParams.get("to");
+  if (fromUrl || toUrl) {
+    const out = { full_range: "false" };
+    if (fromUrl) out.from = fromUrl;
+    if (toUrl) out.to = toUrl;
+    else out.to = new Date().toISOString();
+    return out;
+  }
+  const tf = document.getElementById("timeframeSelect")?.value || "2h";
+  const days = Core.tradeMapInitialDays(tf);
+  const end = new Date();
+  const start = new Date(end.getTime() - days * 86400000);
+  return {
+    from: start.toISOString(),
+    to: end.toISOString(),
+    full_range: "false",
+  };
+}
+
+function markerRangeParams() {
+  const to = new Date().toISOString();
+  const from = ohlcvLoadedFrom || initialOhlcvRangeIso().from;
+  return { from, to, full_range: "false" };
+}
+
+function applyLoadedOhlcvRange(meta) {
+  if (meta?.range_start) ohlcvLoadedFrom = String(meta.range_start);
+  if (meta?.range_end) ohlcvLoadedTo = String(meta.range_end);
+}
+
+function scheduleHistoryPrefetch(range) {
+  if (!range || historyLoadInFlight || historyExhausted || !lastCandles.length) return;
+  if (range.from > 25) return;
+  if (historyLoadTimer) clearTimeout(historyLoadTimer);
+  historyLoadTimer = setTimeout(() => {
+    loadMoreHistory().catch((e) => setStatus(String(e)));
+  }, 350);
+}
+
+async function loadMoreHistory() {
+  if (historyLoadInFlight || historyExhausted || !lastCandles.length) return;
+  const timeframe = document.getElementById("timeframeSelect").value;
+  const symbol = document.getElementById("symbolSelect").value;
+  const oldest = lastCandles[0].time;
+  const chunkDays = Core.tradeMapHistoryChunkDays(timeframe);
+  const newFromMs =
+    Number(oldest) * 1000 - chunkDays * 86400000;
+  const newFromIso = new Date(newFromMs).toISOString();
+  if (
+    ohlcvLoadedFrom &&
+    newFromMs >= new Date(ohlcvLoadedFrom).getTime() - 1000
+  ) {
+    historyExhausted = true;
+    return;
+  }
+  historyLoadInFlight = true;
+  try {
+    const q = new URLSearchParams({
+      symbol,
+      timeframe,
+      scopes: scopesParam(),
+      include_pending: String(layersState().pending),
+      from: newFromIso,
+      to: Core.isoFromUnixSec(oldest),
+      include_ohlcv: "full",
+      include_features: "false",
+      full_range: "false",
+    });
+    const { data, meta } = await Shell.api(`/api/trade-map/bundle?${q}`);
+    const more = Core.sanitizeCandlesForLwc(data.ohlcv?.candles || []);
+    if (!more.length) {
+      historyExhausted = true;
+      return;
+    }
+    const merged = Core.mergeCandlesByTime(more, lastCandles);
+    if (merged.length === lastCandles.length) {
+      historyExhausted = true;
+      return;
+    }
+    lastCandles = merged;
+    candleSeries.setData(merged);
+    ohlcvLoadedFrom = meta.range_start || newFromIso;
+    applyMarkers(data.markers || []);
+    applyTradeLinks(data.trade_links || []);
+  } finally {
+    historyLoadInFlight = false;
+  }
+}
+
 function bindTimeScaleSync() {
   if (timeSyncBound) return;
   timeSyncBound = true;
@@ -275,6 +427,7 @@ function bindTimeScaleSync() {
       pane.chart.timeScale().setVisibleLogicalRange(range);
     }
     chart.priceScale("right").applyOptions({ autoScale: true });
+    scheduleHistoryPrefetch(range);
   });
 }
 
@@ -493,6 +646,48 @@ function applyMarkers(rawMarkers) {
   lastRawMarkers = rawMarkers || [];
   markerById = new Map(lastRawMarkers.map((m) => [m.id, m]));
   candleSeries.setMarkers(Core.markersToLwc(lastRawMarkers, selectedMarkerId));
+}
+
+function clearTradeLinks() {
+  if (!chart) return;
+  for (const s of tradeLinkSeries) {
+    try {
+      chart.removeSeries(s);
+    } catch (_) {
+      /* already removed */
+    }
+  }
+  tradeLinkSeries = [];
+}
+
+function applyTradeLinks(links) {
+  clearTradeLinks();
+  if (!chart || !Array.isArray(links) || !links.length) return;
+  for (const lk of links) {
+    const t0 = Number(lk.entry_time);
+    let t1 = Number(lk.exit_time);
+    const p0 = Number(lk.entry_price);
+    const p1 = Number(lk.exit_price);
+    if (![t0, t1, p0, p1].every(Number.isFinite)) continue;
+    if (t1 <= t0) {
+      t1 = t0 + 7200;
+    }
+    const color = lk.color || "#73BF69";
+    const open = String(lk.status || "").toLowerCase() === "open";
+    const series = chart.addLineSeries({
+      color,
+      lineWidth: 1,
+      lineStyle: open ? 2 : 0,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
+    series.setData([
+      { time: t0, value: p0 },
+      { time: t1, value: p1 },
+    ]);
+    tradeLinkSeries.push(series);
+  }
 }
 
 function scrollChartToMarker(markerTime) {
@@ -818,47 +1013,92 @@ async function showMarkerDetail(markerId) {
   }
 }
 
-async function refreshBundle() {
+async function refreshBundle(opts = {}) {
+  const mode = opts.mode || "full";
   const symbol = document.getElementById("symbolSelect").value;
   Shell.setSymbol(symbol);
   const timeframe = document.getElementById("timeframeSelect").value;
   const scopes = scopesParam();
   const pending = layersState().pending;
   const featParam = Core.featureColumnsParam(selectedFeatureColumns);
-  setStatusLoading();
+  if (mode === "full") setStatusLoading();
+
   const q = new URLSearchParams({
     symbol,
     timeframe,
     scopes,
     include_pending: String(pending),
-    full_range: "true",
+    ...markerRangeParams(),
   });
-  if (featParam) q.set("feature_columns", featParam);
-  const pageUrl = new URL(window.location.href);
-  if (pageUrl.searchParams.get("from")) {
-    q.set("from", pageUrl.searchParams.get("from"));
-    q.set("full_range", "false");
+
+  if (mode === "poll") {
+    q.set("include_ohlcv", "tail");
+    q.set("include_features", "false");
+    const lastT = lastCandles.length ? lastCandles[lastCandles.length - 1].time : null;
+    if (lastT != null) {
+      const barSec = Core.barDurationSec(timeframe);
+      const tailFrom = Core.isoFromUnixSec(Number(lastT) - barSec * 5);
+      q.set("ohlcv_from", tailFrom);
+      q.set("ohlcv_to", new Date().toISOString());
+    }
+  } else {
+    q.set("include_ohlcv", "full");
+    q.set("include_features", "true");
+    if (!ohlcvLoadedFrom || mode === "full") {
+      const init = initialOhlcvRangeIso();
+      q.set("from", init.from);
+      q.set("to", init.to);
+      q.set("full_range", init.full_range || "false");
+    }
+    if (featParam) q.set("feature_columns", featParam);
+    const mainOl = Core.mainOverlaysQueryParam(
+      document.getElementById("mainEma1200")?.checked,
+      document.getElementById("mainWeeklyEma200")?.checked
+    );
+    if (mainOl) q.set("main_overlays", mainOl);
   }
-  if (pageUrl.searchParams.get("to")) {
-    q.set("to", pageUrl.searchParams.get("to"));
-    q.set("full_range", "false");
-  }
+
   const { data, meta } = await Shell.api(`/api/trade-map/bundle?${q}`);
-  const candles = Core.sanitizeCandlesForLwc(data.ohlcv?.candles || []);
-  lastCandles = candles;
-  candleSeries.setData(candles);
+  const pageUrl = new URL(window.location.href);
+
+  if (mode === "poll" && data.ohlcv?.candles?.length) {
+    const merged = Core.mergeCandlesByTime(
+      lastCandles,
+      Core.sanitizeCandlesForLwc(data.ohlcv.candles)
+    );
+    lastCandles = merged;
+    candleSeries.setData(merged);
+    ohlcvLoadedTo = meta.range_end || new Date().toISOString();
+  } else if (mode !== "poll") {
+    const candles = Core.sanitizeCandlesForLwc(data.ohlcv?.candles || []);
+    lastCandles = candles;
+    candleSeries.setData(candles);
+    applyMainOverlays(data.main_overlays || {});
+    applyLoadedOhlcvRange(meta);
+    if (chartFitPending) {
+      applyChartViewport(candles.length);
+      chartFitPending = false;
+    }
+    syncSubcharts(candles, data.overlays || {});
+  }
+
   const markers = data.markers || [];
   applyMarkers(markers);
-  if (chartFitPending) {
-    applyChartViewport(candles.length);
-    chartFitPending = false;
-  }
-  syncSubcharts(candles, data.overlays || {});
+  applyTradeLinks(data.trade_links || []);
 
-  setStatusFromBundle(symbol, timeframe, candles, markers, meta, data.overlays || {});
+  if (mode !== "poll") {
+    setStatusFromBundle(
+      symbol,
+      timeframe,
+      lastCandles,
+      markers,
+      meta,
+      data.overlays || {}
+    );
+  }
   tickClock();
 
-  if (ordersDockOpen) {
+  if (ordersDockOpen && mode !== "poll") {
     await refreshOrdersList();
   }
 
@@ -874,14 +1114,15 @@ async function refreshBundle() {
 function startPoll() {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(() => {
-    refreshBundle().catch((e) => setStatus(String(e)));
+    refreshBundle({ mode: "poll" }).catch((e) => setStatus(String(e)));
   }, POLL_MS);
 }
 
 function bindControls() {
-  const rerun = () => refreshBundle().catch((e) => setStatus(String(e)));
+  const rerun = () => refreshBundle({ mode: "full" }).catch((e) => setStatus(String(e)));
   const rerunAll = async () => {
     chartFitPending = true;
+    resetOhlcvLoadedRange();
     saveLayout();
     await loadFeatureColumns();
     rerun();
@@ -893,6 +1134,8 @@ function bindControls() {
   [
     "symbolSelect",
     "timeframeSelect",
+    "mainEma1200",
+    "mainWeeklyEma200",
     "layerTrend",
     "layerSpot",
     "layerMultiLeg",
@@ -905,7 +1148,15 @@ function bindControls() {
         rerun();
         return;
       }
-      if (id === "symbolSelect") Shell.setSymbol(document.getElementById("symbolSelect").value);
+      if (id === "symbolSelect") {
+        Shell.setSymbol(document.getElementById("symbolSelect").value);
+        resetOhlcvLoadedRange();
+        chartFitPending = true;
+      }
+      if (id === "timeframeSelect") {
+        resetOhlcvLoadedRange();
+        chartFitPending = true;
+      }
       if (id.startsWith("layer")) renderFeaturePicker();
       if (ordersDockOpen) refreshOrdersList().catch(() => {});
       rerunAll();

@@ -45,11 +45,13 @@ def bus_root(tmp_path: Path) -> Path:
     feat_rows = []
     for i in range(0, 24 * 60, 120):
         ts = start + pd.Timedelta(minutes=i)
+        close = 100.0 + i * 0.02
         feat_rows.append(
             {
                 "timestamp": ts,
-                "close": 100.0 + i * 0.02,
+                "close": close,
                 "weekly_ema_200_position": -0.05 if i < 600 else 0.12,
+                "ema_1200_position": 0.02,
                 "regime_score": 0.1 + (i % 100) * 0.001,
             }
         )
