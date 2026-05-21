@@ -19,13 +19,13 @@ chmod +x deploy/business-console/run_console.sh
 ## Production (Docker)
 
 ```bash
-cd /opt/quant-engine/business-console
+cd /opt/quant-engine/deploy/business-console
 docker compose up -d --build
 ```
 
-Build context is the **repository root** (`../..`): image includes `src/mlbot_console`, `src/time_series_model`, and `config/strategies`.
+Build context is the **repository root** (`../..` → `/opt/quant-engine`): image includes `src/mlbot_console`, `src/time_series_model`, and `config/strategies`.
 
-CI packs `src/mlbot_console`, `src/time_series_model`, `config/strategies`, and this deploy tree to `/opt/quant-engine/`.
+CI packs `deploy/business-console`, `src/`, `config/strategies`, and `live/highcap/universe.yaml` under `/opt/quant-engine/` (same layout as the git repo).
 
 **systemd**: `deploy/systemd/quant-business-console.service` — `PYTHONPATH=/opt/quant-engine/src`, `uvicorn mlbot_console.main:app`.
 
