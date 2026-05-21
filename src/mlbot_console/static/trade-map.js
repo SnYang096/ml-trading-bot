@@ -31,6 +31,8 @@ const defaultLayout = () => ({
   volume: false,
   features: ["weekly_ema_200_position"],
   ordersDock: false,
+  hideExpired: true,
+  hideCanceled: true,
 });
 
 function loadLayout() {
@@ -47,6 +49,8 @@ function saveLayout() {
     volume: document.getElementById("paneVolume").checked,
     features: [...selectedFeatureColumns],
     ordersDock: ordersDockOpen,
+    hideExpired: document.getElementById("hideExpired")?.checked ?? true,
+    hideCanceled: document.getElementById("hideCanceled")?.checked ?? true,
   };
   localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
   Shell.setScopesState(layersState());
@@ -56,7 +60,18 @@ function applyLayoutToControls(layout) {
   document.getElementById("paneVolume").checked = !!layout.volume;
   selectedFeatureColumns = Array.isArray(layout.features) ? [...layout.features] : [];
   ordersDockOpen = !!layout.ordersDock;
+  const hideExp = document.getElementById("hideExpired");
+  const hideCan = document.getElementById("hideCanceled");
+  if (hideExp) hideExp.checked = layout.hideExpired !== false;
+  if (hideCan) hideCan.checked = layout.hideCanceled !== false;
   applyOrdersDockVisibility();
+}
+
+function ordersExcludeStatusParam() {
+  const parts = [];
+  if (document.getElementById("hideExpired")?.checked) parts.push("expired");
+  if (document.getElementById("hideCanceled")?.checked) parts.push("canceled");
+  return parts.join(",");
 }
 
 function applyScopesFromStorage() {
@@ -549,6 +564,8 @@ async function refreshOrdersList() {
     scopes: scopesParam(),
     limit: "500",
   });
+  const exclude = ordersExcludeStatusParam();
+  if (exclude) q.set("exclude_status", exclude);
   try {
     const { data, meta } = await Shell.api(`/api/orders/list?${q}`);
     const rows = data || [];
@@ -875,6 +892,14 @@ function bindControls() {
   });
   document.getElementById("ordersDockToggle").addEventListener("click", () => {
     toggleOrdersDock();
+  });
+  ["hideExpired", "hideCanceled"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener("change", () => {
+      saveLayout();
+      if (ordersDockOpen) refreshOrdersList().catch((e) => setStatus(String(e)));
+    });
   });
   Shell.bindSymbolPersist("symbolSelect");
 }

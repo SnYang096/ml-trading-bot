@@ -205,6 +205,8 @@
       ["类型", o.order_type],
       ["数量", o.filled_quantity ?? o.quantity],
       ["价格", o.average_price ?? o.price],
+      ["止盈价", o.take_profit_price ?? o.stop_price],
+      ["用途", o.purpose ?? o.order_type],
       ["策略", o.strategy],
       ["成交时间", formatOrderTime(o.time)],
       ["创建", o.created_at],
@@ -248,14 +250,22 @@
           <td>${statusBadge(r.status)}</td>
           <td>${esc(String(r.filled_quantity ?? r.quantity ?? ""))}</td>
           <td>${esc(String(r.average_price ?? r.price ?? ""))}</td>
+          <td>${esc(formatTpPrice(r))}</td>
           <td class="id-cell" title="${esc(r.order_id || "")}">${esc(r.order_id || "")}</td>
         </tr>`;
       })
       .join("");
   }
 
+  function formatTpPrice(row) {
+    const v = row?.take_profit_price ?? row?.stop_price;
+    if (v == null || v === "") return "—";
+    const n = Number(v);
+    return Number.isFinite(n) ? String(n) : "—";
+  }
+
   function ordersTableColspan(showSymbol) {
-    return showSymbol ? 8 : 7;
+    return showSymbol ? 9 : 8;
   }
 
   function formatOrderTime(ts) {
@@ -283,5 +293,6 @@
     renderOrderDetailHtml,
     buildOrdersTableRows,
     ordersTableColspan,
+    formatTpPrice,
   };
 })(typeof globalThis !== "undefined" ? globalThis : window);

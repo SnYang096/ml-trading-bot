@@ -45,6 +45,47 @@ def _marker_id(scope: str, source: str, key: str) -> str:
     return f"{scope}:{source}:{key}"
 
 
+def _multi_leg_event(purpose: str, order_type: str = "") -> str:
+    p = str(purpose or "").lower()
+    ot = str(order_type or "").lower()
+    if any(
+        x in p
+        for x in (
+            "exit",
+            "close",
+            "stop",
+            "reduce",
+            "take_profit",
+            "market_exit",
+        )
+    ):
+        return "exit"
+    if "take_profit" in ot or ot in {"take_profit", "take_profit_market"}:
+        return "exit"
+    if p in {"tp"}:
+        return "exit"
+    return "entry"
+
+
+def _multi_leg_take_profit_price(row: Dict[str, Any]) -> Optional[float]:
+    purpose = str(row.get("purpose") or "").lower()
+    ot = str(row.get("order_type") or "").lower()
+    sp = row.get("stop_price")
+    pr = row.get("price")
+    if "take_profit" in purpose or "take_profit" in ot:
+        if sp is not None and sp == sp:
+            return float(sp)
+        if pr is not None and pr == pr:
+            return float(pr)
+    if sp is not None and sp == sp and float(sp) > 0:
+        return float(sp)
+    leg = str(row.get("leg_id") or row.get("local_order_id") or "")
+    if "_S" in leg.upper() and str(row.get("side") or "").upper() in {"SELL", "SHORT"}:
+        if pr is not None and pr == pr:
+            return float(pr)
+    return None
+
+
 def _append(
     out: List[Dict[str, Any]],
     seen: Set[str],
@@ -345,8 +386,9 @@ def multi_leg_markers(
     out: List[Dict[str, Any]] = []
     seen: Set[str] = set()
     ord_sql = """
-        SELECT local_order_id, strategy, symbol, side, purpose, status,
-               filled_quantity, average_price, filled_at, created_at, price, quantity
+        SELECT local_order_id, strategy, symbol, side, purpose, status, order_type,
+               filled_quantity, average_price, filled_at, created_at, price, quantity,
+               stop_price, leg_id
         FROM multi_leg_orders
         WHERE symbol = ?
         ORDER BY COALESCE(filled_at, created_at) ASC
@@ -355,29 +397,24 @@ def multi_leg_markers(
         status = str(row.get("status") or "").lower()
         filled_qty = _f(row.get("filled_quantity")) or 0.0
         is_filled = status in {"filled", "closed"} or filled_qty > 0
+        if not is_filled and not include_open_orders:
+            continue
         ts = _parse_ts(row.get("filled_at")) or _parse_ts(row.get("created_at"))
         if ts is None:
             continue
-        if is_filled:
-            if not _ts_in_chart_window(
-                ts, start_ts=start_ts, end_ts=end_ts, since_ts=since_ts
-            ):
-                continue
-        elif not include_open_orders:
-            if not _ts_in_chart_window(
-                ts, start_ts=start_ts, end_ts=end_ts, since_ts=since_ts
-            ):
-                continue
-        elif since_ts is not None and ts <= since_ts:
+        if not _ts_in_chart_window(
+            ts, start_ts=start_ts, end_ts=end_ts, since_ts=since_ts
+        ):
             continue
-        purpose = str(row.get("purpose") or "").lower()
-        if any(x in purpose for x in ("exit", "close", "stop", "reduce")):
-            event = "exit"
-        else:
-            event = "entry"
+        if since_ts is not None and not is_filled and ts <= since_ts:
+            continue
+        purpose = str(row.get("purpose") or "")
+        order_type = str(row.get("order_type") or "")
+        event = _multi_leg_event(purpose, order_type)
         side_raw = str(row.get("side") or "").upper()
         side = "long" if side_raw in {"BUY", "LONG"} else "short"
         strat = str(row.get("strategy") or "multi_leg").lower()
+        tp_price = _multi_leg_take_profit_price(row)
         _append(
             out,
             seen,
@@ -394,7 +431,11 @@ def multi_leg_markers(
             extra={
                 "time": ts,
                 "purpose": purpose,
+                "order_type": order_type,
                 "local_order_id": row.get("local_order_id"),
+                "leg_id": row.get("leg_id"),
+                "take_profit_price": tp_price,
+                "stop_price": _f(row.get("stop_price")),
             },
         )
 
@@ -420,6 +461,8 @@ def multi_leg_markers(
         ex_type = str(row.get("execution_type") or "").upper()
         event = "exit" if "CLOSE" in ex_type or ex_type == "REDUCE" else "entry"
         strat = str(row.get("strategy") or "multi_leg").lower()
+        side_raw = "SELL" if event == "exit" else "BUY"
+        side = "long" if side_raw in {"BUY", "LONG"} else "short"
         _append(
             out,
             seen,
@@ -428,7 +471,7 @@ def multi_leg_markers(
             key=str(row.get("event_id")),
             symbol=sym,
             event=event,
-            side="long",
+            side=side,
             price=None,
             strategy=strat,
             status="filled",

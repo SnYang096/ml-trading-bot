@@ -345,11 +345,15 @@ main {
 .page-trade-map .orders-dock-head {
   flex: 0 0 auto;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px 12px;
   padding: 6px 12px;
   font-size: 0.8rem;
   border-bottom: 1px solid #30363d;
+}
+.page-trade-map .orders-filter-chk {
+  font-size: 0.72rem;
 }
 .page-trade-map .orders-dock .orders-table-wrap {
   flex: 1;

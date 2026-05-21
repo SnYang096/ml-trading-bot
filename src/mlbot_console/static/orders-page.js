@@ -111,6 +111,10 @@ async function refreshOrders() {
     limit: "500",
   });
   if (status) q.set("status", status);
+  const exclude = [];
+  if (document.getElementById("hideExpired")?.checked) exclude.push("expired");
+  if (document.getElementById("hideCanceled")?.checked) exclude.push("canceled");
+  if (exclude.length) q.set("exclude_status", exclude.join(","));
   try {
     const { data, meta } = await Shell.api(`/api/orders/list?${q}`);
     const rows = data || [];
@@ -145,6 +149,8 @@ function bindControls() {
     "layerTrend",
     "layerSpot",
     "layerMultiLeg",
+    "hideExpired",
+    "hideCanceled",
   ].forEach((id) => document.getElementById(id).addEventListener("change", rerun));
   document.getElementById("refreshBtn").addEventListener("click", rerun);
   Shell.bindSymbolPersist("symbolSelect");

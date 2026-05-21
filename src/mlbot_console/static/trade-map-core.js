@@ -66,7 +66,9 @@
       const isExit = m.event === "exit";
       const pending = (m.status || "filled").toLowerCase() === "pending";
       const selected = selectedId && m.id === selectedId;
-      const baseText = `${m.scope}:${m.event}${pending ? ":pending" : ""}`;
+      const purpose = (m.detail && m.detail.purpose) || "";
+      const purposeTag = purpose ? `:${purpose}` : "";
+      const baseText = `${m.scope}:${m.event}${purposeTag}${pending ? ":pending" : ""}`;
       return {
         time: m.time,
         position: isExit ? "aboveBar" : "belowBar",

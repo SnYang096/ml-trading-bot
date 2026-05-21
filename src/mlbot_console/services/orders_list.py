@@ -6,7 +6,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from mlbot_console.services.db import query_rows
-from mlbot_console.services.trade_markers import _marker_id, _parse_ts
+from mlbot_console.services.trade_markers import (
+    _marker_id,
+    _multi_leg_take_profit_price,
+    _parse_ts,
+)
 
 _ALL_SYMBOLS = frozenset({"", "*", "ALL", "__ALL__"})
 
@@ -21,6 +25,17 @@ def _row_time(row: Dict[str, Any]) -> int:
         if ts is not None:
             return ts
     return 0
+
+
+def _exclude_statuses(
+    rows: List[Dict[str, Any]], exclude: Optional[List[str]]
+) -> List[Dict[str, Any]]:
+    if not exclude:
+        return rows
+    blocked = {str(s).strip().lower() for s in exclude if str(s).strip()}
+    if not blocked:
+        return rows
+    return [r for r in rows if str(r.get("status") or "").lower() not in blocked]
 
 
 def _normalize(
@@ -41,24 +56,30 @@ def _normalize(
         "multi_leg": "multi_leg_orders",
     }.get(scope, "orders")
     marker_key = oid
-    return {
+    item = {
         "scope": scope,
         "order_id": oid,
         "symbol": sym,
         "side": side,
         "status": status,
         "order_type": row.get("order_type") or row.get("purpose"),
+        "purpose": row.get("purpose"),
         "quantity": row.get("quantity"),
         "price": row.get("price") or row.get("average_price"),
         "filled_quantity": filled_qty,
         "average_price": row.get("average_price"),
+        "stop_price": row.get("stop_price"),
         "created_at": row.get("created_at"),
         "filled_at": row.get("filled_at"),
         "updated_at": row.get("updated_at"),
         "strategy": row.get("strategy") or row.get("strategy_id"),
+        "leg_id": row.get("leg_id"),
         "time": t,
         "marker_id": _marker_id(scope, source, marker_key) if oid else None,
     }
+    if scope == "multi_leg":
+        item["take_profit_price"] = _multi_leg_take_profit_price(row)
+    return item
 
 
 def trend_orders(
@@ -141,8 +162,8 @@ def multi_leg_orders_list(
     if _is_all_symbols(symbol):
         sql = """
             SELECT local_order_id AS order_id, symbol, side, status, order_type, purpose,
-                   quantity, price, filled_quantity, average_price, created_at, filled_at,
-                   strategy
+                   quantity, price, stop_price, filled_quantity, average_price, created_at,
+                   filled_at, strategy, leg_id
             FROM multi_leg_orders
             ORDER BY COALESCE(filled_at, created_at) DESC
             LIMIT ?
@@ -152,8 +173,8 @@ def multi_leg_orders_list(
         sym = symbol.upper()
         sql = """
             SELECT local_order_id AS order_id, symbol, side, status, order_type, purpose,
-                   quantity, price, filled_quantity, average_price, created_at, filled_at,
-                   strategy
+                   quantity, price, stop_price, filled_quantity, average_price, created_at,
+                   filled_at, strategy, leg_id
             FROM multi_leg_orders
             WHERE symbol = ?
             ORDER BY COALESCE(filled_at, created_at) DESC
@@ -180,6 +201,7 @@ def collect_orders(
     symbol: str,
     scopes: List[str],
     status: Optional[str] = None,
+    exclude_statuses: Optional[List[str]] = None,
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
     merged: List[Dict[str, Any]] = []
@@ -198,4 +220,5 @@ def collect_orders(
             multi_leg_orders_list(multi_leg_db, symbol, status=status, limit=per_scope)
         )
     merged.sort(key=lambda r: r.get("time") or 0, reverse=True)
+    merged = _exclude_statuses(merged, exclude_statuses)
     return merged[: int(limit)]

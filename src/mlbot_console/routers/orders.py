@@ -20,8 +20,15 @@ def orders_list(
     symbol: str = Query("*"),
     scopes: str = Query("trend,spot"),
     status: Optional[str] = Query(None),
+    exclude_status: str = Query(
+        "",
+        description="Comma-separated statuses to omit (e.g. expired,canceled)",
+    ),
     limit: int = Query(100, ge=1, le=500),
 ) -> dict:
+    exclude_statuses = [
+        s.strip().lower() for s in exclude_status.split(",") if s.strip()
+    ]
     rows = collect_orders(
         trend_db=SETTINGS.trend_order_db,
         spot_db=SETTINGS.spot_order_db,
@@ -29,6 +36,7 @@ def orders_list(
         symbol=symbol,
         scopes=_scopes_list(scopes),
         status=status,
+        exclude_statuses=exclude_statuses or None,
         limit=limit,
     )
     sym_meta = "ALL" if str(symbol).strip().upper() in {"", "*", "ALL", "__ALL__"} else symbol.upper()
