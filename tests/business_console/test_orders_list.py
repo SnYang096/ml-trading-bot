@@ -137,6 +137,30 @@ def test_trend_orders_join_survives_positions_created_at_column(tmp_path):
     assert any(r["strategy"] == "tpc" for r in rows)
 
 
+def test_trend_orders_exclude_rejected_leaves_filled_visible(trend_db):
+    import sqlite3
+
+    conn = sqlite3.connect(trend_db)
+    for i in range(30):
+        conn.execute(
+            """
+            INSERT INTO orders VALUES (
+                ?, 'ETHUSDT', 'BUY', 'rejected', 'stop_market',
+                0.0, 100.0,
+                '2024-01-02T10:00:00+00:00', '2024-01-02T09:00:00+00:00',
+                '2024-01-02T10:00:00+00:00', NULL, 0.0, NULL
+            )
+            """,
+            (f"rej_{i}",),
+        )
+    conn.commit()
+    conn.close()
+
+    rows = trend_orders(trend_db, "ETHUSDT", exclude_statuses=["rejected"], limit=50)
+    assert all(r["status"] != "rejected" for r in rows)
+    assert any(r["order_type"] == "position_exit" for r in rows)
+
+
 def test_collect_orders_scopes(trend_db, spot_db, multi_leg_db):
     all_rows = collect_orders(
         trend_db=trend_db,

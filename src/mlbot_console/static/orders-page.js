@@ -114,6 +114,8 @@ async function refreshOrders() {
   const exclude = [];
   if (document.getElementById("hideExpired")?.checked) exclude.push("expired");
   if (document.getElementById("hideCanceled")?.checked) exclude.push("canceled");
+  if (document.getElementById("hideRejected")?.checked) exclude.push("rejected");
+  if (document.getElementById("hidePending")?.checked) exclude.push("pending");
   if (exclude.length) q.set("exclude_status", exclude.join(","));
   try {
     const { data, meta } = await Shell.api(`/api/orders/list?${q}`);
@@ -151,6 +153,8 @@ function bindControls() {
     "layerMultiLeg",
     "hideExpired",
     "hideCanceled",
+    "hideRejected",
+    "hidePending",
   ].forEach((id) => document.getElementById(id).addEventListener("change", rerun));
   document.getElementById("refreshBtn").addEventListener("click", rerun);
   Shell.bindSymbolPersist("symbolSelect");

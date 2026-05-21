@@ -204,39 +204,57 @@ def _trend_operation_rows(
     return out
 
 
+def _sql_excluded_status_clause(
+    excluded: Optional[List[str]], *, alias: str = "o"
+) -> tuple[str, tuple[Any, ...]]:
+    """Build NOT IN filter so rejected/pending noise does not fill the row limit."""
+    blocked = {str(s).strip().lower() for s in (excluded or []) if str(s).strip()}
+    if not blocked:
+        return "", ()
+    placeholders = ",".join("?" for _ in blocked)
+    return f" AND lower({alias}.status) NOT IN ({placeholders})", tuple(blocked)
+
+
 def trend_orders(
     db_path: Path,
     symbol: str,
     *,
     status: Optional[str] = None,
+    exclude_statuses: Optional[List[str]] = None,
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
+    status_filter = str(status or "").strip().lower()
+    excluded = list(exclude_statuses or [])
+    if status_filter:
+        excluded = [s for s in excluded if s.lower() != status_filter]
+    status_clause, status_params = _sql_excluded_status_clause(excluded, alias="o")
     if _is_all_symbols(symbol):
-        sql = """
+        sql = f"""
             SELECT o.order_id, o.symbol AS symbol, o.side AS side, o.status, o.order_type,
                    o.quantity, o.price, o.filled_quantity, o.average_price,
                    o.created_at, o.updated_at, o.filled_at,
                    o.position_id, p.strategy_id
             FROM orders o
             LEFT JOIN positions p ON p.position_id = o.position_id
+            WHERE 1=1{status_clause}
             ORDER BY COALESCE(o.filled_at, o.created_at) DESC
             LIMIT ?
         """
-        rows = query_rows(db_path, sql, (int(limit),))
+        rows = query_rows(db_path, sql, (*status_params, int(limit)))
     else:
         sym = symbol.upper()
-        sql = """
+        sql = f"""
             SELECT o.order_id, o.symbol AS symbol, o.side AS side, o.status, o.order_type,
                    o.quantity, o.price, o.filled_quantity, o.average_price,
                    o.created_at, o.updated_at, o.filled_at,
                    o.position_id, p.strategy_id
             FROM orders o
             LEFT JOIN positions p ON p.position_id = o.position_id
-            WHERE o.symbol = ?
+            WHERE o.symbol = ?{status_clause}
             ORDER BY COALESCE(o.filled_at, o.created_at) DESC
             LIMIT ?
         """
-        rows = query_rows(db_path, sql, (sym, int(limit)))
+        rows = query_rows(db_path, sql, (sym, *status_params, int(limit)))
     pos_sql = """
         SELECT position_id, symbol, side, entry_time, exit_time,
                entry_price, exit_price, realized_pnl, status, strategy_id
@@ -350,7 +368,15 @@ def collect_orders(
     scope_set = {s.strip().lower() for s in scopes if s.strip()}
     per_scope = max(int(limit), 1)
     if "trend" in scope_set and trend_db.is_file():
-        merged.extend(trend_orders(trend_db, symbol, status=status, limit=per_scope))
+        merged.extend(
+            trend_orders(
+                trend_db,
+                symbol,
+                status=status,
+                exclude_statuses=exclude_statuses,
+                limit=per_scope,
+            )
+        )
     if "spot" in scope_set and spot_db.is_file():
         merged.extend(spot_orders_list(spot_db, symbol, status=status, limit=per_scope))
     if "multi_leg" in scope_set and multi_leg_db.is_file():
