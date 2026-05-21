@@ -1091,7 +1091,9 @@ async function refreshBundle(opts = {}) {
   const featParam = Core.featureColumnsParam(selectedFeatureColumns);
   if (mode === "full") {
     setStatusLoading();
-    resetMarkerQueryRange();
+    if (opts.resetMarkerRange) {
+      resetMarkerQueryRange();
+    }
   }
 
   const q = new URLSearchParams({
@@ -1191,19 +1193,21 @@ function startPoll() {
 }
 
 function bindControls() {
-  const rerun = () => refreshBundle({ mode: "full" }).catch((e) => setStatus(String(e)));
+  const rerun = (opts = {}) =>
+    refreshBundle({ mode: "full", ...opts }).catch((e) => setStatus(String(e)));
   const rerunAll = async () => {
     chartFitPending = true;
     resetOhlcvLoadedRange();
     resetMarkerQueryRange();
     saveLayout();
     await loadFeatureColumns();
-    rerun();
+    await rerun();
   };
   document.getElementById("refreshBtn").addEventListener("click", () => {
     chartFitPending = true;
     rerunAll();
   });
+  const resetChartRangeIds = new Set(["symbolSelect", "timeframeSelect"]);
   [
     "symbolSelect",
     "timeframeSelect",
@@ -1221,20 +1225,21 @@ function bindControls() {
         rerun();
         return;
       }
-      if (id === "symbolSelect") {
-        Shell.setSymbol(document.getElementById("symbolSelect").value);
+      if (resetChartRangeIds.has(id)) {
+        if (id === "symbolSelect") {
+          Shell.setSymbol(document.getElementById("symbolSelect").value);
+        }
         resetOhlcvLoadedRange();
         resetMarkerQueryRange();
         chartFitPending = true;
-      }
-      if (id === "timeframeSelect") {
-        resetOhlcvLoadedRange();
-        resetMarkerQueryRange();
-        chartFitPending = true;
+        if (id.startsWith("layer")) renderFeaturePicker();
+        if (ordersDockOpen) refreshOrdersList().catch(() => {});
+        rerunAll();
+        return;
       }
       if (id.startsWith("layer")) renderFeaturePicker();
       if (ordersDockOpen) refreshOrdersList().catch(() => {});
-      rerunAll();
+      rerun();
     })
   );
   document.getElementById("detailCloseBtn").addEventListener("click", () => {

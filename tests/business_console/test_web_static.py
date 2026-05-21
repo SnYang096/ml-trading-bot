@@ -52,6 +52,20 @@ def test_static_core_js(client):
     assert "markersToLwc" in r.text
 
 
+def test_trade_map_js_layer_toggle_does_not_reset_history(client):
+    """Regression: EMA/layer changes must not call resetOhlcvLoadedRange."""
+    r = client.get("/static/trade-map.js")
+    assert r.status_code == 200
+    body = r.text
+    assert "resetChartRangeIds" in body
+    assert "opts.resetMarkerRange" in body
+    idx = body.find('"mainEma1200"')
+    assert idx >= 0
+    block = body[idx : idx + 1200]
+    assert "resetOhlcvLoadedRange" not in block
+    assert "rerunAll" not in block
+
+
 def test_bundle_json_shape_for_frontend(client):
     r = client.get(
         "/api/trade-map/bundle",

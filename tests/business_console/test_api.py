@@ -133,6 +133,54 @@ def test_trade_map_bundle_windowed_default(client):
     assert r.json()["meta"]["full_range"] is False
 
 
+def test_trade_map_bundle_tail_preserves_marker_times(client):
+    """Tail OHLCV slice must not re-align markers onto the last few bars."""
+    import pandas as pd
+
+    common = {
+        "symbol": "ETHUSDT",
+        "timeframe": "2h",
+        "scopes": "trend",
+        "from": "2024-01-01T00:00:00Z",
+        "to": "2024-01-03T12:00:00Z",
+    }
+    full = client.get(
+        "/api/trade-map/bundle", params={**common, "include_ohlcv": "full"}
+    )
+    assert full.status_code == 200
+    entry_mid = "trend:positions:p1:entry"
+    full_markers = {m["id"]: m for m in full.json()["data"]["markers"]}
+    assert entry_mid in full_markers
+    entry_time_full = int(full_markers[entry_mid]["time"])
+
+    tail_from = "2024-01-03T06:00:00Z"
+    tail_to = "2024-01-03T12:00:00Z"
+    tail = client.get(
+        "/api/trade-map/bundle",
+        params={
+            **common,
+            "include_ohlcv": "tail",
+            "ohlcv_from": tail_from,
+            "ohlcv_to": tail_to,
+            "include_features": "false",
+        },
+    )
+    assert tail.status_code == 200
+    body = tail.json()
+    assert body["meta"]["include_ohlcv"] == "tail"
+    tail_candles = body["data"]["ohlcv"]["candles"]
+    assert tail_candles
+    tail_times = {int(c["time"]) for c in tail_candles}
+    assert entry_time_full not in tail_times
+
+    tail_markers = {m["id"]: m for m in body["data"]["markers"]}
+    assert int(tail_markers[entry_mid]["time"]) == entry_time_full
+    assert tail_markers[entry_mid].get("detail", {}).get("order_time") is None
+
+    expected = int(pd.Timestamp("2024-01-01T10:00:00+00:00").timestamp())
+    assert entry_time_full == expected
+
+
 def test_trade_map_bundle_ohlcv_none(client):
     r = client.get(
         "/api/trade-map/bundle",

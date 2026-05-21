@@ -276,7 +276,8 @@ def trade_map_bundle(
         **mk,
     )
     marker_counts = marker_scope_counts(markers)
-    if ohlcv.get("candles"):
+    # Tail poll returns only a few bars; aligning to that slice collapses all markers.
+    if ohlcv_mode == "full" and ohlcv.get("candles"):
         candle_times = [int(c["time"]) for c in ohlcv["candles"] if c.get("time") is not None]
         markers = align_markers_to_candles(markers, candle_times)
     trade_links, _ = collect_trade_links(

@@ -193,12 +193,8 @@ def multi_leg_trade_links(
                 entry_px = _price(ent)
                 if entry_ts is None or entry_px is None or exit_ts < entry_ts:
                     continue
-                if ekey in seen_entry and any(
-                    lk.get("entry_marker_id")
-                    == _marker_id("multi_leg", "multi_leg_orders", eoid or ekey)
-                    and lk.get("status") == "closed"
-                    for lk in links
-                ):
+                entry_mid = _marker_id("multi_leg", "multi_leg_orders", eoid or ekey)
+                if any(lk.get("entry_marker_id") == entry_mid for lk in links):
                     continue
                 _append_link(
                     links,
