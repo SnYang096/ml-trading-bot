@@ -23,7 +23,8 @@ sys.path.insert(0, str(project_root))
 
 from src.time_series_model.live.generic_live_strategy import GenericLiveStrategy
 from src.time_series_model.portfolio.live_pcm import LivePCM
-from src.live_data_stream import StorageManager, MultiSymbolManager
+from src.live_data_stream.feature_storage import StorageManager
+from src.live_data_stream.multi_symbol_manager import MultiSymbolManager
 from src.live_data_stream.order_manager_factory import init_order_manager_from_env
 
 

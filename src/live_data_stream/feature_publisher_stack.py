@@ -18,8 +18,9 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 
 from src.config.strategy_layout import resolve_strategy_package_under_root
-from src.live_data_stream import MultiSymbolManager, StorageManager
+from src.live_data_stream.feature_storage import StorageManager
 from src.live_data_stream.gap_filler import GapFiller
+from src.live_data_stream.multi_symbol_manager import MultiSymbolManager
 from src.live_data_stream.constitution_config import (
     enabled_archetypes_from_constitution,
     load_constitution_dict,
