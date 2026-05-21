@@ -219,7 +219,7 @@ def trend_orders(
                    o.position_id, p.strategy_id
             FROM orders o
             LEFT JOIN positions p ON p.position_id = o.position_id
-            ORDER BY COALESCE(filled_at, created_at) DESC
+            ORDER BY COALESCE(o.filled_at, o.created_at) DESC
             LIMIT ?
         """
         rows = query_rows(db_path, sql, (int(limit),))
@@ -233,7 +233,7 @@ def trend_orders(
             FROM orders o
             LEFT JOIN positions p ON p.position_id = o.position_id
             WHERE o.symbol = ?
-            ORDER BY COALESCE(filled_at, created_at) DESC
+            ORDER BY COALESCE(o.filled_at, o.created_at) DESC
             LIMIT ?
         """
         rows = query_rows(db_path, sql, (sym, int(limit)))

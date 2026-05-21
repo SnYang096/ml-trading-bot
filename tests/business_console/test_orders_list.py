@@ -61,6 +61,82 @@ def test_trend_orders_all_symbols(trend_db):
     assert "BTCUSDT" in symbols
 
 
+def test_trend_orders_join_survives_positions_created_at_column(tmp_path):
+    """Production trend DB has created_at on both orders and positions."""
+    import sqlite3
+
+    path = tmp_path / "prod_like_trend.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE positions (
+            position_id TEXT PRIMARY KEY,
+            symbol TEXT,
+            side TEXT,
+            entry_time TEXT,
+            exit_time TEXT,
+            entry_price REAL,
+            exit_price REAL,
+            realized_pnl REAL,
+            status TEXT,
+            strategy_id TEXT,
+            created_at TEXT,
+            updated_at TEXT
+        );
+        CREATE TABLE position_operations (
+            operation_id TEXT PRIMARY KEY,
+            position_id TEXT,
+            operation_type TEXT,
+            operation_time TEXT,
+            size REAL,
+            price REAL,
+            reason TEXT
+        );
+        CREATE TABLE orders (
+            order_id TEXT PRIMARY KEY,
+            symbol TEXT,
+            side TEXT,
+            status TEXT,
+            order_type TEXT,
+            quantity REAL,
+            price REAL,
+            filled_at TEXT,
+            created_at TEXT,
+            updated_at TEXT,
+            average_price REAL,
+            filled_quantity REAL,
+            position_id TEXT
+        );
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO positions VALUES (
+            'p_bnb', 'BNBUSDT', 'long',
+            '2024-01-01T10:00:00+00:00', NULL,
+            600.0, NULL, 0.0, 'open', 'tpc',
+            '2024-01-01T10:00:00+00:00', '2024-01-01T10:00:00+00:00'
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO orders VALUES (
+            'ord_bnb', 'BNBUSDT', 'BUY', 'filled', 'limit',
+            0.1, 601.0,
+            '2024-01-01T11:00:00+00:00', '2024-01-01T10:30:00+00:00',
+            '2024-01-01T11:00:00+00:00', 601.0, 0.1, 'p_bnb'
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    rows = trend_orders(path, "BNBUSDT", limit=50)
+    assert any(r["order_id"] == "ord_bnb" for r in rows)
+    assert any(r["strategy"] == "tpc" for r in rows)
+
+
 def test_collect_orders_scopes(trend_db, spot_db, multi_leg_db):
     all_rows = collect_orders(
         trend_db=trend_db,
