@@ -106,3 +106,33 @@ def test_fetch_ohlcv_stitch_more_2h_bars_than_bus_only(stitched_roots):
     assert stitched["source"] == "live_storage+bars_1min"
     assert stitched["live_storage_1m_rows"] > 0
     assert len(stitched["candles"]) > len(bus_only["candles"])
+
+
+def test_fetch_ohlcv_stitch_with_explicit_window(stitched_roots):
+    """Windowed from/to must still merge live_storage archive (regression)."""
+    bus_root, live_bars_root = stitched_roots
+    start = pd.Timestamp("2024-01-01", tz="UTC")
+    end = pd.Timestamp("2024-01-07 23:59", tz="UTC")
+    bus_only = fetch_ohlcv(
+        bus_root,
+        "ETHUSDT",
+        "2h",
+        start=start,
+        end=end,
+        max_days=30,
+        full_range=False,
+        stitch_live_storage=False,
+    )
+    stitched = fetch_ohlcv(
+        bus_root,
+        "ETHUSDT",
+        "2h",
+        start=start,
+        end=end,
+        max_days=30,
+        full_range=False,
+        live_storage_bars_root=live_bars_root,
+        stitch_live_storage=True,
+    )
+    assert stitched["source"] == "live_storage+bars_1min"
+    assert len(stitched["candles"]) > len(bus_only["candles"])

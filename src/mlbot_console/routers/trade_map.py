@@ -355,6 +355,8 @@ def trade_map_bundle(
             "macro_kline_root": ohlcv.get("macro_kline_root"),
             "macro_available": ohlcv.get("macro_available"),
             "macro_rows": ohlcv.get("macro_rows"),
+            "expected_bars": ohlcv.get("expected_bars"),
+            "data_sparse": ohlcv.get("data_sparse"),
         },
     )
 

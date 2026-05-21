@@ -140,6 +140,9 @@ function setStatusFromBundle(symbol, timeframe, candles, markers, meta, overlays
   if (meta.ohlcv_source) parts.push(meta.ohlcv_source);
   if (meta.macro_rows != null) parts.push(`macro=${meta.macro_rows}`);
   if (meta.macro_available === false) parts.push("macro_missing");
+  if (meta.data_sparse || (meta.expected_bars && candles.length < meta.expected_bars * 0.25)) {
+    parts.push(`数据不足(有${candles.length}根/约需${meta.expected_bars || "?"})`);
+  }
   if (meta.range_start && meta.range_end) {
     parts.push(`${meta.range_start.slice(0, 10)}→${meta.range_end.slice(0, 10)}`);
   }
@@ -356,9 +359,14 @@ function markerRangeParams() {
   return { from, to, full_range: "false" };
 }
 
-function applyLoadedOhlcvRange(meta) {
-  if (meta?.range_start) ohlcvLoadedFrom = String(meta.range_start);
-  if (meta?.range_end) ohlcvLoadedTo = String(meta.range_end);
+function applyLoadedOhlcvRange(meta, candles) {
+  if (candles?.length) {
+    ohlcvLoadedFrom = Core.isoFromUnixSec(candles[0].time);
+    ohlcvLoadedTo = Core.isoFromUnixSec(candles[candles.length - 1].time);
+  } else {
+    if (meta?.range_start) ohlcvLoadedFrom = String(meta.range_start);
+    if (meta?.range_end) ohlcvLoadedTo = String(meta.range_end);
+  }
 }
 
 function scheduleHistoryPrefetch(range) {
@@ -379,13 +387,6 @@ async function loadMoreHistory() {
   const newFromMs =
     Number(oldest) * 1000 - chunkDays * 86400000;
   const newFromIso = new Date(newFromMs).toISOString();
-  if (
-    ohlcvLoadedFrom &&
-    newFromMs >= new Date(ohlcvLoadedFrom).getTime() - 1000
-  ) {
-    historyExhausted = true;
-    return;
-  }
   historyLoadInFlight = true;
   try {
     const q = new URLSearchParams({
@@ -412,7 +413,7 @@ async function loadMoreHistory() {
     }
     lastCandles = merged;
     candleSeries.setData(merged);
-    ohlcvLoadedFrom = meta.range_start || newFromIso;
+    applyLoadedOhlcvRange(meta, merged);
     applyMarkers(data.markers || []);
     applyTradeLinks(data.trade_links || []);
   } finally {
@@ -1076,7 +1077,7 @@ async function refreshBundle(opts = {}) {
     lastCandles = candles;
     candleSeries.setData(candles);
     applyMainOverlays(data.main_overlays || {});
-    applyLoadedOhlcvRange(meta);
+    applyLoadedOhlcvRange(meta, candles);
     if (chartFitPending) {
       applyChartViewport(candles.length);
       chartFitPending = false;

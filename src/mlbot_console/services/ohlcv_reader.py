@@ -606,19 +606,16 @@ def fetch_ohlcv(
     path = _bars_path(feature_bus_root, symbol)
     bars_root = Path(live_storage_bars_root) if live_storage_bars_root else None
     do_stitch = bool(
-        stitch_live_storage
-        and bars_root is not None
-        and bars_root.is_dir()
-        and start is None
-        and end is None
+        stitch_live_storage and bars_root is not None and bars_root.is_dir()
     )
+    use_full = full_range and start is None and end is None
     start_ts, end_ts, clipped, bars_1min_rows = _resolve_window(
         path,
         start=start,
         end=end,
         max_days=max_days,
-        full_range=full_range and start is None and end is None,
-        calendar_span=do_stitch,
+        full_range=use_full,
+        calendar_span=bool(do_stitch and use_full),
     )
     bus_df = load_bars_1min(feature_bus_root, symbol, start=start_ts, end=end_ts)
     live_storage_rows = 0
@@ -633,6 +630,10 @@ def fetch_ohlcv(
         raw = bus_df
         source = "bars_1min"
     resampled, degraded = resample_ohlcv(raw, timeframe)
+    span_days = max(1.0, (end_ts - start_ts).total_seconds() / 86400.0)
+    bars_per_day = {"15min": 96.0, "2h": 12.0, "120T": 12.0, "1d": 1.0, "1w": 1.0 / 7.0}
+    expected_bars = int(span_days * bars_per_day.get(tf, 12.0))
+    data_sparse = len(resampled) < max(8, int(expected_bars * 0.25))
     mtime = path.stat().st_mtime if path.is_file() else None
     return {
         "symbol": symbol.upper(),
@@ -648,4 +649,6 @@ def fetch_ohlcv(
         "range_end": end_ts.isoformat(),
         "range_clipped": clipped,
         "max_ohlcv_days": max_days,
+        "expected_bars": expected_bars,
+        "data_sparse": data_sparse,
     }
