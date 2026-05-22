@@ -879,7 +879,7 @@ class OrderFlowListener:
                 except Exception:
                     pass
                 return
-            for tf, extra_features in features_by_timeframe.items():
+            for tf, extra_features in list(features_by_timeframe.items()):
                 if tf == primary_tf:
                     continue
                 extra_fc = self.extra_feature_computers.get(tf)
@@ -892,12 +892,22 @@ class OrderFlowListener:
                     )
                     if should_skip_feature_bus_publish(extra_report):
                         logger.error(
-                            "[%s] skip feature-bus publish (%s): critical=%s",
+                            "[%s] skip extra feature-bus publish (%s): critical=%s",
                             self.symbol,
                             tf,
                             extra_report.get("critical_nan"),
                         )
-                        return
+                        try:
+                            from src.time_series_model.live.metrics_exporter import (
+                                METRICS,
+                            )
+
+                            METRICS.feature_bus_publish_skipped_total.labels(
+                                symbol=self.symbol, timeframe=tf
+                            ).inc()
+                        except Exception:
+                            pass
+                        features_by_timeframe.pop(tf, None)
         except Exception as audit_exc:
             from src.live_data_stream.feature_bus_audit import FeatureBusAuditError
 
