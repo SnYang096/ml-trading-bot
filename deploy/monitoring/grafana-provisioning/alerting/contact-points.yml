@@ -1,0 +1,17 @@
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: telegram-quant-ops
+    receivers:
+      - uid: telegram-quant-ops
+        type: telegram
+        settings:
+          chatid: "-1002004555233"
+          parse_mode: HTML
+          message: |
+            {{ template "telegram.message" . }}
+          disable_notification: false
+          protect_content: false
+        secureSettings:
+          bottoken: $__env{GRAFANA_ALERT_TELEGRAM_BOT_TOKEN}

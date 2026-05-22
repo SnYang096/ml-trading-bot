@@ -1,0 +1,142 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [
+    { "title": "System Health", "url": "/d/quant-system", "type": "link", "targetBlank": false },
+    { "title": "Ops Hub", "url": "/d/quant-home", "type": "link", "targetBlank": false }
+  ],
+  "panels": [
+    {
+      "type": "row",
+      "title": "systemd · quant-* 容器日志",
+      "id": 1,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "type": "logs",
+      "title": "journald (quant-feature-bus / trend / hedge / spot)",
+      "id": 2,
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 1 },
+      "datasource": { "type": "loki", "uid": "loki-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{job=\"systemd-journal\", unit=~\"quant-${service:regex}.*\"}",
+          "legendFormat": ""
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": "none"
+      }
+    },
+    {
+      "type": "row",
+      "title": "审计 JSONL · 结构化",
+      "id": 3,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 },
+      "collapsed": false
+    },
+    {
+      "type": "logs",
+      "title": "audit files",
+      "id": 4,
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 14 },
+      "datasource": { "type": "loki", "uid": "loki-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{job=\"audit\", process=~\"${audit_process:regex}\"}",
+          "legendFormat": ""
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": true,
+        "enableLogDetails": true,
+        "sortOrder": "Descending"
+      }
+    },
+    {
+      "type": "row",
+      "title": "错误 / 对账 / 异常",
+      "id": 5,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 },
+      "collapsed": false
+    },
+    {
+      "type": "logs",
+      "title": "ERROR · reconcile · Traceback",
+      "id": 6,
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 25 },
+      "datasource": { "type": "loki", "uid": "loki-monitoring" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{job=~\"systemd-journal|audit\"} |~ \"(?i)(error|reconcile not ok|traceback|exception|api_error|orphan)\"",
+          "legendFormat": ""
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending"
+      }
+    }
+  ],
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["quant", "logs", "loki"],
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "type": "custom",
+        "label": "systemd unit",
+        "query": "feature-bus,trend-swing,hedge-multileg,spot-accum",
+        "options": [
+          { "text": "feature-bus", "value": "feature-bus", "selected": true },
+          { "text": "trend-swing", "value": "trend-swing", "selected": false },
+          { "text": "hedge-multileg", "value": "hedge-multileg", "selected": false },
+          { "text": "spot-accum", "value": "spot-accum", "selected": false },
+          { "text": "all", "value": ".*", "selected": false }
+        ],
+        "current": { "text": "feature-bus", "value": "feature-bus" },
+        "includeAll": false,
+        "multi": false
+      },
+      {
+        "name": "audit_process",
+        "type": "custom",
+        "label": "audit process",
+        "query": "feature_bus,trend,multi_leg",
+        "options": [
+          { "text": "all", "value": ".*", "selected": true },
+          { "text": "feature_bus", "value": "feature_bus", "selected": false },
+          { "text": "trend", "value": "trend", "selected": false },
+          { "text": "multi_leg", "value": "multi_leg", "selected": false }
+        ],
+        "current": { "text": "all", "value": ".*" },
+        "includeAll": false,
+        "multi": true
+      }
+    ]
+  },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "utc",
+  "title": "Logs · journald & audit",
+  "uid": "quant-logs",
+  "version": 1
+}

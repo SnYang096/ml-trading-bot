@@ -1,0 +1,295 @@
+apiVersion: 1
+groups:
+- orgId: 1
+  name: quant_ops
+  folder: Quant Ops
+  interval: 1m
+  rules:
+  - uid: quant_target_down
+    title: QuantTargetDown
+    condition: C
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 300
+        to: 0
+      datasourceUid: prometheus-monitoring
+      model:
+        expr: up{job=~"quant-feature-bus|quant-trend-fattail|quant-hedge-multileg|quant-spot-accum"} == 0
+        instant: true
+        intervalMs: 1000
+        maxDataPoints: 43200
+        refId: A
+    - refId: B
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: reduce
+        expression: A
+        reducer: last
+        refId: B
+    - refId: C
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: threshold
+        expression: B
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+        refId: C
+    noDataState: OK
+    execErrState: Alerting
+    for: 1m
+    annotations:
+      summary: 量化进程 Prometheus target 不可用
+      description: 检查 systemctl status / journalctl -u quant-* ；Grafana System Health
+    labels:
+      severity: critical
+    isPaused: false
+  - uid: quant_trend_reconciliation
+    title: QuantTrendReconciliationManualCheck
+    condition: C
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 300
+        to: 0
+      datasourceUid: prometheus-monitoring
+      model:
+        expr: (min(mlbot_reconciliation_ok{scope="trend"}) == 0) or (sum(mlbot_reconciliation_issue_count{scope="trend"}) > 0)
+        instant: true
+        intervalMs: 1000
+        maxDataPoints: 43200
+        refId: A
+    - refId: B
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: reduce
+        expression: A
+        reducer: last
+        refId: B
+    - refId: C
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: threshold
+        expression: B
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+        refId: C
+    noDataState: OK
+    execErrState: Alerting
+    for: 3m
+    annotations:
+      summary: Trend 订单对账异常
+      description: DB vs 币安 open/algo；见 order_management.db / quant-strategy-map-trend
+    labels:
+      severity: warning
+    isPaused: false
+  - uid: quant_hedge_reconciliation
+    title: QuantHedgeReconciliationManualCheck
+    condition: C
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 300
+        to: 0
+      datasourceUid: prometheus-monitoring
+      model:
+        expr: (min(mlbot_reconciliation_ok{scope="hedge"}) == 0) or (sum(mlbot_reconciliation_issue_count{scope="hedge"}) > 0)
+        instant: true
+        intervalMs: 1000
+        maxDataPoints: 43200
+        refId: A
+    - refId: B
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: reduce
+        expression: A
+        reducer: last
+        refId: B
+    - refId: C
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: threshold
+        expression: B
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+        refId: C
+    noDataState: OK
+    execErrState: Alerting
+    for: 3m
+    annotations:
+      summary: Multi-leg 对账异常
+      description: engine/DB vs 交易所；见 HEDGE_RECONCILIATION_CN.md
+    labels:
+      severity: warning
+    isPaused: false
+  - uid: quant_spot_reconciliation
+    title: QuantSpotReconciliationManualCheck
+    condition: C
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 300
+        to: 0
+      datasourceUid: prometheus-monitoring
+      model:
+        expr: (min(mlbot_reconciliation_ok{scope="spot"}) == 0) or (sum(mlbot_reconciliation_issue_count{scope="spot"}) > 0)
+        instant: true
+        intervalMs: 1000
+        maxDataPoints: 43200
+        refId: A
+    - refId: B
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: reduce
+        expression: A
+        reducer: last
+        refId: B
+    - refId: C
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: threshold
+        expression: B
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+        refId: C
+    noDataState: OK
+    execErrState: Alerting
+    for: 3m
+    annotations:
+      summary: Spot 对账异常
+      description: pending/ledger vs 交易所
+    labels:
+      severity: warning
+    isPaused: false
+  - uid: quant_pipeline_stale
+    title: QuantPipelineStale
+    condition: C
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 300
+        to: 0
+      datasourceUid: prometheus-monitoring
+      model:
+        expr: min(mlbot_pipeline_data_fresh{job="quant-feature-bus"}) == 0
+        instant: true
+        intervalMs: 1000
+        maxDataPoints: 43200
+        refId: A
+    - refId: B
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: reduce
+        expression: A
+        reducer: last
+        refId: B
+    - refId: C
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: threshold
+        expression: B
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+        refId: C
+    noDataState: OK
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: Feature-bus 数据管线不新鲜
+      description: ticks/bars/bus 停滞；检查 quant-feature-bus WS 与磁盘写入
+    labels:
+      severity: warning
+    isPaused: false
+  - uid: quant_disk_critical
+    title: QuantDiskCritical
+    condition: C
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 300
+        to: 0
+      datasourceUid: prometheus-monitoring
+      model:
+        expr: mlbot_disk_used_percent{job="quant-feature-bus",volume="root"} > 90
+        instant: true
+        intervalMs: 1000
+        maxDataPoints: 43200
+        refId: A
+    - refId: B
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: reduce
+        expression: A
+        reducer: last
+        refId: B
+    - refId: C
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: threshold
+        expression: B
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+        refId: C
+    noDataState: OK
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: 根分区磁盘使用率过高
+      description: 清理旧日志/warmup；见 quant_system Disk 面板
+    labels:
+      severity: critical
+    isPaused: false

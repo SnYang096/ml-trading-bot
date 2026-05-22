@@ -458,51 +458,6 @@
     },
     {
       "type": "timeseries",
-      "title": "Hedge · 经典漏斗 / orders（多腿不写 trend funnel → 多为 No data）",
-      "id": 313,
-      "gridPos": {
-        "h": 7,
-        "w": 24,
-        "x": 0,
-        "y": 28
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus-monitoring"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum by (strategy, stage) (rate(mlbot_funnel_total{job=~\"$job\",strategy=~\"${strategy:regex}\"}[$__rate_interval]))",
-          "legendFormat": "{{strategy}} · {{stage}}"
-        },
-        {
-          "refId": "B",
-          "expr": "sum by (strategy) (rate(mlbot_orders_total{job=~\"$job\",strategy=~\"${strategy:regex}\"}[$__rate_interval]))",
-          "legendFormat": "orders {{strategy}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "ops",
-          "custom": {
-            "stacking": {
-              "mode": "normal",
-              "group": "C"
-            }
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom"
-        }
-      }
-    },
-    {
-      "type": "timeseries",
       "title": "Hedge · ATR / 波动（atr、atr14）",
       "description": "与价格同量级（USDT）的波动代理；**勿**与 0~1 的 chop/box 同轴。",
       "id": 334,
@@ -730,85 +685,6 @@
           "displayMode": "table",
           "placement": "bottom"
         }
-      }
-    },
-    {
-      "type": "timeseries",
-      "title": "Hedge · 交易所持仓 qty（历史 · 按引擎 reconcile）",
-      "description": "**同一数据源**与下方持仓表：`mlbot_position_qty{scope=\"hedge\"}`，按引擎 **`strategy`** 标签与 **symbol/side** 分线。**纵轴 >0 ≈ 当时 reconcile 读到该合约净仓**（两引擎同 symbol 时常 **两条线数值相同**）。\n\n**限制**：粒度 ≤ bar / scrape；retention 受 Prometheus 配置约束；**不含**订单级明细。",
-      "id": 320,
-      "gridPos": {
-        "h": 6,
-        "w": 24,
-        "x": 0,
-        "y": 63
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus-monitoring"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "mlbot_position_qty{job=~\"$job\",scope=\"hedge\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"}",
-          "legendFormat": "{{strategy}} · {{symbol}} {{side}} · qty"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "min": 0,
-          "decimals": 4,
-          "custom": {
-            "stacking": {
-              "mode": "none"
-            }
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom"
-        }
-      }
-    },
-    {
-      "type": "table",
-      "title": "Hedge · 交易所持仓（按引擎 reconcile；同合约多引擎会重复一行）",
-      "description": "来自 **`MultiLegDaemon`** 每条 bar 后对 **`adapter.sync_positions(symbol)`** 的 **`METRICS.update_position_metrics(scope='hedge', strategy=运行时名)`**。\n\n**`strategy` 标签** = **进程内引擎名**，**不是 clientOrderId 级别的归因**。数据仍是 **交易所该 **`symbol` 合约的净持仓** —— 因而 **同一账户、同一 symbol、两个网格/多腿共存**时，两行 **数量通常相同**，都等于交易所净仓之和；**不能与「仅某引擎自认仓」逐项对齐**。\n\n**Stale 占位 0**：reconcile 对旧标签会 `set(0)`，instant 表里曾出现 qty=0 行。**已用 PromQL `> 0`** 仅在表上隐藏空仓占位。空仓且从未有过非零序列 ⇒ **仍 No data**（正常现象）。趋势侧另见账户级 `strategy=all` 面板。",
-      "id": 317,
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 69
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus-monitoring"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "max by (strategy, symbol, side) (mlbot_position_qty{job=~\"$job\",scope=\"hedge\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"}) > 0",
-          "format": "table",
-          "instant": true
-        },
-        {
-          "refId": "B",
-          "expr": "max by (strategy, symbol, side) (mlbot_position_notional_usdt{job=~\"$job\",scope=\"hedge\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"}) > 0",
-          "format": "table",
-          "instant": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
-      "options": {
-        "showHeader": true
       }
     },
     {
@@ -1197,5 +1073,5 @@
   "timezone": "utc",
   "title": "Strategy Map · Multi-leg Hedge",
   "uid": "quant-strategy-map-hedge",
-  "version": 1
+  "version": 4
 }

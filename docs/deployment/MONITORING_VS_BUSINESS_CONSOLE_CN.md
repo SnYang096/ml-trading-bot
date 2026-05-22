@@ -15,7 +15,8 @@
 | 需求 | 更合适的技术 |
 |------|----------------|
 | 进程存活、CPU、**磁盘/日志/warmup 目录**、错误率、漏斗/拒因 **时序** | 应用 `/metrics`（`quant-feature-bus` 暴露 `mlbot_disk_*`）→ **Prometheus** → **Grafana** |
-| **告警**（Target down、拒因突增、账户更新失败） | Prometheus **Alertmanager** 或 Grafana 告警 |
+| **告警**（Target down、对账异常、管线停滞、磁盘） | **Grafana Unified Alerting** → Telegram |
+| **多进程日志**（journald + 审计 JSONL） | **Loki + Promtail** → Grafana `quant-logs` 看板 |
 | **K 线（OHLCV）**、Parquet **逐列特征**、大时间窗浏览 | **小后台**：读 Parquet/API + 图表库（Lightweight Charts / ECharts） |
 | 订单/持仓/审计 **行级明细**、下钻单次决策 | **小后台 + 结构化存储**（SQLite/JSONL/审计日志），按需查询 |
 | 内网可视化、不负责复杂交互 | Grafana **Explore** 查 PromQL |
@@ -28,11 +29,14 @@
 
 ### 2.1 Grafana + Prometheus（保留）
 
-**职责**：「运行时健康 + 粗粒度策略地图」——与当前 `deploy/monitoring` 一致。
+**职责**：「运行时健康 + 策略管道 + 日志检索」——与当前 `deploy/monitoring` 一致。
 
-- 抓取：`quant-*` 容器暴露的 `:9090/metrics`（宿主映射 9190/9191/9192）。
-- 面板：`quant_home`、`quant_strategy_map_trend`、`quant_strategy_map_hedge`、`quant_system` 等已 provision 的 JSON。
-- **不做**：Parquet K 线全量浏览、任意 SQL 即席分析、逐笔订单生命周期的主界面。
+- 抓取：`quant-*` 容器暴露的 `:9090/metrics`（宿主映射 9190/9191/9192/9193）。
+- **默认首页**：`quant_system`（System Health）— 四进程 UP、WS、管线新鲜、bus 消费、对账灯。
+- **导航**：`quant_home`（Ops Hub）— 链到 System / Logs / Strategy Map / CMS。
+- **策略**：`quant_strategy_map_*` — 信号、拒因、对账（不含账户权益主界面）。
+- **日志**：`quant_logs` — Loki 收 journald `quant-*.service` + 审计文件。
+- **不做**：Parquet K 线、账户总览、逐笔订单主界面（→ 业务 CMS :8800）。
 
 **价值**：生态成熟、Alerting、多 job 对比、与部署 CI 已集成（`docker-compose.monitoring.yml`），**不必用自研重造「时序库 + 告警规则引擎」**。
 
@@ -56,6 +60,7 @@
 |------|----------|------|
 | **Grafana** | 约 150–400 MB | 面板数量、数据源多少会波动 |
 | **Prometheus** | 约 300 MB–1.5+ GB | 与 `retention.time` / `retention.size`、series 数量强相关；仓库内配置为 **30d + 1GB 上限**（`docker-compose.monitoring.yml`） |
+| **Loki + Promtail** | 约 200–400 MB | Loki 保留 **7d**（`loki-config.yml`） |
 
 在 **4G 主机**上，若交易容器已占 3G+，监控栈仍通常可接受；若极端吃紧，可：
 
@@ -77,16 +82,33 @@
 
 ---
 
-## 5. 实施阶段（建议）
+## 5. 看板与告警（当前）
 
-1. **P0**：网络可达性（SSH 隧道 / VPN / HTTPS 反代），确保至少能打开 Grafana；Prometheus Target 全 UP。
-2. **P1**：业务 CMS **Trade Map Live**（全 symbol、默认 2h、可切 15m/1m/1d、实盘开平仓标记、轮询刷新）；详见 [BUSINESS_CONSOLE_DESIGN_CN.md §4.2](./BUSINESS_CONSOLE_DESIGN_CN.md#42-实盘互动交易地图trade-map-live--核心能力)。
-3. **P2**：审计/SQLite 只读 API（分页、按 symbol/time 过滤）；不与写路径竞争锁。
-4. **P3**（可选）：Grafana 增加 **Loki** 采集审计日志 —— 仍建议「检索用 Loki，分析用后台」。
+| 看板 UID | 用途 |
+|----------|------|
+| `quant-system` | **默认首页** — System Health |
+| `quant-home` | Ops Hub 导航（链 CMS / Logs） |
+| `quant-logs` | Loki：journald + audit |
+| `quant-strategy-map-*` | 信号 / 对账 / 拒因 |
+
+**Telegram 告警**（`telegram-quant-ops`）：
+
+1. 在监控主机：`cp deploy/monitoring/.env.example /opt/quant-engine/monitoring/.env`
+2. 填入 `GRAFANA_ALERT_TELEGRAM_BOT_TOKEN`（勿提交 git；若 token 曾泄露请 BotFather 轮换）
+3. `docker compose -f docker-compose.monitoring.yml up -d grafana`
+4. Grafana → Alerting → Contact points → **Test** `telegram-quant-ops`
+
+规则文件：`grafana-provisioning/alerting/rules/quant_ops.yaml`（对账 / Target down / 管线 / 磁盘）。
+
+## 6. 实施阶段（建议）
+
+1. **P0**：SSH 隧道打开 Grafana；Prometheus Targets 四 job UP；`monitoring/.env` 配好 Telegram。
+2. **P1**：业务 CMS（账户 / 订单 / Trade Map）— 见 [BUSINESS_CONSOLE_DESIGN_CN.md](./BUSINESS_CONSOLE_DESIGN_CN.md)。
+3. **P2**：Loki 日志 — 用 `quant-logs` 替代多窗口 `journalctl -f`。
 
 ---
 
-## 6. 相关文件
+## 7. 相关文件
 
 - 部署与卷约定：`.github/workflows/deploy.yml` 头部注释  
 - 监控 compose：`deploy/monitoring/docker-compose.monitoring.yml`  
@@ -95,6 +117,17 @@
 
 ---
 
-## 7. 修订记录
+## 8. 已知限制与验证
 
+| 项 | 说明 |
+|----|------|
+| **静态测试** | `pytest tests/deploy/test_monitoring_provisioning.py` — JSON/YAML/compose/无 token 泄漏 |
+| **Telegram `$__env`** | `contact-points.yml` 依赖 Grafana 10 的 `$__env{GRAFANA_ALERT_TELEGRAM_BOT_TOKEN}`；若 Test 失败，在 UI 手填 token 或查容器 env |
+| **一眼总览** | 顶栏为 UP/WS/管线/对账；**未**单独做 bars/s 消费灯（详见 System 各进程块 timeseries） |
+| **Promtail 路径** | 依赖宿主 `/opt/quant-engine/...` 与 `journald`；本地无该目录时 promtail 仅 journal 有效 |
+| **告警文件位置** | `quant_ops.yaml` 须在 `provisioning/alerting/` **根目录**，不可放 `rules/` 子目录 |
+
+## 9. 修订记录
+
+- 2026-05-22：System Health 默认首页；Ops Hub；Loki/Promtail；Grafana→Telegram 告警；审查修复告警 YAML/面板 ID。
 - 2026-05-15：初版 — 职责划分、内存粗估、Parquet K 线走小后台。

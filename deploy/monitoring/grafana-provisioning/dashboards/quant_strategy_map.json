@@ -1,5 +1,7 @@
 {
-  "annotations": { "list": [] },
+  "annotations": {
+    "list": []
+  },
   "editable": true,
   "graphTooltip": 0,
   "id": null,
@@ -25,30 +27,54 @@
       "targetBlank": false,
       "icon": "dashboard"
     },
-    { "title": "Home", "url": "/d/quant-home", "type": "link", "targetBlank": false },
-    { "title": "System", "url": "/d/quant-system", "type": "link", "targetBlank": false }
+    {
+      "title": "Home",
+      "url": "/d/quant-home",
+      "type": "link",
+      "targetBlank": false
+    },
+    {
+      "title": "System",
+      "url": "/d/quant-system",
+      "type": "link",
+      "targetBlank": false
+    }
   ],
   "panels": [
     {
       "type": "text",
       "title": "Strategy workloads",
       "id": 1,
-      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 0 },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
       "options": {
         "mode": "markdown",
-        "content": "## Strategy Map hub\n\n三个策略看板（各自 Prometheus `job`）：\n\n- **[Strategy Map · Trend](/d/quant-strategy-map-trend)** — funnel `mlbot_funnel_*`，`quant-trend-fattail` :9190\n- **[Strategy Map · Multi-leg Hedge](/d/quant-strategy-map-hedge)** — `mlbot_multi_leg_*`，`quant-hedge-multileg` :9191\n- **[Strategy Map · Spot Accum](/d/quant-strategy-map-spot)** — pending/持仓/对账，`quant-spot-accum` :9193\n\n**Prometheus 全局抓取间隔**：`scrape_interval: 15s`（见 `deploy/monitoring/prometheus.yml`）。指标先有 `/metrics` 暴露才有 TSDB。"
+        "content": "## Strategy Map · 策略管道健康\n\n业务账户/订单/K 线请用 **业务 CMS**（:8800）。本组只看 **信号、拒因、对账、风控**。\n\n- **[Trend](/d/quant-strategy-map-trend)** — `quant-trend-fattail` :9190\n- **[Multi-leg Hedge](/d/quant-strategy-map-hedge)** — `quant-hedge-multileg` :9191\n- **[Spot Accum](/d/quant-strategy-map-spot)** — `quant-spot-accum` :9193\n\n[System Health](/d/quant-system) · [Logs](/d/quant-logs) · [Ops Hub](/d/quant-home)"
       },
       "transparent": false
     }
   ],
   "schemaVersion": 39,
   "style": "dark",
-  "tags": ["quant", "strategy", "core"],
-  "templating": { "list": [] },
-  "time": { "from": "now-6h", "to": "now" },
+  "tags": [
+    "quant",
+    "strategy",
+    "core"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
   "timepicker": {},
   "timezone": "utc",
   "title": "Strategy Map · Hub",
   "uid": "quant-strategy-map",
-  "version": 1
+  "version": 4
 }

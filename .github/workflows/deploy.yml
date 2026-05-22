@@ -611,7 +611,7 @@ jobs:
             rm -f /tmp/mlbot-monitoring.tgz
             cd /opt/quant-engine/monitoring
             # sqlite-web 仅用本地 Dockerfile build，勿对 mlbot-sqlite-web:* 执行 pull（无远端仓库）
-            docker compose -f docker-compose.monitoring.yml pull prometheus grafana
+            docker compose -f docker-compose.monitoring.yml pull prometheus grafana loki promtail
             docker compose -f docker-compose.monitoring.yml up -d --build --remove-orphans
             echo ""
             echo "=== 🧹 Cleanup old Grafana dashboard UIDs ==="
@@ -661,7 +661,8 @@ jobs:
             echo "=== 📊 Monitoring containers ==="
             docker ps --filter name=mlbot --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
             echo ""
-            echo "Grafana 默认 http://<主机>:3000 （compose 内 admin/admin，上线后请改密）；Prometheus :9091。"
+            echo "Grafana 默认 http://<主机>:3000 （首页 System Health；admin/admin 上线后请改密）；Prometheus :9091；Loki :3100。"
+            echo "Telegram 告警: 在 monitoring 目录 cp .env.example .env 并填入 GRAFANA_ALERT_TELEGRAM_BOT_TOKEN 后 restart grafana。"
             echo "SQLite 只读浏览器 sqlite-web：8871=live_monitor / 8872=order_management / 8873=multi_leg_order_management（无登录，勿对公网暴露）。"
             echo "Metrics: 宿主 9192=feature-bus / 9190=trend-swing / 9191=hedge-multileg / 9193=spot-accum（Prometheus 经 host.docker.internal，见 deploy/monitoring/prometheus.yml）。"
 

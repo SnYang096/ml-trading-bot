@@ -1,8 +1,10 @@
-# 监控栈: Prometheus + Grafana + sqlite-web（只读 SQLite）
+# 监控栈: Prometheus + Grafana + Loki + Promtail + sqlite-web（只读 SQLite）
 # 用法: cd deploy/monitoring && docker compose -f docker-compose.monitoring.yml up -d
+# Telegram 告警: 复制 .env.example → .env，填入 GRAFANA_ALERT_TELEGRAM_BOT_TOKEN（勿提交 git）
 #
 # Prometheus: http://localhost:9091
-# Grafana:    http://localhost:3000  (admin / admin)
+# Grafana:    http://localhost:3000  (admin / admin) — 默认首页 System Health
+# Loki:       http://localhost:3100 （Grafana Explore / quant-logs 看板）
 #
 # sqlite-web（coleifer/sqlite-web 一单库一进程；order/multi_leg 目录需 RW 挂载，详见各 service 注释）
 #   live_monitor.db        → http://<host>:8871  （stats_15min）
@@ -32,6 +34,32 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  loki:
+    image: grafana/loki:2.9.8
+    container_name: mlbot-loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/config.yml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/config.yml
+
+  promtail:
+    image: grafana/promtail:2.9.8
+    container_name: mlbot-promtail
+    restart: unless-stopped
+    user: root
+    volumes:
+      - ./promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/log/journal:/var/log/journal:ro
+      - /etc/machine-id:/etc/machine-id:ro
+      - /opt/quant-engine/live/highcap/data/logs:/logs/trend_bus:ro
+      - /opt/quant-engine/data/multi_leg_live/state/logs:/logs/multi_leg:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+
   grafana:
     image: grafana/grafana:10.4.1
     container_name: mlbot-grafana
@@ -42,14 +70,21 @@ services:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_USERS_ALLOW_SIGN_UP=false
-      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/quant_home.json
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/quant_system.json
+      - GF_UNIFIED_ALERTING_ENABLED=true
+      - GF_ALERTING_ENABLED=false
+      # Telegram（compose 从同目录 .env 做 ${} 替换后注入容器）
+      - GRAFANA_ALERT_TELEGRAM_BOT_TOKEN=${GRAFANA_ALERT_TELEGRAM_BOT_TOKEN:-}
+      - GRAFANA_ALERT_TELEGRAM_CHAT_ID=${GRAFANA_ALERT_TELEGRAM_CHAT_ID:--1002004555233}
     volumes:
       - ./grafana-provisioning/datasources:/etc/grafana/provisioning/datasources:ro
       - ./grafana-provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
       - ./grafana-provisioning/dashboards:/var/lib/grafana/dashboards:ro
+      - ./grafana-provisioning/alerting:/etc/grafana/provisioning/alerting:ro
       - grafana_data:/var/lib/grafana
     depends_on:
       - prometheus
+      - loki
 
   sqlite-web-live-monitor:
     build:
@@ -121,3 +156,4 @@ services:
 volumes:
   prometheus_data:
   grafana_data:
+  loki_data:

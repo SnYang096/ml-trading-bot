@@ -459,85 +459,6 @@
       }
     },
     {
-      "type": "timeseries",
-      "title": "Trend · 交易所持仓 qty（历史 · reconcile）",
-      "description": "**同一数据源**与下方持仓表：`mlbot_position_qty{scope=\"trend\",strategy=\"all\"}` 按 **Prometheus scrape** 打点。**纵轴 >0 区间 ≈ 当时账户在该 symbol/side 上有净仓**，可作「开过仓」的视觉提醒。\n\n**限制**：粒度 ≤ scrape 间隔；长度 ≤ Prometheus retention；空仓为 **0**（不断线取决于 TSDB 是否有样本）。**不含**单笔成交价 / 已实现盈亏。",
-      "id": 816,
-      "gridPos": {
-        "h": 6,
-        "w": 24,
-        "x": 0,
-        "y": 45
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus-monitoring"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "mlbot_position_qty{job=~\"$job\",scope=\"trend\",strategy=\"all\",symbol=~\"${symbol:regex}\"}",
-          "legendFormat": "{{symbol}} {{side}} · qty"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "min": 0,
-          "decimals": 4,
-          "custom": {
-            "stacking": {
-              "mode": "none"
-            }
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom"
-        }
-      }
-    },
-    {
-      "type": "table",
-      "title": "Trend · 交易所持仓（账户 reconcile，`strategy` 固定为 `all`）",
-      "description": "**数据源**：`METRICS.update_account_data()` → Binance Futures `GET /fapi/v2/account` 的 **`positions`**，经 `update_position_metrics(..., strategy=\"all\")` 写入 Gauges。**不是** archetype/`PositionTracker` 内部台账。\n\n**为何和「入场价 / entry 打点」可对不上**：上图 **`mlbot_strategy_event_price`** 的 `strategy` = **archetype（如 tpc）**；本表 **`strategy`** 恒为 **`all`**（交易所在单账户上不区分内置策略）。`entry` 在 **挂单成功回路**打点，**不能保证**几秒后的 scrape 上仍有净仓（未成交、已平、被拒、或减少为 0）。\n\n**为何曾出现 qty=0 仍占一行**：Grafana **instant** 会合并曾为非零的标签组合；已对 PromQL **`> 0`** 过滤，空仓不再占行。**上方策略变量不参与本表**（避免误筛掉 `strategy=all` 序列）。`symbol` 变量仍生效。",
-      "id": 307,
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 51
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus-monitoring"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "max by (strategy, symbol, side) (mlbot_position_qty{job=~\"$job\",scope=\"trend\",strategy=\"all\",symbol=~\"${symbol:regex}\"}) > 0",
-          "format": "table",
-          "instant": true
-        },
-        {
-          "refId": "B",
-          "expr": "max by (strategy, symbol, side) (mlbot_position_notional_usdt{job=~\"$job\",scope=\"trend\",strategy=\"all\",symbol=~\"${symbol:regex}\"}) > 0",
-          "format": "table",
-          "instant": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
-      "options": {
-        "showHeader": true
-      }
-    },
-    {
       "type": "table",
       "title": "Trend · 事件计数（所选范围末值 = increase 窗口可查 Explore）",
       "id": 310,
@@ -845,5 +766,5 @@
   "timezone": "utc",
   "title": "Strategy Map · Trend",
   "uid": "quant-strategy-map-trend",
-  "version": 1
+  "version": 2
 }

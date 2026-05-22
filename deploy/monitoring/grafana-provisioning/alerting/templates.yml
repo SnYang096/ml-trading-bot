@@ -1,0 +1,18 @@
+apiVersion: 1
+
+templates:
+  - orgId: 1
+    name: quant_ops_template
+    template: |
+      {{ define "telegram.message" }}
+      {{ range .Alerts }}
+      {{ if eq .Status "firing" }}🚨 <b>【故障发生】</b>{{ else }}✅ <b>【已恢复】</b>{{ end }}
+      <b>规则</b>: {{ .Labels.alertname }}
+      <b>级别</b>: {{ .Labels.severity }}
+      <b>详情</b>: {{ index .Annotations "summary" }}
+
+      {{ index .Annotations "description" }}
+      
+      <a href="http://127.0.0.1:3000/d/quant-system">🔗 查看 System Health 看板</a>
+      {{ end }}
+      {{ end }}
