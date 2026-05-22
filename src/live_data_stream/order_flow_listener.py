@@ -870,6 +870,14 @@ class OrderFlowListener:
                     primary_report.get("missing_count"),
                     primary_report.get("expected"),
                 )
+                try:
+                    from src.time_series_model.live.metrics_exporter import METRICS
+
+                    METRICS.feature_bus_publish_skipped_total.labels(
+                        symbol=self.symbol, timeframe=primary_tf
+                    ).inc()
+                except Exception:
+                    pass
                 return
             for tf, extra_features in features_by_timeframe.items():
                 if tf == primary_tf:

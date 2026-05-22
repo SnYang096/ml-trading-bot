@@ -484,6 +484,11 @@ class Metrics:
             "1 if critical features (atr, oi_*) are NaN, 0 otherwise",
             ["symbol", "timeframe"],
         )
+        self.feature_bus_publish_skipped_total = Counter(
+            "mlbot_feature_bus_publish_skipped_total",
+            "Feature-bus snapshots withheld due to critical NaN or high nan_ratio",
+            ["symbol", "timeframe"],
+        )
 
         self.feature_bus_snapshot_age_seconds = Gauge(
             "mlbot_feature_bus_snapshot_age_seconds",
