@@ -85,6 +85,16 @@ def audit_published_features(
     return report
 
 
+def should_skip_feature_bus_publish(report: Dict[str, Any]) -> bool:
+    """Block writing poisoned snapshots to the shared bus (default on)."""
+    if not _truthy("MLBOT_FEATURE_BUS_SKIP_PUBLISH_ON_BAD_HEALTH", "1"):
+        return False
+    critical = list(report.get("critical_nan") or [])
+    nan_ratio = float(report.get("nan_ratio") or 0.0)
+    fatal_ratio = _float_env("MLBOT_FEATURE_BUS_AUDIT_NAN_FATAL_RATIO", 0.5)
+    return bool(critical) or nan_ratio >= fatal_ratio
+
+
 def _enforce_thresholds(
     report: Dict[str, Any],
     *,

@@ -848,25 +848,48 @@ class OrderFlowListener:
         )
 
         try:
-            from src.live_data_stream.feature_bus_audit import audit_published_features
+            from src.live_data_stream.feature_bus_audit import (
+                FeatureBusAuditError,
+                audit_published_features,
+                should_skip_feature_bus_publish,
+            )
 
-            audit_published_features(
+            primary_report = audit_published_features(
                 features=features,
                 symbol=self.symbol,
                 timeframe=primary_tf,
                 feature_computer=self.feature_computer,
             )
+            if should_skip_feature_bus_publish(primary_report):
+                logger.error(
+                    "[%s] skip feature-bus publish: critical=%s nan_ratio=%.1f%% "
+                    "(missing %s/%s)",
+                    self.symbol,
+                    primary_report.get("critical_nan"),
+                    float(primary_report.get("nan_ratio") or 0.0) * 100.0,
+                    primary_report.get("missing_count"),
+                    primary_report.get("expected"),
+                )
+                return
             for tf, extra_features in features_by_timeframe.items():
                 if tf == primary_tf:
                     continue
                 extra_fc = self.extra_feature_computers.get(tf)
                 if extra_fc and extra_features:
-                    audit_published_features(
+                    extra_report = audit_published_features(
                         features=extra_features,
                         symbol=self.symbol,
                         timeframe=tf,
                         feature_computer=extra_fc,
                     )
+                    if should_skip_feature_bus_publish(extra_report):
+                        logger.error(
+                            "[%s] skip feature-bus publish (%s): critical=%s",
+                            self.symbol,
+                            tf,
+                            extra_report.get("critical_nan"),
+                        )
+                        return
         except Exception as audit_exc:
             from src.live_data_stream.feature_bus_audit import FeatureBusAuditError
 
