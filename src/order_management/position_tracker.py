@@ -458,10 +458,28 @@ class PositionTracker:
             return list(fetch(self.symbol) or [])
         return list(api.get_open_orders(self.symbol) or [])
 
+    @staticmethod
+    def _is_stop_or_tp_conditional(order: Dict[str, Any]) -> bool:
+        otype = str(order.get("type") or "").lower()
+        info = order.get("info") if isinstance(order.get("info"), dict) else {}
+        raw_type = str(info.get("type") or info.get("orderType") or "").lower()
+        combined = f"{otype} {raw_type}"
+        return any(
+            token in combined
+            for token in (
+                "stop",
+                "take_profit",
+                "trailing_stop",
+            )
+        )
+
     def _cancel_open_close_position_conditionals(
-        self, *, position_side: str
+        self,
+        *,
+        position_side: str,
+        include_all_stop_tp: bool = False,
     ) -> int:
-        """Cancel closePosition STOP/TP conditionals so a new SL can be placed (-4130 guard)."""
+        """Cancel STOP/TP conditionals so a new closePosition SL can be placed (-4130 guard)."""
         api = getattr(self.order_manager, "binance_api", None)
         if api is None:
             return 0
@@ -479,7 +497,9 @@ class PositionTracker:
         for order in open_orders:
             if not isinstance(order, dict):
                 continue
-            if not self._order_info_close_position(order):
+            if not include_all_stop_tp and not self._order_info_close_position(order):
+                continue
+            if include_all_stop_tp and not self._is_stop_or_tp_conditional(order):
                 continue
             info = order.get("info") if isinstance(order.get("info"), dict) else {}
             order_pos_side = str(info.get("positionSide") or "BOTH").upper()
@@ -633,12 +653,19 @@ class PositionTracker:
                         position_side=position_side
                     )
                     if n_cleared == 0:
+                        n_cleared = self._cancel_open_close_position_conditionals(
+                            position_side=position_side,
+                            include_all_stop_tp=True,
+                        )
+                    if n_cleared == 0:
                         logger.warning(
-                            "[%s] -4130 retry: no closePosition conditional in "
-                            "openOrders/openAlgoOrders (%s); cancel orphans on exchange",
+                            "[%s] -4130 retry: no STOP/TP conditional in "
+                            "openOrders/openAlgoOrders (%s); check exchange manually",
                             self.symbol,
                             position_side,
                         )
+                    else:
+                        time.sleep(0.25)
                     continue
                 self._log_exchange_sl_failure(new_sl, last_exc, log_key=_4130_log_key)
                 return

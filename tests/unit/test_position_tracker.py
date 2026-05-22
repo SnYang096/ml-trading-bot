@@ -446,6 +446,32 @@ class TestSyncExchangeSL:
 
         om.place_order.assert_not_called()
 
+    def test_sync_exchange_sl_retries_after_4130_non_close_position_stop(self):
+        """-4130 retry clears STOP/TP even when closePosition flag is absent in API row."""
+        om = _make_om()
+        om.place_order.side_effect = [
+            Exception('binance {"code":-4130,"msg":"existing"}'),
+            MagicMock(order_id="SL_RETRY2"),
+        ]
+        om.binance_api.get_open_orders.return_value = [
+            {
+                "order_id": "777",
+                "side": "sell",
+                "type": "stop_market",
+                "info": {"positionSide": "LONG", "type": "STOP_MARKET"},
+            }
+        ]
+        tracker = _make_tracker(om)
+        pos = _make_pos(stop_loss_r=3.0)
+        tracker.add("pid2", pos)
+        pos["stop_loss_price"] = float(pos["stop_loss_price"]) + 50.0
+        pos["_exchange_sl_price"] = float(pos["stop_loss_price"]) - 50.0
+
+        tracker.sync_exchange_sl("pid2")
+
+        assert om.place_order.call_count == 2
+        om.binance_api.cancel_order.assert_called_with("777", "BTCUSDT")
+
     def test_sync_exchange_sl_retries_after_4130(self):
         om = _make_om()
         om.place_order.side_effect = [
