@@ -31,6 +31,7 @@
 #   /opt/quant-engine/live/highcap/data       → /app/live/highcap/data       (live storage / state / logs)
 #   /opt/quant-engine/data                    → /app/data                    (parquet_data 等)
 #   /opt/quant-engine/live/binance_mainnet.env → 通过 --env-file 注入（quant-trend-swing / quant-hedge-multileg；feature-bus 无此文件）。
+#   /opt/quant-engine/.env → business-console compose（mainnet + 可选 spot 合并，与 binance_*_mainnet.env 同步写入）。
 #   /opt/quant-engine/monitoring → CI 解压 deploy/monitoring，docker compose 拉起 Grafana :3000、Prometheus :9091、sqlite-web :8871-8873；
 #   /opt/quant-engine/deploy/business-console → CI 解压同路径，docker compose 拉起 Trade Map :8800（127.0.0.1，SSH 隧道/VPN）；
 #   指标端口：quant-feature-bus 9192→9090，quant-trend-swing 9190→9090，quant-hedge-multileg 9191→9090，quant-spot-accum 9193→9090。
@@ -249,6 +250,13 @@ jobs:
             else
               echo "::notice::BINANCE_SPOT_* 未配置或不成对，跳过 binance_spot_mainnet.env"
             fi
+            # business-console compose 读取 /opt/quant-engine/.env（合并 mainnet + 可选 spot）
+            sudo cp /opt/quant-engine/live/binance_mainnet.env /opt/quant-engine/.env
+            sudo chmod 600 /opt/quant-engine/.env
+            if [ -f /opt/quant-engine/live/binance_spot_mainnet.env ]; then
+              sudo sh -c 'cat /opt/quant-engine/live/binance_spot_mainnet.env >> /opt/quant-engine/.env'
+            fi
+            echo "✅ Business console .env ready"
             # 主网部署：不写入 testnet env；清理历史文件以免误用旧密钥
             sudo rm -f /opt/quant-engine/live/binance_multi_leg_testnet.env
             # 仅持久化 runtime 数据目录；config/scripts 来自镜像（避免 bind mount 顶替 image 内容）
@@ -715,6 +723,19 @@ jobs:
             if [ -f /opt/quant-engine/deploy/systemd/quant-business-console.service ]; then
               sudo cp /opt/quant-engine/deploy/systemd/quant-business-console.service /etc/systemd/system/
               sudo systemctl daemon-reload
+            fi
+            # 兼容旧宿主：仅有 live/binance_*_mainnet.env、尚无根目录 .env 时补齐
+            if [ ! -f /opt/quant-engine/.env ]; then
+              if [ ! -f /opt/quant-engine/live/binance_mainnet.env ]; then
+                echo "::error::缺少 /opt/quant-engine/live/binance_mainnet.env；请先跑 deploy「Write API keys」步骤或手动写入密钥。"
+                exit 1
+              fi
+              sudo cp /opt/quant-engine/live/binance_mainnet.env /opt/quant-engine/.env
+              sudo chmod 600 /opt/quant-engine/.env
+              if [ -f /opt/quant-engine/live/binance_spot_mainnet.env ]; then
+                sudo sh -c 'cat /opt/quant-engine/live/binance_spot_mainnet.env >> /opt/quant-engine/.env'
+              fi
+              echo "✅ 已从 binance_*_mainnet.env 生成 /opt/quant-engine/.env"
             fi
             cd /opt/quant-engine/deploy/business-console
             docker compose up -d --build --remove-orphans

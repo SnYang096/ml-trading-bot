@@ -15,7 +15,7 @@ services:
     ports:
       - "127.0.0.1:8800:8800"
     env_file:
-      # Host /opt/quant-engine/.env (deploy.yml) — API keys for live Binance balances
+      # deploy.yml「Write API keys」写入；由 live/binance_*_mainnet.env 合并生成
       - /opt/quant-engine/.env
     environment:
       - MLBOT_CONSOLE_PORT=8800
