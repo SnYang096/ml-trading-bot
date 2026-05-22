@@ -1148,6 +1148,22 @@ class Metrics:
         # 按策略更新漏斗
         for strategy, stats in by_strategy.items():
             s = str(strategy)
+            if stats.get("regime_passed", 0):
+                self.funnel_stage.labels(stage="regime", strategy=s).inc(
+                    stats["regime_passed"]
+                )
+            if stats.get("regime_denied", 0):
+                self.funnel_stage.labels(stage="regime", strategy=s).inc(
+                    stats["regime_denied"]
+                )
+            if stats.get("prefilter_passed", 0):
+                self.funnel_stage.labels(stage="prefilter", strategy=s).inc(
+                    stats["prefilter_passed"]
+                )
+            if stats.get("prefilter_denied", 0):
+                self.funnel_stage.labels(stage="prefilter", strategy=s).inc(
+                    stats["prefilter_denied"]
+                )
             if stats.get("direction", 0):
                 self.funnel_stage.labels(stage="direction", strategy=s).inc(
                     stats["direction"]

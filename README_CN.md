@@ -337,6 +337,13 @@ python scripts/regime_drift_monitor.py \
 # 退出码非零 = 至少一个策略 ALERT；可挂到 cron 触发 Tier-0 校准
 ```
 
+**业务 CMS（Trade Map / 漏斗）与 live 配置对齐**
+
+- 默认 archetype 真值：`live/highcap/config/strategies`（与 Feature Bus / trend 进程一致）。
+- 对照 research：`MLBOT_CONSOLE_STRATEGIES_ROOT=config/strategies`。
+- 漏斗只读 API：`GET /api/trend/funnel`（`stats_15min.by_strategy` 含 `regime_passed` / `prefilter_denied` 等，需 trend 进程跑 Phase 2 统计后才有数据）。
+- **上线 deploy 前**：CMS 不会出现 `regime.yaml` 列（live 树尚无文件）——属预期。
+
 ### 4) 事件回测（Event Backtest）
 
 > 用真实 1min bar 逐笔触发信号，与实盘时序严格对齐；支持 execution 参数 grid search。

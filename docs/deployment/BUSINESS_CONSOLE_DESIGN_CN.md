@@ -230,9 +230,9 @@ Spot  eligibility 已在 `decision_chain_debug` 打日志；CMS 可解析最近 
 
 **附图 · 特征列分组**（archetype 真值 + `trade-map-core.js`）：
 
-- **数据源**：`config/strategies/<slug>/archetypes/*.yaml` 由 `src/time_series_model/live/feature_stage_taxonomy.py` 解析；API `GET /api/bus/features/columns` 附带 `taxonomy` / `column_meta`，`GET /api/bus/features/taxonomy` 可单独拉全表。
+- **数据源**：`live/highcap/config/strategies/<slug>/archetypes/*.yaml`（默认；`MLBOT_CONSOLE_STRATEGIES_ROOT` 可覆盖为 `config/strategies` 做 research 对照）由 `src/time_series_model/live/feature_stage_taxonomy.py` 解析；API `GET /api/bus/features/columns` 附带 `taxonomy` / `column_meta`，`GET /api/bus/features/taxonomy` 可单独拉全表。
 - **分组维度**：`账户层 (B/A/C)` → `策略 (TPC/BPC/ME/SRB/Spot/Chop Grid/Trend Scalp)` → **管线阶段**：
-  - B 系统：`Prefilter` → `Direction` → `Gate` → `Entry` → `Evidence` → `Execution`
+  - B 系统：`Regime` → `Prefilter` → `Direction` → `Gate` → `Entry` → `Evidence` → `Execution`
   - A 层：主要为 `Prefilter`（`weekly_ema_200_position`）+ `Execution`（deploy 约束，无 gate/entry 列）
   - C 层：`Regime`（`entry_feature` 如 `bpc_semantic_chop` / `trend_confidence`）+ `Prefilter` 规则（如 `box_pos_60`）
 - 特征面板 checklist 标题形如 **`B·Trend › TPC › Gate`**；已选 chip 同格式。Bus 中未出现在任何 archetype 的列归入 **未归类**（启发式兜底）。
@@ -279,7 +279,7 @@ Spot  eligibility 已在 `decision_chain_debug` 打日志；CMS 可解析最近 
 
 | 页面 | 数据 | 核心能力 |
 |------|------|----------|
-| 漏斗时间线 | `stats_15min` | 按 symbol 查 `direction_assigned` → `orders_placed`，展开 `by_strategy` JSON |
+| 漏斗时间线 | `stats_15min` | `GET /api/trend/funnel`；按 symbol 查 `direction_assigned` → `orders_placed`，展开 `by_strategy`（含 `regime_passed` / `prefilter_denied` 等，deploy 后随 live 配置出现 regime 列） |
 | 订单列表 | `orders` | 分页、状态筛选、链到 `positions` |
 | 持仓与 slot | `positions`, `slots_state` | 当前仓、PCM slot 占用 |
 | 止损轨迹 | `stop_loss_trailing` | 单笔仓位 SL 上移历史 |

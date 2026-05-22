@@ -138,8 +138,12 @@ def infer_block_stage(funnel: Dict[str, Any]) -> str:
         return "simple_not_deep_bear"
     if str(f.get("accumulation_policy") or "").startswith("bull"):
         return "accumulation_policy"
+    if f.get("regime") is False:
+        return "regime_deny"
     if f.get("prefilter") is False:
         return "prefilter_deny"
+    if f.get("regime_side_block"):
+        return "regime_side_deny"
     if f.get("direction") is False or f.get("direction_value") == 0:
         return "no_direction"
     if f.get("gate") is False:
@@ -169,6 +173,7 @@ def summarize_layers(funnel: Dict[str, Any]) -> Dict[str, str]:
 
     return {
         "simple_deep_bear": _mark("simple_deep_bear" in f, f.get("simple_deep_bear")),
+        "regime": _mark("regime" in f, f.get("regime")),
         "prefilter": _mark("prefilter" in f, f.get("prefilter")),
         "direction": _mark("direction" in f, f.get("direction")),
         "gate": _mark("gate" in f, f.get("gate")),

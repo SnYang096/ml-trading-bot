@@ -143,7 +143,7 @@ class ConsoleSettings:
             strategies_root=Path(
                 os.getenv(
                     "MLBOT_CONSOLE_STRATEGIES_ROOT",
-                    str(root / "config" / "strategies"),
+                    str(live_root / "config" / "strategies"),
                 )
             ),
         )

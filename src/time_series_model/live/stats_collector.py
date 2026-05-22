@@ -134,6 +134,19 @@ class StatsCollector:
         """记录处理了多少根 bar (每次 15min 计算时调用)"""
         self._bars_processed += count
 
+    @staticmethod
+    def _bump_regime_deny_reason(
+        strat_stats: Dict[str, Any], funnel: Dict[str, Any]
+    ) -> None:
+        reason = funnel.get("regime_reason")
+        if not reason:
+            return
+        counts = strat_stats.setdefault("regime_deny_reasons", {})
+        if not isinstance(counts, dict):
+            return
+        rk = str(reason)[:60]
+        counts[rk] = int(counts.get(rk, 0) or 0) + 1
+
     def record_strategy_eval(
         self,
         symbol: str,
@@ -146,11 +159,27 @@ class StatsCollector:
             symbol: 交易对
             strategy: 策略名 (bpc/me/fer)
             funnel: 漏斗各阶段结果, 如:
-                {"direction": True, "direction_value": 1, "gate": False,
-                 "gate_reasons": ["vol_too_low"]}
+                {"regime": True, "prefilter": True, "direction": True,
+                 "direction_value": 1, "gate": False, "gate_reasons": ["vol_too_low"]}
         """
         strat_stats = self._by_strategy[strategy]
         strat_stats["evals"] += 1
+
+        if "regime" in funnel:
+            if funnel.get("regime"):
+                strat_stats["regime_passed"] += 1
+            else:
+                strat_stats["regime_denied"] += 1
+                self._bump_regime_deny_reason(strat_stats, funnel)
+
+        if "prefilter" in funnel:
+            if funnel.get("prefilter"):
+                strat_stats["prefilter_passed"] += 1
+            else:
+                strat_stats["prefilter_denied"] += 1
+
+        if funnel.get("regime_side_block"):
+            strat_stats["regime_side_blocked"] += 1
 
         if funnel.get("direction"):
             self._direction_assigned += 1

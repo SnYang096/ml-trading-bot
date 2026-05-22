@@ -27,12 +27,12 @@ CONSOLE_STRATEGIES: Tuple[Dict[str, str], ...] = (
 )
 
 STAGE_ORDER: Tuple[str, ...] = (
+    "regime",
     "prefilter",
     "direction",
     "gate",
     "entry",
     "evidence",
-    "regime",
     "execution",
 )
 

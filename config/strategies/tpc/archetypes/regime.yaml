@@ -1,6 +1,9 @@
 # TPC Regime — 慢变量数据空间约束 + 多空掩码
 # A/B/C 共用慢变量层；与 BPC/ME/SRB 同源 chop + box 约束。
 # 详见 docs/strategy/regime_layer.md (TODO) + Tier-0 季度 plateau 校准。
+#
+# NOTE: allowed_regimes (bull/bear/neutral) 当前仅 schema 占位，运行时未接线过滤。
+#       EMA1200 宏观带在 archetypes/direction.yaml (signal_match_position_band)，不在本文件。
 
 allowed_regimes:
   - bull

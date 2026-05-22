@@ -233,12 +233,12 @@
 
   const ACCOUNT_LAYER_ORDER = ["trend", "spot", "multi_leg", "shared"];
   const STAGE_ORDER = [
+    "regime",
     "prefilter",
     "direction",
     "gate",
     "entry",
     "evidence",
-    "regime",
     "execution",
   ];
 
@@ -526,7 +526,7 @@
     if (featureTaxonomy && featureTaxonomy.strategies) {
       const strat = featureTaxonomy.strategies.find((s) => s.id === sid);
       if (strat) {
-        for (const stage of ["prefilter", "regime", "gate", "entry", "direction", "evidence"]) {
+        for (const stage of ["regime", "prefilter", "direction", "gate", "entry", "evidence"]) {
           for (const c of (strat.stages && strat.stages[stage]) || []) {
             if (avail.has(c) && !picks.includes(c)) picks.push(c);
             if (picks.length >= maxCols) return picks;
@@ -543,7 +543,7 @@
     if (featureTaxonomy && featureTaxonomy.strategies) {
       for (const s of featureTaxonomy.strategies) {
         if (s.account_layer !== layerId) continue;
-        for (const stage of ["prefilter", "regime", "gate", "entry"]) {
+        for (const stage of ["regime", "prefilter", "gate", "entry"]) {
           for (const c of (s.stages && s.stages[stage]) || []) {
             if (avail.has(c) && !picks.includes(c)) picks.push(c);
             if (picks.length >= maxCols) return picks;

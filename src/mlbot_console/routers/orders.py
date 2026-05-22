@@ -7,6 +7,7 @@ from fastapi import APIRouter, Query
 from mlbot_console.config import SETTINGS
 from mlbot_console.responses import ok
 from mlbot_console.services.orders_list import collect_orders, multi_leg_orders_list, spot_orders_list, trend_orders
+from mlbot_console.services.trend_funnel import fetch_funnel_snapshots
 
 router = APIRouter(tags=["orders"])
 
@@ -57,6 +58,26 @@ def trend_orders_api(
         limit=limit,
     )
     return ok(rows, meta={"count": len(rows)})
+
+
+@router.get("/api/trend/funnel")
+def trend_funnel_api(
+    symbol: str = Query("", description="Empty or * = all symbols in snapshot"),
+    limit: int = Query(96, ge=1, le=500, description="Recent 15min windows"),
+) -> dict:
+    rows = fetch_funnel_snapshots(
+        SETTINGS.live_monitor_db,
+        symbol=symbol,
+        limit=limit,
+    )
+    return ok(
+        rows,
+        meta={
+            "count": len(rows),
+            "db": str(SETTINGS.live_monitor_db),
+            "symbol": symbol or "*",
+        },
+    )
 
 
 @router.get("/api/spot/orders")

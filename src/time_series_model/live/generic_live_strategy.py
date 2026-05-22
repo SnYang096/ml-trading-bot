@@ -700,8 +700,12 @@ class GenericLiveStrategy:
             self.archetype = load_strategy_archetype(
                 self.strategy_name, self.strategies_root, live_layout=True
             )
+            _rg_rules = len(self.archetype.regime.rules)
+            _rg_empty = self.archetype.regime.is_empty
             logger.info(
                 f"\u2705 Archetype loaded: "
+                f"{_rg_rules} regime rules (empty={_rg_empty}, "
+                f"allowed_sides={list(self.archetype.regime.allowed_sides)}), "
                 f"{len(self.archetype.prefilter.rules)} prefilter rules, "
                 f"{len(self.archetype.gate.all_rules)} gate rules"
             )
