@@ -8066,6 +8066,50 @@ def _run_slow_snapshot_adoption_gate(
     }
 
 
+def _run_pre_deploy_contract_checks_if_configured(
+    *,
+    cfg: Dict[str, Any],
+    strategies: List[str],
+    strategies_root: Path,
+    run_root: Path,
+) -> Optional[Dict[str, Any]]:
+    """Run ``contract_checks`` from pipeline YAML when present (pre_deploy_replay profile)."""
+    if not isinstance(cfg.get("contract_checks"), dict):
+        return None
+    from scripts.pre_deploy_contract_checks import run_pre_deploy_contract_checks
+
+    pred_map: Dict[str, Path] = {}
+    for strat in strategies:
+        for candidate in (
+            run_root / strat / "predictions.parquet",
+            run_root.parent.parent / "train_final" / strat / "predictions.parquet",
+        ):
+            if candidate.is_file():
+                pred_map[strat] = candidate
+                break
+
+    summary = run_pre_deploy_contract_checks(
+        cfg=cfg,
+        strategies=strategies,
+        strategies_root=strategies_root,
+        project_root=PROJECT_ROOT,
+        predictions_by_strategy=pred_map,
+        results_root=PROJECT_ROOT / "results",
+    )
+    out_path = run_root / "contract_checks.json"
+    out_path.write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    status = str(summary.get("status", "PASS"))
+    print(f"\n   contract_checks: {status}")
+    if summary.get("blocked"):
+        for line in summary["blocked"]:
+            print(f"      BLOCKED: {line}")
+    if status == "BLOCKED":
+        print(f"   ⚠️  contract_checks BLOCKED — see {out_path}")
+    return summary
+
+
 def _run_fast_month_stage(
     *,
     cfg: Dict[str, Any],
@@ -8506,6 +8550,15 @@ def _run_fast_month_stage(
         "end_state_paths": end_state_paths,
         "pcm": pcm_result or {},
     }
+    contract_summary = _run_pre_deploy_contract_checks_if_configured(
+        cfg=cfg,
+        strategies=strategies,
+        strategies_root=month_strategies_root,
+        run_root=run_root,
+    )
+    if contract_summary:
+        summary["contract_checks"] = contract_summary
+
     (run_root / "fast_month_summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
     )

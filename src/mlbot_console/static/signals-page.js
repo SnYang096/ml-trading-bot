@@ -52,6 +52,71 @@ function renderRows(rows) {
     .join("");
 }
 
+function renderFunnelRows(rows) {
+  const tbody = document.getElementById("funnelBody");
+  if (!tbody) return;
+  const flat = [];
+  for (const snap of rows || []) {
+    const bys = snap.by_strategy || {};
+    for (const [strat, st] of Object.entries(bys)) {
+      if (!st || typeof st !== "object") continue;
+      flat.push({
+        timestamp: snap.timestamp,
+        symbol: snap.symbol || "",
+        strategy: strat,
+        regime_passed: st.regime_passed ?? 0,
+        regime_denied: st.regime_denied ?? 0,
+        prefilter_passed: st.prefilter_passed ?? 0,
+        prefilter_denied: st.prefilter_denied ?? 0,
+        direction: st.direction ?? 0,
+        gate_passed: st.gate_passed ?? 0,
+      });
+    }
+  }
+  if (!flat.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="muted">无 funnel 数据（需实盘 stats_15min）</td></tr>';
+    return;
+  }
+  tbody.innerHTML = flat
+    .slice(0, 80)
+    .map(
+      (r) => `<tr>
+        <td>${esc(String(r.timestamp || "").slice(0, 16))}</td>
+        <td>${esc(r.symbol)}</td>
+        <td>${esc(r.strategy)}</td>
+        <td>${r.regime_passed}</td>
+        <td>${r.regime_denied}</td>
+        <td>${r.prefilter_passed}</td>
+        <td>${r.prefilter_denied}</td>
+        <td>${r.direction}</td>
+        <td>${r.gate_passed}</td>
+      </tr>`
+    )
+    .join("");
+}
+
+async function refreshFunnel() {
+  const symSel = document.getElementById("funnelSymbolSelect");
+  const sym = symSel?.value || "";
+  const q = new URLSearchParams({ limit: "48" });
+  if (sym) q.set("symbol", sym);
+  try {
+    const { data } = await Shell.api(`/api/trend/funnel?${q}`);
+    renderFunnelRows(data || []);
+    const symbols = new Set((data || []).map((r) => r.symbol).filter(Boolean));
+    if (symSel && symSel.options.length <= 1) {
+      for (const s of [...symbols].sort()) {
+        const o = document.createElement("option");
+        o.value = s;
+        o.textContent = s;
+        symSel.appendChild(o);
+      }
+    }
+  } catch (_) {
+    renderFunnelRows([]);
+  }
+}
+
 async function refreshSignals() {
   const timeframe = document.getElementById("timeframeSelect").value;
   const lookback = document.getElementById("lookbackSelect").value;
@@ -59,6 +124,7 @@ async function refreshSignals() {
   const q = new URLSearchParams({ timeframe, lookback_days: lookback });
   const { data, meta } = await Shell.api(`/api/trade-map/signals?${q}`);
   renderRows(data || []);
+  await refreshFunnel();
   setStatus(
     `${meta.count ?? (data || []).length} symbols · ${timeframe} · ${lookback}d · ${new Date().toLocaleTimeString()}`
   );
@@ -70,6 +136,8 @@ function bindControls() {
     document.getElementById(id).addEventListener("change", rerun)
   );
   document.getElementById("refreshBtn").addEventListener("click", rerun);
+  const funnelSym = document.getElementById("funnelSymbolSelect");
+  if (funnelSym) funnelSym.addEventListener("change", () => refreshFunnel().catch(() => {}));
 }
 
 function startPoll() {

@@ -17,6 +17,7 @@ from mlbot_console.routers import (
     health,
     links,
     orders,
+    regime,
     spot,
     trade_map,
 )
@@ -41,6 +42,7 @@ app.include_router(trade_map.router)
 app.include_router(spot.router)
 app.include_router(orders.router)
 app.include_router(account.router)
+app.include_router(regime.router)
 app.include_router(links.router)
 
 _FRONTEND = Path(__file__).resolve().parent / "static"
@@ -71,3 +73,8 @@ def signals_page() -> FileResponse:
 @app.get("/account")
 def account_page() -> FileResponse:
     return FileResponse(_FRONTEND / "account.html")
+
+
+@app.get("/regime")
+def regime_page() -> FileResponse:
+    return FileResponse(_FRONTEND / "regime.html")

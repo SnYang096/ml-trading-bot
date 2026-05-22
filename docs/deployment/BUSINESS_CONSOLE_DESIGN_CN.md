@@ -279,7 +279,8 @@ Spot  eligibility 已在 `decision_chain_debug` 打日志；CMS 可解析最近 
 
 | 页面 | 数据 | 核心能力 |
 |------|------|----------|
-| 漏斗时间线 | `stats_15min` | `GET /api/trend/funnel`；按 symbol 查 `direction_assigned` → `orders_placed`，展开 `by_strategy`（含 `regime_passed` / `prefilter_denied` 等，deploy 后随 live 配置出现 regime 列） |
+| 漏斗时间线 | `stats_15min` | `GET /api/trend/funnel`；策略信号页 `/signals` 表格；`by_strategy` 含 `regime_passed` / `prefilter_denied` 等 |
+| Regime 运维 | `live/.../regime.yaml` + `results/regime_drift_monitor/` | `GET /api/trend/regime-ops`、页面 `/regime` |
 | 订单列表 | `orders` | 分页、状态筛选、链到 `positions` |
 | 持仓与 slot | `positions`, `slots_state` | 当前仓、PCM slot 占用 |
 | 止损轨迹 | `stop_loss_trailing` | 单笔仓位 SL 上移历史 |

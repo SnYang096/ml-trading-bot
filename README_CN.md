@@ -341,8 +341,19 @@ python scripts/regime_drift_monitor.py \
 
 - 默认 archetype 真值：`live/highcap/config/strategies`（与 Feature Bus / trend 进程一致）。
 - 对照 research：`MLBOT_CONSOLE_STRATEGIES_ROOT=config/strategies`。
-- 漏斗只读 API：`GET /api/trend/funnel`（`stats_15min.by_strategy` 含 `regime_passed` / `prefilter_denied` 等，需 trend 进程跑 Phase 2 统计后才有数据）。
-- **上线 deploy 前**：CMS 不会出现 `regime.yaml` 列（live 树尚无文件）——属预期。
+- 漏斗只读 API：`GET /api/trend/funnel`；策略信号页展示 15min 分层计数。
+- Regime 运维：`GET /api/trend/regime-ops`、页面 `/regime`（`last_calibration` + drift 报告只读）。
+
+**实盘 deploy 检查清单（regime 落地）**
+
+```bash
+python scripts/deploy_config_to_live.py --diff -s tpc
+python scripts/deploy_config_to_live.py --deploy -s tpc --yes
+python scripts/verify_live_regime_feature_columns.py   # regime → box_structure_f 节点
+# 重启 quant-feature-bus、quant-trend-fattail；constitution enabled_archetypes 仅启用已上线策略（默认仅 tpc）
+```
+
+验收：`live/.../tpc/archetypes/regime.yaml` 存在；live `gate.yaml` 无 `gate_tpc_semantic_chop_high`；trend 日志含 `regime rules`；`posthoc_layer_effectiveness.py --strict-locked-features --strategies tpc` 退出码 0。详见 `docs/strategy/regime_layer.md`。
 
 ### 4) 事件回测（Event Backtest）
 

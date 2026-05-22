@@ -273,6 +273,8 @@ class BacktestResult:
                 "reject_pcm_trend_pool_post_unlock_cap",
                 "PCM趋势池解锁后symbol上限(trend_pool_guard)",
             ),
+            ("reject_regime", "Regime慢变量拒单(chop/box)"),
+            ("reject_regime_side", "Regime allowed_sides掩码拒单"),
             ("reject_pcm_direction_policy", "PCM宪法方向过滤(按候选intent计次)"),
             ("reject_pcm_family_conflict", "PCM同symbol家族反向冲突"),
             ("reject_pcm_daily_throttle", "PCM家族日内入场上限"),

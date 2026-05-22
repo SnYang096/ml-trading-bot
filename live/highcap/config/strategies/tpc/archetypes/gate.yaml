@@ -13,22 +13,9 @@ schema:
     selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
     min_gate_score: 0.0
     alert_threshold: 0.25
-hard_gates:
-- id: gate_tpc_semantic_chop_high
-  tag: HARD_TPC_SEMANTIC_CHOP
-  phase: hard_gate
-  priority: 6
-  reason: TPC 专用：BB 偏窄且方向置信低 → 典型震荡来回扫区
-  when:
-    tpc_semantic_chop:
-      value_gt: 0.4
-  then:
-    action: deny
-  comment: '20260425 trade diagnostic: chop>=0.40 的 TPC 成交 n=234, R=-860；下调到 0.40 防止波动区来回扫开仓'
-  locked: true
-  frozen: true
-  promote_never_disable: true
-  lock_reason: 波动区过滤（标准）：与 BPC/ME 三策略同构，避免 chop bar 上的虚假回调
+# NOTE: gate_tpc_semantic_chop_high 已迁移至 archetypes/regime.yaml
+#       chop 上限是 A/B/C 共用慢变量，Tier-0 季度 plateau 校准统一处理。
+hard_gates: []
 guardrails: []
 system_safety:
 - id: gate_evt_var_99_evt_var_99

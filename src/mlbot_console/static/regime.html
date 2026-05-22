@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Regime 运维 · MLBot Console</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body class="page-regime">
+  <header class="toolbar">
+    <h1>业务控制台</h1>
+    <nav class="app-nav" id="appNav"></nav>
+    <nav class="ext-links" id="extLinks"></nav>
+    <button id="refreshBtn" type="button">刷新</button>
+    <span id="statusLine" class="status">—</span>
+  </header>
+
+  <main class="regime-main">
+    <p class="muted">
+      只读展示 <code>live/highcap/config/strategies/*/archetypes/regime.yaml</code>
+      与最近一次 drift 报告（若存在 <code>results/regime_drift_monitor/</code>）。
+    </p>
+    <div class="signals-table-wrap">
+      <table class="signals-table" id="regimeTable">
+        <thead>
+          <tr>
+            <th>策略</th>
+            <th>文件</th>
+            <th>规则数</th>
+            <th>allowed_sides</th>
+            <th>last_calibration</th>
+            <th>漂移</th>
+          </tr>
+        </thead>
+        <tbody id="regimeBody">
+          <tr><td colspan="6" class="muted">加载中…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+  <script src="/static/console-shell.js"></script>
+  <script src="/static/regime-page.js"></script>
+</body>
+</html>

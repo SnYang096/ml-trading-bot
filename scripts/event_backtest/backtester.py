@@ -1617,6 +1617,21 @@ class EventBacktester:
                         if _deepest == "no_evaluable_signal":
                             _deepest = "pcm_direction_filter"
                         continue
+                    if lf.get("regime") is False:
+                        if _deepest in (
+                            "no_evaluable_signal",
+                            "pcm_direction_filter",
+                        ):
+                            _deepest = "regime_deny"
+                        continue
+                    if lf.get("regime_side_block"):
+                        if _deepest in (
+                            "no_evaluable_signal",
+                            "pcm_direction_filter",
+                            "regime_deny",
+                        ):
+                            _deepest = "regime_side_deny"
+                        continue
                     if lf.get("prefilter") is False:
                         if _deepest in ("no_evaluable_signal", "pcm_direction_filter"):
                             _deepest = "prefilter_deny"
@@ -1653,6 +1668,12 @@ class EventBacktester:
                     funnel["reject_pcm_struct_pass_no_intent"] += 1
                 elif _deepest == "pcm_direction_filter":
                     funnel["reject_pcm_direction_filter"] += 1
+                elif _deepest == "regime_deny":
+                    funnel.setdefault("reject_regime", 0)
+                    funnel["reject_regime"] += 1
+                elif _deepest == "regime_side_deny":
+                    funnel.setdefault("reject_regime_side", 0)
+                    funnel["reject_regime_side"] += 1
                 elif _deepest == "prefilter_deny":
                     funnel["reject_prefilter_deny"] += 1
                 elif _deepest == "gate_deny":

@@ -37,6 +37,36 @@
     <p class="muted signals-hint">
       全 universe 策略信号一览；点击「地图」进入该 symbol 的 K 线交易地图。
     </p>
+    <section class="panel funnel-panel">
+      <h3>Trend 漏斗（15min · stats_15min）</h3>
+      <p class="muted">regime / prefilter / direction / gate 按策略分层；数据来自 live_monitor.db。</p>
+      <label>Symbol
+        <select id="funnelSymbolSelect">
+          <option value="">全部</option>
+        </select>
+      </label>
+      <div class="signals-table-wrap">
+        <table class="signals-table" id="funnelTable">
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>Symbol</th>
+              <th>策略</th>
+              <th>regime ✓</th>
+              <th>regime ✗</th>
+              <th>prefilter ✓</th>
+              <th>prefilter ✗</th>
+              <th>direction</th>
+              <th>gate ✓</th>
+            </tr>
+          </thead>
+          <tbody id="funnelBody">
+            <tr><td colspan="9" class="muted">加载中…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <div class="signals-table-wrap">
       <table id="signalsTable" class="signals-table">
         <thead>
