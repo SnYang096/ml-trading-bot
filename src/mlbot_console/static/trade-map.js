@@ -288,6 +288,39 @@ function initMainChart() {
     const hit = Core.findMarkerByTime(lastRawMarkers, param.time, tol);
     if (hit?.id) selectMarker(hit.id);
   });
+
+  const legend = document.getElementById("chartLegend");
+  chart.subscribeCrosshairMove((param) => {
+    if (!param || !param.time || param.point.x < 0 || param.point.y < 0) {
+      legend.classList.add("hidden");
+      return;
+    }
+    const data = param.seriesData.get(candleSeries);
+    if (!data) {
+      legend.classList.add("hidden");
+      return;
+    }
+    const o = data.open;
+    const h = data.high;
+    const l = data.low;
+    const c = data.close;
+    const timeStr = Shell.formatOrderTime(param.time);
+    
+    const pct = ((c - o) / o * 100).toFixed(2);
+    const cls = c >= o ? "legend-pos" : "legend-neg";
+    const sign = c >= o ? "+" : "";
+
+    let overlayText = "";
+    for (const [key, series] of mainOverlaySeries.entries()) {
+      const val = param.seriesData.get(series);
+      if (val && val.value !== undefined) {
+        overlayText += `  ${key}: <span class="legend-price">${val.value.toFixed(4)}</span>`;
+      }
+    }
+
+    legend.innerHTML = `${timeStr}  O <span class="legend-price">${o.toFixed(4)}</span>  H <span class="legend-price">${h.toFixed(4)}</span>  L <span class="legend-price">${l.toFixed(4)}</span>  C <span class="legend-price">${c.toFixed(4)}</span>  <span class="${cls}">${sign}${pct}%</span>${overlayText}`;
+    legend.classList.remove("hidden");
+  });
 }
 
 function resizeAllSubcharts() {
@@ -415,9 +448,13 @@ function mergeTradeLinks(existing, incoming) {
   return [...byKey.values()];
 }
 
-function updateMarkerPollSince() {
-  // Using client time minus 2 seconds to account for clock skew/latency.
-  lastMarkerPollSince = new Date(Date.now() - 2000).toISOString();
+function updateMarkerPollSince(serverTimestamp) {
+  if (serverTimestamp) {
+    lastMarkerPollSince = serverTimestamp;
+  } else {
+    // Fallback: Using client time minus 2 seconds to account for clock skew/latency.
+    lastMarkerPollSince = new Date(Date.now() - 2000).toISOString();
+  }
 }
 
 function markerRangeParams() {
@@ -1238,17 +1275,23 @@ async function refreshBundle(opts = {}) {
   }
 
   const { data, meta } = await Shell.api(`/api/trade-map/bundle?${q}`);
-  updateMarkerPollSince();
+  updateMarkerPollSince(meta?.server_timestamp);
   lastMarkerCounts = meta.marker_counts || null;
   const pageUrl = new URL(window.location.href);
 
   if (mode === "poll" && data.ohlcv?.candles?.length) {
+    const newCandles = Core.sanitizeCandlesForLwc(data.ohlcv.candles);
     const merged = Core.mergeCandlesByTime(
       lastCandles,
-      Core.sanitizeCandlesForLwc(data.ohlcv.candles)
+      newCandles
     );
     lastCandles = merged;
-    candleSeries.setData(merged);
+    // O(1) incremental update for new bars
+    for (const c of newCandles) {
+      if (c.time >= lastCandles[0].time) {
+        candleSeries.update(c);
+      }
+    }
     applyMainOverlays(data.main_overlays || {}, { merge: true });
     ohlcvLoadedTo = meta.range_end || new Date().toISOString();
   } else if (mode !== "poll") {
@@ -1385,6 +1428,9 @@ function bindControls() {
     bindControls();
     await Shell.loadExtLinks();
     await Shell.loadSymbols("symbolSelect");
+    Shell.bindOrdersFilterSync(() => {
+      if (ordersDockOpen) refreshOrdersList().catch(() => {});
+    });
     const pageUrl = new URL(window.location.href);
     const symParam = pageUrl.searchParams.get("symbol");
     if (symParam) {

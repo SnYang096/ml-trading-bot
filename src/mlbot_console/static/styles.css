@@ -455,7 +455,27 @@ main {
 .signals-table tbody tr:hover { background: #161b22; }
 .signals-table .muted { color: #8b949e; font-size: 0.72rem; }
 .chart-pane { flex: 1; min-height: 160px; }
-.main-pane { flex: 3; min-height: 280px; }
+.main-pane { flex: 3; min-height: 280px; position: relative; }
+.chart-legend {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 10;
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: #c9d1d9;
+  background: rgba(22, 27, 34, 0.7);
+  padding: 6px 10px;
+  border-radius: 4px;
+  border: 1px solid rgba(48, 54, 61, 0.5);
+  pointer-events: none;
+  white-space: pre;
+}
+.chart-legend.hidden { display: none; }
+.chart-legend .legend-price { color: #58a6ff; font-weight: bold; }
+.chart-legend .legend-pos { color: #3fb950; }
+.chart-legend .legend-neg { color: #f85149; }
 .subchart-stack {
   display: flex;
   flex-direction: column;

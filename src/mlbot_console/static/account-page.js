@@ -190,20 +190,10 @@ function renderDailyChart(daily) {
   return `<div class="daily-bars">${bars}</div><div class="daily-labels">${labels}</div>`;
 }
 
-async function refreshAccount() {
-  const symbol = document.getElementById("symbolSelect").value;
-  const lookback = document.getElementById("lookbackSelect").value;
-  if (!Shell.isAllSymbols(symbol)) Shell.setSymbol(symbol);
-  setStatus("加载中…");
+async function refreshGlobalAccount() {
   const globalQ = new URLSearchParams({ symbol: Shell.SYMBOL_ALL, lookback_days: "0" });
-  const scopedQ = new URLSearchParams({ symbol, lookback_days: lookback });
   try {
-    const [globalRes, scopedRes] = await Promise.all([
-      Shell.api(`/api/account/summary?${globalQ}`),
-      Shell.api(`/api/account/summary?${scopedQ}`),
-    ]);
-    const globalData = globalRes.data;
-    const scopedData = scopedRes.data;
+    const { data: globalData } = await Shell.api(`/api/account/summary?${globalQ}`);
     document.getElementById("kpiRow").innerHTML = renderGlobalKpis(
       globalData.totals,
       globalData.exchange_ledger
@@ -214,6 +204,21 @@ async function refreshAccount() {
         ? renderLedgerPanel(globalData.exchange_ledger)
         : '<p class="muted">—</p>';
     }
+  } catch (e) {
+    document.getElementById("kpiRow").innerHTML = `<span class="muted">${Shell.escHtml(String(e))}</span>`;
+    setStatus(String(e));
+  }
+}
+
+async function refreshScopedAccount() {
+  const symbol = document.getElementById("symbolSelect").value;
+  const lookback = document.getElementById("lookbackSelect").value;
+  if (!Shell.isAllSymbols(symbol)) Shell.setSymbol(symbol);
+  setStatus("加载中…");
+  const scopedQ = new URLSearchParams({ symbol, lookback_days: lookback });
+  try {
+    const { data: scopedData, meta } = await Shell.api(`/api/account/summary?${scopedQ}`);
+    
     const scopedKpi = document.getElementById("scopedKpiRow");
     if (scopedKpi) {
       scopedKpi.innerHTML = renderScopedKpis(scopedData.totals);
@@ -225,21 +230,28 @@ async function refreshAccount() {
     document.getElementById("dailyChart").innerHTML = renderDailyChart(scopedData.daily_realized);
     const notes = (scopedData.notes || []).map((n) => `· ${n}`).join("\n");
     document.getElementById("accountNotes").textContent = notes;
-    const symLabel = scopedRes.meta?.symbol || scopedData.symbol || symbol;
-    const lb =
-      lookback === "0" ? "全部历史" : `${lookback} 天`;
+    const symLabel = meta?.symbol || scopedData.symbol || symbol;
+    const lb = lookback === "0" ? "全部历史" : `${lookback} 天`;
     setStatus(`${symLabel} · ${lb} · ${new Date().toLocaleTimeString()}`);
   } catch (e) {
-    document.getElementById("kpiRow").innerHTML = `<span class="muted">${Shell.escHtml(String(e))}</span>`;
     setStatus(String(e));
   }
 }
 
+async function refreshAccount() {
+  setStatus("加载中…");
+  await Promise.all([
+    refreshGlobalAccount(),
+    refreshScopedAccount(),
+  ]);
+}
+
 function bindControls() {
-  const rerun = () => refreshAccount().catch((e) => setStatus(String(e)));
-  document.getElementById("refreshBtn").addEventListener("click", rerun);
-  document.getElementById("symbolSelect").addEventListener("change", rerun);
-  document.getElementById("lookbackSelect").addEventListener("change", rerun);
+  const rerunAll = () => refreshAccount().catch((e) => setStatus(String(e)));
+  const rerunScoped = () => refreshScopedAccount().catch((e) => setStatus(String(e)));
+  document.getElementById("refreshBtn").addEventListener("click", rerunAll);
+  document.getElementById("symbolSelect").addEventListener("change", rerunScoped);
+  document.getElementById("lookbackSelect").addEventListener("change", rerunScoped);
   Shell.bindSymbolPersist("symbolSelect");
 }
 

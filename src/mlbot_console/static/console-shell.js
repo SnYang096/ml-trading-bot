@@ -424,6 +424,18 @@
     return parts.join(",");
   }
 
+  function bindOrdersFilterSync(onChange) {
+    window.addEventListener("storage", (ev) => {
+      if (ev.key === ORDERS_FILTER_KEY && ev.newValue) {
+        try {
+          const filter = { ...defaultOrdersFilter(), ...JSON.parse(ev.newValue) };
+          applyOrdersFilterToControls(filter);
+          if (typeof onChange === "function") onChange(filter);
+        } catch (_) {}
+      }
+    });
+  }
+
   root.MLBotConsole = {
     api,
     SYMBOL_ALL,
@@ -454,5 +466,6 @@
     applyOrdersFilterToControls,
     ordersFilterFromControls,
     ordersExcludeStatusParamFromFilter,
+    bindOrdersFilterSync,
   };
 })(typeof globalThis !== "undefined" ? globalThis : window);

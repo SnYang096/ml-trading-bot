@@ -264,6 +264,7 @@ function startPoll() {
   try {
     Shell.initAppNav("orders");
     Shell.applyOrdersFilterToControls(Shell.loadOrdersFilter());
+    Shell.bindOrdersFilterSync(() => refreshOrders().catch(() => {}));
     applyScopesFromStorage();
     bindControls();
     await Shell.loadExtLinks();

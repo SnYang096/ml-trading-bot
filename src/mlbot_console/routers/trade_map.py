@@ -370,6 +370,7 @@ def trade_map_bundle(
         },
         meta={
             "poll_seconds": SETTINGS.map_poll_seconds,
+            "server_timestamp": pd.Timestamp.utcnow().isoformat(),
             "degraded_ohlc": ohlcv.get("degraded_ohlc", False),
             "bars_1min_rows": ohlcv.get("bars_1min_rows"),
             "live_storage_1m_rows": ohlcv.get("live_storage_1m_rows"),

@@ -117,6 +117,8 @@ async function refreshFunnel() {
   }
 }
 
+let funnelLoaded = false;
+
 async function refreshSignals() {
   const timeframe = document.getElementById("timeframeSelect").value;
   const lookback = document.getElementById("lookbackSelect").value;
@@ -124,7 +126,12 @@ async function refreshSignals() {
   const q = new URLSearchParams({ timeframe, lookback_days: lookback });
   const { data, meta } = await Shell.api(`/api/trade-map/signals?${q}`);
   renderRows(data || []);
-  await refreshFunnel();
+  
+  const funnelPanel = document.querySelector(".funnel-panel");
+  if (funnelPanel && funnelPanel.open) {
+    await refreshFunnel();
+  }
+  
   setStatus(
     `${meta.count ?? (data || []).length} symbols · ${timeframe} · ${lookback}d · ${new Date().toLocaleTimeString()}`
   );
@@ -138,6 +145,17 @@ function bindControls() {
   document.getElementById("refreshBtn").addEventListener("click", rerun);
   const funnelSym = document.getElementById("funnelSymbolSelect");
   if (funnelSym) funnelSym.addEventListener("change", () => refreshFunnel().catch(() => {}));
+  
+  const funnelPanel = document.querySelector(".funnel-panel");
+  if (funnelPanel) {
+    funnelPanel.addEventListener("toggle", () => {
+      if (funnelPanel.open && !funnelLoaded) {
+        refreshFunnel().then(() => {
+          funnelLoaded = true;
+        }).catch(() => {});
+      }
+    });
+  }
 }
 
 function startPoll() {
