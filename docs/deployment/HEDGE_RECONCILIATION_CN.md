@@ -175,7 +175,9 @@ local_keys    = { exchange_order_id, client_order_id, order_id(local) }
 
 ### 4.3 Cancel 的幂等性（启动崩溃修复）
 
-对账发现 orphan 后会发起 cancel。实际生产里可能出现竞态：open 快照里还能看到某个 `order_id`，但执行撤单时币安已经返回 `-2011 Unknown order sent.`。这代表订单在撤单前已经成交/撤销/过期或交易所快照短暂滞后，**不应让 `run_multi_leg_live.py` 退出**。
+对账发现 orphan 后会发起 cancel。`openAlgoOrders` 里的条件单（`algoId` 常为 `2000000…`）必须用 **`cancel_algo_order`**，不能用普通 `cancel_order`，否则币安返回 `-2011 Unknown order sent.` 且下一轮 open 快照仍能看到该单 → 对账死循环。
+
+实际生产里也可能出现竞态：open 快照里还能看到某个 `order_id`，但执行撤单时币安已经返回 `-2011`。这代表订单在撤单前已经成交/撤销/过期或交易所快照短暂滞后，**不应让 `run_multi_leg_live.py` 退出**；`binance_api` 对此记 **INFO** 而非 ERROR。
 
 当前处理：
 

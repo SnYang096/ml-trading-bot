@@ -166,6 +166,7 @@ class MultiLegReconciler:
                         "symbol": symbol,
                         "exchange_order_id": order_id,
                         "reason": "orphan_exchange_order",
+                        "is_algo_order": bool(order.get("_is_algo_order")),
                     }
                 )
         return actions

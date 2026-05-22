@@ -265,11 +265,31 @@ def test_cancel_treats_unknown_order_as_already_gone() -> None:
         {
             "action": "cancel",
             "symbol": "BNBUSDT",
-            "order_id": "2000000972847548",
+            "order_id": "90414533226",
             "reason": "orphan_exchange_order",
         }
     )
 
+    assert result.status == "canceled"
+
+
+def test_cancel_orphan_algo_order_uses_cancel_algo() -> None:
+    api = _api()
+    api.cancel_algo_order = MagicMock(return_value=True)
+    adapter = GridExecutionAdapter(api)
+
+    result = adapter.execute_action(
+        {
+            "action": "cancel",
+            "symbol": "BNBUSDT",
+            "order_id": "2000000972847548",
+            "reason": "orphan_exchange_order",
+            "is_algo_order": True,
+        }
+    )
+
+    api.cancel_order.assert_not_called()
+    api.cancel_algo_order.assert_called_once_with("2000000972847548", "BNBUSDT")
     assert result.status == "canceled"
 
 

@@ -24,6 +24,15 @@ _BINANCE_READ_LOCK = threading.Lock()
 _BINANCE_READ_LAST_AT = 0.0
 
 
+def _is_cancel_target_gone(exc: BaseException) -> bool:
+    """True when cancel target is already filled/canceled (Binance -2011, etc.)."""
+    name = type(exc).__name__.lower()
+    if "ordernotfound" in name or "order not found" in name:
+        return True
+    msg = str(exc).lower()
+    return "unknown order" in msg or "-2011" in msg or "order does not exist" in msg
+
+
 def _is_binance_rate_limit_detail(text: str) -> bool:
     """Recognize Binance / ccxt wording for REST rate limits (-1003, HTTP 429)."""
     chunk = str(text or "")
@@ -1109,7 +1118,10 @@ class BinanceAPI:
             result = self.exchange.cancel_order(order_id, ccxt_sym)
             return result.get("status") == "canceled"
         except Exception as e:
-            logger.error(f"撤单失败: {e}")
+            if _is_cancel_target_gone(e):
+                logger.info("撤单: 订单已不存在 (%s)", e)
+            else:
+                logger.error(f"撤单失败: {e}")
             raise
 
     def cancel_all_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:

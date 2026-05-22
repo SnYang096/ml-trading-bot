@@ -60,6 +60,38 @@ def test_reports_and_suggests_cancel_for_orphan_exchange_order() -> None:
             "symbol": "BTCUSDT",
             "exchange_order_id": "ex_1",
             "reason": "orphan_exchange_order",
+            "is_algo_order": False,
+        }
+    ]
+
+
+def test_orphan_algo_order_suggest_cancel_with_algo_flag() -> None:
+    reconciler = MultiLegReconciler(
+        ReconciliationPolicy(
+            client_id_prefixes={"cg_"}, cancel_orphan_exchange_orders=True
+        )
+    )
+
+    report = reconciler.reconcile(
+        local_orders=[],
+        exchange_orders=[
+            {
+                "order_id": "2000000972847548",
+                "client_order_id": "cg_orphan_tp",
+                "symbol": "BNBUSDT",
+                "_is_algo_order": True,
+            },
+        ],
+    )
+
+    assert len(report.orphan_exchange_orders) == 1
+    assert report.suggested_actions == [
+        {
+            "action": "cancel",
+            "symbol": "BNBUSDT",
+            "exchange_order_id": "2000000972847548",
+            "reason": "orphan_exchange_order",
+            "is_algo_order": True,
         }
     ]
 

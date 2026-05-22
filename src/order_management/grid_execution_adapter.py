@@ -336,8 +336,12 @@ class MultiLegExecutionAdapter:
             )
             self._persist_order_result(action, result, purpose="cancel")
             return result
+        is_algo = bool(action.get("is_algo_order") or action.get("_is_algo_order"))
         try:
-            ok = self.binance_api.cancel_order(order_id, symbol)
+            if is_algo and hasattr(self.binance_api, "cancel_algo_order"):
+                ok = bool(self.binance_api.cancel_algo_order(order_id, symbol))
+            else:
+                ok = self.binance_api.cancel_order(order_id, symbol)
         except Exception as exc:
             if _is_order_already_gone(exc):
                 logger.info(
