@@ -6,7 +6,13 @@ from fastapi import APIRouter, Query
 
 from mlbot_console.config import SETTINGS
 from mlbot_console.responses import ok
-from mlbot_console.services.orders_list import collect_orders, multi_leg_orders_list, spot_orders_list, trend_orders
+from mlbot_console.services.orders_list import (
+    collect_orders,
+    enrich_orders_pnl,
+    multi_leg_orders_list,
+    spot_orders_list,
+    trend_orders,
+)
 from mlbot_console.services.trend_funnel import fetch_funnel_snapshots
 
 router = APIRouter(tags=["orders"])
@@ -49,13 +55,32 @@ def orders_list(
 def trend_orders_api(
     symbol: str = Query(...),
     status: Optional[str] = Query(None),
+    exclude_status: str = Query(""),
     limit: int = Query(100, ge=1, le=500),
 ) -> dict:
+    exclude_statuses = [
+        s.strip().lower() for s in exclude_status.split(",") if s.strip()
+    ]
+    fetch_limit = limit
+    if exclude_statuses:
+        from mlbot_console.services.orders_list import _effective_fetch_limit
+
+        fetch_limit = _effective_fetch_limit(limit, exclude_statuses)
     rows = trend_orders(
         SETTINGS.trend_order_db,
         symbol,
         status=status,
-        limit=limit,
+        exclude_statuses=exclude_statuses or None,
+        limit=fetch_limit,
+    )
+    rows = rows[:limit]
+    enrich_orders_pnl(
+        rows,
+        trend_db=SETTINGS.trend_order_db,
+        spot_db=SETTINGS.spot_order_db,
+        multi_leg_db=SETTINGS.multi_leg_db,
+        feature_bus_root=SETTINGS.feature_bus_root,
+        symbol=symbol,
     )
     return ok(rows, meta={"count": len(rows)})
 
@@ -92,6 +117,14 @@ def spot_orders_api(
         status=status,
         limit=limit,
     )
+    enrich_orders_pnl(
+        rows,
+        trend_db=SETTINGS.trend_order_db,
+        spot_db=SETTINGS.spot_order_db,
+        multi_leg_db=SETTINGS.multi_leg_db,
+        feature_bus_root=SETTINGS.feature_bus_root,
+        symbol=symbol,
+    )
     return ok(rows, meta={"count": len(rows)})
 
 
@@ -99,12 +132,33 @@ def spot_orders_api(
 def multileg_orders_api(
     symbol: str = Query(...),
     status: Optional[str] = Query(None),
+    exclude_status: str = Query(""),
     limit: int = Query(100, ge=1, le=500),
 ) -> dict:
+    exclude_statuses = [
+        s.strip().lower() for s in exclude_status.split(",") if s.strip()
+    ]
+    from mlbot_console.services.orders_list import _effective_fetch_limit
+
+    fetch_limit = (
+        _effective_fetch_limit(limit, exclude_statuses)
+        if exclude_statuses
+        else limit
+    )
     rows = multi_leg_orders_list(
         SETTINGS.multi_leg_db,
         symbol,
         status=status,
-        limit=limit,
+        exclude_statuses=exclude_statuses or None,
+        limit=fetch_limit,
+    )
+    rows = rows[:limit]
+    enrich_orders_pnl(
+        rows,
+        trend_db=SETTINGS.trend_order_db,
+        spot_db=SETTINGS.spot_order_db,
+        multi_leg_db=SETTINGS.multi_leg_db,
+        feature_bus_root=SETTINGS.feature_bus_root,
+        symbol=symbol,
     )
     return ok(rows, meta={"count": len(rows)})

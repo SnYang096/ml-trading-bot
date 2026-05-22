@@ -115,6 +115,8 @@ def _normalize(
         "filled_at": row.get("filled_at"),
         "updated_at": row.get("updated_at"),
         "strategy": row.get("strategy") or row.get("strategy_id"),
+        "strategy_id": row.get("strategy_id") or row.get("strategy"),
+        "position_id": row.get("position_id"),
         "leg_id": row.get("leg_id"),
         "time": t,
         "marker_id": _marker_id(scope, source, marker_key) if oid else None,
@@ -251,6 +253,53 @@ def _trend_operation_rows(
     return out
 
 
+def _enrich_trend_sl_tp(
+    rows: List[Dict[str, Any]], pos_rows: List[Dict[str, Any]]
+) -> None:
+    """Fill stop/TP on exchange order rows when position join was missing."""
+    by_pid = {
+        str(p.get("position_id") or ""): p
+        for p in pos_rows
+        if str(p.get("position_id") or "").strip()
+    }
+    latest_by_sym_strat: Dict[tuple[str, str], Dict[str, Any]] = {}
+    latest_by_sym: Dict[str, Dict[str, Any]] = {}
+    for p in sorted(pos_rows, key=_row_time, reverse=True):
+        sym_u = str(p.get("symbol") or "").upper()
+        key = (sym_u, str(p.get("strategy_id") or ""))
+        if key not in latest_by_sym_strat:
+            latest_by_sym_strat[key] = p
+        if sym_u not in latest_by_sym:
+            latest_by_sym[sym_u] = p
+    for item in rows:
+        if str(item.get("scope") or "") != "trend":
+            continue
+        if item.get("stop_loss_price") is not None:
+            continue
+        pid = str(item.get("position_id") or "")
+        pos = by_pid.get(pid) if pid else None
+        if pos is None:
+            sym_u = str(item.get("symbol") or "").upper()
+            strat = str(item.get("strategy") or item.get("strategy_id") or "")
+            pos = latest_by_sym_strat.get((sym_u, strat)) or latest_by_sym.get(sym_u)
+        if not pos:
+            continue
+        sl = _first_positive_price(pos.get("stop_loss_price"))
+        tp = _first_positive_price(pos.get("take_profit_price"))
+        if sl is not None:
+            item["stop_loss_price"] = sl
+        if tp is not None and item.get("take_profit_price") is None:
+            item["take_profit_price"] = tp
+
+
+def _effective_fetch_limit(limit: int, exclude_statuses: Optional[List[str]]) -> int:
+    base = max(int(limit), 1)
+    n_ex = len([s for s in (exclude_statuses or []) if str(s).strip()])
+    if n_ex:
+        return min(2000, base * max(4, n_ex + 2))
+    return min(500, base)
+
+
 def _sql_excluded_status_clause(
     excluded: Optional[List[str]], *, alias: str = "o"
 ) -> tuple[str, tuple[Any, ...]]:
@@ -317,6 +366,7 @@ def trend_orders(
     pos_sql += " ORDER BY COALESCE(exit_time, entry_time) DESC LIMIT ?"
     pos_rows = query_rows(db_path, pos_sql, (*pos_params, int(limit)))
     out = [_normalize("trend", r) for r in rows]
+    _enrich_trend_sl_tp(out, pos_rows)
     out.extend(_trend_position_event_rows(pos_rows))
     out.extend(_trend_operation_rows(db_path, symbol, int(limit)))
     if status:
@@ -366,33 +416,43 @@ def multi_leg_orders_list(
     symbol: str,
     *,
     status: Optional[str] = None,
+    exclude_statuses: Optional[List[str]] = None,
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
+    status_clause, status_params = _sql_excluded_status_clause(
+        exclude_statuses, alias="multi_leg_orders"
+    )
     if _is_all_symbols(symbol):
-        sql = """
+        sql = f"""
             SELECT local_order_id AS order_id, symbol, side, status, order_type, purpose,
                    quantity, price, stop_price, filled_quantity, average_price, created_at,
                    filled_at, strategy, leg_id
             FROM multi_leg_orders
+            WHERE 1=1{status_clause}
             ORDER BY COALESCE(filled_at, created_at) DESC
             LIMIT ?
         """
-        rows = query_rows(db_path, sql, (int(limit),))
+        rows = query_rows(db_path, sql, (*status_params, int(limit)))
     else:
         sym = symbol.upper()
-        sql = """
+        sql = f"""
             SELECT local_order_id AS order_id, symbol, side, status, order_type, purpose,
                    quantity, price, stop_price, filled_quantity, average_price, created_at,
                    filled_at, strategy, leg_id
             FROM multi_leg_orders
-            WHERE symbol = ?
+            WHERE symbol = ?{status_clause}
             ORDER BY COALESCE(filled_at, created_at) DESC
             LIMIT ?
         """
-        rows = query_rows(db_path, sql, (sym, int(limit)))
+        rows = query_rows(db_path, sql, (sym, *status_params, int(limit)))
     enrich_multileg_rows_for_symbol(db_path, symbol, rows)
     out = []
     for r in rows:
+        qty = float(r.get("quantity") or 0)
+        filled = float(r.get("filled_quantity") or 0)
+        if qty <= 0 and filled > 0:
+            r = dict(r)
+            r["quantity"] = filled
         item = _normalize("multi_leg", r)
         if r.get("purpose"):
             item["order_type"] = r.get("purpose")
@@ -431,6 +491,35 @@ def _attach_pnl_fields(
                 row[key] = rec.get(key)
 
 
+def enrich_orders_pnl(
+    rows: List[Dict[str, Any]],
+    *,
+    trend_db: Path,
+    spot_db: Path,
+    multi_leg_db: Path,
+    feature_bus_root: Optional[Path],
+    symbol: str,
+) -> None:
+    """Attach PnL fields when feature bus is available."""
+    if feature_bus_root is None:
+        return
+    from mlbot_console.services.account_summary import build_order_pnl_maps
+
+    trend_map, spot_map, multileg_map = build_order_pnl_maps(
+        trend_db=trend_db,
+        spot_db=spot_db,
+        multi_leg_db=multi_leg_db,
+        feature_bus_root=feature_bus_root,
+        symbol=symbol,
+    )
+    _attach_pnl_fields(
+        rows,
+        trend_map=trend_map,
+        spot_map=spot_map,
+        multileg_map=multileg_map,
+    )
+
+
 def collect_orders(
     *,
     trend_db: Path,
@@ -445,7 +534,7 @@ def collect_orders(
 ) -> List[Dict[str, Any]]:
     merged: List[Dict[str, Any]] = []
     scope_set = {s.strip().lower() for s in scopes if s.strip()}
-    per_scope = max(int(limit), 1)
+    per_scope = _effective_fetch_limit(int(limit), exclude_statuses)
     if "trend" in scope_set and trend_db.is_file():
         merged.extend(
             trend_orders(
@@ -460,25 +549,23 @@ def collect_orders(
         merged.extend(spot_orders_list(spot_db, symbol, status=status, limit=per_scope))
     if "multi_leg" in scope_set and multi_leg_db.is_file():
         merged.extend(
-            multi_leg_orders_list(multi_leg_db, symbol, status=status, limit=per_scope)
+            multi_leg_orders_list(
+                multi_leg_db,
+                symbol,
+                status=status,
+                exclude_statuses=exclude_statuses,
+                limit=per_scope,
+            )
         )
     merged.sort(key=lambda r: r.get("time") or 0, reverse=True)
     merged = _exclude_statuses(merged, exclude_statuses)
     merged = merged[: int(limit)]
-    if feature_bus_root is not None:
-        from mlbot_console.services.account_summary import build_order_pnl_maps
-
-        trend_map, spot_map, multileg_map = build_order_pnl_maps(
-            trend_db=trend_db,
-            spot_db=spot_db,
-            multi_leg_db=multi_leg_db,
-            feature_bus_root=feature_bus_root,
-            symbol=symbol,
-        )
-        _attach_pnl_fields(
-            merged,
-            trend_map=trend_map,
-            spot_map=spot_map,
-            multileg_map=multileg_map,
-        )
+    enrich_orders_pnl(
+        merged,
+        trend_db=trend_db,
+        spot_db=spot_db,
+        multi_leg_db=multi_leg_db,
+        feature_bus_root=feature_bus_root,
+        symbol=symbol,
+    )
     return merged

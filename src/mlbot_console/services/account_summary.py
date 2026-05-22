@@ -452,6 +452,37 @@ def build_order_pnl_maps(
                     "pnl_hint": "已实现",
                 }
                 trend_map[f"{pid}:exit"] = rec
+        sym_filter = " AND o.symbol = ?" if sym else ""
+        for row in query_rows(
+            trend_db,
+            f"""
+            SELECT o.order_id, o.side, p.realized_pnl, p.side AS pos_side, p.exit_time
+            FROM orders o
+            INNER JOIN positions p ON p.position_id = o.position_id
+            WHERE p.exit_time IS NOT NULL AND p.realized_pnl IS NOT NULL{sym_filter}
+            """,
+            params,
+        ):
+            oid = str(row.get("order_id") or "")
+            if not oid or oid in trend_map:
+                continue
+            o_side = str(row.get("side") or "")
+            p_side = str(row.get("pos_side") or "long")
+            is_long = p_side.lower() == "long"
+            exit_side = o_side.lower() in {"sell", "short"} if is_long else o_side.lower() in {
+                "buy",
+                "long",
+            }
+            if not exit_side:
+                continue
+            rpnl = row.get("realized_pnl")
+            if rpnl is None:
+                continue
+            trend_map[oid] = {
+                "pnl_usdt": float(rpnl),
+                "realized_pnl": float(rpnl),
+                "pnl_hint": "已实现",
+            }
 
     spot_map = compute_spot_order_pnl(
         spot_db, symbol=symbol if sym else None, mark_prices=marks

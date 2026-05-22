@@ -222,6 +222,80 @@ def test_collect_orders_entry_row_has_no_trend_exit_pnl(
     assert entry_row.get("pnl_usdt") is None
 
 
+def test_trend_filled_order_inherits_stop_loss_without_position_id(trend_db):
+    import sqlite3
+
+    conn = sqlite3.connect(trend_db)
+    conn.execute(
+        """
+        INSERT INTO orders VALUES (
+            'ord_no_pid', 'ETHUSDT', 'SELL', 'filled', 'limit',
+            0.1, 105.0, NULL,
+            '2024-01-01T14:00:00+00:00', '2024-01-01T13:30:00+00:00',
+            '2024-01-01T14:00:00+00:00', 105.0, 0.1, NULL
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    rows = trend_orders(trend_db, "ETHUSDT", limit=50)
+    row = next(r for r in rows if r["order_id"] == "ord_no_pid")
+    assert row["stop_loss_price"] == 98.5
+    assert row["take_profit_price"] == 106.0
+
+
+def test_collect_orders_multileg_history_survives_exclude_filter(
+    trend_db, spot_db, multi_leg_db
+):
+    rows = collect_orders(
+        trend_db=trend_db,
+        spot_db=spot_db,
+        multi_leg_db=multi_leg_db,
+        symbol="ETHUSDT",
+        scopes=["multi_leg"],
+        exclude_statuses=["expired", "canceled", "rejected"],
+        limit=50,
+    )
+    ids = {r["order_id"] for r in rows}
+    assert "ml_eth_open_tp" in ids
+    assert "ml_eth_entry" in ids
+    assert "ml_eth_l2_expired" not in ids
+
+
+def test_collect_orders_trend_exit_order_gets_pnl(
+    trend_db, spot_db, multi_leg_db, bus_root
+):
+    import sqlite3
+
+    conn = sqlite3.connect(trend_db)
+    conn.execute(
+        """
+        INSERT INTO orders VALUES (
+            'ord_exit_fill', 'ETHUSDT', 'SELL', 'filled', 'limit',
+            0.1, 105.0, NULL,
+            '2024-01-01T14:00:00+00:00', '2024-01-01T13:30:00+00:00',
+            '2024-01-01T14:00:00+00:00', 105.0, 0.1, 'p1'
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    rows = collect_orders(
+        trend_db=trend_db,
+        spot_db=spot_db,
+        multi_leg_db=multi_leg_db,
+        symbol="ETHUSDT",
+        scopes=["trend"],
+        limit=50,
+        feature_bus_root=bus_root,
+    )
+    row = next(r for r in rows if r["order_id"] == "ord_exit_fill")
+    assert row["pnl_usdt"] == 12.5
+    assert row["stop_loss_price"] == 98.5
+
+
 def test_collect_orders_attaches_trend_exit_pnl(
     trend_db, spot_db, multi_leg_db, bus_root
 ):

@@ -213,6 +213,35 @@ def multi_leg_db(tmp_path: Path) -> Path:
             "filled_at": "2024-01-01T12:00:00+00:00",
         }
     )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": "ml_eth_l2_expired",
+            "symbol": "ETHUSDT",
+            "side": "BUY",
+            "purpose": "entry",
+            "quantity": 0.01,
+            "price": 1990.0,
+            "status": "expired",
+            "filled_at": "2024-01-01T11:00:00+00:00",
+        }
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": "ml_eth_open_tp",
+            "symbol": "ETHUSDT",
+            "side": "SELL",
+            "purpose": "take_profit",
+            "quantity": 0.0,
+            "price": 2010.0,
+            "status": "open",
+            "filled_quantity": 0.0,
+            "filled_at": "2024-01-01T13:00:00+00:00",
+        }
+    )
     storage.record_execution_report(
         {
             "run_id": run_id,
@@ -283,6 +312,7 @@ def client(console_settings, monkeypatch):
         "mlbot_console.routers.orders",
         "mlbot_console.routers.account",
         "mlbot_console.routers.links",
+        "mlbot_console.routers.regime",
     ):
         monkeypatch.setattr(f"{mod}.SETTINGS", console_settings)
     return TestClient(app)
