@@ -124,6 +124,31 @@ def _live_tp_covers_entry(
     return covered >= quantity * 0.99
 
 
+def _live_tp_qty_by_side(open_orders: Iterable[Dict[str, Any]]) -> Dict[str, float]:
+    qty_by_side = {"LONG": 0.0, "SHORT": 0.0}
+    for order in open_orders:
+        o_pos = str(
+            order.get("position_side")
+            or order.get("positionSide")
+            or (order.get("info") or {}).get("positionSide")
+            or ""
+        ).upper()
+        if o_pos not in qty_by_side:
+            continue
+        o_side = str(order.get("side") or "").lower()
+        if (o_pos == "LONG" and o_side != "sell") or (
+            o_pos == "SHORT" and o_side != "buy"
+        ):
+            continue
+        if not bool(order.get("reduce_only", order.get("reduceOnly", True))):
+            continue
+        qty = _as_float(order.get("remaining") or order.get("quantity"))
+        if qty <= 0:
+            qty = _as_float(order.get("filled"))
+        qty_by_side[o_pos] += qty
+    return qty_by_side
+
+
 def _open_position_qty_by_side(positions: Iterable[Dict[str, Any]]) -> Dict[str, float]:
     qty_by_side = {"LONG": 0.0, "SHORT": 0.0}
     for pos in positions:
@@ -187,6 +212,7 @@ def _db_entry_tp_actions(
     con.close()
 
     position_qty = _open_position_qty_by_side(positions)
+    live_tp_qty = _live_tp_qty_by_side(open_orders)
     live_keys = _live_order_keys(open_orders)
     live_tp_by_leg: set[str] = set()
     for tp in tp_rows:
@@ -207,6 +233,8 @@ def _db_entry_tp_actions(
         if not position_side:
             continue
         if position_qty.get(position_side, 0.0) <= 0:
+            continue
+        if live_tp_qty.get(position_side, 0.0) >= position_qty[position_side] * 0.99:
             continue
         qty = _as_float(entry.get("filled_quantity")) or _as_float(
             entry.get("quantity")

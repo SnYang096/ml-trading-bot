@@ -134,3 +134,59 @@ def test_db_entry_repair_plans_only_missing_s2_tp(tmp_path: Path) -> None:
     assert actions[0]["side"] == "SHORT"
     assert actions[0]["quantity"] == pytest.approx(0.31)
     assert actions[0]["price"] == pytest.approx(649.98)
+
+
+def test_db_entry_repair_skips_when_side_qty_already_covered(tmp_path: Path) -> None:
+    db = tmp_path / "orders.db"
+    _make_db(db)
+    grid = "BNBUSDT_2026-05-19 08:40:00+00:00"
+    _insert(
+        db,
+        local_order_id=f"{grid}_S1",
+        symbol="BNBUSDT",
+        side="SELL",
+        purpose="entry",
+        status="filled",
+        quantity=0.31,
+        filled_quantity=0.31,
+        price=649.99,
+        average_price=649.99,
+    )
+    _insert(
+        db,
+        local_order_id=f"{grid}_S2",
+        symbol="BNBUSDT",
+        side="SELL",
+        purpose="entry",
+        status="filled",
+        quantity=0.31,
+        filled_quantity=0.31,
+        price=656.42,
+        average_price=656.42,
+    )
+
+    actions = _db_entry_tp_actions(
+        db_path=db,
+        symbol="BNBUSDT",
+        grid_id=grid,
+        spacing=6.4355,
+        positions=[{"symbol": "BNB/USDT:USDT", "side": "short", "size": 0.62}],
+        open_orders=[
+            {
+                "side": "buy",
+                "price": 643.55,
+                "remaining": 0.31,
+                "position_side": "SHORT",
+                "reduce_only": True,
+            },
+            {
+                "side": "buy",
+                "price": 646.77,
+                "remaining": 0.31,
+                "position_side": "SHORT",
+                "reduce_only": True,
+            },
+        ],
+    )
+
+    assert actions == []
