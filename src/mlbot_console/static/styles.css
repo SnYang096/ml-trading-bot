@@ -1086,8 +1086,30 @@ main {
   border: 1px solid #8957e5;
 }
 
-.orders-table tr.orders-leg-tp-row td:first-child {
-  /* TP leg on its own row, aligned under entry in the leg column */
+.orders-leg-cell-inner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.orders-leg-meta {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.orders-leg-slot {
+  flex: 0 0 4.75rem;
+  min-width: 4.75rem;
+  text-align: left;
+}
+
+.orders-leg-slot .leg-badge {
+  margin-left: 0;
+}
+
+.orders-table tr.orders-leg-tp-row td.orders-leg-cell {
   border-left: 2px solid rgba(240, 136, 62, 0.35);
 }
 

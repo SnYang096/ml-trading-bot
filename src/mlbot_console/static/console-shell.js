@@ -290,6 +290,18 @@
     return String(row?.leg_label || "").trim().endsWith("_tp");
   }
 
+  function ordersLegCell(row, esc) {
+    const leg = legBadge(row);
+    const meta = `${scopeBadge(row.scope)} ${strategyBadge(row.strategy, row.scope)}`;
+    return (
+      `<td class="orders-leg-cell">` +
+      `<div class="orders-leg-cell-inner">` +
+      `<span class="orders-leg-meta">${meta}</span>` +
+      `<span class="orders-leg-slot">${leg}</span>` +
+      `</div></td>`
+    );
+  }
+
   function buildOrdersTableRows(rows, options) {
     const opts = options || {};
     const showSymbol = opts.showSymbol !== false;
@@ -313,14 +325,13 @@
       }
       const mid = r.marker_id || "";
       const symCell = showSymbol ? `<td>${esc(r.symbol || "")}</td>` : "";
-      const leg = legBadge(r);
       const tpRow = isTpLegRow(r);
       parts.push(
         `<tr data-idx="${i}" data-marker-id="${esc(mid)}" data-symbol="${esc(r.symbol || "")}"` +
           (batch ? ` data-grid-batch="${esc(batch)}"` : "") +
           (tpRow ? ` class="orders-leg-tp-row"` : "") +
           `>
-          <td>${scopeBadge(r.scope)} ${strategyBadge(r.strategy, r.scope)} ${leg}</td>
+          ${ordersLegCell(r, esc)}
           ${symCell}
           <td>${esc(formatOrderTime(r.time))}</td>
           <td class="${sideClass(r.side)}">${esc(r.side || "")}</td>
