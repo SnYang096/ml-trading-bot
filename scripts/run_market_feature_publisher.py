@@ -38,6 +38,7 @@ from src.live_data_stream.auto_gap_fill import (  # noqa: E402
 from src.live_data_stream.websocket_client import (  # noqa: E402
     BinanceTick,
     BinanceWebSocketClient,
+    configure_binance_ws_queue_size,
 )
 from src.time_series_model.live.metrics_exporter import (  # noqa: E402
     METRICS,
@@ -482,6 +483,11 @@ async def async_main() -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
     args = parse_args()
+    ws_queue = configure_binance_ws_queue_size()
+    logger.info(
+        "Binance WS MAX_QUEUE_SIZE=%d (override with MLBOT_BINANCE_WS_MAX_QUEUE)",
+        ws_queue,
+    )
     symbols = _parse_symbols(args.symbols)
     live_storage_base = _resolve_project_path(args.live_storage_base)
     _configure_feature_bus_audit(live_storage_base)
@@ -567,12 +573,16 @@ async def async_main() -> None:
                 tick.symbol,
             )
 
+    def _process_tick(tick: BinanceTick) -> None:
+        fast_emitter.on_tick(tick)
+        manager.on_trade_tick(tick.symbol, _tick_to_listener_tick(tick))
+
     async def _tick_consumer() -> None:
+        loop = asyncio.get_running_loop()
         while True:
             tick = await tick_queue.get()
             try:
-                fast_emitter.on_tick(tick)
-                manager.on_trade_tick(tick.symbol, _tick_to_listener_tick(tick))
+                await loop.run_in_executor(None, _process_tick, tick)
             except Exception:
                 logger.exception("tick consumer failed for %s", tick.symbol)
             finally:
@@ -583,14 +593,25 @@ async def async_main() -> None:
     ws_client.add_reconnect_callback(lambda: _set_ws_connected(1))
     stop_event = asyncio.Event()
     metrics_task = asyncio.create_task(_periodic_process_metrics())
-    tick_consumer_task = asyncio.create_task(_tick_consumer())
+    n_consumers = max(1, int(os.getenv("MLBOT_TICK_CONSUMER_WORKERS", "2")))
+    tick_consumer_tasks = [
+        asyncio.create_task(_tick_consumer(), name=f"tick-consumer-{i}")
+        for i in range(n_consumers)
+    ]
+    logger.info(
+        "tick dispatch: queue=%d workers=%d",
+        tick_queue.maxsize,
+        n_consumers,
+    )
     try:
         _set_ws_connected(1)
         await ws_client.run(stop_event)
     finally:
-        tick_consumer_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await tick_consumer_task
+        for task in tick_consumer_tasks:
+            task.cancel()
+        for task in tick_consumer_tasks:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
         if auto_gap_task is not None:
             auto_gap_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

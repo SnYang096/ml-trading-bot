@@ -45,7 +45,7 @@ def configure_binance_ws_queue_size() -> int:
     try:
         from binance.ws.reconnecting_websocket import ReconnectingWebsocket
 
-        size = max(100, int(os.getenv("MLBOT_BINANCE_WS_MAX_QUEUE", "512")))
+        size = max(100, int(os.getenv("MLBOT_BINANCE_WS_MAX_QUEUE", "2048")))
         ReconnectingWebsocket.MAX_QUEUE_SIZE = size
         logger.info("Binance WS MAX_QUEUE_SIZE=%d", size)
         return size
@@ -150,6 +150,8 @@ class BinanceWebSocketClient:
 
         if not symbols:
             raise ValueError("symbols must not be empty")
+
+        configure_binance_ws_queue_size()
 
         self.symbols = [s.upper() for s in symbols]
         if not use_futures:
