@@ -184,12 +184,11 @@ def test_s1_tp_shows_s1_inventory_when_entry_order_missing(multi_leg_db):
         limit=50,
     )
     s1 = next(r for r in rows if r.get("order_id") == f"{group}_S1")
-    tp = next(r for r in rows if r.get("order_id") == f"{group}_S1_tp")
+    assert not any(r.get("order_id") == f"{group}_S1_tp" for r in rows)
     assert s1["purpose"] == "inventory"
     assert s1["leg_label"] == "S1"
     assert s1["status"] == "filled"
     assert s1.get("take_profit_price") == 643.5545
-    assert tp.get("leg_label") == "S1_tp"
 
 
 def test_open_s_grid_leg_does_not_duplicate_tp_price(multi_leg_db):
@@ -458,14 +457,11 @@ def test_l1_entry_shows_repair_tp_as_l1_tp(multi_leg_db):
         limit=50,
     )
     l1 = next(r for r in rows if r["order_id"].endswith("_L1"))
-    tp = next(r for r in rows if r["order_id"].endswith("_L1_tp"))
+    assert not any(r["order_id"].endswith("_L1_tp") for r in rows)
     assert l1["take_profit_price"] == 652.67
     assert "补挂" in (l1.get("take_profit_hint") or "")
-    assert tp["leg_label"] == "L1_tp"
-    assert tp.get("is_repair_tp") is True
     expected = pytest.approx((652.67 - 637.11) * 0.31, rel=1e-4)
     assert l1["pnl_usdt"] == expected
-    assert tp["pnl_usdt"] == expected
 
 
 def test_l1_closed_pair_shows_realized_pnl_on_entry_and_tp(multi_leg_db):
@@ -519,10 +515,9 @@ def test_l1_closed_pair_shows_realized_pnl_on_entry_and_tp(multi_leg_db):
         limit=50,
     )
     l1 = next(r for r in rows if r["order_id"].endswith("_L1"))
-    tp = next(r for r in rows if r["order_id"].endswith("_L1_tp"))
+    assert not any(r["order_id"].endswith("_L1_tp") for r in rows)
     expected = pytest.approx((652.67 - 637.11) * 0.31, rel=1e-4)
     assert l1["pnl_usdt"] == expected
-    assert tp["pnl_usdt"] == expected
     assert l1.get("pnl_hint") == "已实现"
 
 
@@ -595,3 +590,73 @@ def test_open_short_inventory_shows_unrealized_pnl(multi_leg_db):
     s1b = next(r for r in rows2 if r.get("order_id") == f"{group}_S1")
     assert s1b["pnl_usdt"] == pytest.approx((653.205 - 640.0) * 0.62, rel=1e-4)
     assert s1b.get("pnl_hint") == "浮盈"
+
+
+def test_s2_filled_without_tp_shows_inferred_missing_tp(multi_leg_db):
+    from src.order_management.multi_leg_storage import MultiLegStorage
+
+    storage = MultiLegStorage(str(multi_leg_db))
+    run_id = storage.create_run(
+        mode="testnet",
+        strategies=["chop_grid"],
+        symbols=["BNBUSDT"],
+        run_id="mlr_s2_missing_tp",
+    )
+    group = "BNBUSDT_2026-05-19 08:40:00+00:00"
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": f"{group}_S1",
+            "symbol": "BNBUSDT",
+            "side": "SELL",
+            "purpose": "entry",
+            "quantity": 0.31,
+            "price": 649.99,
+            "status": "filled",
+            "filled_quantity": 0.31,
+            "average_price": 649.99,
+        }
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": f"{group}_S1_tp",
+            "leg_id": f"{group}_S1",
+            "symbol": "BNBUSDT",
+            "side": "SHORT",
+            "purpose": "take_profit",
+            "quantity": 0.31,
+            "price": 643.55,
+            "status": "open",
+        }
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": f"{group}_S2",
+            "symbol": "BNBUSDT",
+            "side": "SELL",
+            "purpose": "entry",
+            "quantity": 0.31,
+            "price": 656.42,
+            "status": "filled",
+            "filled_quantity": 0.31,
+            "average_price": 656.42,
+        }
+    )
+    rows = collect_orders(
+        trend_db=multi_leg_db.parent / "missing_trend.db",
+        spot_db=multi_leg_db.parent / "missing_spot.db",
+        multi_leg_db=multi_leg_db,
+        symbol="BNBUSDT",
+        scopes=["multi_leg"],
+        limit=50,
+    )
+    assert not any(r["order_id"].endswith("_S1_tp") for r in rows)
+    assert not any(r["order_id"].endswith("_S2_tp") for r in rows)
+    s2 = next(r for r in rows if r["order_id"].endswith("_S2"))
+    assert s2["take_profit_price"] == pytest.approx(649.98, abs=0.02)
+    assert "未挂止盈" in (s2.get("take_profit_hint") or "")

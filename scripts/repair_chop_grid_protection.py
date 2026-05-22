@@ -14,15 +14,16 @@ import argparse
 import json
 import logging
 import os
+import sqlite3
 import sys
 from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.order_management.binance_api import BinanceAPI
 from src.order_management.grid_execution_adapter import MultiLegExecutionAdapter
-from src.order_management.models import OrderSide, OrderType
 from src.order_management.multi_leg_storage import MultiLegStorage
 from src.time_series_model.live.chop_grid_live_engine import ChopGridLiveEngine
 
@@ -43,6 +44,207 @@ def _api_from_env() -> BinanceAPI:
 
 def _round_price(px: float) -> float:
     return round(px, 2)
+
+
+def _as_float(value: Any, default: float = 0.0) -> float:
+    try:
+        if value is None or value == "":
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _load_grid_id(state_path: Path) -> str:
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return ""
+    return str(state.get("grid_id") or "").strip()
+
+
+def _entry_position_side(row: Dict[str, Any]) -> Optional[str]:
+    side = str(row.get("side") or "").upper()
+    if side == "BUY":
+        return "LONG"
+    if side == "SELL":
+        return "SHORT"
+    return None
+
+
+def _tp_price(entry_price: float, spacing: float, position_side: str) -> float:
+    if position_side == "LONG":
+        return _round_price(entry_price + spacing)
+    return _round_price(entry_price - spacing)
+
+
+def _live_order_keys(open_orders: Iterable[Dict[str, Any]]) -> set[str]:
+    keys: set[str] = set()
+    for order in open_orders:
+        info = order.get("info") or {}
+        for key in (
+            order.get("order_id"),
+            order.get("client_order_id"),
+            info.get("orderId"),
+            info.get("clientOrderId"),
+        ):
+            if key:
+                keys.add(str(key))
+    return keys
+
+
+def _live_tp_covers_entry(
+    *,
+    open_orders: Iterable[Dict[str, Any]],
+    position_side: str,
+    target_price: float,
+    quantity: float,
+    spacing: float,
+) -> bool:
+    want_side = "sell" if position_side == "LONG" else "buy"
+    covered = 0.0
+    tolerance = max(spacing * 0.05, target_price * 0.0005, 0.01)
+    for order in open_orders:
+        o_side = str(order.get("side") or "").lower()
+        o_pos = str(
+            order.get("position_side")
+            or order.get("positionSide")
+            or (order.get("info") or {}).get("positionSide")
+            or ""
+        ).upper()
+        if o_side != want_side or o_pos != position_side:
+            continue
+        price = _as_float(order.get("price"))
+        if price <= 0 or abs(price - target_price) > tolerance:
+            continue
+        qty = _as_float(order.get("remaining") or order.get("quantity"))
+        if qty <= 0:
+            qty = _as_float(order.get("filled"))
+        covered += qty
+    return covered >= quantity * 0.99
+
+
+def _open_position_qty_by_side(positions: Iterable[Dict[str, Any]]) -> Dict[str, float]:
+    qty_by_side = {"LONG": 0.0, "SHORT": 0.0}
+    for pos in positions:
+        side_raw = str(pos.get("side") or pos.get("positionSide") or "").lower()
+        side = "LONG" if side_raw in {"long", "buy"} else "SHORT"
+        qty = _as_float(
+            pos.get("size") or pos.get("contracts") or pos.get("positionAmt")
+        )
+        if qty < 0:
+            side = "SHORT"
+            qty = abs(qty)
+        qty_by_side[side] += qty
+    return qty_by_side
+
+
+def _db_entry_tp_actions(
+    *,
+    db_path: Path,
+    symbol: str,
+    grid_id: str,
+    spacing: float,
+    positions: List[Dict[str, Any]],
+    open_orders: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Plan missing per-entry TP orders, e.g. S2_tp when S2 filled but no TP exists."""
+    if not grid_id or spacing <= 0 or not db_path.exists():
+        return []
+    con = sqlite3.connect(str(db_path))
+    con.row_factory = sqlite3.Row
+    like = f"{grid_id}_%"
+    entries = [
+        dict(row)
+        for row in con.execute(
+            """
+            SELECT local_order_id, symbol, side, quantity, filled_quantity,
+                   price, average_price
+            FROM multi_leg_orders
+            WHERE symbol = ?
+              AND local_order_id LIKE ?
+              AND lower(COALESCE(purpose, '')) = 'entry'
+              AND lower(COALESCE(status, '')) = 'filled'
+            ORDER BY local_order_id
+            """,
+            (symbol, like),
+        ).fetchall()
+    ]
+    tp_rows = [
+        dict(row)
+        for row in con.execute(
+            """
+            SELECT local_order_id, leg_id, exchange_order_id, client_order_id, status
+            FROM multi_leg_orders
+            WHERE symbol = ?
+              AND local_order_id LIKE ?
+              AND lower(COALESCE(purpose, '')) = 'take_profit'
+              AND lower(COALESCE(status, '')) NOT IN ('filled', 'canceled', 'cancelled', 'expired', 'rejected')
+            """,
+            (symbol, like),
+        ).fetchall()
+    ]
+    con.close()
+
+    position_qty = _open_position_qty_by_side(positions)
+    live_keys = _live_order_keys(open_orders)
+    live_tp_by_leg: set[str] = set()
+    for tp in tp_rows:
+        if (
+            str(tp.get("exchange_order_id") or "") in live_keys
+            or str(tp.get("client_order_id") or "") in live_keys
+        ):
+            leg_id = str(tp.get("leg_id") or "").strip()
+            if leg_id:
+                live_tp_by_leg.add(leg_id)
+
+    actions: List[Dict[str, Any]] = []
+    for entry in entries:
+        entry_id = str(entry.get("local_order_id") or "").strip()
+        if not entry_id or entry_id in live_tp_by_leg:
+            continue
+        position_side = _entry_position_side(entry)
+        if not position_side:
+            continue
+        if position_qty.get(position_side, 0.0) <= 0:
+            continue
+        qty = _as_float(entry.get("filled_quantity")) or _as_float(
+            entry.get("quantity")
+        )
+        entry_price = _as_float(entry.get("average_price")) or _as_float(
+            entry.get("price")
+        )
+        if qty <= 0 or entry_price <= 0:
+            continue
+        target_price = _tp_price(entry_price, spacing, position_side)
+        if _live_tp_covers_entry(
+            open_orders=open_orders,
+            position_side=position_side,
+            target_price=target_price,
+            quantity=qty,
+            spacing=spacing,
+        ):
+            continue
+        actions.append(
+            {
+                "action": "place_protection",
+                "order_id": f"{entry_id}_tp",
+                "leg_id": entry_id,
+                "symbol": symbol,
+                "side": position_side,
+                "quantity": qty,
+                "price": target_price,
+                "trigger_price": target_price,
+                "order_type": "limit",
+                "protection_type": "take_profit",
+                "reduce_only": True,
+                "post_only": False,
+                "time_in_force": "GTC",
+                "timestamp": "",
+                "repair_source": "db_filled_entry_missing_tp",
+            }
+        )
+    return actions
 
 
 def main() -> None:
@@ -68,16 +270,33 @@ def main() -> None:
     logger.info("open_orders: %d", len(open_orders))
 
     state_path = Path(args.state_dir) / f"chop_grid_{symbol}.json"
+    db_path = Path(args.db)
     engine = ChopGridLiveEngine(
         config_path=args.chop_grid_config,
         state_path=state_path,
         level_notional=200.0,
         bar_simulation=False,
     )
-    actions = engine.actions_ensure_protection(
-        exchange_positions=positions,
-        exchange_orders=open_orders,
+    grid_id = _load_grid_id(state_path)
+    actions = _db_entry_tp_actions(
+        db_path=db_path,
+        symbol=symbol,
+        grid_id=grid_id,
+        spacing=float(engine.state.spacing or 0.0),
+        positions=[dict(p) for p in positions],
+        open_orders=[dict(o) for o in open_orders],
     )
+    if actions:
+        logger.info(
+            "DB filled-entry repair planned %d missing TP actions for grid=%s",
+            len(actions),
+            grid_id,
+        )
+    else:
+        actions = engine.actions_ensure_protection(
+            exchange_positions=positions,
+            exchange_orders=open_orders,
+        )
     if not actions:
         logger.info("No protection actions needed (already covered or no inventory).")
         return
@@ -98,7 +317,7 @@ def main() -> None:
         logger.info("Dry-run only; pass --execute to place orders.")
         return
 
-    storage = MultiLegStorage(str(args.db))
+    storage = MultiLegStorage(str(db_path))
     run_id = storage.create_run(
         mode="repair",
         strategies=["chop_grid"],

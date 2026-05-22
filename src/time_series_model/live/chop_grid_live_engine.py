@@ -505,13 +505,31 @@ class ChopGridLiveEngine:
         for pos in self.state.inventory:
             if str(pos.symbol or "").upper() != sym:
                 continue
-            if self._has_open_protection(pos, open_orders):
+            covered_qty = self._open_tp_covered_qty(pos, open_orders)
+            need_qty = float(pos.quantity or 0.0)
+            if need_qty <= 0 or covered_qty >= need_qty * 0.99:
                 continue
+            remaining_qty = max(0.0, need_qty - covered_qty)
+            action_pos = GridPosition(
+                symbol=pos.symbol,
+                side=pos.side,
+                level=pos.level,
+                entry_price=pos.entry_price,
+                quantity=remaining_qty,
+                entry_time=pos.entry_time,
+                leg_id=pos.leg_id,
+                protection_order_ids=list(pos.protection_order_ids),
+            )
             new_actions = self._protection_actions(
                 order_id=pos.leg_id,
-                pos=pos,
+                pos=action_pos,
                 timestamp=ts,
             )
+            if covered_qty > 0:
+                for action in new_actions:
+                    oid = str(action.get("order_id") or "")
+                    if oid:
+                        action["order_id"] = f"{oid}_supp"
             for action in new_actions:
                 if str(action.get("protection_type") or "") == "take_profit":
                     # Catch-up protection must close if price already crossed TP.
@@ -639,9 +657,17 @@ class ChopGridLiveEngine:
     def _has_open_protection(
         self, pos: GridPosition, open_orders: List[Dict[str, Any]]
     ) -> bool:
+        need = float(pos.quantity or 0.0)
+        if need <= 0:
+            return False
+        return self._open_tp_covered_qty(pos, open_orders) >= need * 0.99
+
+    def _open_tp_covered_qty(
+        self, pos: GridPosition, open_orders: List[Dict[str, Any]]
+    ) -> float:
         tp_px = self._tp_price_for_position(pos)
         if tp_px is None:
-            return False
+            return 0.0
         protection_ids = {str(oid) for oid in pos.protection_order_ids if str(oid)}
         if protection_ids:
             live_ids = {
@@ -693,10 +719,7 @@ class ChopGridLiveEngine:
                 covered_qty += o_qty
             elif abs(price - tp_px) <= self.state.spacing * 2:
                 covered_qty += o_qty
-        need = float(pos.quantity or 0.0)
-        if need <= 0:
-            return False
-        return covered_qty >= need * 0.99
+        return covered_qty
 
     def _is_chop_grid_exchange_order(self, order: Mapping[str, Any]) -> bool:
         info = order.get("info") or {}

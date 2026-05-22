@@ -10,6 +10,7 @@ from mlbot_console.services.db import query_rows
 from mlbot_console.services.multileg_order_links import (
     enrich_multileg_rows_for_symbol,
     entry_link_id,
+    hide_paired_tp_protection_rows,
     is_entry_row,
     leg_index,
     leg_suffix,
@@ -702,7 +703,7 @@ def multi_leg_orders_list(
     if status:
         st = status.lower()
         out = [r for r in out if r["status"] == st]
-    return out
+    return hide_paired_tp_protection_rows(out)
 
 
 def _attach_pnl_fields(

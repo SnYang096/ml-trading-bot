@@ -248,4 +248,5 @@ def test_partial_tp_qty_does_not_count_as_full_protection(tmp_path: Path) -> Non
     )
     tp_actions = [a for a in actions if a.get("protection_type") == "take_profit"]
     assert len(tp_actions) == 1
-    assert float(tp_actions[0]["quantity"]) == pytest.approx(0.62, rel=1e-6)
+    assert float(tp_actions[0]["quantity"]) == pytest.approx(0.31, rel=1e-6)
+    assert tp_actions[0]["order_id"].endswith("_S1_tp_supp")

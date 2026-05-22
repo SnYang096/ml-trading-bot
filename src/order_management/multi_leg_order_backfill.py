@@ -116,11 +116,14 @@ def _resolve_rest_order_snapshot(
     """
     client_order_id = str(row.get("client_order_id") or "").strip()
     try:
-        snap = api.get_order(
-            exchange_order_id,
-            symbol,
-            client_order_id=client_order_id or None,
-        )
+        try:
+            snap = api.get_order(
+                exchange_order_id,
+                symbol,
+                client_order_id=client_order_id or None,
+            )
+        except TypeError:
+            snap = api.get_order(exchange_order_id, symbol)
     except Exception:
         logger.debug(
             "multi-leg REST backfill: get_order failed symbol=%s exchange=%s",

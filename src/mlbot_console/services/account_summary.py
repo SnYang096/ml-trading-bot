@@ -509,7 +509,7 @@ def build_order_pnl_maps(
             }
 
     spot_map: Dict[str, Dict[str, Any]] = {}
-    if spot_db.is_file() and marks:
+    if spot_db.is_file():
         spot_map = compute_spot_order_pnl(
             spot_db, symbol=symbol if sym else None, mark_prices=marks
         )

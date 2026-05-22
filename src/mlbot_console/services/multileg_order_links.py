@@ -138,6 +138,53 @@ def is_entry_row(row: Dict[str, Any]) -> bool:
     return is_l_entry_row(row) or is_s_entry_row(row)
 
 
+def _entry_side_kind(row: Dict[str, Any]) -> Optional[str]:
+    for field in ("order_id", "local_order_id", "leg_id"):
+        kind = leg_side_kind(str(row.get(field) or ""))
+        if kind:
+            return kind
+    return None
+
+
+def _infer_chop_grid_spacing(legs: List[Dict[str, Any]], side_kind: str) -> Optional[float]:
+    """Spacing from an entry↔TP pair on the same side, else from adjacent entry prices."""
+    spacings: List[float] = []
+    indexed: List[Tuple[int, float]] = []
+    for row in legs:
+        if _entry_side_kind(row) != side_kind or not is_entry_row(row):
+            continue
+        entry_px = _price(row)
+        idx = leg_index(
+            str(row.get("order_id") or row.get("local_order_id") or row.get("leg_id") or "")
+        )
+        if entry_px is not None and idx > 0:
+            indexed.append((idx, entry_px))
+        eid = entry_link_id(row)
+        oid = str(row.get("order_id") or "")
+        tp_rows = _protection_tp_rows(legs, eid)
+        if not tp_rows and oid and oid != eid:
+            tp_rows = _protection_tp_rows(legs, oid)
+        for tp in tp_rows:
+            tp_px = _price(tp)
+            if entry_px is not None and tp_px is not None:
+                spacings.append(abs(entry_px - tp_px))
+    if spacings:
+        return spacings[0]
+    if len(indexed) >= 2:
+        indexed.sort(key=lambda x: x[0])
+        i0, p0 = indexed[0]
+        i1, p1 = indexed[-1]
+        if i1 != i0:
+            return abs(p1 - p0) / abs(i1 - i0)
+    return None
+
+
+def _planned_tp_price(entry_px: float, spacing: float, side_kind: str) -> float:
+    if side_kind == "L":
+        return entry_px + spacing
+    return entry_px - spacing
+
+
 def annotate_leg_group(legs: List[Dict[str, Any]]) -> None:
     """Mutate raw multi_leg_orders rows with _link_* fields for entry legs."""
     l_legs = [r for r in legs if is_l_entry_row(r)]
@@ -161,6 +208,13 @@ def annotate_leg_group(legs: List[Dict[str, Any]]) -> None:
             row["_link_tp_price"] = _price(planned)
             row["_link_tp_leg"] = leg_suffix(str(planned.get("order_id") or ""))
             row["_link_tp_status"] = str(planned.get("status") or "")
+        elif not tp_rows and _is_filled_row(row):
+            side = _entry_side_kind(row)
+            entry_px = _price(row)
+            spacing = _infer_chop_grid_spacing(legs, side) if side else None
+            if side and entry_px is not None and spacing is not None and spacing > 0:
+                row["_link_tp_price"] = _planned_tp_price(entry_px, spacing, side)
+                row["_link_tp_status"] = "missing"
         if exit_row is not None:
             from mlbot_console.services.multileg_repair_tp import is_repair_tp_row
 
@@ -243,8 +297,10 @@ def resolve_take_profit_display(row: Dict[str, Any]) -> Tuple[Optional[float], s
 
     link_px = row.get("_link_tp_price")
     if link_px is not None and link_px == link_px:
-        hint = "挂单"
         st = str(row.get("_link_tp_status") or "").lower()
+        if st == "missing":
+            return float(link_px), "未挂止盈"
+        hint = "挂单"
         leg = row.get("_link_tp_leg") or ""
         if leg and st:
             hint = f"{leg}·{st}"
@@ -260,6 +316,39 @@ def resolve_take_profit_display(row: Dict[str, Any]) -> Tuple[Optional[float], s
             return direct, "止盈单"
 
     return None, ""
+
+
+def tp_parent_entry_order_id(order_id: str) -> Optional[str]:
+    oid = str(order_id or "")
+    m = _TP_SUFFIX_RE.search(oid)
+    if not m:
+        return None
+    return oid[: m.start()] + f"_{m.group(1)}{m.group(2)}"
+
+
+def hide_paired_tp_protection_rows(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Drop *_tp rows when the paired entry leg is already in the list (TP shown on entry)."""
+    entry_ids = {
+        str(item.get("order_id") or "")
+        for item in items
+        if str(item.get("scope") or "") == "multi_leg"
+        and str(item.get("leg_label") or "")
+        and not str(item.get("leg_label") or "").endswith("_tp")
+    }
+    if not entry_ids:
+        return items
+    out: List[Dict[str, Any]] = []
+    for item in items:
+        if str(item.get("scope") or "") != "multi_leg":
+            out.append(item)
+            continue
+        oid = str(item.get("order_id") or "")
+        parent = tp_parent_entry_order_id(oid)
+        label = str(item.get("leg_label") or "")
+        if parent and parent in entry_ids and label.endswith("_tp"):
+            continue
+        out.append(item)
+    return out
 
 
 def enrich_multileg_rows_for_symbol(
