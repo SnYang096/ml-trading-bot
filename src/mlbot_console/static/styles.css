@@ -731,6 +731,26 @@ main {
   gap: 14px;
   min-height: 0;
 }
+.account-ledger-panel {
+  margin: 0.5rem 0 1rem;
+  padding: 0.65rem 0.85rem;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  font-size: 0.82rem;
+}
+.account-ledger-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.2rem 2rem;
+}
+.account-ledger-strip strong {
+  color: #e6edf3;
+}
+.account-sub {
+  font-size: 0.68rem;
+  margin-top: 0.15rem;
+}
 .account-kpi-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));

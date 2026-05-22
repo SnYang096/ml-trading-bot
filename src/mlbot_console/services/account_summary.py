@@ -15,6 +15,7 @@ from mlbot_console.services.strategy_registry import (
     default_spot_strategy_id,
     spot_strategy_ids,
 )
+from mlbot_console.services.exchange_balances import build_exchange_ledger
 from mlbot_console.services.trade_links import multi_leg_trade_links
 from mlbot_console.services.trade_markers import _parse_ts
 
@@ -381,16 +382,33 @@ def build_account_summary(
 
     daily = _merge_daily([s["daily_realized"] for s in scopes])
 
+    ledger = build_exchange_ledger(mark_prices=marks)
+    exchange_by_scope = {str(a["scope"]): a for a in ledger.get("accounts") or []}
+    for scope_block in scopes:
+        ex = exchange_by_scope.get(str(scope_block.get("scope") or ""))
+        if ex:
+            scope_block["exchange"] = ex
+
+    ledger_totals = dict(ledger.get("totals") or {})
+    totals = {
+        "realized_pnl": total_realized,
+        "unrealized_pnl": total_unrealized,
+        "open_positions": total_open,
+        "closed_trades": total_closed,
+        "equity_usdt": ledger_totals.get("equity_usdt"),
+        "wallet_balance_usdt": ledger_totals.get("wallet_balance_usdt"),
+        "available_usdt": ledger_totals.get("available_usdt"),
+        "exchange_unrealized_pnl_usdt": ledger_totals.get(
+            "exchange_unrealized_pnl_usdt"
+        ),
+    }
+
     return {
         "symbol": "ALL" if _is_all_symbols(symbol) else str(symbol).upper(),
         "lookback_days": lookback_days,
         "since_ts": since_ts,
-        "totals": {
-            "realized_pnl": total_realized,
-            "unrealized_pnl": total_unrealized,
-            "open_positions": total_open,
-            "closed_trades": total_closed,
-        },
+        "totals": totals,
+        "exchange_ledger": ledger,
         "scopes": scopes,
         "strategies": sorted(
             strategy_rows.values(),
@@ -399,6 +417,9 @@ def build_account_summary(
         "daily_realized": daily,
         "mark_prices": marks,
         "notes": [
+            "余额/权益来自币安实时 API：Trend→BINANCE_API_KEY，Multi-leg→MULTI_LEG_BINANCE_FUTURES_*，Spot→BINANCE_SPOT_*。",
+            "合约权益=totalMarginBalance，钱包余额=totalWalletBalance；现货权益≈USDT+持仓按标记价折算。",
+            "总账 equity_usdt 为各账户权益之和（三个独立子账户，非单账户拆分）。",
             "Trend PnL from positions.realized_pnl on closed rows.",
             "Spot PnL uses FIFO buy lots by fill time; sells realize against oldest buys.",
             "Spot open buys show unrealized PnL when bars_1min close is available.",
