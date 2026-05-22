@@ -4,13 +4,13 @@ from unittest.mock import MagicMock, patch
 from mlbot_console.services.exchange_balances import _fetch_spot_equity
 
 
-@patch("order_management.spot_binance_api.SpotBinanceAPI")
-def test_fetch_spot_equity(mock_spot_api_class):
-    mock_api = MagicMock()
-    mock_spot_api_class.return_value = mock_api
+@patch("mlbot_console.services.spot_ccxt.spot_binance_exchange")
+def test_fetch_spot_equity(mock_spot_exchange):
+    mock_exchange = MagicMock()
+    mock_spot_exchange.return_value = mock_exchange
 
     # Mock balance response
-    mock_api.exchange.fetch_balance.return_value = {
+    mock_exchange.fetch_balance.return_value = {
         "USDT": {"free": 100.0, "total": 150.0},
         "total": {
             "USDT": 150.0,
@@ -22,7 +22,7 @@ def test_fetch_spot_equity(mock_spot_api_class):
     }
 
     # Mock ticker fallback for SHIB
-    mock_api.exchange.fetch_tickers.return_value = {"SHIB/USDT": {"last": 0.00001}}
+    mock_exchange.fetch_tickers.return_value = {"SHIB/USDT": {"last": 0.00001}}
 
     mark_prices = {
         "BTCUSDT": 60000.0,

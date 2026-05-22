@@ -12,15 +12,15 @@ def test_fetch_mark_prices_stablecoins(tmp_path):
 
 
 @patch("mlbot_console.services.mark_prices.latest_close_prices")
-@patch("order_management.spot_binance_api.SpotBinanceAPI")
-def test_fetch_mark_prices_fallback(mock_spot_api_class, mock_latest_close, tmp_path):
+@patch("mlbot_console.services.spot_ccxt.spot_binance_exchange")
+def test_fetch_mark_prices_fallback(mock_spot_exchange, mock_latest_close, tmp_path):
     # Mock feature bus returning only BTC
     mock_latest_close.return_value = {"BTCUSDT": 65000.0}
 
     # Mock ccxt exchange ticker
-    mock_api = MagicMock()
-    mock_spot_api_class.return_value = mock_api
-    mock_api.exchange.fetch_tickers.return_value = {
+    mock_exchange = MagicMock()
+    mock_spot_exchange.return_value = mock_exchange
+    mock_exchange.fetch_tickers.return_value = {
         "ETH/USDT": {"last": 3000.0},
         "SOL/USDT": {"close": 150.0},
     }

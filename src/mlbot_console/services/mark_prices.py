@@ -34,17 +34,14 @@ def fetch_mark_prices(
     
     if missing:
         try:
-            from order_management.spot_binance_api import SpotBinanceAPI
-            # We don't need auth for public ticker, but we instantiate it anyway
-            # If we don't have keys, we can still fetch public ticker using ccxt
-            api = SpotBinanceAPI(
+            from mlbot_console.services.spot_ccxt import spot_binance_exchange
+
+            exchange = spot_binance_exchange(
                 api_key=os.getenv("BINANCE_SPOT_API_KEY", ""),
                 api_secret=os.getenv("BINANCE_SPOT_API_SECRET", ""),
-                testnet=False
             )
-            
-            # Fetch all tickers to avoid rate limits if many missing
-            tickers = api.exchange.fetch_tickers()
+            exchange.load_markets()
+            tickers = exchange.fetch_tickers()
             for sym in missing:
                 # ccxt format is usually BASE/QUOTE
                 ccxt_sym = f"{sym}/USDT" if not sym.endswith("USDT") else f"{sym[:-4]}/USDT"

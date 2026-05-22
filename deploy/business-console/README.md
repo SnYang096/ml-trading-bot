@@ -23,7 +23,7 @@ cd /opt/quant-engine/deploy/business-console
 docker compose up -d --build
 ```
 
-Build context is the **repository root** (`../..` → `/opt/quant-engine`): image includes `src/mlbot_console`, `src/order_management`, `src/time_series_model`, and `config/strategies`. Account overview needs `requests`, `ccxt`, and `python-dotenv` (see `requirements.txt`).
+Build context is the **repository root** (`../..` → `/opt/quant-engine`): image includes `src/mlbot_console`, `src/time_series_model`, and `config/strategies`. Account overview uses `requests`, `ccxt`, and `python-dotenv` via `mlbot_console.services.spot_ccxt` (no `order_management` copy).
 
 CI packs `deploy/business-console`, `src/`, `config/strategies`, and `live/highcap/universe.yaml` under `/opt/quant-engine/` (same layout as the git repo).
 

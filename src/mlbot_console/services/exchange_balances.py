@@ -98,10 +98,11 @@ def _fetch_spot_equity(
     api_secret: str,
     mark_prices: Mapping[str, float],
 ) -> Dict[str, Any]:
-    from order_management.spot_binance_api import SpotBinanceAPI
+    from mlbot_console.services.spot_ccxt import spot_binance_exchange
 
-    api = SpotBinanceAPI(api_key=api_key, api_secret=api_secret, testnet=False)
-    bal = api.exchange.fetch_balance()
+    exchange = spot_binance_exchange(api_key=api_key, api_secret=api_secret)
+    exchange.load_markets()
+    bal = exchange.fetch_balance()
     usdt = bal.get("USDT") if isinstance(bal.get("USDT"), dict) else {}
     free_usdt = float(usdt.get("free") or 0.0)
     total_usdt = float(usdt.get("total") or free_usdt)
@@ -130,7 +131,7 @@ def _fetch_spot_equity(
     fallback_marks = {}
     if missing_assets:
         try:
-            tickers = api.exchange.fetch_tickers()
+            tickers = exchange.fetch_tickers()
             for sym in missing_assets:
                 ccxt_sym = f"{sym}/USDT"
                 ticker = tickers.get(ccxt_sym)
