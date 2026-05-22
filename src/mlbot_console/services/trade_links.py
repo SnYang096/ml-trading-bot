@@ -151,6 +151,10 @@ def multi_leg_trade_links(
             if not tp_rows and oid:
                 tp_rows = _protection_tp_rows(group_rows, oid)
             filled_tp = _pick_filled_tp(tp_rows)
+            if filled_tp is None:
+                from mlbot_console.services.multileg_repair_tp import pick_repair_filled_tp
+
+                filled_tp = pick_repair_filled_tp(group_rows, ekey)
             if filled_tp is not None:
                 exit_ts = _ts_row(filled_tp)
                 exit_px = _price(filled_tp)

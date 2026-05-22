@@ -742,23 +742,42 @@ def enrich_orders_pnl(
     feature_bus_root: Optional[Path],
     symbol: str,
 ) -> None:
-    """Attach PnL fields when feature bus is available."""
-    if feature_bus_root is None:
-        return
-    from mlbot_console.services.account_summary import build_order_pnl_maps
+    """Attach PnL from DB links and mark prices (multileg works without feature bus)."""
+    from mlbot_console.services.account_summary import (
+        build_order_pnl_maps,
+        latest_close_prices,
+        _discover_symbols,
+    )
+    from mlbot_console.services.multileg_leg_pnl import attach_multileg_display_pnl
+
+    bus = feature_bus_root if feature_bus_root is not None and feature_bus_root.is_dir() else None
+    marks: Dict[str, float] = {}
+    if bus is not None:
+        syms = _discover_symbols(
+            trend_db=trend_db, spot_db=spot_db, multi_leg_db=multi_leg_db
+        )
+        marks = latest_close_prices(bus, syms)
 
     trend_map, spot_map, multileg_map = build_order_pnl_maps(
         trend_db=trend_db,
         spot_db=spot_db,
         multi_leg_db=multi_leg_db,
-        feature_bus_root=feature_bus_root,
+        feature_bus_root=bus,
         symbol=symbol,
+        mark_prices=marks,
     )
     _attach_pnl_fields(
         rows,
         trend_map=trend_map,
         spot_map=spot_map,
         multileg_map=multileg_map,
+    )
+
+    attach_multileg_display_pnl(
+        rows,
+        db_path=multi_leg_db,
+        symbol=symbol,
+        mark_prices=marks,
     )
 
 

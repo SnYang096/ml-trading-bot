@@ -438,14 +438,17 @@ def build_order_pnl_maps(
     trend_db: Path,
     spot_db: Path,
     multi_leg_db: Path,
-    feature_bus_root: Path,
+    feature_bus_root: Optional[Path] = None,
     symbol: str = "*",
+    mark_prices: Optional[Dict[str, float]] = None,
 ) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
     """Return (trend_by_order_id, spot_by_order_id, multileg_by_order_id) enrichment maps."""
     symbols = _discover_symbols(
         trend_db=trend_db, spot_db=spot_db, multi_leg_db=multi_leg_db
     )
-    marks = latest_close_prices(feature_bus_root, symbols)
+    marks = dict(mark_prices or {})
+    if not marks and feature_bus_root is not None and feature_bus_root.is_dir():
+        marks = latest_close_prices(feature_bus_root, symbols)
     sym = None if _is_all_symbols(symbol) else symbol.upper()
 
     trend_map: Dict[str, Dict[str, Any]] = {}
@@ -505,48 +508,30 @@ def build_order_pnl_maps(
                 "pnl_hint": "已实现",
             }
 
-    spot_map = compute_spot_order_pnl(
-        spot_db, symbol=symbol if sym else None, mark_prices=marks
-    )
+    spot_map: Dict[str, Dict[str, Any]] = {}
+    if spot_db.is_file() and marks:
+        spot_map = compute_spot_order_pnl(
+            spot_db, symbol=symbol if sym else None, mark_prices=marks
+        )
 
     multileg_map: Dict[str, Dict[str, Any]] = {}
     if multi_leg_db.is_file():
-        rows_sql = (
-            "SELECT local_order_id, strategy, symbol, side, filled_quantity, "
-            "average_price, price FROM multi_leg_orders"
-        )
+        from mlbot_console.services.multileg_leg_pnl import multileg_pnl_by_order_id
+
         if sym:
-            ml_rows = query_rows(
-                multi_leg_db,
-                rows_sql + " WHERE symbol = ?",
-                (sym,),
+            multileg_map = multileg_pnl_by_order_id(
+                multi_leg_db, sym, mark_prices=marks
             )
-            syms = [sym]
         else:
-            ml_rows = query_rows(multi_leg_db, rows_sql)
-            syms = _discover_symbols(
+            for s in _discover_symbols(
                 trend_db=Path("/dev/null"),
                 spot_db=Path("/dev/null"),
                 multi_leg_db=multi_leg_db,
-            )
-        by_id = {str(r.get("local_order_id") or ""): r for r in ml_rows}
-        for s in syms:
-            for link in multi_leg_trade_links(multi_leg_db, s)[0]:
-                if str(link.get("status") or "").lower() != "closed":
-                    continue
-                exit_key = str(link.get("exit_marker_id") or "").rsplit(":", 1)[-1]
-                entry_key = str(link.get("entry_marker_id") or "").rsplit(":", 1)[-1]
-                er = by_id.get(exit_key)
-                en = by_id.get(entry_key)
-                if not er or not en:
-                    continue
-                pnl = _link_pnl_usdt(en, er)
-                if pnl is None or not exit_key:
-                    continue
-                multileg_map[exit_key] = {
-                    "pnl_usdt": pnl,
-                    "realized_pnl": pnl,
-                    "pnl_hint": "已实现",
-                }
+            ):
+                multileg_map.update(
+                    multileg_pnl_by_order_id(
+                        multi_leg_db, s, mark_prices=marks
+                    )
+                )
 
     return trend_map, spot_map, multileg_map
