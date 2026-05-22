@@ -47,6 +47,22 @@ def _market_exit_reason_bucket(action: Dict[str, Any]) -> str:
     return "other"
 
 
+def _is_duplicate_client_order_id_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "-4116" in text or "clientorderid is duplicated" in text
+
+
+def _is_live_order_status(status: Any) -> bool:
+    return str(status or "").strip().lower() in {
+        "open",
+        "new",
+        "submitted",
+        "accepted",
+        "partially_filled",
+        "partial",
+    }
+
+
 def _is_order_already_gone(exc: BaseException) -> bool:
     """True when cancel target is already filled/canceled (Binance -2011, etc.)."""
     name = type(exc).__name__.lower()
@@ -494,31 +510,48 @@ class MultiLegExecutionAdapter:
             self._persist_order_result(action, result, purpose=purpose)
             return result
 
-        order = self.binance_api.place_order(
-            symbol=symbol,
-            side=side,
-            order_type=order_type,
-            quantity=quantity,
-            price=order_price,
-            stop_price=None if order_type == OrderType.LIMIT else protection_price,
-            reduce_only=True,
-            close_position=False,
-            client_order_id=client_order_id,
-            position_side=pos_side,
-            working_type=(
-                None
-                if order_type == OrderType.LIMIT
-                else str(action.get("working_type") or "MARK_PRICE")
-            ),
-            price_protect=(
-                None
-                if order_type == OrderType.LIMIT
-                else bool(action.get("price_protect", True))
-            ),
-            post_only=bool(action.get("post_only")),
-            time_in_force=str(action.get("time_in_force") or "").strip().upper()
-            or None,
-        )
+        try:
+            order = self.binance_api.place_order(
+                symbol=symbol,
+                side=side,
+                order_type=order_type,
+                quantity=quantity,
+                price=order_price,
+                stop_price=None if order_type == OrderType.LIMIT else protection_price,
+                reduce_only=True,
+                close_position=False,
+                client_order_id=client_order_id,
+                position_side=pos_side,
+                working_type=(
+                    None
+                    if order_type == OrderType.LIMIT
+                    else str(action.get("working_type") or "MARK_PRICE")
+                ),
+                price_protect=(
+                    None
+                    if order_type == OrderType.LIMIT
+                    else bool(action.get("price_protect", True))
+                ),
+                post_only=bool(action.get("post_only")),
+                time_in_force=str(action.get("time_in_force") or "").strip().upper()
+                or None,
+            )
+        except Exception as exc:
+            if not _is_duplicate_client_order_id_error(exc):
+                raise
+            fetch_by_client_id = getattr(self.binance_api, "get_order_by_client_id", None)
+            if not callable(fetch_by_client_id):
+                raise
+            order = fetch_by_client_id(client_order_id, symbol)
+            if not order or not _is_live_order_status(order.get("status")):
+                raise
+            logger.warning(
+                "multi-leg protection order already exists: local_order_id=%s "
+                "client_order_id=%s exchange_order_id=%s",
+                action.get("order_id"),
+                client_order_id,
+                order.get("order_id"),
+            )
         result = MultiLegExecutionResult(
             action="place_protection",
             status=str(order.get("status", "submitted")),

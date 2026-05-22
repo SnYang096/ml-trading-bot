@@ -24,6 +24,7 @@ def _api(*, hedge_mode: bool = True, hedge_mode_probe_error=None) -> MagicMock:
         "status": "open",
     }
     api.cancel_order.return_value = True
+    api.get_open_orders_for_sl_cleanup = None
     api.get_open_orders.return_value = []
     api.get_positions.return_value = []
     return api
@@ -236,6 +237,41 @@ def test_place_take_profit_protection_for_short_uses_post_only_limit_buy() -> No
     assert kwargs["price_protect"] is None
     assert kwargs["post_only"] is True
     assert kwargs["time_in_force"] == "GTX"
+
+
+def test_duplicate_protection_client_id_reuses_live_order() -> None:
+    api = _api()
+    api.place_order.side_effect = Exception(
+        'binance {"code":-4116,"msg":"ClientOrderId is duplicated."}'
+    )
+    api.get_order_by_client_id.return_value = {
+        "order_id": "ex_existing",
+        "client_order_id": "cg_existing",
+        "symbol": "BTCUSDT",
+        "status": "open",
+        "price": 95000.0,
+    }
+    adapter = MultiLegExecutionAdapter(api)
+
+    result = adapter.execute_action(
+        {
+            "action": "place_protection",
+            "symbol": "BTCUSDT",
+            "side": "SHORT",
+            "quantity": 0.02,
+            "price": 95000.0,
+            "trigger_price": 95000.0,
+            "order_type": "limit",
+            "protection_type": "take_profit",
+            "order_id": "leg_s1_tp_supp",
+        }
+    )
+
+    api.get_order_by_client_id.assert_called_once()
+    assert result.status == "open"
+    assert result.order_id == "ex_existing"
+    assert result.client_order_id == "cg_existing"
+    assert (result.raw or {}).get("local_order_id") == "leg_s1_tp_supp"
 
 
 def test_cancel_requires_symbol_and_calls_exchange() -> None:
