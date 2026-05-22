@@ -252,11 +252,12 @@ jobs:
             fi
             # business-console compose 读取 /opt/quant-engine/.env（合并 mainnet + 可选 spot）
             sudo cp /opt/quant-engine/live/binance_mainnet.env /opt/quant-engine/.env
-            sudo chmod 600 /opt/quant-engine/.env
             if [ -f /opt/quant-engine/live/binance_spot_mainnet.env ]; then
               sudo sh -c 'cat /opt/quant-engine/live/binance_spot_mainnet.env >> /opt/quant-engine/.env'
             fi
-            echo "✅ Business console .env ready"
+            sudo chown "$(whoami):$(whoami)" /opt/quant-engine/.env
+            chmod 600 /opt/quant-engine/.env
+            echo "✅ Business console .env ready (owned by $(whoami), mode 600)"
             # 主网部署：不写入 testnet env；清理历史文件以免误用旧密钥
             sudo rm -f /opt/quant-engine/live/binance_multi_leg_testnet.env
             # 仅持久化 runtime 数据目录；config/scripts 来自镜像（避免 bind mount 顶替 image 内容）
@@ -731,11 +732,16 @@ jobs:
                 exit 1
               fi
               sudo cp /opt/quant-engine/live/binance_mainnet.env /opt/quant-engine/.env
-              sudo chmod 600 /opt/quant-engine/.env
               if [ -f /opt/quant-engine/live/binance_spot_mainnet.env ]; then
                 sudo sh -c 'cat /opt/quant-engine/live/binance_spot_mainnet.env >> /opt/quant-engine/.env'
               fi
               echo "✅ 已从 binance_*_mainnet.env 生成 /opt/quant-engine/.env"
+            fi
+            # docker compose（非 root）必须能读 env_file；历史部署可能仍是 root:root + 600
+            if [ ! -r /opt/quant-engine/.env ]; then
+              sudo chown "$(whoami):$(whoami)" /opt/quant-engine/.env
+              chmod 600 /opt/quant-engine/.env
+              echo "✅ 已修正 /opt/quant-engine/.env 属主为 $(whoami)"
             fi
             cd /opt/quant-engine/deploy/business-console
             docker compose up -d --build --remove-orphans
