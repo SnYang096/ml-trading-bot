@@ -619,6 +619,15 @@ jobs:
             sudo tar xzf /tmp/mlbot-monitoring.tgz -C /opt/quant-engine
             rm -f /tmp/mlbot-monitoring.tgz
             cd /opt/quant-engine/monitoring
+            ALERT_DIR=grafana-provisioning/alerting
+            rm -f "$ALERT_DIR/contact-points.telegram.yml" "$ALERT_DIR/notification-policies.yml"
+            if [ -f .env ] && grep -qE '^GRAFANA_ALERT_TELEGRAM_BOT_TOKEN=.+' .env 2>/dev/null; then
+              cp "$ALERT_DIR/contact-points.telegram.yml.template" "$ALERT_DIR/contact-points.telegram.yml"
+              cp "$ALERT_DIR/notification-policies.telegram.yml.template" "$ALERT_DIR/notification-policies.yml"
+              echo "✅ Telegram alerting provisioning enabled"
+            else
+              echo "::notice::monitoring/.env 无 Telegram token；Grafana 可启动，告警不发 Telegram（cp .env.example .env 后 redeploy 或 restart grafana）"
+            fi
             # sqlite-web 仅用本地 Dockerfile build，勿对 mlbot-sqlite-web:* 执行 pull（无远端仓库）
             docker compose -f docker-compose.monitoring.yml pull prometheus grafana loki promtail
             docker compose -f docker-compose.monitoring.yml up -d --build --remove-orphans

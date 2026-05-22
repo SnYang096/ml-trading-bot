@@ -30,7 +30,7 @@ scrape_configs:
           job: audit
           log_type: audit
           process: feature_bus
-        __path__: /logs/trend_bus/feature_bus_audit.log*
+          __path__: /logs/trend_bus/feature_bus_audit.log*
 
   - job_name: audit_trend
     static_configs:
@@ -39,7 +39,7 @@ scrape_configs:
           job: audit
           log_type: audit
           process: trend
-        __path__: /logs/trend_bus/trend_live_audit.log*
+          __path__: /logs/trend_bus/trend_live_audit.log*
 
   - job_name: audit_multi_leg
     static_configs:
@@ -48,4 +48,4 @@ scrape_configs:
           job: audit
           log_type: audit
           process: multi_leg
-        __path__: /logs/multi_leg/multi_leg_audit.log*
+          __path__: /logs/multi_leg/multi_leg_audit.log*

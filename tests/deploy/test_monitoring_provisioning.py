@@ -91,11 +91,14 @@ def test_quant_ops_alert_rules_yaml_valid_promql():
     assert any("mlbot_pipeline_data_fresh" in e for e in exprs)
 
 
-def test_contact_point_telegram_no_literal_token():
+def test_contact_point_default_empty_telegram_in_template():
     cp = yaml.safe_load((ALERTING / "contact-points.yml").read_text(encoding="utf-8"))
-    raw = (ALERTING / "contact-points.yml").read_text(encoding="utf-8")
+    assert cp.get("contactPoints") == []
+    tpl = ALERTING / "contact-points.telegram.yml.template"
+    raw = tpl.read_text(encoding="utf-8")
     assert "AAH" not in raw  # bot token fragment must not be committed
-    recv = cp["contactPoints"][0]["receivers"][0]
+    cp_tg = yaml.safe_load(raw)
+    recv = cp_tg["contactPoints"][0]["receivers"][0]
     assert recv["type"] == "telegram"
     assert recv["settings"]["chatid"] == "-1002004555233"
     assert "bottoken" in recv.get("secureSettings", {})
@@ -189,6 +192,11 @@ def test_promtail_journal_and_audit_paths():
     journal = next(s for s in cfg["scrape_configs"] if s["job_name"] == "systemd_quant")
     keep = [r for r in journal["relabel_configs"] if r.get("action") == "keep"][0]
     assert "quant-" in keep["regex"]
+    for job in ("audit_feature_bus", "audit_trend", "audit_multi_leg"):
+        sc = next(s for s in cfg["scrape_configs"] if s["job_name"] == job)
+        labels = sc["static_configs"][0]["labels"]
+        assert "__path__" in labels
+        assert "/logs/" in labels["__path__"]
 
 
 def test_prometheus_scrape_quant_jobs():
