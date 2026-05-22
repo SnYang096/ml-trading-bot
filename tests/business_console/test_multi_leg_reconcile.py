@@ -194,6 +194,17 @@ def test_s1_tp_shows_s1_inventory_when_entry_order_missing(multi_leg_db):
     assert tp.get("leg_label") == "S1_tp"
 
 
+def test_leg_suffix_labels_protection_variants():
+    from mlbot_console.services.multileg_order_links import leg_suffix
+
+    group = "BNBUSDT_2026-05-19 08:40:00+00:00"
+    assert leg_suffix(f"{group}_S1") == "S1"
+    assert leg_suffix(f"{group}_S1_tp") == "S1_tp"
+    assert leg_suffix(f"{group}_S1_tp_supp") == "S1_tp_supp"
+    assert leg_suffix(f"{group}_S1_sl") == "S1_sl"
+    assert leg_suffix(f"{group}_S1_sl_supp") == "S1_sl_supp"
+
+
 def test_open_s_grid_leg_does_not_duplicate_tp_price(multi_leg_db):
     from mlbot_console.services.multileg_order_links import resolve_take_profit_display
 

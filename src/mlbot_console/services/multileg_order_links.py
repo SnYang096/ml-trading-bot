@@ -9,6 +9,7 @@ from mlbot_console.services.trade_markers import _OPEN_ORDER_STATUSES, _multi_le
 
 _LEG_SUFFIX_RE = re.compile(r"_(L|S)(\d+)$", re.I)
 _TP_SUFFIX_RE = re.compile(r"_(L|S)(\d+)_tp$", re.I)
+_PROT_SUFFIX_RE = re.compile(r"_(L|S)(\d+)_(tp|sl)(?:_supp)?$", re.I)
 
 
 def leg_group_key(order_id: str) -> Optional[str]:
@@ -30,19 +31,25 @@ def leg_side_kind(order_id: str) -> Optional[str]:
 
 
 def leg_suffix(order_id: str) -> str:
-    m = _LEG_SUFFIX_RE.search(str(order_id or ""))
-    if not m:
-        m = _TP_SUFFIX_RE.search(str(order_id or ""))
-        if not m:
-            return ""
+    oid = str(order_id or "")
+    m = _PROT_SUFFIX_RE.search(oid)
+    if m:
+        label = f"{m.group(1)}{m.group(2)}_{m.group(3).lower()}"
+        if oid.endswith("_supp"):
+            label += "_supp"
+        return label
+    m = _LEG_SUFFIX_RE.search(oid)
+    if m:
+        return f"{m.group(1)}{m.group(2)}"
+    m = _TP_SUFFIX_RE.search(oid)
+    if m:
         return f"{m.group(1)}{m.group(2)}_tp"
-    return f"{m.group(1)}{m.group(2)}"
+    return ""
 
 
 def leg_index(order_id: str) -> int:
-    m = _LEG_SUFFIX_RE.search(str(order_id or ""))
-    if not m:
-        m = _TP_SUFFIX_RE.search(str(order_id or ""))
+    oid = str(order_id or "")
+    m = _PROT_SUFFIX_RE.search(oid) or _LEG_SUFFIX_RE.search(oid) or _TP_SUFFIX_RE.search(oid)
     if not m:
         return 0
     try:
@@ -126,10 +133,13 @@ def _pick_filled_tp(tp_rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
 
 def is_s_entry_row(row: Dict[str, Any]) -> bool:
     purpose = str(row.get("purpose") or "").lower()
-    if "take_profit" in purpose or "market_exit" in purpose:
+    if "take_profit" in purpose or "market_exit" in purpose or "stop_loss" in purpose:
         return False
     for field in ("order_id", "local_order_id", "leg_id"):
-        if leg_side_kind(str(row.get(field) or "")) == "S":
+        oid = str(row.get(field) or "")
+        if _PROT_SUFFIX_RE.search(oid) or _TP_SUFFIX_RE.search(oid):
+            return False
+        if leg_side_kind(oid) == "S":
             return True
     return False
 
@@ -263,10 +273,13 @@ def row_group_key(row: Dict[str, Any]) -> Optional[str]:
 
 def is_l_entry_row(row: Dict[str, Any]) -> bool:
     purpose = str(row.get("purpose") or "").lower()
-    if "take_profit" in purpose or "market_exit" in purpose:
+    if "take_profit" in purpose or "market_exit" in purpose or "stop_loss" in purpose:
         return False
     for field in ("order_id", "local_order_id", "leg_id"):
-        if leg_side_kind(str(row.get(field) or "")) == "L":
+        oid = str(row.get(field) or "")
+        if _PROT_SUFFIX_RE.search(oid) or _TP_SUFFIX_RE.search(oid):
+            return False
+        if leg_side_kind(oid) == "L":
             return True
     return False
 
@@ -300,7 +313,9 @@ def _is_tp_protection_row(row: Dict[str, Any]) -> bool:
         return True
     for field in ("order_id", "local_order_id", "leg_id"):
         oid = str(row.get(field) or "")
-        if _TP_SUFFIX_RE.search(oid):
+        if _TP_SUFFIX_RE.search(oid) or (
+            _PROT_SUFFIX_RE.search(oid) and "_tp" in oid.lower()
+        ):
             return True
     return False
 
@@ -309,6 +324,11 @@ def resolve_take_profit_display(row: Dict[str, Any]) -> Tuple[Optional[float], s
     """
     Return (price, hint) for UI: *_tp protection orders, not grid S entry legs.
     """
+    purpose = str(row.get("purpose") or "").lower()
+    oid = str(row.get("order_id") or row.get("local_order_id") or "")
+    if "stop_loss" in purpose or oid.endswith("_sl") or "_sl_" in oid:
+        return None, ""
+
     exit_px = row.get("_link_exit_price")
     if exit_px is not None and exit_px == exit_px:
         hint = "已平仓"

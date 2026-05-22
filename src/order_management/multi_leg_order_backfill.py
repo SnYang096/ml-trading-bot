@@ -166,6 +166,16 @@ def _is_stale_missing_exchange_order(
     ex_id = str(row.get("exchange_order_id") or "").strip()
     if not ex_id or ex_id in open_exchange_ids:
         return False
+    
+    # 白名单机制：保护 chop_grid 的网格入场单不被错误标为 expired
+    strategy = str(row.get("strategy") or "").lower()
+    client_id = str(row.get("client_order_id") or "").lower()
+    if strategy == "chop_grid" and client_id.startswith("cg_"):
+        # 检查是否为入场单 (L1/L2/S1/S2 等，不含 _tp/_sl)
+        import re
+        if re.search(r"_(L|S)\d+$", client_id, re.I):
+            return False
+
     age_ref = row.get("updated_at") or row.get("created_at")
     age_ts = _parse_utc_ts(age_ref)
     if age_ts is None:

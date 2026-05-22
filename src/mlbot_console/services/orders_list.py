@@ -115,7 +115,7 @@ def _normalize(
         "stop_price": row.get("stop_price"),
         "stop_loss_price": _first_positive_price(
             row.get("stop_price")
-            if "stop" in str(row.get("order_type") or "").lower()
+            if "stop" in str(row.get("order_type") or "").lower() or "stop" in str(row.get("purpose") or "").lower()
             else None,
             row.get("stop_loss_price"),
         ),
@@ -136,9 +136,17 @@ def _normalize(
         "pnl_hint": row.get("pnl_hint"),
     }
     if scope == "multi_leg":
-        tp_px, tp_hint = resolve_take_profit_display(row)
-        item["take_profit_price"] = tp_px
-        item["take_profit_hint"] = tp_hint
+        # 如果是 SL 行，只设置 stop_loss_price，不走 resolve_take_profit_display
+        purpose = str(row.get("purpose") or "").lower()
+        if "stop_loss" in purpose or oid.endswith("_sl") or "_sl_" in oid:
+            item["stop_loss_price"] = _first_positive_price(row.get("stop_price"), row.get("price"))
+            item["take_profit_price"] = None
+            item["take_profit_hint"] = ""
+        else:
+            tp_px, tp_hint = resolve_take_profit_display(row)
+            item["take_profit_price"] = tp_px
+            item["take_profit_hint"] = tp_hint
+            
         if row.get("_link_exit_price") is not None:
             item["exit_price"] = row.get("_link_exit_price")
             item["exit_order_id"] = row.get("_link_exit_leg")
@@ -833,6 +841,10 @@ def collect_orders(
         )
     merged = _sort_orders_for_display(merged)
     merged = _exclude_statuses(merged, exclude_statuses)
+    
+    # 隐藏非法的 _supp 单
+    merged = [r for r in merged if not str(r.get("order_id") or "").endswith("_supp")]
+    
     merged = merged[: int(limit)]
     enrich_orders_pnl(
         merged,

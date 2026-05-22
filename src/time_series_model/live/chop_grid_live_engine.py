@@ -525,17 +525,25 @@ class ChopGridLiveEngine:
                 pos=action_pos,
                 timestamp=ts,
             )
-            if covered_qty > 0:
-                for action in new_actions:
-                    oid = str(action.get("order_id") or "")
-                    if oid:
-                        action["order_id"] = f"{oid}_supp"
+            # 过滤掉已存在的保护单类型
+            existing_types = set()
+            for order in open_orders:
+                if str(order.get("client_order_id") or "").startswith(pos.leg_id):
+                    if str(order.get("client_order_id") or "").endswith("_tp"):
+                        existing_types.add("take_profit")
+                    elif str(order.get("client_order_id") or "").endswith("_sl"):
+                        existing_types.add("stop_loss")
+
+            filtered_actions = []
             for action in new_actions:
-                if str(action.get("protection_type") or "") == "take_profit":
-                    # Catch-up protection must close if price already crossed TP.
-                    action["post_only"] = False
-                    action["time_in_force"] = "GTC"
-            actions.extend(new_actions)
+                ptype = str(action.get("protection_type") or "")
+                if ptype not in existing_types:
+                    if ptype == "take_profit":
+                        # Catch-up protection must close if price already crossed TP.
+                        action["post_only"] = False
+                        action["time_in_force"] = "GTC"
+                    filtered_actions.append(action)
+            actions.extend(filtered_actions)
         if actions:
             logger.info(
                 "chop_grid ensure_protection: symbol=%s inventory=%d actions=%d",
