@@ -7,6 +7,7 @@ COPY deploy/business-console/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 COPY src/mlbot_console /app/src/mlbot_console
+COPY src/order_management /app/src/order_management
 COPY src/live_data_stream /app/src/live_data_stream
 COPY src/time_series_model /app/src/time_series_model
 COPY config/strategies /app/config/strategies
