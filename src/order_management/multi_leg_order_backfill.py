@@ -88,6 +88,17 @@ def _parse_utc_ts(raw: Any) -> float | None:
     return None
 
 
+def _fetch_open_order_rows(api: Any, symbol: str) -> list[dict[str, Any]] | None:
+    """Return open orders for symbol, or None when the snapshot fetch failed."""
+    fetch = getattr(api, "get_open_orders_for_sl_cleanup", None)
+    try:
+        if callable(fetch):
+            return list(fetch(symbol) or [])
+        return list(api.get_open_orders(symbol) or [])
+    except Exception:
+        return None
+
+
 def _is_stale_missing_exchange_order(
     row: dict[str, Any],
     *,
@@ -139,22 +150,25 @@ def run_multi_leg_backfill_once(
     )
     # None = open snapshot unavailable (API error); do not treat as empty exchange.
     open_exchange_ids_by_symbol: dict[str, set[str] | None] = {}
+    open_rows_by_symbol: dict[str, list[dict[str, Any]] | None] = {}
     for symbol in symbols:
-        try:
-            rows = api.get_open_orders(symbol) or []
-            open_exchange_ids_by_symbol[symbol] = {
-                str(o.get("order_id") or "").strip()
-                for o in rows
-                if str(o.get("order_id") or "").strip()
-            }
-        except Exception:
+        rows = _fetch_open_order_rows(api, symbol)
+        if rows is None:
             api_error_count += 1
             logger.debug(
-                "multi-leg REST backfill: get_open_orders failed symbol=%s",
+                "multi-leg REST backfill: open snapshot failed symbol=%s",
                 symbol,
                 exc_info=True,
             )
             open_exchange_ids_by_symbol[symbol] = None
+            open_rows_by_symbol[symbol] = None
+            continue
+        open_rows_by_symbol[symbol] = rows
+        open_exchange_ids_by_symbol[symbol] = {
+            str(o.get("order_id") or "").strip()
+            for o in rows
+            if str(o.get("order_id") or "").strip()
+        }
 
     for row in candidates:
         ex_id = str(row.get("exchange_order_id") or "").strip()
@@ -165,15 +179,47 @@ def run_multi_leg_backfill_once(
             try:
                 snap = api.get_order(ex_id, symbol)
             except Exception:
-                api_error_count += 1
                 logger.debug(
                     "multi-leg REST backfill: get_order failed symbol=%s exchange=%s",
                     symbol,
                     ex_id,
                     exc_info=True,
                 )
-                continue
+                snap = None
             if not snap:
+                open_rows = open_rows_by_symbol.get(symbol)
+                local_status = str(row.get("status") or "").strip().lower()
+                if open_rows and local_status not in {
+                    "expired",
+                    "canceled",
+                    "rejected",
+                    "filled",
+                }:
+                    for open_row in open_rows:
+                        if str(open_row.get("order_id") or "").strip() != ex_id:
+                            continue
+                        payload = {
+                            "run_id": row.get("run_id"),
+                            "strategy": row.get("strategy"),
+                            "symbol": symbol,
+                            "order_id": ex_id,
+                            "client_order_id": open_row.get("client_order_id")
+                            or row.get("client_order_id"),
+                            "status": normalize_rest_order_status(
+                                open_row.get("status")
+                            ),
+                            "filled_qty": open_row.get("filled"),
+                            "avg_price": open_row.get("average_price"),
+                            "event_time": open_row.get("update_time")
+                            or open_row.get("timestamp"),
+                            "trade_time": open_row.get("update_time")
+                            or open_row.get("timestamp"),
+                            "raw": open_row,
+                        }
+                        changed = int(storage.apply_execution_report(payload) or 0)
+                        updated_rows += max(0, changed)
+                        break
+                    continue
                 open_exchange_ids = open_exchange_ids_by_symbol.get(symbol)
                 if open_exchange_ids is None:
                     continue

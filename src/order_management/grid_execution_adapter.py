@@ -204,8 +204,11 @@ class MultiLegExecutionAdapter:
         )
 
     def sync_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Fetch open exchange orders for reconcile/reporting."""
+        """Fetch open exchange orders for reconcile/reporting (incl. algo/conditional)."""
         sym = symbol or self.default_symbol
+        fetch = getattr(self.binance_api, "get_open_orders_for_sl_cleanup", None)
+        if callable(fetch):
+            return list(fetch(sym) or [])
         return self.binance_api.get_open_orders(sym)
 
     def sync_positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:

@@ -200,7 +200,7 @@ class MultiLegLiveOrchestrator:
             else self.adapter.sync_positions(None)
         )
         report = self.reconciler.reconcile(
-            local_orders=_call_snapshot(self.engine, "local_order_snapshots"),
+            local_orders=self._merged_local_order_snapshots(),
             exchange_orders=orders,
             local_positions=_call_snapshot(self.engine, "local_position_snapshots"),
             exchange_positions=positions,
@@ -275,6 +275,73 @@ class MultiLegLiveOrchestrator:
             results.extend(cancel_results)
             _call_optional(self.engine, "on_execution_results", cancel_results)
         return report, results
+
+    def _merged_local_order_snapshots(self) -> List[LocalOrderSnapshot]:
+        """Engine JSON state plus open rows from multi_leg_orders (survives restart)."""
+        merged: List[LocalOrderSnapshot] = []
+        for snap in _call_snapshot(self.engine, "local_order_snapshots") or []:
+            if isinstance(snap, LocalOrderSnapshot):
+                merged.append(snap)
+
+        storage = self.storage
+        getter = (
+            getattr(storage, "get_open_orders_for_reconcile", None) if storage else None
+        )
+        if not callable(getter):
+            return merged
+
+        db_rows = (
+            getter(strategy=self.strategy_name, symbol=self.symbol or None) or []
+        )
+
+        def _keys(snap: LocalOrderSnapshot) -> set[str]:
+            out: set[str] = set()
+            for key in (
+                str(snap.order_id or ""),
+                str(snap.exchange_order_id or ""),
+                str(snap.client_order_id or ""),
+            ):
+                if key:
+                    out.add(key)
+            return out
+
+        for row in db_rows:
+            ex_id = str(row.get("exchange_order_id") or "").strip()
+            client_id = str(row.get("client_order_id") or "").strip()
+            local_id = str(row.get("local_order_id") or "").strip()
+            row_keys = {k for k in (ex_id, client_id, local_id) if k}
+
+            match_idx: Optional[int] = None
+            for i, snap in enumerate(merged):
+                if not _keys(snap).isdisjoint(row_keys):
+                    match_idx = i
+                    break
+
+            db_snap = LocalOrderSnapshot(
+                order_id=local_id or ex_id,
+                symbol=str(row.get("symbol") or self.symbol or ""),
+                side=str(row.get("side") or ""),
+                quantity=float(row.get("quantity") or 0.0),
+                price=float(row.get("price") or 0.0),
+                exchange_order_id=ex_id,
+                client_order_id=client_id,
+            )
+
+            if match_idx is not None:
+                old = merged[match_idx]
+                merged[match_idx] = LocalOrderSnapshot(
+                    order_id=old.order_id or db_snap.order_id,
+                    symbol=old.symbol or db_snap.symbol,
+                    side=old.side or db_snap.side,
+                    quantity=old.quantity if old.quantity else db_snap.quantity,
+                    price=old.price if old.price else db_snap.price,
+                    exchange_order_id=old.exchange_order_id or db_snap.exchange_order_id,
+                    client_order_id=old.client_order_id or db_snap.client_order_id,
+                )
+            else:
+                merged.append(db_snap)
+
+        return merged
 
     def on_execution_report(self, report: Mapping[str, Any]) -> None:
         """Forward user-stream execution updates and execute follow-up actions."""

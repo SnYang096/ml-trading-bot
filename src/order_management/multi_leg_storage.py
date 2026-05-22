@@ -249,6 +249,41 @@ class MultiLegStorage:
         finally:
             conn.close()
 
+    def get_open_orders_for_reconcile(
+        self,
+        *,
+        strategy: str,
+        symbol: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Open multi-leg rows for reconcile (DB truth, not engine JSON state)."""
+        conn = self._connect()
+        try:
+            where_extra = " AND strategy = ? "
+            params: list[Any] = [str(strategy)]
+            if symbol:
+                where_extra += " AND symbol = ? "
+                params.append(str(symbol).upper())
+            cur = conn.execute(
+                f"""
+                SELECT
+                    local_order_id, strategy, symbol, side, quantity, price,
+                    exchange_order_id, client_order_id, filled_quantity, status
+                FROM multi_leg_orders
+                WHERE
+                    exchange_order_id IS NOT NULL
+                    AND TRIM(exchange_order_id) != ''
+                    AND LOWER(TRIM(COALESCE(status, ''))) IN (
+                        'submitted', 'open', 'pending',
+                        'partially_filled', 'unknown', 'new'
+                    )
+                    {where_extra}
+                """,
+                tuple(params),
+            )
+            return [dict(r) for r in cur.fetchall()]
+        finally:
+            conn.close()
+
     def apply_execution_report(self, payload: Dict[str, Any]) -> int:
         """Update multi_leg_orders status/fill fields from user-stream report."""
         exchange_order_id = _none_if_blank(payload.get("order_id"))
@@ -331,9 +366,13 @@ class MultiLegStorage:
                     END,
                     canceled_at = CASE
                         WHEN ? IS NOT NULL THEN ?
+                        WHEN ? THEN NULL
                         ELSE canceled_at
                     END,
-                    error_message = COALESCE(?, error_message),
+                    error_message = CASE
+                        WHEN ? THEN NULL
+                        ELSE COALESCE(?, error_message)
+                    END,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE {where}
                 """,
@@ -347,6 +386,8 @@ class MultiLegStorage:
                     filled_at,
                     canceled_at if is_terminal else None,
                     canceled_at,
+                    not is_terminal,
+                    not is_terminal,
                     error_message,
                     *params,
                 ],

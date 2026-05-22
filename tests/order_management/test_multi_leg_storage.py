@@ -93,6 +93,91 @@ def test_multi_leg_storage_creates_isolated_tables_and_records(tmp_path) -> None
         conn.close()
 
 
+def test_get_open_orders_for_reconcile_filters_terminal(tmp_path) -> None:
+    db_path = tmp_path / "multi_leg.db"
+    storage = MultiLegStorage(str(db_path))
+    run_id = storage.create_run(
+        mode="testnet", strategies=["chop_grid"], symbols=["BNBUSDT"]
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": "open_1",
+            "symbol": "BNBUSDT",
+            "side": "BUY",
+            "order_type": "limit",
+            "quantity": 0.1,
+            "exchange_order_id": "90489849398",
+            "client_order_id": "cg_16738f8fae98",
+            "status": "open",
+        }
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": "stale_l2",
+            "symbol": "BNBUSDT",
+            "side": "BUY",
+            "order_type": "limit",
+            "quantity": 0.1,
+            "exchange_order_id": "90414533226",
+            "client_order_id": "cg_5b030aa6a6ac",
+            "status": "expired",
+        }
+    )
+
+    rows = storage.get_open_orders_for_reconcile(strategy="chop_grid", symbol="BNBUSDT")
+    assert len(rows) == 1
+    assert rows[0]["local_order_id"] == "open_1"
+
+
+def test_apply_execution_report_reopens_expired_order_and_clears_error(
+    tmp_path,
+) -> None:
+    db_path = tmp_path / "multi_leg.db"
+    storage = MultiLegStorage(str(db_path))
+    run_id = storage.create_run(
+        mode="testnet", strategies=["chop_grid"], symbols=["BNBUSDT"]
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": "stale_l2",
+            "symbol": "BNBUSDT",
+            "side": "BUY",
+            "order_type": "limit",
+            "quantity": 0.1,
+            "exchange_order_id": "90414533226",
+            "client_order_id": "cg_5b030aa6a6ac",
+            "status": "expired",
+            "error_message": "exchange_order_missing",
+        }
+    )
+
+    changed = storage.apply_execution_report(
+        {
+            "order_id": "90414533226",
+            "client_order_id": "cg_5b030aa6a6ac",
+            "status": "open",
+            "event_time": "2026-05-22T00:00:00+00:00",
+        }
+    )
+    assert changed == 1
+
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT status, canceled_at, error_message FROM multi_leg_orders "
+            "WHERE local_order_id = 'stale_l2'"
+        ).fetchone()
+        assert row == ("open", None, None)
+    finally:
+        conn.close()
+
+
 def test_close_absent_positions_marks_stale_open_rows_closed(tmp_path) -> None:
     db_path = tmp_path / "multi_leg.db"
     storage = MultiLegStorage(str(db_path))

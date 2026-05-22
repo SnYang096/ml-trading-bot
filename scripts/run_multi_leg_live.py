@@ -497,7 +497,7 @@ def build_daemon(
             reconciler = MultiLegReconciler(
                 ReconciliationPolicy(
                     client_id_prefixes={f"{prefix}_"},
-                    cancel_orphan_exchange_orders=(strategy != "chop_grid"),
+                    cancel_orphan_exchange_orders=True,
                     skip_position_reconciliation=(sym_u in multi_engine_symbols),
                 )
             )

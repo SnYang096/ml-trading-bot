@@ -326,3 +326,113 @@ def test_run_actions_passes_drawdown_provider_to_governor() -> None:
     assert not report.risk.ok
     assert "max_drawdown_pct exceeded" in report.risk.rejected[0].reason
     adapter.execute_actions.assert_not_called()
+
+
+def test_reconcile_merges_db_open_row_when_engine_state_empty(tmp_path) -> None:
+    from src.order_management.multi_leg_storage import MultiLegStorage
+
+    engine = FakeEngine(orders=[])
+    adapter = _adapter()
+    adapter.sync_open_orders.return_value = [
+        {
+            "order_id": "90489849398",
+            "client_order_id": "cg_16738f8fae98",
+            "symbol": "BNBUSDT",
+        }
+    ]
+    storage = MultiLegStorage(str(tmp_path / "multi_leg.db"))
+    run_id = storage.create_run(
+        mode="testnet", strategies=["chop_grid"], symbols=["BNBUSDT"]
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": "cg_BNBUSDT_S1_tp",
+            "symbol": "BNBUSDT",
+            "side": "SELL",
+            "order_type": "limit",
+            "quantity": 0.1,
+            "price": 643.0,
+            "exchange_order_id": "90489849398",
+            "client_order_id": "cg_16738f8fae98",
+            "status": "open",
+        }
+    )
+    orchestrator = MultiLegLiveOrchestrator(
+        engine=engine,
+        governor=MultiLegPortfolioRiskGovernor(
+            MultiLegRiskLimits(max_gross_notional=1_000.0, max_net_notional=1_000.0)
+        ),
+        adapter=adapter,
+        reconciler=MultiLegReconciler(ReconciliationPolicy(client_id_prefixes={"cg_"})),
+        storage=storage,
+        strategy_name="chop_grid",
+        symbol="BNBUSDT",
+    )
+
+    report, _ = orchestrator.reconcile()
+
+    assert report.ok
+    assert not report.orphan_exchange_orders
+
+
+def test_reconcile_enriches_engine_row_missing_exchange_id(tmp_path) -> None:
+    from src.order_management.multi_leg_storage import MultiLegStorage
+
+    engine = FakeEngine(
+        orders=[
+            LocalOrderSnapshot(
+                order_id="cg_BNBUSDT_S1_tp",
+                symbol="BNBUSDT",
+                side="SELL",
+                quantity=0.1,
+                price=643.0,
+                exchange_order_id="",
+                client_order_id="cg_16738f8fae98",
+            )
+        ]
+    )
+    adapter = _adapter()
+    adapter.sync_open_orders.return_value = [
+        {
+            "order_id": "90489849398",
+            "client_order_id": "cg_16738f8fae98",
+            "symbol": "BNBUSDT",
+        }
+    ]
+    storage = MultiLegStorage(str(tmp_path / "multi_leg.db"))
+    run_id = storage.create_run(
+        mode="testnet", strategies=["chop_grid"], symbols=["BNBUSDT"]
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": "cg_BNBUSDT_S1_tp",
+            "symbol": "BNBUSDT",
+            "side": "SELL",
+            "order_type": "limit",
+            "quantity": 0.1,
+            "price": 643.0,
+            "exchange_order_id": "90489849398",
+            "client_order_id": "cg_16738f8fae98",
+            "status": "open",
+        }
+    )
+    orchestrator = MultiLegLiveOrchestrator(
+        engine=engine,
+        governor=MultiLegPortfolioRiskGovernor(
+            MultiLegRiskLimits(max_gross_notional=1_000.0, max_net_notional=1_000.0)
+        ),
+        adapter=adapter,
+        reconciler=MultiLegReconciler(ReconciliationPolicy(client_id_prefixes={"cg_"})),
+        storage=storage,
+        strategy_name="chop_grid",
+        symbol="BNBUSDT",
+    )
+
+    report, _ = orchestrator.reconcile()
+
+    assert report.ok
+    assert not report.orphan_exchange_orders
