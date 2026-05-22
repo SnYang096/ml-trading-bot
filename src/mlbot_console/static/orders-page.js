@@ -205,6 +205,7 @@ async function refreshOrders(opts = {}) {
       showSymbol: showSymbolColumn(),
       escHtml: Shell.escHtml,
     });
+    Shell.bindOrdersTableResize(document.getElementById("ordersTable"));
     bindOrdersTable(rows);
     if (
       selectedRowIdx >= 0 &&
@@ -263,6 +264,7 @@ function startPoll() {
 (async () => {
   try {
     Shell.initAppNav("orders");
+    Shell.bindOrdersTableResize(document.getElementById("ordersTable"));
     Shell.applyOrdersFilterToControls(Shell.loadOrdersFilter());
     Shell.bindOrdersFilterSync(() => refreshOrders().catch(() => {}));
     applyScopesFromStorage();

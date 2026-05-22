@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from mlbot_console.services.db import query_rows
 from mlbot_console.services.multileg_order_links import (
     enrich_multileg_rows_for_symbol,
+    entry_link_id,
+    is_entry_row,
+    leg_index,
+    leg_suffix,
     resolve_take_profit_display,
+    row_group_key,
 )
 from mlbot_console.services.trade_markers import _marker_id, _parse_ts
 
@@ -132,6 +138,11 @@ def _normalize(
         if row.get("_link_exit_price") is not None:
             item["exit_price"] = row.get("_link_exit_price")
             item["exit_order_id"] = row.get("_link_exit_leg")
+        oid = str(row.get("order_id") or row.get("local_order_id") or "")
+        lid = str(row.get("leg_id") or "")
+        item["grid_batch"] = row_group_key(row)
+        item["leg_label"] = leg_suffix(oid) or leg_suffix(lid)
+        item["leg_index"] = leg_index(oid) or leg_index(lid)
     return item
 
 
@@ -292,6 +303,166 @@ def _enrich_trend_sl_tp(
             item["take_profit_price"] = tp
 
 
+def _entry_leg_ids_in_rows(rows: List[Dict[str, Any]]) -> Set[str]:
+    out: Set[str] = set()
+    for row in rows:
+        if not is_entry_row(row):
+            continue
+        eid = entry_link_id(row)
+        if eid:
+            out.add(eid)
+    return out
+
+
+def _query_open_multileg_positions(
+    db_path: Path, symbol: str
+) -> List[Dict[str, Any]]:
+    if _is_all_symbols(symbol):
+        sql = """
+            SELECT leg_id, strategy, symbol, side, entry_price, quantity, status,
+                   opened_at, updated_at
+            FROM multi_leg_positions
+            WHERE lower(trim(coalesce(status, ''))) = 'open'
+            ORDER BY opened_at DESC
+        """
+        return query_rows(db_path, sql)
+    sym = symbol.upper()
+    sql = """
+        SELECT leg_id, strategy, symbol, side, entry_price, quantity, status,
+               opened_at, updated_at
+        FROM multi_leg_positions
+        WHERE symbol = ?
+          AND lower(trim(coalesce(status, ''))) = 'open'
+        ORDER BY opened_at DESC
+    """
+    return query_rows(db_path, sql, (sym,))
+
+
+def _inventory_from_engine_state(
+    engine_data_root: Path, symbol: str
+) -> List[Dict[str, Any]]:
+    sym = symbol.upper()
+    state_dir = engine_data_root / "multi_leg_live" / "state"
+    if not state_dir.is_dir():
+        return []
+    out: List[Dict[str, Any]] = []
+    for path in sorted(state_dir.glob(f"chop_grid_{sym}.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        strategy = path.stem.rsplit("_", 1)[0] if "_" in path.stem else "chop_grid"
+        for inv in data.get("inventory") or []:
+            leg_id = str(inv.get("leg_id") or "").strip()
+            if not leg_id:
+                continue
+            qty = float(inv.get("quantity") or 0)
+            if qty <= 0:
+                continue
+            out.append(
+                {
+                    "leg_id": leg_id,
+                    "strategy": strategy,
+                    "symbol": sym,
+                    "side": str(inv.get("side") or "").upper(),
+                    "entry_price": float(inv.get("entry_price") or 0),
+                    "quantity": qty,
+                    "status": "open",
+                    "opened_at": inv.get("entry_time"),
+                }
+            )
+    return out
+
+
+def _inventory_row_from_position(pos: Dict[str, Any]) -> Dict[str, Any]:
+    leg_id = str(pos.get("leg_id") or "").strip()
+    qty = float(pos.get("quantity") or 0)
+    entry_px = float(pos.get("entry_price") or 0)
+    side = str(pos.get("side") or "").upper()
+    return {
+        "order_id": leg_id,
+        "local_order_id": leg_id,
+        "leg_id": leg_id,
+        "symbol": str(pos.get("symbol") or "").upper(),
+        "side": side,
+        "status": "filled",
+        "order_type": "inventory_leg",
+        "purpose": "inventory",
+        "quantity": qty,
+        "filled_quantity": qty,
+        "price": entry_px,
+        "average_price": entry_px,
+        "strategy": str(pos.get("strategy") or "chop_grid"),
+        "created_at": pos.get("opened_at") or pos.get("updated_at"),
+        "filled_at": pos.get("opened_at") or pos.get("updated_at"),
+        "_synthetic_inventory": True,
+    }
+
+
+def _supplement_multileg_inventory_entries(
+    db_path: Path,
+    symbol: str,
+    rows: List[Dict[str, Any]],
+    *,
+    engine_data_root: Optional[Path] = None,
+) -> None:
+    """Add open inventory legs missing from multi_leg_orders (e.g. S1 when only S1_tp shows)."""
+    if _is_all_symbols(symbol):
+        return
+    covered = _entry_leg_ids_in_rows(rows)
+    seen_legs: Set[str] = set(covered)
+    candidates: List[Dict[str, Any]] = []
+    if db_path.is_file():
+        candidates.extend(_query_open_multileg_positions(db_path, symbol))
+    if engine_data_root is not None:
+        candidates.extend(_inventory_from_engine_state(engine_data_root, symbol))
+    for pos in candidates:
+        leg_id = str(pos.get("leg_id") or "").strip()
+        if not leg_id or leg_id in seen_legs:
+            continue
+        seen_legs.add(leg_id)
+        rows.append(_inventory_row_from_position(pos))
+
+
+def _sort_orders_for_display(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Keep non-grid rows by time; cluster multi_leg chop_grid rows by grid_batch."""
+
+    def _batch_sort_key(row: Dict[str, Any]) -> tuple:
+        batch = str(row.get("grid_batch") or "")
+        if batch:
+            side_rank = 0 if str(row.get("leg_label") or "").upper().startswith("L") else 1
+            return (
+                0,
+                batch,
+                side_rank,
+                int(row.get("leg_index") or 0),
+                str(row.get("leg_label") or ""),
+            )
+        return (1, -(int(row.get("time") or 0)))
+
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    standalone: List[Dict[str, Any]] = []
+    for row in rows:
+        batch = str(row.get("grid_batch") or "")
+        if str(row.get("scope") or "") == "multi_leg" and batch:
+            grouped.setdefault(batch, []).append(row)
+        else:
+            standalone.append(row)
+
+    out: List[Dict[str, Any]] = []
+    batch_keys = sorted(
+        grouped.keys(),
+        key=lambda b: max(int(r.get("time") or 0) for r in grouped[b]),
+        reverse=True,
+    )
+    for batch in batch_keys:
+        legs = sorted(grouped[batch], key=_batch_sort_key)
+        out.extend(legs)
+    standalone.sort(key=lambda r: int(r.get("time") or 0), reverse=True)
+    out.extend(standalone)
+    return out
+
+
 def _effective_fetch_limit(limit: int, exclude_statuses: Optional[List[str]]) -> int:
     base = max(int(limit), 1)
     n_ex = len([s for s in (exclude_statuses or []) if str(s).strip()])
@@ -418,6 +589,7 @@ def multi_leg_orders_list(
     status: Optional[str] = None,
     exclude_statuses: Optional[List[str]] = None,
     limit: int = 100,
+    engine_data_root: Optional[Path] = None,
 ) -> List[Dict[str, Any]]:
     status_clause, status_params = _sql_excluded_status_clause(
         exclude_statuses, alias="multi_leg_orders"
@@ -445,6 +617,9 @@ def multi_leg_orders_list(
             LIMIT ?
         """
         rows = query_rows(db_path, sql, (sym, *status_params, int(limit)))
+    _supplement_multileg_inventory_entries(
+        db_path, symbol, rows, engine_data_root=engine_data_root
+    )
     enrich_multileg_rows_for_symbol(db_path, symbol, rows)
     out = []
     for r in rows:
@@ -531,6 +706,7 @@ def collect_orders(
     exclude_statuses: Optional[List[str]] = None,
     limit: int = 100,
     feature_bus_root: Optional[Path] = None,
+    engine_data_root: Optional[Path] = None,
 ) -> List[Dict[str, Any]]:
     merged: List[Dict[str, Any]] = []
     scope_set = {s.strip().lower() for s in scopes if s.strip()}
@@ -555,9 +731,10 @@ def collect_orders(
                 status=status,
                 exclude_statuses=exclude_statuses,
                 limit=per_scope,
+                engine_data_root=engine_data_root,
             )
         )
-    merged.sort(key=lambda r: r.get("time") or 0, reverse=True)
+    merged = _sort_orders_for_display(merged)
     merged = _exclude_statuses(merged, exclude_statuses)
     merged = merged[: int(limit)]
     enrich_orders_pnl(

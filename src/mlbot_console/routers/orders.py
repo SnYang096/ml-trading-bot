@@ -46,6 +46,7 @@ def orders_list(
         exclude_statuses=exclude_statuses or None,
         limit=limit,
         feature_bus_root=SETTINGS.feature_bus_root,
+        engine_data_root=SETTINGS.engine_data_root,
     )
     sym_meta = "ALL" if str(symbol).strip().upper() in {"", "*", "ALL", "__ALL__"} else symbol.upper()
     return ok(rows, meta={"count": len(rows), "symbol": sym_meta})
@@ -151,6 +152,7 @@ def multileg_orders_api(
         status=status,
         exclude_statuses=exclude_statuses or None,
         limit=fetch_limit,
+        engine_data_root=SETTINGS.engine_data_root,
     )
     rows = rows[:limit]
     enrich_orders_pnl(

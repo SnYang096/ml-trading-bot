@@ -81,6 +81,130 @@ def test_l1_entry_shows_tp_from_l1_tp_protection_row(multi_leg_db):
     assert "tp" in (l1.get("take_profit_hint") or "").lower()
 
 
+def test_cg_entry_shows_tp_via_leg_id(multi_leg_db):
+    from src.order_management.multi_leg_storage import MultiLegStorage
+
+    storage = MultiLegStorage(str(multi_leg_db))
+    run_id = storage.create_run(
+        mode="testnet",
+        strategies=["chop_grid"],
+        symbols=["BNBUSDT"],
+        run_id="mlr_cg_tp",
+    )
+    group = "BNBUSDT_2026-05-19 08:40:00+00:00"
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": "cg_live_entry_1",
+            "leg_id": f"{group}_L1",
+            "symbol": "BNBUSDT",
+            "side": "BUY",
+            "purpose": "place",
+            "status": "filled",
+            "filled_quantity": 0.31,
+            "average_price": 637.11,
+            "filled_at": "2026-05-19T14:48:21+00:00",
+        }
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": "cg_live_tp_1",
+            "leg_id": f"{group}_L1",
+            "symbol": "BNBUSDT",
+            "side": "SELL",
+            "purpose": "take_profit",
+            "price": 643.55,
+            "status": "open",
+            "created_at": "2026-05-21T07:00:22+00:00",
+        }
+    )
+    rows = collect_orders(
+        trend_db=multi_leg_db.parent / "missing_trend.db",
+        spot_db=multi_leg_db.parent / "missing_spot.db",
+        multi_leg_db=multi_leg_db,
+        symbol="BNBUSDT",
+        scopes=["multi_leg"],
+        limit=50,
+    )
+    entry = next(r for r in rows if r["order_id"] == "cg_live_entry_1")
+    assert entry["take_profit_price"] == 643.55
+    assert entry.get("grid_batch") == group
+    assert entry.get("leg_label") == "L1"
+
+
+def test_s1_tp_shows_s1_inventory_when_entry_order_missing(multi_leg_db):
+    from src.order_management.multi_leg_storage import MultiLegStorage
+
+    storage = MultiLegStorage(str(multi_leg_db))
+    run_id = storage.create_run(
+        mode="testnet",
+        strategies=["chop_grid"],
+        symbols=["BNBUSDT"],
+        run_id="mlr_s1_inv",
+    )
+    group = "BNBUSDT_2026-05-19 08:40:00+00:00"
+    storage.upsert_position(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "leg_id": f"{group}_S1",
+            "symbol": "BNBUSDT",
+            "side": "SHORT",
+            "entry_price": 653.205,
+            "quantity": 0.62,
+            "status": "open",
+        }
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": f"{group}_S1_tp",
+            "leg_id": f"{group}_S1",
+            "symbol": "BNBUSDT",
+            "side": "SHORT",
+            "purpose": "take_profit",
+            "price": 643.5545,
+            "status": "open",
+            "created_at": "2026-05-21T07:00:22+00:00",
+        }
+    )
+    rows = collect_orders(
+        trend_db=multi_leg_db.parent / "missing_trend.db",
+        spot_db=multi_leg_db.parent / "missing_spot.db",
+        multi_leg_db=multi_leg_db,
+        symbol="BNBUSDT",
+        scopes=["multi_leg"],
+        exclude_statuses=["expired", "canceled"],
+        limit=50,
+    )
+    s1 = next(r for r in rows if r.get("order_id") == f"{group}_S1")
+    tp = next(r for r in rows if r.get("order_id") == f"{group}_S1_tp")
+    assert s1["purpose"] == "inventory"
+    assert s1["leg_label"] == "S1"
+    assert s1["status"] == "filled"
+    assert s1.get("take_profit_price") == 643.5545
+    assert tp.get("leg_label") == "S1_tp"
+
+
+def test_open_s_grid_leg_does_not_duplicate_tp_price(multi_leg_db):
+    from mlbot_console.services.multileg_order_links import resolve_take_profit_display
+
+    row = {
+        "order_id": "BNBUSDT_2026-05-19 08:40:00+00:00_S1",
+        "purpose": "entry",
+        "side": "SELL",
+        "price": 643.5545,
+        "status": "open",
+    }
+    tp_px, hint = resolve_take_profit_display(row)
+    assert tp_px is None
+    assert hint == ""
+
+
 def test_l1_entry_does_not_use_s_grid_as_tp(multi_leg_db):
     from src.order_management.multi_leg_storage import MultiLegStorage
 

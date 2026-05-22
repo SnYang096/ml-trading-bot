@@ -114,21 +114,33 @@ def _pick_filled_tp(tp_rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     return None
 
 
+def is_s_entry_row(row: Dict[str, Any]) -> bool:
+    purpose = str(row.get("purpose") or "").lower()
+    if "take_profit" in purpose or "market_exit" in purpose:
+        return False
+    for field in ("order_id", "local_order_id", "leg_id"):
+        if leg_side_kind(str(row.get(field) or "")) == "S":
+            return True
+    return False
+
+
+def is_entry_row(row: Dict[str, Any]) -> bool:
+    return is_l_entry_row(row) or is_s_entry_row(row)
+
+
 def annotate_leg_group(legs: List[Dict[str, Any]]) -> None:
     """Mutate raw multi_leg_orders rows with _link_* fields for entry legs."""
     l_legs = [r for r in legs if is_l_entry_row(r)]
-    s_legs = [
-        r
-        for r in legs
-        if leg_side_kind(str(r.get("order_id") or "")) == "S"
-        or leg_side_kind(str(r.get("leg_id") or "")) == "S"
-    ]
+    s_legs = [r for r in legs if is_s_entry_row(r)]
     if not l_legs and not s_legs:
         return
 
     for row in l_legs + s_legs:
-        eid = str(row.get("order_id") or "")
+        eid = entry_link_id(row)
         tp_rows = _protection_tp_rows(legs, eid)
+        oid = str(row.get("order_id") or "")
+        if not tp_rows and oid and oid != eid:
+            tp_rows = _protection_tp_rows(legs, oid)
         planned = _pick_planned_tp(tp_rows)
         exit_row = _pick_filled_tp(tp_rows)
         if planned is not None:
@@ -183,6 +195,17 @@ def build_leg_link_index(rows: List[Dict[str, Any]]) -> Dict[str, List[Dict[str,
     return by_group
 
 
+def _is_tp_protection_row(row: Dict[str, Any]) -> bool:
+    purpose = str(row.get("purpose") or "").lower()
+    if "take_profit" in purpose:
+        return True
+    for field in ("order_id", "local_order_id", "leg_id"):
+        oid = str(row.get(field) or "")
+        if _TP_SUFFIX_RE.search(oid):
+            return True
+    return False
+
+
 def resolve_take_profit_display(row: Dict[str, Any]) -> Tuple[Optional[float], str]:
     """
     Return (price, hint) for UI: *_tp protection orders, not grid S entry legs.
@@ -194,10 +217,6 @@ def resolve_take_profit_display(row: Dict[str, Any]) -> Tuple[Optional[float], s
         if leg:
             hint = f"已平·{str(leg)[-6:]}"
         return float(exit_px), hint
-
-    direct = _multi_leg_take_profit_price(row)
-    if direct is not None:
-        return direct, ""
 
     link_px = row.get("_link_tp_price")
     if link_px is not None and link_px == link_px:
@@ -211,6 +230,11 @@ def resolve_take_profit_display(row: Dict[str, Any]) -> Tuple[Optional[float], s
         elif st:
             hint = st
         return float(link_px), hint
+
+    if _is_tp_protection_row(row):
+        direct = _multi_leg_take_profit_price(row)
+        if direct is not None:
+            return direct, "止盈单"
 
     return None, ""
 
@@ -235,6 +259,12 @@ def enrich_multileg_rows_for_symbol(
         WHERE symbol = ?
     """
     all_rows = query_rows(db_path, sql, (sym,))
+    known = {str(r.get("order_id") or "") for r in all_rows}
+    for item in rows:
+        oid = str(item.get("order_id") or "")
+        if oid and oid not in known:
+            all_rows.append(item)
+            known.add(oid)
     build_leg_link_index(all_rows)
     by_oid = {str(r.get("order_id") or ""): r for r in all_rows}
     for item in rows:

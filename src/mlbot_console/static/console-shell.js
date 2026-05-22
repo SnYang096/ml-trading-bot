@@ -234,6 +234,8 @@
       ["盈亏", formatPnl(o)],
       ["用途", o.purpose ?? o.order_type],
       ["策略", o.strategy],
+      ["网格批次", o.grid_batch],
+      ["档位", o.leg_label],
       ["成交时间", formatOrderTime(o.time)],
       ["创建", o.created_at],
       ["成交", o.filled_at],
@@ -258,18 +260,58 @@
     return html;
   }
 
+  function shortGridBatchLabel(batch) {
+    const s = String(batch || "");
+    if (!s) return "";
+    const m = s.match(/^([A-Z0-9]+)_(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2})/);
+    if (m) return `${m[1]} · ${m[2].replace("T", " ")}`;
+    if (s.length > 42) return `${s.slice(0, 40)}…`;
+    return s;
+  }
+
+  function legBadge(row) {
+    const parts = [];
+    const purpose = String(row?.purpose || "").toLowerCase();
+    if (purpose === "inventory" || String(row?.order_type || "") === "inventory_leg") {
+      parts.push('<span class="leg-badge leg-inv" title="引擎库存腿">库存</span>');
+    }
+    const label = String(row?.leg_label || "").trim();
+    if (label) {
+      const cls = label.includes("tp") ? "leg-badge leg-tp" : "leg-badge";
+      parts.push(`<span class="${cls}" title="网格档位">${escHtml(label)}</span>`);
+    }
+    return parts.join(" ");
+  }
+
   function buildOrdersTableRows(rows, options) {
     const opts = options || {};
     const showSymbol = opts.showSymbol !== false;
     const esc = opts.escHtml || escHtml;
-    return (rows || [])
-      .map((r, i) => {
-        const mid = r.marker_id || "";
-        const symCell = showSymbol
-          ? `<td>${esc(r.symbol || "")}</td>`
-          : "";
-        return `<tr data-idx="${i}" data-marker-id="${esc(mid)}" data-symbol="${esc(r.symbol || "")}">
-          <td>${scopeBadge(r.scope)} ${strategyBadge(r.strategy, r.scope)}</td>
+    const colspan = ordersTableColspan(showSymbol);
+    const parts = [];
+    let lastBatch = null;
+    (rows || []).forEach((r, i) => {
+      const batch = r.scope === "multi_leg" && r.grid_batch ? String(r.grid_batch) : "";
+      if (batch && batch !== lastBatch) {
+        parts.push(
+          `<tr class="grid-batch-header"><td colspan="${colspan}">` +
+            `<span class="grid-batch-tag">网格批次</span> ` +
+            `${esc(shortGridBatchLabel(batch))}` +
+            (showSymbol && r.symbol ? ` · ${esc(r.symbol)}` : "") +
+            `</td></tr>`
+        );
+        lastBatch = batch;
+      } else if (!batch) {
+        lastBatch = null;
+      }
+      const mid = r.marker_id || "";
+      const symCell = showSymbol ? `<td>${esc(r.symbol || "")}</td>` : "";
+      const leg = legBadge(r);
+      parts.push(
+        `<tr data-idx="${i}" data-marker-id="${esc(mid)}" data-symbol="${esc(r.symbol || "")}"` +
+          (batch ? ` data-grid-batch="${esc(batch)}"` : "") +
+          `>
+          <td>${scopeBadge(r.scope)} ${strategyBadge(r.strategy, r.scope)} ${leg}</td>
           ${symCell}
           <td>${esc(formatOrderTime(r.time))}</td>
           <td class="${sideClass(r.side)}">${esc(r.side || "")}</td>
@@ -280,9 +322,10 @@
           <td>${esc(formatSlPrice(r))}</td>
           <td class="${pnlClass(r)}">${esc(formatPnl(r))}</td>
           <td class="id-cell" title="${esc(r.order_id || "")}">${esc(r.order_id || "")}</td>
-        </tr>`;
-      })
-      .join("");
+        </tr>`
+      );
+    });
+    return parts.join("");
   }
 
   function formatTpPrice(row) {
@@ -436,6 +479,104 @@
     });
   }
 
+  const ORDERS_COL_WIDTH_KEY = "mlbot.console.ordersColWidths";
+  const DEFAULT_ORDERS_COL_WIDTHS = {
+    ordersTable: {
+      account: 128,
+      symbol: 76,
+      time: 112,
+      side: 52,
+      status: 68,
+      qty: 56,
+      price: 76,
+      tp: 100,
+      sl: 76,
+      pnl: 72,
+      order_id: 340,
+    },
+    ordersDockTable: {
+      account: 96,
+      symbol: 72,
+      time: 100,
+      side: 48,
+      status: 64,
+      qty: 52,
+      price: 68,
+      tp: 84,
+      order_id: 240,
+    },
+  };
+
+  function loadOrdersColWidths(tableId) {
+    try {
+      const all = JSON.parse(localStorage.getItem(ORDERS_COL_WIDTH_KEY) || "{}");
+      return { ...(DEFAULT_ORDERS_COL_WIDTHS[tableId] || {}), ...(all[tableId] || {}) };
+    } catch (_) {
+      return { ...(DEFAULT_ORDERS_COL_WIDTHS[tableId] || {}) };
+    }
+  }
+
+  function saveOrdersColWidth(tableId, colKey, widthPx) {
+    try {
+      const all = JSON.parse(localStorage.getItem(ORDERS_COL_WIDTH_KEY) || "{}");
+      const per = { ...(all[tableId] || {}), [colKey]: Math.round(widthPx) };
+      all[tableId] = per;
+      localStorage.setItem(ORDERS_COL_WIDTH_KEY, JSON.stringify(all));
+    } catch (_) {}
+  }
+
+  function applyOrdersColWidths(tableEl) {
+    if (!tableEl) return;
+    const tableId = tableEl.id || "ordersTable";
+    const widths = loadOrdersColWidths(tableId);
+    tableEl.querySelectorAll("thead th[data-col]").forEach((th) => {
+      const key = th.getAttribute("data-col");
+      const w = widths[key];
+      if (w && w > 24) {
+        th.style.width = `${w}px`;
+        th.style.minWidth = `${w}px`;
+      }
+    });
+  }
+
+  function bindOrdersTableResize(tableEl) {
+    if (!tableEl || tableEl.dataset.resizeBound === "1") return;
+    tableEl.dataset.resizeBound = "1";
+    const tableId = tableEl.id || "ordersTable";
+    applyOrdersColWidths(tableEl);
+
+    tableEl.querySelectorAll("thead th[data-col]").forEach((th) => {
+      if (th.querySelector(".col-resize-grip")) return;
+      const grip = document.createElement("span");
+      grip.className = "col-resize-grip";
+      grip.setAttribute("aria-hidden", "true");
+      th.appendChild(grip);
+
+      grip.addEventListener("mousedown", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const colKey = th.getAttribute("data-col") || "";
+        const startX = ev.clientX;
+        const startW = th.offsetWidth;
+        tableEl.classList.add("resizing");
+
+        const onMove = (moveEv) => {
+          const w = Math.max(36, startW + moveEv.clientX - startX);
+          th.style.width = `${w}px`;
+          th.style.minWidth = `${w}px`;
+        };
+        const onUp = () => {
+          tableEl.classList.remove("resizing");
+          document.removeEventListener("mousemove", onMove);
+          document.removeEventListener("mouseup", onUp);
+          if (colKey) saveOrdersColWidth(tableId, colKey, th.offsetWidth);
+        };
+        document.addEventListener("mousemove", onMove);
+        document.addEventListener("mouseup", onUp);
+      });
+    });
+  }
+
   root.MLBotConsole = {
     api,
     SYMBOL_ALL,
@@ -467,5 +608,7 @@
     ordersFilterFromControls,
     ordersExcludeStatusParamFromFilter,
     bindOrdersFilterSync,
+    bindOrdersTableResize,
+    applyOrdersColWidths,
   };
 })(typeof globalThis !== "undefined" ? globalThis : window);

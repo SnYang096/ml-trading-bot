@@ -584,24 +584,58 @@ main {
   max-height: 42vh;
 }
 .orders-table {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
   font-size: 0.72rem;
+  table-layout: fixed;
 }
 .orders-table th,
 .orders-table td {
   border-bottom: 1px solid #30363d;
   padding: 4px 6px;
   text-align: left;
+  overflow: hidden;
 }
 .orders-table tbody tr { cursor: pointer; }
 .orders-table tbody tr:hover { background: #21262d; }
 .orders-table tbody tr.selected { background: #1f3d2a; }
-.orders-table .id-cell {
-  max-width: 120px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.orders-table thead th {
+  position: relative;
+  user-select: none;
   white-space: nowrap;
+}
+.orders-table .col-resize-grip {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+}
+.orders-table .col-resize-grip:hover,
+.orders-table.resizing .col-resize-grip {
+  background: rgba(88, 166, 255, 0.35);
+}
+.orders-table.resizing {
+  cursor: col-resize;
+}
+.orders-table .id-cell {
+  font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+  font-size: 0.68rem;
+  line-height: 1.35;
+  white-space: nowrap;
+  vertical-align: top;
+}
+.page-orders .orders-table .id-cell {
+  min-width: 220px;
+  max-width: none;
+  text-overflow: clip;
+}
+.page-trade-map .orders-dock .orders-table .id-cell {
+  max-width: 160px;
+  text-overflow: ellipsis;
 }
 .poll-toast {
   position: fixed;
@@ -736,6 +770,34 @@ main {
 .strategy-badge.strategy-me { color: #d2a8ff; }
 .strategy-badge.strategy-srb { color: #ffa657; }
 .strategy-badge.strategy-chop_grid { color: #73bf69; }
+
+.grid-batch-header td {
+  background: #161b22;
+  color: #8b949e;
+  font-size: 12px;
+  padding: 6px 10px;
+  border-top: 1px solid #30363d;
+}
+.grid-batch-tag {
+  color: #73bf69;
+  font-weight: 600;
+  margin-right: 6px;
+}
+.leg-badge {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 11px;
+  background: #21262d;
+  color: #c9d1d9;
+}
+.leg-badge.leg-tp {
+  color: #f0883e;
+}
+.leg-badge.leg-inv {
+  color: #58a6ff;
+}
 .strategy-badge.strategy-trend_scalp { color: #ca8a04; }
 .strategy-badge.strategy-spot_accum_simple { color: #7ee787; }
 .status-badge {

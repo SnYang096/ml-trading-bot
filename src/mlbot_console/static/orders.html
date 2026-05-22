@@ -49,22 +49,22 @@
   <main class="orders-main">
     <section class="panel orders-page-panel">
       <h3>订单列表 <span id="ordersCount" class="muted"></span></h3>
-      <p class="muted orders-hint">点击行查看详情；有标记时可跳转 <a href="/trade-map">交易地图</a> 定位。</p>
+      <p class="muted orders-hint">点击行查看详情；表头右缘可拖动调整列宽（会记住设置）；有标记时可跳转 <a href="/trade-map">交易地图</a> 定位。</p>
       <div class="orders-table-wrap orders-table-full">
-        <table id="ordersTable" class="orders-table">
+        <table id="ordersTable" class="orders-table orders-table-resizable">
           <thead>
             <tr>
-              <th>账户层</th>
-              <th id="ordersThSymbol">交易对</th>
-              <th>时间</th>
-              <th>方向</th>
-              <th>状态</th>
-              <th>数量</th>
-              <th>价格</th>
-              <th>止盈价</th>
-              <th>止损价</th>
-              <th>盈亏</th>
-              <th>订单号</th>
+              <th data-col="account">账户层</th>
+              <th data-col="symbol" id="ordersThSymbol">交易对</th>
+              <th data-col="time">时间</th>
+              <th data-col="side">方向</th>
+              <th data-col="status">状态</th>
+              <th data-col="qty">数量</th>
+              <th data-col="price">价格</th>
+              <th data-col="tp">止盈价</th>
+              <th data-col="sl">止损价</th>
+              <th data-col="pnl">盈亏</th>
+              <th data-col="order_id">订单号</th>
             </tr>
           </thead>
           <tbody id="ordersBody">

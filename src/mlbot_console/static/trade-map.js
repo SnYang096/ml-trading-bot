@@ -954,6 +954,7 @@ async function refreshOrdersList() {
       showSymbol: showSym,
       escHtml,
     });
+    Shell.bindOrdersTableResize(document.getElementById("ordersDockTable"));
     tbody.querySelectorAll("tr[data-idx]").forEach((tr) => {
       tr.addEventListener("click", () => {
         tbody.querySelectorAll("tr").forEach((x) => x.classList.remove("selected"));
