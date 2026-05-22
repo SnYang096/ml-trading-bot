@@ -28,6 +28,11 @@ const subcharts = new Map();
 /** @type {import('lightweight-charts').ISeriesApi<'Line'>[]} */
 let tradeLinkSeries = [];
 
+/** @type {import('lightweight-charts').IPriceLine[]} */
+let chopGridPriceLines = [];
+/** @type {import('lightweight-charts').ISeriesApi<'Histogram'>|null} */
+let chopRegimeSeries = null;
+
 let availableFeatureColumns = [];
 let selectedFeatureColumns = [];
 let featureSearchQuery = "";
@@ -52,6 +57,7 @@ const defaultLayout = () => ({
   features: ["weekly_ema_200_position"],
   mainEma1200: false,
   mainWeeklyEma200: false,
+  chopGrid: true,
   ordersDock: false,
 });
 
@@ -70,6 +76,7 @@ function saveLayout() {
     features: [...selectedFeatureColumns],
     mainEma1200: !!document.getElementById("mainEma1200")?.checked,
     mainWeeklyEma200: !!document.getElementById("mainWeeklyEma200")?.checked,
+    chopGrid: !!document.getElementById("layerChopGrid")?.checked,
     ordersDock: ordersDockOpen,
   };
   localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
@@ -83,6 +90,8 @@ function applyLayoutToControls(layout) {
   const wkEma = document.getElementById("mainWeeklyEma200");
   if (ema1200) ema1200.checked = !!layout.mainEma1200;
   if (wkEma) wkEma.checked = !!layout.mainWeeklyEma200;
+  const chopGrid = document.getElementById("layerChopGrid");
+  if (chopGrid) chopGrid.checked = layout.chopGrid !== false;
   selectedFeatureColumns = Array.isArray(layout.features) ? [...layout.features] : [];
   ordersDockOpen = !!layout.ordersDock;
   Shell.applyOrdersFilterToControls(Shell.loadOrdersFilter());
@@ -353,6 +362,132 @@ function mergeOverlayPoints(existing, incoming) {
   return [...byTime.values()].sort((a, b) => a.time - b.time);
 }
 
+function clearChopGridOverlay() {
+  for (const pl of chopGridPriceLines) {
+    try {
+      candleSeries.removePriceLine(pl);
+    } catch (_) {
+      /* already removed */
+    }
+  }
+  chopGridPriceLines = [];
+  if (chopRegimeSeries) {
+    try {
+      chart.removeSeries(chopRegimeSeries);
+    } catch (_) {
+      /* */
+    }
+    chopRegimeSeries = null;
+  }
+}
+
+function chopGridOverlayEnabled() {
+  return (
+    !!document.getElementById("layerChopGrid")?.checked &&
+    layersState().multiLeg
+  );
+}
+
+function addChopPriceLine(price, opts = {}) {
+  if (!candleSeries || price == null || !Number.isFinite(Number(price))) return;
+  const pl = candleSeries.createPriceLine({
+    price: Number(price),
+    color: opts.color || "#888",
+    lineWidth: opts.lineWidth ?? 1,
+    lineStyle: opts.lineStyle ?? 0,
+    axisLabelVisible: true,
+    title: opts.title || "",
+  });
+  chopGridPriceLines.push(pl);
+}
+
+function applyChopGridOverlay(overlay) {
+  clearChopGridOverlay();
+  if (!chopGridOverlayEnabled()) return;
+  for (const batch of overlay?.batches || []) {
+    const center = Number(batch.center);
+    if (center > 0) {
+      addChopPriceLine(center, {
+        color: "#94a3b8",
+        lineWidth: 2,
+        lineStyle: 2,
+        title: "中心",
+      });
+    }
+    for (const lv of batch.levels || []) {
+      const leg = lv.leg || "";
+      const isLong = lv.side === "long";
+      const gridColor = isLong
+        ? "rgba(59, 130, 246, 0.45)"
+        : "rgba(249, 115, 22, 0.45)";
+      addChopPriceLine(lv.grid_price, {
+        color: gridColor,
+        lineStyle: 2,
+        title: `${leg} 格`,
+      });
+      const entryPx = lv.entry_price != null ? Number(lv.entry_price) : null;
+      if (entryPx != null && entryPx > 0) {
+        const st = String(lv.entry_status || "");
+        addChopPriceLine(entryPx, {
+          color: isLong ? "#3b82f6" : "#f97316",
+          lineWidth: st === "filled" ? 2 : 1,
+          title: `${leg} ${st === "open" ? "挂单" : st === "filled" ? "成交" : "入场"}`,
+        });
+      }
+      const tpPx = lv.tp_price != null ? Number(lv.tp_price) : null;
+      if (tpPx != null && tpPx > 0) {
+        const tpSt = String(lv.tp_status || "").toLowerCase();
+        const tpOpen = ["open", "pending", "new", "submitted", "shadow"].includes(
+          tpSt
+        );
+        addChopPriceLine(tpPx, {
+          color: tpOpen ? "#a855f7" : "#6b7280",
+          lineStyle: 1,
+          title: `${leg}_tp`,
+        });
+      }
+    }
+  }
+}
+
+function applyChopRegimeBands(regions, candles) {
+  if (!chopGridOverlayEnabled() || !candles?.length) return;
+  if (!chopRegimeSeries) {
+    chopRegimeSeries = chart.addHistogramSeries({
+      priceScaleId: "chop-band",
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+    chart.priceScale("chop-band").applyOptions({
+      scaleMargins: { top: 0.78, bottom: 0 },
+      visible: false,
+    });
+  }
+  const spans = regions || [];
+  const data = candles.map((c) => {
+    const t = c.time;
+    const inChop = spans.some(
+      (r) => t >= Number(r.start) && t <= Number(r.end)
+    );
+    return {
+      time: t,
+      value: inChop ? 1 : 0,
+      color: inChop ? "rgba(115, 191, 105, 0.22)" : "rgba(0,0,0,0)",
+    };
+  });
+  chopRegimeSeries.setData(data);
+}
+
+function applyChopMapLayers(data, candles, opts = {}) {
+  if (!opts.merge) {
+    applyChopGridOverlay(data?.chop_grid_overlay || {});
+    applyChopRegimeBands(data?.chop_regime_regions || [], candles);
+  } else if (chopGridOverlayEnabled()) {
+    applyChopGridOverlay(data?.chop_grid_overlay || {});
+    applyChopRegimeBands(data?.chop_regime_regions || [], candles);
+  }
+}
+
 function applyMainOverlays(mainOverlays, opts = {}) {
   const merge = !!opts.merge;
   if (!merge) clearMainOverlaySeries();
@@ -411,14 +546,7 @@ function initialOhlcvRangeIso() {
     return out;
   }
   const tf = document.getElementById("timeframeSelect")?.value || "2h";
-  const days = Core.tradeMapInitialDays(tf);
-  const end = new Date();
-  const start = new Date(end.getTime() - days * 86400000);
-  return {
-    from: start.toISOString(),
-    to: end.toISOString(),
-    full_range: "true",
-  };
+  return Core.ohlcvInitialQueryRange(tf);
 }
 
 function mergeMarkersById(existing, incoming) {
@@ -1263,8 +1391,8 @@ async function refreshBundle(opts = {}) {
     q.set("include_features", "true");
     if (!ohlcvLoadedFrom || opts.resetOhlcvRange) {
       const init = initialOhlcvRangeIso();
-      q.set("from", init.from);
-      q.set("to", init.to);
+      if (init.from) q.set("from", init.from);
+      if (init.to) q.set("to", init.to);
       q.set("full_range", init.full_range || "false");
     } else {
       q.set("from", ohlcvLoadedFrom);
@@ -1282,24 +1410,27 @@ async function refreshBundle(opts = {}) {
 
   if (mode === "poll" && data.ohlcv?.candles?.length) {
     const newCandles = Core.sanitizeCandlesForLwc(data.ohlcv.candles);
-    const merged = Core.mergeCandlesByTime(
-      lastCandles,
-      newCandles
-    );
+    const prevLast =
+      lastCandles.length > 0
+        ? Number(lastCandles[lastCandles.length - 1].time)
+        : null;
+    const merged = Core.mergeCandlesByTime(lastCandles, newCandles);
     lastCandles = merged;
-    // O(1) incremental update for new bars
     for (const c of newCandles) {
-      if (c.time >= lastCandles[0].time) {
-        candleSeries.update(c);
-      }
+      const t = Number(c.time);
+      if (!Number.isFinite(t)) continue;
+      if (prevLast != null && t < prevLast) continue;
+      candleSeries.update(c);
     }
     applyMainOverlays(data.main_overlays || {}, { merge: true });
+    applyChopMapLayers(data, lastCandles, { merge: true });
     ohlcvLoadedTo = meta.range_end || new Date().toISOString();
   } else if (mode !== "poll") {
     const candles = Core.sanitizeCandlesForLwc(data.ohlcv?.candles || []);
     lastCandles = candles;
     candleSeries.setData(candles);
     applyMainOverlays(data.main_overlays || {});
+    applyChopMapLayers(data, candles);
     applyLoadedOhlcvRange(meta, candles);
     if (chartFitPending) {
       applyChartViewport(candles.length);
@@ -1376,6 +1507,7 @@ function bindControls() {
     "layerSpot",
     "layerMultiLeg",
     "layerPending",
+    "layerChopGrid",
     "paneVolume",
   ].forEach((id) =>
     document.getElementById(id).addEventListener("change", () => {

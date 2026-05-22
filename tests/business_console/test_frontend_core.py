@@ -73,6 +73,8 @@ console.log(JSON.stringify({
   metaStage: meta.stage,
   hitId: hit && hit.id, selColor: sel[0].color,
   init2h: Core.tradeMapInitialDays("2h"),
+  init1d: Core.ohlcvInitialQueryRange("1d"),
+  init2hRange: Core.ohlcvInitialQueryRange("2h"),
   chunk1d: Core.tradeMapHistoryChunkDays("1d"),
   mergedLen: merged.length,
   mergedFirst: merged[0].time,
@@ -111,6 +113,9 @@ def test_trade_map_core_node():
     assert out["hitId"] == "trend:orders:1"
     assert out["selColor"] == "#ffeb3b"
     assert out["init2h"] == 60
+    assert out["init1d"]["full_range"] == "true"
+    assert "from" not in out["init1d"]
+    assert "from" in out["init2hRange"]
     assert out["chunk1d"] == 90
     assert out["mergedLen"] == 2
     assert out["mergedFirst"] == 100

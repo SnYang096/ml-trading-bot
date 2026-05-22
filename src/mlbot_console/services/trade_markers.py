@@ -436,19 +436,30 @@ def multi_leg_markers(
     end_ts: Optional[int] = None,
     since_ts: Optional[int] = None,
     include_open_orders: bool = False,
+    engine_data_root: Optional[Path] = None,
 ) -> List[Dict[str, Any]]:
     sym = symbol.upper()
     out: List[Dict[str, Any]] = []
     seen: Set[str] = set()
-    ord_sql = """
-        SELECT local_order_id, strategy, symbol, side, purpose, status, order_type,
-               filled_quantity, average_price, filled_at, created_at, price, quantity,
-               stop_price, leg_id
-        FROM multi_leg_orders
-        WHERE symbol = ?
-        ORDER BY COALESCE(filled_at, created_at) ASC
-    """
-    for row in query_rows(db_path, ord_sql, (sym,)):
+    if engine_data_root is not None:
+        from mlbot_console.services.orders_list import fetch_multileg_raw_rows
+
+        raw_rows = fetch_multileg_raw_rows(
+            db_path, sym, engine_data_root=engine_data_root
+        )
+    else:
+        ord_sql = """
+            SELECT local_order_id, strategy, symbol, side, purpose, status, order_type,
+                   filled_quantity, average_price, filled_at, created_at, price, quantity,
+                   stop_price, leg_id
+            FROM multi_leg_orders
+            WHERE symbol = ?
+            ORDER BY COALESCE(filled_at, created_at) ASC
+        """
+        raw_rows = query_rows(db_path, ord_sql, (sym,))
+        for row in raw_rows:
+            row["order_id"] = row.get("local_order_id")
+    for row in raw_rows:
         status = str(row.get("status") or "").lower()
         filled_qty = _f(row.get("filled_quantity")) or 0.0
         is_filled = status in {"filled", "closed"} or filled_qty > 0
@@ -468,13 +479,16 @@ def multi_leg_markers(
             continue
         purpose = str(row.get("purpose") or "")
         order_type = str(row.get("order_type") or "")
-        local_oid = str(row.get("local_order_id") or "")
-        event = _multi_leg_event(
-            purpose,
-            order_type,
-            local_order_id=local_oid,
-            is_filled=is_filled,
-        )
+        local_oid = str(row.get("order_id") or row.get("local_order_id") or "")
+        if purpose == "inventory":
+            event = "entry"
+        else:
+            event = _multi_leg_event(
+                purpose,
+                order_type,
+                local_order_id=local_oid,
+                is_filled=is_filled,
+            )
         side_raw = str(row.get("side") or "").upper()
         side = "long" if side_raw in {"BUY", "LONG"} else "short"
         strat = str(row.get("strategy") or "multi_leg").lower()
@@ -487,7 +501,7 @@ def multi_leg_markers(
             seen,
             scope="multi_leg",
             source="multi_leg_orders",
-            key=str(row.get("local_order_id")),
+            key=local_oid or str(row.get("local_order_id") or ""),
             symbol=sym,
             event=event,
             side=side,
@@ -627,6 +641,7 @@ def collect_markers(
     end_ts: Optional[int] = None,
     since_ts: Optional[int] = None,
     include_pending: bool = False,
+    engine_data_root: Optional[Path] = None,
 ) -> List[Dict[str, Any]]:
     merged: List[Dict[str, Any]] = []
     scope_set = {s.strip().lower() for s in scopes if s.strip()}
@@ -662,6 +677,7 @@ def collect_markers(
                 end_ts=end_ts,
                 since_ts=since_ts,
                 include_open_orders=open_orders,
+                engine_data_root=engine_data_root,
             )
         )
     merged.sort(key=lambda m: m["time"])

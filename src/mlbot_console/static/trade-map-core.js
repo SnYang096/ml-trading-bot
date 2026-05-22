@@ -57,6 +57,25 @@
     return 7200;
   }
 
+  /**
+   * Initial bundle OHLCV query for a timeframe.
+   * 1d/1w: Vision macro full history (no from/to; backend full_range).
+   */
+  function ohlcvInitialQueryRange(timeframe) {
+    const tf = String(timeframe || "2h");
+    if (tf === "1d" || tf === "1w") {
+      return { full_range: "true" };
+    }
+    const days = tradeMapInitialDays(tf);
+    const end = new Date();
+    const start = new Date(end.getTime() - days * 86400000);
+    return {
+      from: start.toISOString(),
+      to: end.toISOString(),
+      full_range: "true",
+    };
+  }
+
   /** Default OHLCV window (days) — keep in sync with TRADE_MAP_INITIAL_DAYS. */
   function tradeMapInitialDays(timeframe) {
     const tf = String(timeframe || "2h");
@@ -663,6 +682,7 @@
     markersToLwc,
     findMarkerByTime,
     timeframeToleranceSec,
+    ohlcvInitialQueryRange,
     tradeMapInitialDays,
     tradeMapHistoryChunkDays,
     barDurationSec,

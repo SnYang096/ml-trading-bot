@@ -28,6 +28,10 @@ from mlbot_console.services.ohlcv_reader import (
 )
 from mlbot_console.services.signal_overview import build_signal_overview
 from mlbot_console.services.trade_links import collect_trade_links
+from mlbot_console.services.chop_grid_overlay import (
+    load_chop_grid_map_overlay,
+    load_chop_regime_regions,
+)
 from mlbot_console.services.trade_markers import (
     align_markers_to_candles,
     collect_markers,
@@ -79,6 +83,25 @@ def _marker_kwargs(
         "since_ts": _parse_ts_param(since),
         "include_pending": include_pending,
     }
+
+
+def _bundle_ohlcv_query(
+    tf: str,
+    *,
+    from_: Optional[str],
+    to: Optional[str],
+    ohlcv_from: Optional[str],
+    ohlcv_to: Optional[str],
+    ohlcv_mode: str,
+    full_range: bool,
+) -> tuple[Optional[str], Optional[str], bool]:
+    """OHLCV bounds for bundle: 1d/1w full_range uses Vision macro, not client from/to."""
+    use_full = full_range and ohlcv_mode == "full"
+    if tf in ("1d", "1w") and use_full:
+        return None, None, True
+    if ohlcv_mode == "tail" and ohlcv_from:
+        return ohlcv_from, ohlcv_to, False
+    return from_, to, use_full
 
 
 @router.get("/api/trade-map/symbols")
@@ -146,12 +169,14 @@ def trade_map_markers(
     mk = _marker_kwargs(
         from_=from_, to=to, since=since, include_pending=include_pending
     )
+    scope_list = _scopes_list(scopes)
     markers = collect_markers(
         trend_db=SETTINGS.trend_order_db,
         spot_db=SETTINGS.spot_order_db,
         multi_leg_db=SETTINGS.multi_leg_db,
         symbol=symbol,
-        scopes=_scopes_list(scopes),
+        scopes=scope_list,
+        engine_data_root=SETTINGS.engine_data_root,
         **mk,
     )
     if include_pending and not from_ and not to:
@@ -230,17 +255,22 @@ def trade_map_bundle(
     try:
         tf = assert_trade_map_timeframe(timeframe)
         if ohlcv_mode != "none":
-            ohlcv_start_raw = (
-                ohlcv_from if ohlcv_mode == "tail" and ohlcv_from else from_
+            ohlcv_start_raw, ohlcv_end_raw, use_full = _bundle_ohlcv_query(
+                tf,
+                from_=from_,
+                to=to,
+                ohlcv_from=ohlcv_from,
+                ohlcv_to=ohlcv_to,
+                ohlcv_mode=ohlcv_mode,
+                full_range=full_range,
             )
-            ohlcv_end_raw = ohlcv_to if ohlcv_mode == "tail" and ohlcv_to else to
             start, end, use_full = resolve_trade_map_window(
                 tf,
                 start=(
                     pd.Timestamp(ohlcv_start_raw, tz="UTC") if ohlcv_start_raw else None
                 ),
                 end=pd.Timestamp(ohlcv_end_raw, tz="UTC") if ohlcv_end_raw else None,
-                full_range=full_range and ohlcv_mode == "full",
+                full_range=use_full,
             )
             max_days = (
                 SETTINGS.max_daily_ohlcv_days
@@ -274,13 +304,15 @@ def trade_map_bundle(
     mk = _marker_kwargs(
         from_=from_, to=to, since=since, include_pending=include_pending
     )
+    scope_list = _scopes_list(scopes)
     # Keep client from/to for marker DB query; do not narrow to sparse OHLCV span.
     markers = collect_markers(
         trend_db=SETTINGS.trend_order_db,
         spot_db=SETTINGS.spot_order_db,
         multi_leg_db=SETTINGS.multi_leg_db,
         symbol=symbol,
-        scopes=_scopes_list(scopes),
+        scopes=scope_list,
+        engine_data_root=SETTINGS.engine_data_root,
         **mk,
     )
     marker_counts = marker_scope_counts(markers)
@@ -360,6 +392,36 @@ def trade_map_bundle(
                 }
                 for k in main_keys
             }
+    chop_grid_overlay: dict = {"batches": []}
+    chop_regime_regions: list = []
+    if "multi_leg" in scope_list:
+        try:
+            chop_grid_overlay = load_chop_grid_map_overlay(
+                multi_leg_db=SETTINGS.multi_leg_db,
+                engine_data_root=SETTINGS.engine_data_root,
+                symbol=symbol,
+            )
+        except Exception as exc:
+            logger.exception("chop_grid_map_overlay failed symbol=%s", symbol)
+            chop_grid_overlay = {"batches": [], "error": str(exc)}
+        if ohlcv_mode != "none" and ohlcv.get("candles"):
+            feat_start = start
+            feat_end = end
+            if feat_start is None and ohlcv.get("range_start"):
+                feat_start = pd.Timestamp(str(ohlcv["range_start"]))
+            if feat_end is None and ohlcv.get("range_end"):
+                feat_end = pd.Timestamp(str(ohlcv["range_end"]))
+            try:
+                chop_regime_regions = load_chop_regime_regions(
+                    SETTINGS.feature_bus_root,
+                    symbol,
+                    tf,
+                    start=feat_start,
+                    end=feat_end,
+                )
+            except Exception as exc:
+                logger.exception("chop_regime_regions failed symbol=%s", symbol)
+                chop_regime_regions = []
     return ok(
         {
             "ohlcv": ohlcv,
@@ -367,6 +429,8 @@ def trade_map_bundle(
             "trade_links": trade_links,
             "overlays": overlays,
             "main_overlays": main_ol,
+            "chop_grid_overlay": chop_grid_overlay,
+            "chop_regime_regions": chop_regime_regions,
         },
         meta={
             "poll_seconds": SETTINGS.map_poll_seconds,

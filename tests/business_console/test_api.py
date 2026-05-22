@@ -124,6 +124,44 @@ def test_trade_map_bundle_main_overlays(client):
     assert main["weekly_ema_200"]["available"] is True
 
 
+def test_trade_map_bundle_1d_full_range_uses_macro(
+    client, macro_kline_root, monkeypatch
+):
+    """full_range on 1d must load Vision macro, not a narrow client from/to window."""
+    from dataclasses import replace
+
+    from mlbot_console.routers import trade_map
+
+    patched = replace(
+        trade_map.SETTINGS,
+        macro_spot_kline_root=macro_kline_root,
+        live_data_root=macro_kline_root,
+        live_root=macro_kline_root,
+        daily_ohlcv_start=__import__("datetime").date(2024, 1, 1),
+    )
+    monkeypatch.setattr("mlbot_console.routers.trade_map.SETTINGS", patched)
+    r = client.get(
+        "/api/trade-map/bundle",
+        params={
+            "symbol": "ETHUSDT",
+            "timeframe": "1d",
+            "scopes": "trend",
+            "full_range": "true",
+            "from": "2024-01-25T00:00:00Z",
+            "to": "2024-01-31T00:00:00Z",
+            "main_overlays": "ema_1200,weekly_ema_200",
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["meta"]["full_range"] is True
+    assert body["meta"]["macro_available"] is True
+    assert len(body["data"]["ohlcv"]["candles"]) == 31
+    main = body["data"]["main_overlays"]
+    assert main["ema_1200"]["available"] is True
+    assert len(main["ema_1200"]["points"]) >= 1
+
+
 def test_trade_map_bundle_windowed_default(client):
     r = client.get(
         "/api/trade-map/bundle",

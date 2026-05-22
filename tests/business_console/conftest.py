@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import io
 import sys
+import zipfile
 from datetime import date
 from pathlib import Path
 
@@ -294,6 +296,47 @@ def console_settings(
         basic_auth_password=None,
         strategies_root=PROJECT_ROOT / "config" / "strategies",
     )
+
+
+def _write_monthly_kline_zip(dest: Path, rows: list[list]) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    csv_body = "\n".join(",".join(str(v) for v in r) for r in rows)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("klines.csv", csv_body)
+    dest.write_bytes(buf.getvalue())
+
+
+@pytest.fixture
+def macro_kline_root(tmp_path: Path) -> Path:
+    """Binance Vision-style monthly 1d ZIP cache (ETHUSDT Jan 2024)."""
+    import pandas as pd
+
+    sym = "ETHUSDT"
+    zp = tmp_path / sym / "monthly" / "1d" / f"{sym}-1d-2024-01.zip"
+    base_ms = int(pd.Timestamp("2024-01-01", tz="UTC").timestamp() * 1000)
+    rows = []
+    for day in range(31):
+        t = base_ms + day * 86_400_000
+        price = 100.0 + day
+        rows.append(
+            [
+                t,
+                price,
+                price + 1,
+                price - 1,
+                price + 0.5,
+                1000.0,
+                t + 86_399_999,
+                0,
+                0,
+                0,
+                0,
+                0,
+            ]
+        )
+    _write_monthly_kline_zip(zp, rows)
+    return tmp_path
 
 
 @pytest.fixture
