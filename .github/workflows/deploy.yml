@@ -618,6 +618,7 @@ jobs:
             sudo mkdir -p /opt/quant-engine
             sudo tar xzf /tmp/mlbot-monitoring.tgz -C /opt/quant-engine
             rm -f /tmp/mlbot-monitoring.tgz
+            sudo chown -R "$(whoami):$(whoami)" /opt/quant-engine/monitoring
             cd /opt/quant-engine/monitoring
             ALERT_DIR=grafana-provisioning/alerting
             rm -f "$ALERT_DIR/contact-points.telegram.yml" "$ALERT_DIR/notification-policies.yml"
@@ -730,6 +731,13 @@ jobs:
             sudo mkdir -p /opt/quant-engine
             sudo tar xzf /tmp/mlbot-business-console.tgz -C /opt/quant-engine
             rm -f /tmp/mlbot-business-console.tgz
+            sudo chown -R "$(whoami):$(whoami)" \
+              /opt/quant-engine/deploy \
+              /opt/quant-engine/src \
+              /opt/quant-engine/config
+            if [ -f /opt/quant-engine/live/highcap/universe.yaml ]; then
+              sudo chown "$(whoami):$(whoami)" /opt/quant-engine/live/highcap/universe.yaml
+            fi
             if [ -f /opt/quant-engine/deploy/systemd/quant-business-console.service ]; then
               sudo cp /opt/quant-engine/deploy/systemd/quant-business-console.service /etc/systemd/system/
               sudo systemctl daemon-reload
