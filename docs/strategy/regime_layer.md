@@ -18,21 +18,25 @@ regime → prefilter → direction → gate → entry → evidence → execution
 | `allowed_sides:` | **是** — direction 算出 ±1 之后掩码 long/short |
 | `allowed_regimes:` | **否** — schema 占位；牛熊分桶见 `regime_ablation_report.py` 的 `ema_1200_position` 阈值 |
 
-### TPC / BPC / ME / SRB 共用规则（研究仓默认值）
+### TPC（20260522）
 
-1. **Chop 上限**：`tpc_semantic_chop <= 0.40`（从 `gate.yaml` 迁出，避免与 regime 双重过滤）
-2. **Box 空间**：`box_pos_120` 边缘（≤0.15 或 ≥0.85）或 `box_breakout_up/down >= 0.5`
+仅 **EMA1200 宏观死区**：`ema_1200_position >= 0.10` OR `<= -0.10`（等价 `|pos|>0.10`）。chop 在 **`gate.yaml`**（`gate_tpc_semantic_chop_high`）；box 已移除。
 
-### EMA1200
+### BPC / ME / SRB（研究仓，未改）
 
-宏观相对位置带在 **`direction.yaml`**（`signal_match_position_band` + `ema_1200_position`），不在 `regime.yaml`。目标架构可将粗带过滤迁入 regime、细信号对齐留在 direction。
+仍可为 chop + box（见各策略 `archetypes/regime.yaml`）。
+
+### EMA1200 与 direction
+
+- **TPC**：宏观带在 **`regime.yaml`**；**`direction.yaml`** 仅 MACD sign。
+- **BPC/ME/SRB**：多数仍用 **`direction.yaml`** 的 `signal_match_position_band` + `ema_1200_position`。
 
 ## 特征依赖
 
 | 列 | 来源 |
 |----|------|
-| `tpc_semantic_chop` | semantic / chop 节点 |
-| `box_pos_120`, `box_breakout_*` | `box_structure_f`（`feature_dependencies.yaml`） |
+| `ema_1200_position` | `ema_1200_position_f`（TPC regime） |
+| `tpc_semantic_chop`, `box_pos_*` | BPC/ME/SRB regime；TPC 已迁出 |
 
 实盘 Feature Bus 通过 `extract_features_from_archetypes()` 扫描 `regime.yaml` 自动拉取 `box_structure_f` 节点，**无需**在 live 包内复制 `features.yaml`。
 
@@ -47,7 +51,7 @@ python scripts/deploy_config_to_live.py --deploy -s tpc bpc me srb --yes
 验收：
 
 - `live/highcap/config/strategies/tpc/archetypes/regime.yaml` 存在
-- live `gate.yaml` **无** `gate_tpc_semantic_chop_high`
+- live `gate.yaml` 含 `gate_tpc_semantic_chop_high`（chop）；regime **无** chop/box
 - trend 日志：`N regime rules (empty=False, ...)`
 - `posthoc_layer_effectiveness.py --strict-locked-features --strategies tpc` 退出码 0
 
