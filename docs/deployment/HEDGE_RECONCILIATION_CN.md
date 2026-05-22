@@ -120,10 +120,11 @@ flowchart TD
 
     Orphan --> Policy{"cancel_orphan_exchange_orders?"}
     Policy -->|True 当前 chop_grid 已开启| Cancel["adapter 执行 cancel"]
+    Cancel --> Gone["-2011 / Unknown order<br/>视为已消失，不让进程退出"]
     Policy -->|False| WarnOnly["仅告警 + 写 snapshot"]
 
     Missing --> EngineHook["engine.on_reconciliation_report<br/>prune 无效 pending 等"]
-    Cancel --> Metrics["更新 mlbot_reconciliation_*"]
+    Gone --> Metrics["更新 mlbot_reconciliation_*"]
     WarnOnly --> Metrics
     EngineHook --> Metrics
     PosMM --> Metrics
@@ -171,6 +172,24 @@ local_keys    = { exchange_order_id, client_order_id, order_id(local) }
 
 - 若 `exchange_keys ∩ local_keys = ∅` → **orphan**
 - 若某本地行的 `local_keys` 与所有交易所单都不相交 → **missing**
+
+### 4.3 Cancel 的幂等性（启动崩溃修复）
+
+对账发现 orphan 后会发起 cancel。实际生产里可能出现竞态：open 快照里还能看到某个 `order_id`，但执行撤单时币安已经返回 `-2011 Unknown order sent.`。这代表订单在撤单前已经成交/撤销/过期或交易所快照短暂滞后，**不应让 `run_multi_leg_live.py` 退出**。
+
+当前处理：
+
+```mermaid
+flowchart TD
+    C["adapter.cancel(orphan order_id)"] --> Resp{"币安响应"}
+    Resp -->|canceled| OK["status=canceled"]
+    Resp -->|-2011 Unknown order| Gone["视为 already gone<br/>status=canceled"]
+    Resp -->|其他异常| Raise["继续抛出<br/>人工检查 API / 权限 / 网络"]
+    OK --> Persist["写 multi_leg_orders cancel 结果"]
+    Gone --> Persist
+```
+
+注意：`mlbot_reconciliation_ok` 和 `issue_count` 是按本轮 reconcile report 写入的，cancel 发生在 report 生成之后。因此本轮日志可能仍显示 `orphan_exchange_order=1`；若撤单成功或订单已消失，通常要等下一轮 reconcile 才会归零变绿。
 
 ---
 
@@ -313,6 +332,14 @@ cat /opt/quant-engine/data/multi_leg_live/state/chop_grid_BNBUSDT.json | python3
 journalctl -u quant-hedge-multileg --since "2 hours ago" | rg "reconcile not ok|orphan_exchange|reconcile cancels"
 ```
 
+容器使用 `--rm` 且 systemd 会自动重启，启动失败时容器名可能在 `docker logs` 前已经消失。优先看 systemd 或持久化审计日志：
+
+```bash
+sudo journalctl -u quant-hedge-multileg -n 120 --no-pager
+sudo tail -f /opt/quant-engine/data/multi_leg_live/state/logs/multi_leg_audit.log
+sudo docker logs "$(sudo docker ps -q --filter name=quant-hedge-multileg)" --tail 100
+```
+
 ### 8.4 人工处理原则
 
 | 情况 | 建议 |
@@ -349,6 +376,7 @@ journalctl -u quant-hedge-multileg --since "2 hours ago" | rg "reconcile not ok|
 | 5 | backfill 单笔失败拉高 api_error | 仅 symbol 级 open 拉取失败计 `api_error` | `multi_leg_order_backfill.py` |
 | 6 | 不应把 DB expired 洗回 open | `get_open_orders_for_reconcile` 仅 open 类 status；不纳入 expired | `multi_leg_storage.py` |
 | 7 | 恢复 open 时清理旧 error_message | `apply_execution_report` 非终态时清空 `canceled_at` / `error_message` | `multi_leg_storage.py` |
+| 8 | orphan cancel 遇到 `-2011 Unknown order` 会导致进程启动后崩溃 | 将该错误视为订单已消失，返回 `canceled`，其他异常仍抛出 | `grid_execution_adapter.py` |
 
 测试：`tests/order_management/test_multi_leg_orchestrator.py`、`test_multi_leg_order_backfill.py`、`test_multi_leg_storage.py` 等（合并修复相关用例）。
 
