@@ -41,10 +41,10 @@
     },
     {
       "type": "row",
-      "title": "审计 JSONL · 结构化",
+      "title": "审计 JSONL · 结构化（可选，默认折叠）",
       "id": 3,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 },
-      "collapsed": false
+      "collapsed": true
     },
     {
       "type": "logs",
@@ -83,7 +83,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "{job=~\"systemd-journal|audit\"} |~ \"(?i)(error|reconcile not ok|traceback|exception|api_error|orphan)\"",
+          "expr": "{job=\"systemd-journal\", unit=~\"quant-${service:regex}.*\"} |~ \"(?i)(error|reconcile not ok|traceback|exception|api_error|orphan|critical features)\"",
           "legendFormat": ""
         }
       ],
@@ -136,7 +136,7 @@
   "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},
   "timezone": "utc",
-  "title": "Logs · journald & audit",
+  "title": "Logs · systemd (quant-*)",
   "uid": "quant-logs",
   "version": 1
 }
