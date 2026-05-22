@@ -79,7 +79,9 @@ def test_l1_entry_shows_tp_from_l1_tp_protection_row(multi_leg_db):
         limit=50,
     )
     l1 = next(r for r in rows if r["order_id"].endswith("_L1"))
+    tp = next(r for r in rows if r["order_id"].endswith("_L1_tp"))
     assert l1["take_profit_price"] == 643.55
+    assert tp["leg_label"] == "L1_tp"
     assert "tp" in (l1.get("take_profit_hint") or "").lower()
 
 
@@ -184,11 +186,12 @@ def test_s1_tp_shows_s1_inventory_when_entry_order_missing(multi_leg_db):
         limit=50,
     )
     s1 = next(r for r in rows if r.get("order_id") == f"{group}_S1")
-    assert not any(r.get("order_id") == f"{group}_S1_tp" for r in rows)
+    tp = next(r for r in rows if r.get("order_id") == f"{group}_S1_tp")
     assert s1["purpose"] == "inventory"
     assert s1["leg_label"] == "S1"
     assert s1["status"] == "filled"
     assert s1.get("take_profit_price") == 643.5545
+    assert tp.get("leg_label") == "S1_tp"
 
 
 def test_open_s_grid_leg_does_not_duplicate_tp_price(multi_leg_db):
@@ -457,9 +460,11 @@ def test_l1_entry_shows_repair_tp_as_l1_tp(multi_leg_db):
         limit=50,
     )
     l1 = next(r for r in rows if r["order_id"].endswith("_L1"))
-    assert not any(r["order_id"].endswith("_L1_tp") for r in rows)
+    tp = next(r for r in rows if r["order_id"].endswith("_L1_tp"))
     assert l1["take_profit_price"] == 652.67
     assert "补挂" in (l1.get("take_profit_hint") or "")
+    assert tp["leg_label"] == "L1_tp"
+    assert tp.get("is_repair_tp") is True
     expected = pytest.approx((652.67 - 637.11) * 0.31, rel=1e-4)
     assert l1["pnl_usdt"] == expected
 
@@ -515,9 +520,10 @@ def test_l1_closed_pair_shows_realized_pnl_on_entry_and_tp(multi_leg_db):
         limit=50,
     )
     l1 = next(r for r in rows if r["order_id"].endswith("_L1"))
-    assert not any(r["order_id"].endswith("_L1_tp") for r in rows)
+    tp = next(r for r in rows if r["order_id"].endswith("_L1_tp"))
     expected = pytest.approx((652.67 - 637.11) * 0.31, rel=1e-4)
     assert l1["pnl_usdt"] == expected
+    assert tp["pnl_usdt"] == expected
     assert l1.get("pnl_hint") == "已实现"
 
 
@@ -655,7 +661,7 @@ def test_s2_filled_without_tp_shows_inferred_missing_tp(multi_leg_db):
         scopes=["multi_leg"],
         limit=50,
     )
-    assert not any(r["order_id"].endswith("_S1_tp") for r in rows)
+    assert any(r["order_id"].endswith("_S1_tp") for r in rows)
     assert not any(r["order_id"].endswith("_S2_tp") for r in rows)
     s2 = next(r for r in rows if r["order_id"].endswith("_S2"))
     assert s2["take_profit_price"] == pytest.approx(649.98, abs=0.02)

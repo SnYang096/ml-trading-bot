@@ -205,9 +205,22 @@ def annotate_leg_group(legs: List[Dict[str, Any]]) -> None:
 
             exit_row = pick_repair_filled_tp(legs, eid)
         if planned is not None:
+            from mlbot_console.services.multileg_repair_tp import (
+                is_repair_tp_row,
+                repair_display_leg_label,
+            )
+
+            planned_oid = str(planned.get("order_id") or "")
             row["_link_tp_price"] = _price(planned)
-            row["_link_tp_leg"] = leg_suffix(str(planned.get("order_id") or ""))
+            row["_link_tp_leg"] = leg_suffix(planned_oid)
             row["_link_tp_status"] = str(planned.get("status") or "")
+            row["_link_tp_order_id"] = planned_oid
+            row["_link_tp_leg_label"] = (
+                repair_display_leg_label(planned)
+                if is_repair_tp_row(planned)
+                else leg_suffix(planned_oid)
+            )
+            row["_link_tp_is_repair"] = is_repair_tp_row(planned)
         elif not tp_rows and _is_filled_row(row):
             side = _entry_side_kind(row)
             entry_px = _price(row)
@@ -216,12 +229,23 @@ def annotate_leg_group(legs: List[Dict[str, Any]]) -> None:
                 row["_link_tp_price"] = _planned_tp_price(entry_px, spacing, side)
                 row["_link_tp_status"] = "missing"
         if exit_row is not None:
-            from mlbot_console.services.multileg_repair_tp import is_repair_tp_row
+            from mlbot_console.services.multileg_repair_tp import (
+                is_repair_tp_row,
+                repair_display_leg_label,
+            )
 
+            exit_oid = str(exit_row.get("order_id") or "")
             row["_link_exit_price"] = _price(exit_row)
-            row["_link_exit_leg"] = str(exit_row.get("order_id") or "")
+            row["_link_exit_leg"] = exit_oid
             row["_link_exit_status"] = str(exit_row.get("status") or "")
             row["_link_exit_is_repair"] = is_repair_tp_row(exit_row)
+            row["_link_tp_order_id"] = exit_oid
+            row["_link_tp_leg_label"] = (
+                repair_display_leg_label(exit_row)
+                if is_repair_tp_row(exit_row)
+                else leg_suffix(exit_oid)
+            )
+            row["_link_tp_is_repair"] = is_repair_tp_row(exit_row)
 
 
 def row_group_key(row: Dict[str, Any]) -> Optional[str]:
@@ -318,39 +342,6 @@ def resolve_take_profit_display(row: Dict[str, Any]) -> Tuple[Optional[float], s
     return None, ""
 
 
-def tp_parent_entry_order_id(order_id: str) -> Optional[str]:
-    oid = str(order_id or "")
-    m = _TP_SUFFIX_RE.search(oid)
-    if not m:
-        return None
-    return oid[: m.start()] + f"_{m.group(1)}{m.group(2)}"
-
-
-def hide_paired_tp_protection_rows(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Drop *_tp rows when the paired entry leg is already in the list (TP shown on entry)."""
-    entry_ids = {
-        str(item.get("order_id") or "")
-        for item in items
-        if str(item.get("scope") or "") == "multi_leg"
-        and str(item.get("leg_label") or "")
-        and not str(item.get("leg_label") or "").endswith("_tp")
-    }
-    if not entry_ids:
-        return items
-    out: List[Dict[str, Any]] = []
-    for item in items:
-        if str(item.get("scope") or "") != "multi_leg":
-            out.append(item)
-            continue
-        oid = str(item.get("order_id") or "")
-        parent = tp_parent_entry_order_id(oid)
-        label = str(item.get("leg_label") or "")
-        if parent and parent in entry_ids and label.endswith("_tp"):
-            continue
-        out.append(item)
-    return out
-
-
 def enrich_multileg_rows_for_symbol(
     db_path,
     symbol: str,
@@ -388,6 +379,9 @@ def enrich_multileg_rows_for_symbol(
             "_link_tp_price",
             "_link_tp_leg",
             "_link_tp_status",
+            "_link_tp_order_id",
+            "_link_tp_leg_label",
+            "_link_tp_is_repair",
             "_link_exit_price",
             "_link_exit_leg",
             "_link_exit_status",

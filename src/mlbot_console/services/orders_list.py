@@ -10,7 +10,6 @@ from mlbot_console.services.db import query_rows
 from mlbot_console.services.multileg_order_links import (
     enrich_multileg_rows_for_symbol,
     entry_link_id,
-    hide_paired_tp_protection_rows,
     is_entry_row,
     leg_index,
     leg_suffix,
@@ -153,6 +152,14 @@ def _normalize(
         item["leg_index"] = leg_index(oid) or leg_index(lid)
         if is_repair_tp_row(row):
             item["is_repair_tp"] = True
+        link_label = str(row.get("_link_tp_leg_label") or row.get("_link_tp_leg") or "")
+        link_oid = str(row.get("_link_tp_order_id") or row.get("_link_exit_leg") or "")
+        if link_label and not str(item.get("leg_label") or "").endswith("_tp"):
+            item["linked_tp_leg_label"] = link_label
+        if link_oid and not str(item.get("leg_label") or "").endswith("_tp"):
+            item["linked_tp_order_id"] = link_oid
+        if row.get("_link_tp_is_repair") or row.get("_link_exit_is_repair"):
+            item["linked_tp_is_repair"] = True
     return item
 
 
@@ -471,13 +478,16 @@ def _sort_orders_for_display(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     def _batch_sort_key(row: Dict[str, Any]) -> tuple:
         batch = str(row.get("grid_batch") or "")
         if batch:
-            side_rank = 0 if str(row.get("leg_label") or "").upper().startswith("L") else 1
+            label = str(row.get("leg_label") or "")
+            side_rank = 0 if label.upper().startswith("L") else 1
+            tp_rank = 1 if label.endswith("_tp") else 0
             return (
                 0,
                 batch,
                 side_rank,
                 int(row.get("leg_index") or 0),
-                str(row.get("leg_label") or ""),
+                tp_rank,
+                label,
             )
         return (1, -(int(row.get("time") or 0)))
 
@@ -703,7 +713,7 @@ def multi_leg_orders_list(
     if status:
         st = status.lower()
         out = [r for r in out if r["status"] == st]
-    return hide_paired_tp_protection_rows(out)
+    return out
 
 
 def _attach_pnl_fields(

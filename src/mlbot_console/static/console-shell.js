@@ -280,10 +280,14 @@
     }
     const label = String(row?.leg_label || "").trim();
     if (label) {
-      const cls = label.includes("tp") ? "leg-badge leg-tp" : "leg-badge";
+      const cls = label.endsWith("_tp") ? "leg-badge leg-tp" : "leg-badge";
       parts.push(`<span class="${cls}" title="网格档位">${escHtml(label)}</span>`);
     }
     return parts.join(" ");
+  }
+
+  function isTpLegRow(row) {
+    return String(row?.leg_label || "").trim().endsWith("_tp");
   }
 
   function buildOrdersTableRows(rows, options) {
@@ -310,9 +314,11 @@
       const mid = r.marker_id || "";
       const symCell = showSymbol ? `<td>${esc(r.symbol || "")}</td>` : "";
       const leg = legBadge(r);
+      const tpRow = isTpLegRow(r);
       parts.push(
         `<tr data-idx="${i}" data-marker-id="${esc(mid)}" data-symbol="${esc(r.symbol || "")}"` +
           (batch ? ` data-grid-batch="${esc(batch)}"` : "") +
+          (tpRow ? ` class="orders-leg-tp-row"` : "") +
           `>
           <td>${scopeBadge(r.scope)} ${strategyBadge(r.strategy, r.scope)} ${leg}</td>
           ${symCell}

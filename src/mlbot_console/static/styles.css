@@ -1086,6 +1086,11 @@ main {
   border: 1px solid #8957e5;
 }
 
+.orders-table tr.orders-leg-tp-row td:first-child {
+  /* TP leg on its own row, aligned under entry in the leg column */
+  border-left: 2px solid rgba(240, 136, 62, 0.35);
+}
+
 .strategy-badge.strategy-trend_scalp {
   color: #ca8a04;
 }
