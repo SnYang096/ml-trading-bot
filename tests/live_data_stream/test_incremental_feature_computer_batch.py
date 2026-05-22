@@ -61,6 +61,41 @@ class TestIncrementalFeatureComputerBatch:
         assert len(result) >= 0, "特征字典不应该为空（即使没有匹配的特征）"
         print(f"Generated {len(result)} features")
 
+    def test_ensure_baseline_atr_on_resampled_bars(self):
+        """atr must exist on bars_tf even when StrategyFeatureLoader skips atr_f."""
+        computer = IncrementalFeatureComputer(
+            archetypes_dir="config/strategies/bpc/archetypes"
+        )
+        assert "atr" in computer.live_feature_set
+
+        start_time = pd.Timestamp("2024-01-01", tz="UTC")
+        timestamps = pd.date_range(start_time, periods=5000, freq="1min", tz="UTC")
+        n = len(timestamps)
+        bars_1min = pd.DataFrame(
+            {
+                "timestamp": timestamps,
+                "open": 50000.0 + np.arange(n),
+                "high": 50010.0 + np.arange(n),
+                "low": 49990.0 + np.arange(n),
+                "close": 50005.0 + np.arange(n),
+                "volume": np.full(n, 100.0),
+            }
+        )
+        bars_tf = pd.DataFrame(
+            {
+                "open": [50000.0, 50100.0],
+                "high": [50020.0, 50120.0],
+                "low": [49980.0, 50080.0],
+                "close": [50010.0, 50110.0],
+                "volume": [1000.0, 1100.0],
+            },
+            index=pd.date_range(start_time, periods=2, freq="120min", tz="UTC"),
+        )
+        filled = computer._ensure_baseline_atr_column(bars_tf)
+        assert filled is not None
+        assert "atr" in filled.columns
+        assert np.isfinite(float(filled["atr"].iloc[-1]))
+
     def test_compute_features_batch_empty_data(self):
         """测试空数据的批量计算"""
         computer = IncrementalFeatureComputer(

@@ -1415,6 +1415,39 @@ class IncrementalFeatureComputer:
 
                 _logger.warning("  Loader traceback: %s", traceback.format_exc())
 
+        return self._ensure_baseline_atr_column(bars_tf)
+
+    def _ensure_baseline_atr_column(
+        self, bars_tf: Optional[pd.DataFrame]
+    ) -> Optional[pd.DataFrame]:
+        """Guarantee ``atr`` on resampled bars when the live plan requires it.
+
+        StrategyFeatureLoader can skip ``atr_f`` when nodes are filtered; execution
+        and health checks still need a finite ``atr`` on the last bar.
+        """
+        if bars_tf is None or bars_tf.empty or not self._want("atr"):
+            return bars_tf
+        need_fill = "atr" not in bars_tf.columns
+        if not need_fill and len(bars_tf) > 0:
+            last = bars_tf["atr"].iloc[-1]
+            need_fill = last is None or (np.isscalar(last) and pd.isna(last))
+        if not need_fill:
+            return bars_tf
+        try:
+            from src.features.time_series.baseline_features import (
+                compute_atr_from_series,
+            )
+
+            out = compute_atr_from_series(
+                high=pd.to_numeric(bars_tf["high"], errors="coerce"),
+                low=pd.to_numeric(bars_tf["low"], errors="coerce"),
+                close=pd.to_numeric(bars_tf["close"], errors="coerce"),
+            )
+            if "atr" in bars_tf.columns:
+                bars_tf = bars_tf.drop(columns=["atr"])
+            bars_tf = bars_tf.join(out, how="left")
+        except Exception:
+            pass
         return bars_tf
 
     # ── 元数据驱动的 warmup 特征识别 ─────────────────────────
