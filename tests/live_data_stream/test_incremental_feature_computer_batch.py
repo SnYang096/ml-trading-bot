@@ -61,6 +61,14 @@ class TestIncrementalFeatureComputerBatch:
         assert len(result) >= 0, "特征字典不应该为空（即使没有匹配的特征）"
         print(f"Generated {len(result)} features")
 
+    def test_ensure_atr_f_prepended_for_loader(self):
+        computer = IncrementalFeatureComputer(
+            archetypes_dir="config/strategies/bpc/archetypes"
+        )
+        out = computer._ensure_atr_f_in_loader_request(["box_structure_f"])
+        assert out[0] == "atr_f"
+        assert "box_structure_f" in out
+
     def test_ensure_baseline_atr_on_resampled_bars(self):
         """atr must exist on bars_tf even when StrategyFeatureLoader skips atr_f."""
         computer = IncrementalFeatureComputer(

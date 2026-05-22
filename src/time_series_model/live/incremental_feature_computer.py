@@ -1157,7 +1157,12 @@ class IncrementalFeatureComputer:
         )
 
         if len(bars_tf) < 10:
-            _logger.warning("_compute_features_core: too few bars (%d)", len(bars_tf))
+            _logger.warning(
+                "_compute_features_core: too few %s bars (%d) from %d 1min bars",
+                ptf,
+                len(bars_tf),
+                len(bars_1min),
+            )
             return None
 
         # ── 2. 计算订单流特征 (VPIN / Trade Clustering / Footprint) ──
@@ -1306,6 +1311,7 @@ class IncrementalFeatureComputer:
                 for n in skipped:
                     _collect_deferred_bar_nodes(str(n), deferred_second_pass)
 
+                filtered = self._ensure_atr_f_in_loader_request(filtered)
                 bars_tf = self._feature_loader.load_features_from_requested(
                     bars_tf, requested_features=filtered, fit=False
                 )
@@ -1416,6 +1422,18 @@ class IncrementalFeatureComputer:
                 _logger.warning("  Loader traceback: %s", traceback.format_exc())
 
         return self._ensure_baseline_atr_column(bars_tf)
+
+    def _ensure_atr_f_in_loader_request(self, filtered: List[str]) -> List[str]:
+        """Prepend ``atr_f`` so the loader materializes ``atr`` before dependents."""
+        if not self._want("atr"):
+            return filtered
+        nodes = list(filtered)
+        if "atr_f" in nodes:
+            return nodes
+        feats = (self._feature_deps or {}).get("features") or {}
+        if "atr_f" in feats:
+            nodes.insert(0, "atr_f")
+        return nodes
 
     def _ensure_baseline_atr_column(
         self, bars_tf: Optional[pd.DataFrame]
