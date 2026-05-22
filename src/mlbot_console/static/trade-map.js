@@ -38,7 +38,11 @@ let ohlcvLoadedFrom = null;
 let ohlcvLoadedTo = null;
 /** Marker DB query window (wider than sparse candles). */
 let markerQueryFromIso = null;
+/** ISO timestamp for incremental marker poll (`since` query param). */
+let lastMarkerPollSince = null;
 let lastMarkerCounts = null;
+/** @type {object[]} */
+let lastTradeLinks = [];
 let historyLoadInFlight = false;
 let historyExhausted = false;
 let historyLoadTimer = null;
@@ -49,8 +53,6 @@ const defaultLayout = () => ({
   mainEma1200: false,
   mainWeeklyEma200: false,
   ordersDock: false,
-  hideExpired: true,
-  hideCanceled: true,
 });
 
 function loadLayout() {
@@ -69,11 +71,10 @@ function saveLayout() {
     mainEma1200: !!document.getElementById("mainEma1200")?.checked,
     mainWeeklyEma200: !!document.getElementById("mainWeeklyEma200")?.checked,
     ordersDock: ordersDockOpen,
-    hideExpired: document.getElementById("hideExpired")?.checked ?? true,
-    hideCanceled: document.getElementById("hideCanceled")?.checked ?? true,
   };
   localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
   Shell.setScopesState(layersState());
+  Shell.saveOrdersFilter(Shell.ordersFilterFromControls());
 }
 
 function applyLayoutToControls(layout) {
@@ -84,18 +85,12 @@ function applyLayoutToControls(layout) {
   if (wkEma) wkEma.checked = !!layout.mainWeeklyEma200;
   selectedFeatureColumns = Array.isArray(layout.features) ? [...layout.features] : [];
   ordersDockOpen = !!layout.ordersDock;
-  const hideExp = document.getElementById("hideExpired");
-  const hideCan = document.getElementById("hideCanceled");
-  if (hideExp) hideExp.checked = layout.hideExpired !== false;
-  if (hideCan) hideCan.checked = layout.hideCanceled !== false;
+  Shell.applyOrdersFilterToControls(Shell.loadOrdersFilter());
   applyOrdersDockVisibility();
 }
 
 function ordersExcludeStatusParam() {
-  const parts = [];
-  if (document.getElementById("hideExpired")?.checked) parts.push("expired");
-  if (document.getElementById("hideCanceled")?.checked) parts.push("canceled");
-  return parts.join(",");
+  return Shell.ordersExcludeStatusParamFromFilter(Shell.ordersFilterFromControls());
 }
 
 function applyScopesFromStorage() {
@@ -361,6 +356,8 @@ function resetOhlcvLoadedRange() {
   ohlcvLoadedFrom = null;
   ohlcvLoadedTo = null;
   markerQueryFromIso = null;
+  lastMarkerPollSince = null;
+  lastTradeLinks = [];
   lastMarkerCounts = null;
   historyExhausted = false;
 }
@@ -387,8 +384,40 @@ function initialOhlcvRangeIso() {
   return {
     from: start.toISOString(),
     to: end.toISOString(),
-    full_range: "false",
+    full_range: "true",
   };
+}
+
+function mergeMarkersById(existing, incoming) {
+  const byId = new Map((existing || []).map((m) => [m.id, m]));
+  for (const m of incoming || []) {
+    if (m?.id) byId.set(m.id, m);
+  }
+  return [...byId.values()].sort((a, b) => Number(a.time) - Number(b.time));
+}
+
+function tradeLinkKey(lk) {
+  return [
+    lk?.scope,
+    lk?.strategy,
+    lk?.entry_time,
+    lk?.exit_time,
+    lk?.entry_price,
+    lk?.exit_price,
+  ].join("|");
+}
+
+function mergeTradeLinks(existing, incoming) {
+  const byKey = new Map();
+  for (const lk of [...(existing || []), ...(incoming || [])]) {
+    byKey.set(tradeLinkKey(lk), lk);
+  }
+  return [...byKey.values()];
+}
+
+function updateMarkerPollSince() {
+  // Using client time minus 2 seconds to account for clock skew/latency.
+  lastMarkerPollSince = new Date(Date.now() - 2000).toISOString();
 }
 
 function markerRangeParams() {
@@ -689,8 +718,9 @@ function formatOverlayStatus(overlays) {
   return ` · 特征:${parts.join(",")}`;
 }
 
-function applyMarkers(rawMarkers) {
-  lastRawMarkers = alignMarkersToLoadedCandles(rawMarkers || []);
+function applyMarkers(rawMarkers, opts = {}) {
+  const aligned = alignMarkersToLoadedCandles(rawMarkers || []);
+  lastRawMarkers = opts.merge ? mergeMarkersById(lastRawMarkers, aligned) : aligned;
   markerById = new Map(lastRawMarkers.map((m) => [m.id, m]));
   candleSeries.setMarkers(Core.markersToLwc(lastRawMarkers, selectedMarkerId));
 }
@@ -914,11 +944,15 @@ function escHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
-function toggleFeaturePanel(forceOpen) {
-  const panel = document.getElementById("featurePanel");
+function toggleFeatureDrawer(forceOpen) {
+  const drawer = document.getElementById("featureDrawer");
+  const backdrop = document.getElementById("featureDrawerBackdrop");
   const btn = document.getElementById("featurePanelBtn");
-  const open = forceOpen ?? panel.classList.contains("hidden");
-  panel.classList.toggle("hidden", !open);
+  if (!drawer || !btn) return;
+  const open = forceOpen ?? drawer.classList.contains("hidden");
+  drawer.classList.toggle("hidden", !open);
+  if (backdrop) backdrop.classList.toggle("hidden", !open);
+  document.body.classList.toggle("feature-drawer-open", open);
   btn.setAttribute("aria-expanded", open ? "true" : "false");
 }
 
@@ -1001,22 +1035,30 @@ function renderFeaturePicker() {
 
 function bindFeaturePanel() {
   const btn = document.getElementById("featurePanelBtn");
-  const panel = document.getElementById("featurePanel");
+  const drawer = document.getElementById("featureDrawer");
+  const backdrop = document.getElementById("featureDrawerBackdrop");
+  const closeBtn = document.getElementById("featureDrawerClose");
   btn.addEventListener("click", (ev) => {
     ev.stopPropagation();
-    toggleFeaturePanel(panel.classList.contains("hidden"));
+    toggleFeatureDrawer(drawer.classList.contains("hidden"));
   });
-  document.addEventListener("click", (ev) => {
-    if (!panel.classList.contains("hidden") && !panel.contains(ev.target) && ev.target !== btn) {
-      toggleFeaturePanel(false);
+  if (closeBtn) {
+    closeBtn.addEventListener("click", () => toggleFeatureDrawer(false));
+  }
+  if (backdrop) {
+    backdrop.addEventListener("click", () => toggleFeatureDrawer(false));
+  }
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && drawer && !drawer.classList.contains("hidden")) {
+      toggleFeatureDrawer(false);
     }
   });
-  panel.addEventListener("click", (ev) => ev.stopPropagation());
+  drawer.addEventListener("click", (ev) => ev.stopPropagation());
   document.getElementById("featureSearch").addEventListener("input", (ev) => {
     featureSearchQuery = ev.target.value;
     renderFeaturePicker();
   });
-  panel.querySelectorAll("[data-feature-action]").forEach((el) => {
+  drawer.querySelectorAll("[data-feature-action]").forEach((el) => {
     el.addEventListener("click", () => {
       const action = el.getAttribute("data-feature-action");
       if (action === "clear") {
@@ -1170,6 +1212,7 @@ async function refreshBundle(opts = {}) {
     q.set("include_ohlcv", "tail");
     q.set("include_features", mainOl ? "true" : "false");
     if (mainOl) q.set("main_overlays", mainOl);
+    if (lastMarkerPollSince) q.set("since", lastMarkerPollSince);
     const lastT = lastCandles.length ? lastCandles[lastCandles.length - 1].time : null;
     if (lastT != null) {
       const barSec = Core.barDurationSec(timeframe);
@@ -1195,6 +1238,7 @@ async function refreshBundle(opts = {}) {
   }
 
   const { data, meta } = await Shell.api(`/api/trade-map/bundle?${q}`);
+  updateMarkerPollSince();
   lastMarkerCounts = meta.marker_counts || null;
   const pageUrl = new URL(window.location.href);
 
@@ -1221,8 +1265,15 @@ async function refreshBundle(opts = {}) {
   }
 
   const markers = data.markers || [];
-  applyMarkers(markers);
-  applyTradeLinks(data.trade_links || []);
+  if (mode === "poll") {
+    applyMarkers(markers, { merge: true });
+    lastTradeLinks = mergeTradeLinks(lastTradeLinks, data.trade_links || []);
+    applyTradeLinks(lastTradeLinks);
+  } else {
+    applyMarkers(markers);
+    lastTradeLinks = data.trade_links || [];
+    applyTradeLinks(lastTradeLinks);
+  }
 
   if (mode !== "poll") {
     setStatusFromBundle(
@@ -1316,6 +1367,7 @@ function bindControls() {
     const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener("change", () => {
+      Shell.saveOrdersFilter(Shell.ordersFilterFromControls());
       saveLayout();
       if (ordersDockOpen) refreshOrdersList().catch((e) => setStatus(String(e)));
     });

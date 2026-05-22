@@ -12,47 +12,63 @@
     <nav class="app-nav" id="appNav"></nav>
     <nav class="ext-links" id="extLinks"></nav>
 
-    <div class="module module-data">
-      <span class="module-label">筛选</span>
-      <label>Symbol
-        <select id="symbolSelect"></select>
-      </label>
-      <label>回看
-        <select id="lookbackSelect">
-          <option value="0" selected>全部</option>
-          <option value="7">7 天</option>
-          <option value="14">14 天</option>
-          <option value="30">30 天</option>
-          <option value="90">90 天</option>
-          <option value="365">365 天</option>
-        </select>
-      </label>
-    </div>
-
     <button id="refreshBtn" type="button">刷新</button>
     <a class="toolbar-link" href="/orders">订单列表</a>
     <span id="statusLine" class="status">—</span>
   </header>
 
   <main class="account-main">
-    <section id="kpiRow" class="account-kpi-row muted">加载中…</section>
-    <section id="ledgerPanel" class="account-ledger-panel muted">—</section>
+    <section class="account-global-section panel">
+      <header class="account-section-head">
+        <h2>全局资产</h2>
+        <p class="muted account-section-note">总账权益与钱包余额为币安全账户汇总，不受下方 Symbol 筛选影响。</p>
+      </header>
+      <section id="kpiRow" class="account-kpi-row muted">加载中…</section>
+      <section id="ledgerPanel" class="account-ledger-panel muted">—</section>
+    </section>
 
-    <div class="account-grid">
-      <section class="panel account-panel">
-        <h3>账户层汇总</h3>
-        <div id="scopesTable" class="account-table-wrap muted">—</div>
-      </section>
-      <section class="panel account-panel">
-        <h3>策略汇总</h3>
-        <div id="strategiesTable" class="account-table-wrap muted">—</div>
-      </section>
-    </div>
+    <section class="account-scoped-section panel">
+      <header class="account-scoped-head">
+        <div>
+          <h2>策略与账户层盈亏</h2>
+          <p class="muted account-section-note">已实现盈亏、持仓与按日统计受 Symbol 与回看期筛选。</p>
+        </div>
+        <div class="module module-data account-scoped-filters">
+          <span class="module-label">筛选</span>
+          <label>Symbol
+            <select id="symbolSelect"></select>
+          </label>
+          <label>回看
+            <select id="lookbackSelect">
+              <option value="0" selected>全部</option>
+              <option value="7">7 天</option>
+              <option value="14">14 天</option>
+              <option value="30">30 天</option>
+              <option value="90">90 天</option>
+              <option value="365">365 天</option>
+            </select>
+          </label>
+        </div>
+      </header>
 
-    <section class="panel account-panel">
-      <h3>已实现盈亏（按日）</h3>
-      <div id="dailyChart" class="daily-pnl-chart muted">—</div>
-      <p id="accountNotes" class="account-notes muted"></p>
+      <section id="scopedKpiRow" class="account-kpi-row account-scoped-kpi muted"></section>
+
+      <div class="account-grid">
+        <section class="panel account-panel">
+          <h3>账户层汇总</h3>
+          <div id="scopesTable" class="account-table-wrap muted">—</div>
+        </section>
+        <section class="panel account-panel">
+          <h3>策略汇总</h3>
+          <div id="strategiesTable" class="account-table-wrap muted">—</div>
+        </section>
+      </div>
+
+      <section class="panel account-panel">
+        <h3>已实现盈亏（按日）</h3>
+        <div id="dailyChart" class="daily-pnl-chart muted">—</div>
+        <p id="accountNotes" class="account-notes muted"></p>
+      </section>
     </section>
   </main>
   <script src="/static/console-shell.js"></script>

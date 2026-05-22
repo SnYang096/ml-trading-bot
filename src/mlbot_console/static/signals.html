@@ -37,9 +37,37 @@
     <p class="muted signals-hint">
       全 universe 策略信号一览；点击「地图」进入该 symbol 的 K 线交易地图。
     </p>
-    <section class="panel funnel-panel">
-      <h3>Trend 漏斗（15min · stats_15min）</h3>
-      <p class="muted">regime / prefilter / direction / gate 按策略分层；数据来自 live_monitor.db。</p>
+
+    <section class="panel signals-overview-panel">
+      <h3>全 Symbol 策略信号概览</h3>
+      <div class="signals-table-wrap">
+        <table id="signalsTable" class="signals-table">
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>最新 Bar</th>
+              <th>1m 行数</th>
+              <th>地图</th>
+              <th>B·Trend</th>
+              <th>最近 Trend</th>
+              <th>A·Spot</th>
+              <th>C·Multi-leg</th>
+              <th>最近 Multi-leg</th>
+            </tr>
+          </thead>
+          <tbody id="signalsBody">
+            <tr><td colspan="9" class="muted">加载中…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <details class="panel funnel-panel funnel-collapsed">
+      <summary class="funnel-summary">
+        <span class="funnel-summary-title">Trend 漏斗（15min · stats_15min）</span>
+        <span class="muted funnel-summary-hint">regime / prefilter / direction / gate · 点击展开</span>
+      </summary>
+      <p class="muted">按策略分层；数据来自 live_monitor.db。</p>
       <label>Symbol
         <select id="funnelSymbolSelect">
           <option value="">全部</option>
@@ -65,28 +93,7 @@
           </tbody>
         </table>
       </div>
-    </section>
-
-    <div class="signals-table-wrap">
-      <table id="signalsTable" class="signals-table">
-        <thead>
-          <tr>
-            <th>Symbol</th>
-            <th>最新 Bar</th>
-            <th>1m 行数</th>
-            <th>地图</th>
-            <th>B·Trend</th>
-            <th>最近 Trend</th>
-            <th>A·Spot</th>
-            <th>C·Multi-leg</th>
-            <th>最近 Multi-leg</th>
-          </tr>
-        </thead>
-        <tbody id="signalsBody">
-          <tr><td colspan="9" class="muted">加载中…</td></tr>
-        </tbody>
-      </table>
-    </div>
+    </details>
   </main>
   <script src="/static/console-shell.js"></script>
   <script src="/static/signals-page.js"></script>

@@ -176,12 +176,8 @@ async function refreshOrders(opts = {}) {
     limit: "500",
   });
   if (status) q.set("status", status);
-  const exclude = [];
-  if (document.getElementById("hideExpired")?.checked) exclude.push("expired");
-  if (document.getElementById("hideCanceled")?.checked) exclude.push("canceled");
-  if (document.getElementById("hideRejected")?.checked) exclude.push("rejected");
-  if (document.getElementById("hidePending")?.checked) exclude.push("pending");
-  if (exclude.length) q.set("exclude_status", exclude.join(","));
+  const exclude = Shell.ordersExcludeStatusParamFromFilter(Shell.ordersFilterFromControls());
+  if (exclude) q.set("exclude_status", exclude);
   try {
     const { data, meta } = await Shell.api(`/api/orders/list?${q}`);
     const rows = data || [];
@@ -242,7 +238,16 @@ function bindControls() {
     "hideCanceled",
     "hideRejected",
     "hidePending",
-  ].forEach((id) => document.getElementById(id).addEventListener("change", rerun));
+  ].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener("change", () => {
+      if (["hideExpired", "hideCanceled", "hideRejected", "hidePending"].includes(id)) {
+        Shell.saveOrdersFilter(Shell.ordersFilterFromControls());
+      }
+      rerun();
+    });
+  });
   document.getElementById("refreshBtn").addEventListener("click", rerun);
   Shell.bindSymbolPersist("symbolSelect");
 }
@@ -258,6 +263,7 @@ function startPoll() {
 (async () => {
   try {
     Shell.initAppNav("orders");
+    Shell.applyOrdersFilterToControls(Shell.loadOrdersFilter());
     applyScopesFromStorage();
     bindControls();
     await Shell.loadExtLinks();

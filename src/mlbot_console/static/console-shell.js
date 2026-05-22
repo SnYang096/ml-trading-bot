@@ -4,6 +4,8 @@
 (function (root) {
   const SYMBOL_KEY = "mlbot_console_symbol";
   const SCOPES_KEY = "mlbot_console_scopes";
+  const ORDERS_FILTER_KEY = "mlbot_orders_filter";
+  const TRADE_MAP_LAYOUT_KEY = "mlbot_trade_map_layout_v2";
   const SYMBOL_ALL = "*";
 
   const SCOPE_LABELS = {
@@ -330,6 +332,98 @@
     return d.toISOString().slice(0, 19).replace("T", " ");
   }
 
+  function defaultOrdersFilter() {
+    return {
+      hideExpired: true,
+      hideCanceled: true,
+      hideRejected: false,
+      hidePending: false,
+    };
+  }
+
+  function migrateOrdersFilterFromTradeMapLayout() {
+    try {
+      const raw = localStorage.getItem(TRADE_MAP_LAYOUT_KEY);
+      if (!raw) return null;
+      const layout = JSON.parse(raw);
+      if (layout == null || typeof layout !== "object") return null;
+      return {
+        hideExpired: layout.hideExpired !== false,
+        hideCanceled: layout.hideCanceled !== false,
+        hideRejected: false,
+        hidePending: false,
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function loadOrdersFilter() {
+    try {
+      const raw = localStorage.getItem(ORDERS_FILTER_KEY);
+      if (raw) {
+        const stored = JSON.parse(raw);
+        if (stored && typeof stored === "object") {
+          return { ...defaultOrdersFilter(), ...stored };
+        }
+      }
+    } catch (_) {
+      /* fall through */
+    }
+    const migrated = migrateOrdersFilterFromTradeMapLayout();
+    if (migrated) {
+      saveOrdersFilter(migrated);
+      return migrated;
+    }
+    return defaultOrdersFilter();
+  }
+
+  function saveOrdersFilter(filter) {
+    const merged = { ...defaultOrdersFilter(), ...(filter || {}) };
+    localStorage.setItem(ORDERS_FILTER_KEY, JSON.stringify(merged));
+    return merged;
+  }
+
+  function applyOrdersFilterToControls(filter, ids) {
+    const f = { ...defaultOrdersFilter(), ...(filter || {}) };
+    const map = ids || {
+      hideExpired: "hideExpired",
+      hideCanceled: "hideCanceled",
+      hideRejected: "hideRejected",
+      hidePending: "hidePending",
+    };
+    for (const [key, elId] of Object.entries(map)) {
+      const el = document.getElementById(elId);
+      if (el) el.checked = !!f[key];
+    }
+    return f;
+  }
+
+  function ordersFilterFromControls(ids) {
+    const map = ids || {
+      hideExpired: "hideExpired",
+      hideCanceled: "hideCanceled",
+      hideRejected: "hideRejected",
+      hidePending: "hidePending",
+    };
+    const out = { ...defaultOrdersFilter() };
+    for (const [key, elId] of Object.entries(map)) {
+      const el = document.getElementById(elId);
+      if (el) out[key] = !!el.checked;
+    }
+    return out;
+  }
+
+  function ordersExcludeStatusParamFromFilter(filter) {
+    const f = { ...defaultOrdersFilter(), ...(filter || {}) };
+    const parts = [];
+    if (f.hideExpired) parts.push("expired");
+    if (f.hideCanceled) parts.push("canceled");
+    if (f.hideRejected) parts.push("rejected");
+    if (f.hidePending) parts.push("pending");
+    return parts.join(",");
+  }
+
   root.MLBotConsole = {
     api,
     SYMBOL_ALL,
@@ -354,5 +448,11 @@
     formatSlPrice,
     formatPnl,
     pnlClass,
+    defaultOrdersFilter,
+    loadOrdersFilter,
+    saveOrdersFilter,
+    applyOrdersFilterToControls,
+    ordersFilterFromControls,
+    ordersExcludeStatusParamFromFilter,
   };
 })(typeof globalThis !== "undefined" ? globalThis : window);

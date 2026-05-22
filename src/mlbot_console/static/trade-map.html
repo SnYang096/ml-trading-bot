@@ -8,63 +8,11 @@
   <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body class="page-trade-map">
-  <header class="toolbar">
-    <div class="toolbar-row-controls">
+  <header class="toolbar toolbar-global">
+    <div class="toolbar-row-global">
       <h1>业务控制台</h1>
       <nav class="app-nav" id="appNav"></nav>
       <nav class="ext-links" id="extLinks"></nav>
-
-      <div class="module module-data">
-        <span class="module-label">数据</span>
-        <label>Symbol
-          <select id="symbolSelect"></select>
-        </label>
-        <label>周期
-          <select id="timeframeSelect">
-            <option value="2h" selected>2h</option>
-            <option value="15min">15min</option>
-            <option value="1d">1d</option>
-            <option value="1w">1w</option>
-          </select>
-        </label>
-        <label class="chk-pill" title="2h 特征 bus 的 EMA1200 价格线，叠加在当前周期主图"><input type="checkbox" id="mainEma1200" /> EMA1200</label>
-        <label class="chk-pill" title="周线 EMA200 价格线（2h 特征 bus），叠加在当前周期主图"><input type="checkbox" id="mainWeeklyEma200" /> 周线EMA200</label>
-      </div>
-
-      <div class="module module-accounts" title="账户层 A/B/C：控制主图成交标记">
-        <span class="module-label">账户层</span>
-        <label><input type="checkbox" id="layerTrend" checked /> B·Trend</label>
-        <label><input type="checkbox" id="layerSpot" checked /> A·Spot</label>
-        <label><input type="checkbox" id="layerMultiLeg" checked /> C·Multi-leg</label>
-        <label title="在已成交标记之外，叠加显示 open/pending 网格限价单与 TP 保护单（不含 expired/canceled）"><input type="checkbox" id="layerPending" /> 含挂单</label>
-      </div>
-
-      <div class="module module-subcharts">
-        <span class="module-label">附图</span>
-        <label class="chk-pill"><input type="checkbox" id="paneVolume" /> 成交量</label>
-        <div class="feature-panel-wrap">
-          <button type="button" id="featurePanelBtn" class="feature-panel-btn" aria-expanded="false">
-            特征 <span id="featurePickerHint" class="feature-count-badge">…</span>
-          </button>
-          <div id="featurePanel" class="feature-panel hidden" role="dialog" aria-label="特征列选择">
-            <div class="feature-panel-head">
-              <input type="search" id="featureSearch" class="feature-search" placeholder="搜索特征列…" autocomplete="off" />
-            <div class="feature-panel-actions">
-              <button type="button" class="btn-ghost" data-feature-action="preset-spot">Spot</button>
-              <button type="button" class="btn-ghost" data-feature-action="preset-tpc">TPC</button>
-              <button type="button" class="btn-ghost" data-feature-action="preset-bpc">BPC</button>
-              <button type="button" class="btn-ghost" data-feature-action="preset-chop_grid">Chop</button>
-              <button type="button" class="btn-ghost" data-feature-action="preset-trend_scalp">Scalp</button>
-              <button type="button" class="btn-ghost" data-feature-action="clear">清空</button>
-            </div>
-            </div>
-            <div id="featureSelectedChips" class="feature-chips"></div>
-            <div id="featureColumnList" class="feature-column-list">加载中…</div>
-          </div>
-        </div>
-      </div>
-
-      <button id="ordersDockToggle" type="button" class="orders-dock-toggle" aria-pressed="false">订单表</button>
       <button id="refreshBtn" type="button">刷新</button>
     </div>
     <div class="toolbar-row-status">
@@ -76,6 +24,64 @@
       <span id="statusClock" class="status-clock">--:--:--</span>
     </div>
   </header>
+
+  <div class="toolbar toolbar-chart">
+    <div class="module module-data">
+      <span class="module-label">数据</span>
+      <label>Symbol
+        <select id="symbolSelect"></select>
+      </label>
+      <label>周期
+        <select id="timeframeSelect">
+          <option value="2h" selected>2h</option>
+          <option value="15min">15min</option>
+          <option value="1d">1d</option>
+          <option value="1w">1w</option>
+        </select>
+      </label>
+      <label class="chk-pill" title="2h 特征 bus 的 EMA1200 价格线，叠加在当前周期主图"><input type="checkbox" id="mainEma1200" /> EMA1200</label>
+      <label class="chk-pill" title="周线 EMA200 价格线（2h 特征 bus），叠加在当前周期主图"><input type="checkbox" id="mainWeeklyEma200" /> 周线EMA200</label>
+    </div>
+
+    <div class="module module-accounts" title="账户层 A/B/C：控制主图成交标记">
+      <span class="module-label">账户层</span>
+      <label><input type="checkbox" id="layerTrend" checked /> B·Trend</label>
+      <label><input type="checkbox" id="layerSpot" checked /> A·Spot</label>
+      <label><input type="checkbox" id="layerMultiLeg" checked /> C·Multi-leg</label>
+      <label title="在已成交标记之外，叠加显示 open/pending 网格限价单与 TP 保护单（不含 expired/canceled）"><input type="checkbox" id="layerPending" /> 含挂单</label>
+    </div>
+
+    <div class="module module-subcharts">
+      <span class="module-label">附图</span>
+      <label class="chk-pill"><input type="checkbox" id="paneVolume" /> 成交量</label>
+      <button type="button" id="featurePanelBtn" class="feature-panel-btn" aria-expanded="false" aria-controls="featureDrawer">
+        特征 <span id="featurePickerHint" class="feature-count-badge">…</span>
+      </button>
+    </div>
+
+    <button id="ordersDockToggle" type="button" class="orders-dock-toggle" aria-pressed="false">订单表</button>
+  </div>
+
+  <aside id="featureDrawer" class="feature-drawer hidden" role="dialog" aria-label="特征列选择">
+    <div class="feature-drawer-head">
+      <h3>特征附图</h3>
+      <button type="button" id="featureDrawerClose" class="drawer-close" aria-label="关闭">×</button>
+    </div>
+    <div class="feature-panel-head">
+      <input type="search" id="featureSearch" class="feature-search" placeholder="搜索特征列…" autocomplete="off" />
+      <div class="feature-panel-actions">
+        <button type="button" class="btn-ghost" data-feature-action="preset-spot">Spot</button>
+        <button type="button" class="btn-ghost" data-feature-action="preset-tpc">TPC</button>
+        <button type="button" class="btn-ghost" data-feature-action="preset-bpc">BPC</button>
+        <button type="button" class="btn-ghost" data-feature-action="preset-chop_grid">Chop</button>
+        <button type="button" class="btn-ghost" data-feature-action="preset-trend_scalp">Scalp</button>
+        <button type="button" class="btn-ghost" data-feature-action="clear">清空</button>
+      </div>
+    </div>
+    <div id="featureSelectedChips" class="feature-chips"></div>
+    <div id="featureColumnList" class="feature-column-list">加载中…</div>
+  </aside>
+  <div id="featureDrawerBackdrop" class="feature-drawer-backdrop hidden" aria-hidden="true"></div>
 
   <main class="trade-map-main">
     <div class="chart-stack">

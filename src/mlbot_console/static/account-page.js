@@ -1,5 +1,5 @@
 /**
- * Account overview — aggregate PnL by scope/strategy and daily realized chart.
+ * Account overview — global exchange ledger vs symbol-scoped strategy PnL.
  */
 
 const Shell = globalThis.MLBotConsole;
@@ -30,11 +30,50 @@ function fmtUsdt(n) {
   return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function renderKpis(totals) {
+function renderGlobalKpis(totals, ledger) {
+  const t = totals || {};
+  const lt = ledger?.totals || {};
+  const cards = [
+    {
+      label: "总权益（总账）",
+      value: lt.equity_usdt ?? t.equity_usdt,
+      hint: "USDT · 币安各账户之和",
+      fmt: fmtUsdt,
+    },
+    {
+      label: "总钱包余额",
+      value: lt.wallet_balance_usdt ?? t.wallet_balance_usdt,
+      hint: "USDT",
+      fmt: fmtUsdt,
+    },
+    {
+      label: "总可用",
+      value: lt.available_usdt ?? t.available_usdt,
+      hint: "USDT",
+      fmt: fmtUsdt,
+    },
+    {
+      label: "合约未实现",
+      value: lt.exchange_unrealized_pnl_usdt ?? t.exchange_unrealized_pnl_usdt,
+      hint: "USDT · 交易所",
+      fmt: fmtUsdt,
+    },
+  ];
+  return cards
+    .map((c) => {
+      const raw = c.fmt ? c.fmt(c.value) : fmtPnlNum(c.value);
+      return `<div class="account-kpi-card account-kpi-global">
+        <div class="account-kpi-label">${Shell.escHtml(c.label)}</div>
+        <div class="account-kpi-value">${Shell.escHtml(raw)}</div>
+        <div class="account-kpi-hint muted">${Shell.escHtml(c.hint)}</div>
+      </div>`;
+    })
+    .join("");
+}
+
+function renderScopedKpis(totals) {
   const t = totals || {};
   const cards = [
-    { label: "总权益（总账）", value: t.equity_usdt, hint: "USDT · 币安各账户之和", fmt: fmtUsdt },
-    { label: "总钱包余额", value: t.wallet_balance_usdt, hint: "USDT", fmt: fmtUsdt },
     { label: "已实现盈亏", value: t.realized_pnl, hint: "USDT · 本地 DB" },
     { label: "持仓浮盈", value: t.unrealized_pnl, hint: "USDT · 本地估算" },
     { label: "已平仓笔数", value: t.closed_trades, hint: "笔", fmt: (v) => String(v ?? 0) },
@@ -67,7 +106,9 @@ function renderScopesTable(scopes) {
     .map((s) => {
       const label = s.label || s.scope || "—";
       const ex = s.exchange || {};
-      const binance = ex.binance_label ? `<div class="muted account-sub">${Shell.escHtml(ex.binance_label)}</div>` : "";
+      const binance = ex.binance_label
+        ? `<div class="muted account-sub">${Shell.escHtml(ex.binance_label)}</div>`
+        : "";
       return `<tr>
         <td>${Shell.escHtml(label)}${binance}</td>
         <td>${exCell(ex, "wallet_balance_usdt")}</td>
@@ -154,23 +195,40 @@ async function refreshAccount() {
   const lookback = document.getElementById("lookbackSelect").value;
   if (!Shell.isAllSymbols(symbol)) Shell.setSymbol(symbol);
   setStatus("加载中…");
-  const q = new URLSearchParams({ symbol, lookback_days: lookback });
+  const globalQ = new URLSearchParams({ symbol: Shell.SYMBOL_ALL, lookback_days: "0" });
+  const scopedQ = new URLSearchParams({ symbol, lookback_days: lookback });
   try {
-    const { data, meta } = await Shell.api(`/api/account/summary?${q}`);
-    document.getElementById("kpiRow").innerHTML = renderKpis(data.totals);
+    const [globalRes, scopedRes] = await Promise.all([
+      Shell.api(`/api/account/summary?${globalQ}`),
+      Shell.api(`/api/account/summary?${scopedQ}`),
+    ]);
+    const globalData = globalRes.data;
+    const scopedData = scopedRes.data;
+    document.getElementById("kpiRow").innerHTML = renderGlobalKpis(
+      globalData.totals,
+      globalData.exchange_ledger
+    );
     const ledgerEl = document.getElementById("ledgerPanel");
     if (ledgerEl) {
-      ledgerEl.innerHTML = data.exchange_ledger
-        ? renderLedgerPanel(data.exchange_ledger)
+      ledgerEl.innerHTML = globalData.exchange_ledger
+        ? renderLedgerPanel(globalData.exchange_ledger)
         : '<p class="muted">—</p>';
     }
-    document.getElementById("scopesTable").innerHTML = renderScopesTable(data.scopes);
-    document.getElementById("strategiesTable").innerHTML = renderStrategiesTable(data.strategies);
-    document.getElementById("dailyChart").innerHTML = renderDailyChart(data.daily_realized);
-    const notes = (data.notes || []).map((n) => `· ${n}`).join("\n");
+    const scopedKpi = document.getElementById("scopedKpiRow");
+    if (scopedKpi) {
+      scopedKpi.innerHTML = renderScopedKpis(scopedData.totals);
+    }
+    document.getElementById("scopesTable").innerHTML = renderScopesTable(scopedData.scopes);
+    document.getElementById("strategiesTable").innerHTML = renderStrategiesTable(
+      scopedData.strategies
+    );
+    document.getElementById("dailyChart").innerHTML = renderDailyChart(scopedData.daily_realized);
+    const notes = (scopedData.notes || []).map((n) => `· ${n}`).join("\n");
     document.getElementById("accountNotes").textContent = notes;
-    const symLabel = meta?.symbol || data.symbol || symbol;
-    setStatus(`${symLabel} · ${lookback} 天 · ${new Date().toLocaleTimeString()}`);
+    const symLabel = scopedRes.meta?.symbol || scopedData.symbol || symbol;
+    const lb =
+      lookback === "0" ? "全部历史" : `${lookback} 天`;
+    setStatus(`${symLabel} · ${lb} · ${new Date().toLocaleTimeString()}`);
   } catch (e) {
     document.getElementById("kpiRow").innerHTML = `<span class="muted">${Shell.escHtml(String(e))}</span>`;
     setStatus(String(e));

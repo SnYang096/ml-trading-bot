@@ -14,6 +14,9 @@ def test_trade_map_html_served(client):
     assert "appNav" in body
     assert "featureColumnList" in body
     assert "featurePanelBtn" in body
+    assert "featureDrawer" in body
+    assert "toolbar-chart" in body
+    assert "toolbar-global" in body
     assert "featureSearch" in body
     assert "subchartStack" in body
     assert 'data-feature-action="preset-tpc"' in body
@@ -49,7 +52,21 @@ def test_account_html_served(client):
     assert "账户总览" in body
     assert "account-page.js" in body
     assert "kpiRow" in body
+    assert "account-global-section" in body
+    assert "account-scoped-section" in body
+    assert "scopedKpiRow" in body
     assert "appNav" in body
+
+
+def test_signals_html_overview_first(client):
+    r = client.get("/signals")
+    assert r.status_code == 200
+    body = r.text
+    assert "signals-overview-panel" in body
+    assert "funnel-collapsed" in body
+    overview_pos = body.find("signals-overview-panel")
+    funnel_pos = body.find("funnel-collapsed")
+    assert overview_pos >= 0 and funnel_pos > overview_pos
 
 
 def test_console_shell_has_account_nav(client):
@@ -57,12 +74,14 @@ def test_console_shell_has_account_nav(client):
     assert r.status_code == 200
     assert 'href: "/account"' in r.text
     assert "formatPnl" in r.text
+    assert "mlbot_orders_filter" in r.text
+    assert "loadOrdersFilter" in r.text
 
 
-def test_root_redirects_to_signals(client):
+def test_root_redirects_to_trade_map(client):
     r = client.get("/", follow_redirects=False)
     assert r.status_code == 200
-    assert "/signals" in r.text
+    assert "/trade-map" in r.text
 
 
 def test_static_core_js(client):
@@ -86,6 +105,10 @@ def test_trade_map_js_layer_toggle_does_not_reset_history(client):
     block = body[idx : idx + 1200]
     assert "resetOhlcvLoadedRange" not in block
     assert "rerunAll" not in block
+    assert "lastMarkerPollSince" in body
+    assert 'mode === "poll"' in body
+    assert "mergeMarkersById" in body
+    assert "featureDrawer" in body
 
 
 def test_bundle_json_shape_for_frontend(client):
