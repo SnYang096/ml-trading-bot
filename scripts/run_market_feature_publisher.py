@@ -31,7 +31,10 @@ from src.live_data_stream.feature_bus import (  # noqa: E402
     FeatureBusWriter,
     effective_max_rows_for_warmup,
 )
-from src.live_data_stream.auto_gap_fill import auto_gap_fill_loop  # noqa: E402
+from src.live_data_stream.auto_gap_fill import (  # noqa: E402
+    auto_gap_fill_loop,
+    run_auto_gap_fill_once,
+)
 from src.live_data_stream.websocket_client import (  # noqa: E402
     BinanceTick,
     BinanceWebSocketClient,
@@ -222,10 +225,25 @@ def parse_args() -> argparse.Namespace:
         help="How far back to scan live 1m bars for large gaps.",
     )
     p.add_argument(
+        "--auto-gap-fill-startup-lookback-hours",
+        type=float,
+        default=float(os.getenv("MLBOT_AUTO_GAP_FILL_STARTUP_LOOKBACK_HOURS", "0")),
+        help=(
+            "Startup repair scan window. Set 0 to use warmup-days; "
+            "keeps long feature windows clean before the first feature audit."
+        ),
+    )
+    p.add_argument(
         "--auto-gap-fill-min-gap-minutes",
         type=float,
         default=float(os.getenv("MLBOT_AUTO_GAP_FILL_MIN_GAP_MINUTES", "60")),
         help="Minimum 1m bar gap size repaired by the background filler.",
+    )
+    p.add_argument(
+        "--auto-gap-fill-max-gaps-per-run",
+        type=int,
+        default=int(os.getenv("MLBOT_AUTO_GAP_FILL_MAX_GAPS_PER_RUN", "24")),
+        help="Maximum detected gaps repaired per auto-gap-fill pass.",
     )
     p.add_argument(
         "--auto-gap-fill-initial-delay-seconds",
@@ -407,6 +425,41 @@ async def _startup_feature_audit(manager: Any) -> None:
     logger.info("quant-feature-bus: post-warmup feature audit done")
 
 
+async def _startup_gap_repair(
+    args: argparse.Namespace, manager: Any, symbols: List[str]
+) -> None:
+    """Repair persisted gaps before computing feature-bus snapshots."""
+    if args.auto_gap_fill_interval_minutes <= 0 or manager.gap_filler is None:
+        return
+
+    startup_lookback = float(args.auto_gap_fill_startup_lookback_hours)
+    if startup_lookback <= 0:
+        startup_lookback = max(
+            float(args.auto_gap_fill_lookback_hours),
+            float(args.warmup_days) * 24.0,
+        )
+
+    logger.info(
+        "auto-gap-fill: startup repair lookback=%.1fh min_gap=%.1fmin",
+        startup_lookback,
+        args.auto_gap_fill_min_gap_minutes,
+    )
+    loop = asyncio.get_running_loop()
+
+    def _run_once() -> int:
+        return run_auto_gap_fill_once(
+            manager.storage_manager,
+            manager.gap_filler,
+            symbols,
+            lookback_hours=startup_lookback,
+            min_gap_minutes=args.auto_gap_fill_min_gap_minutes,
+            max_gaps_per_run=args.auto_gap_fill_max_gaps_per_run,
+        )
+
+    written = await loop.run_in_executor(None, _run_once)
+    logger.info("auto-gap-fill: startup repair done written_bars=%d", written)
+
+
 async def _periodic_process_metrics() -> None:
     interval = int(os.getenv("MLBOT_MARKET_DATA_INTERVAL", "30"))
     loop = asyncio.get_running_loop()
@@ -456,6 +509,7 @@ async def async_main() -> None:
     )
     if args.warmup_days > 0:
         await manager.warmup_all(days=args.warmup_days, use_gap_filler=True)
+        await _startup_gap_repair(args, manager, symbols)
         await _startup_feature_audit(manager)
     else:
         now = pd.Timestamp.now(tz="UTC")
@@ -477,7 +531,13 @@ async def async_main() -> None:
                 symbols,
                 interval_seconds=args.auto_gap_fill_interval_minutes * 60.0,
                 lookback_hours=args.auto_gap_fill_lookback_hours,
+                startup_lookback_hours=(
+                    args.auto_gap_fill_startup_lookback_hours
+                    if args.auto_gap_fill_startup_lookback_hours > 0
+                    else None
+                ),
                 min_gap_minutes=args.auto_gap_fill_min_gap_minutes,
+                max_gaps_per_run=args.auto_gap_fill_max_gaps_per_run,
                 initial_delay_seconds=args.auto_gap_fill_initial_delay_seconds,
             )
         )

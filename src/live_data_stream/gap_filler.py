@@ -329,23 +329,24 @@ class GapFiller:
             else:
                 result[key] = df
 
-        # 3. 补齐所有 gap
+        # 3. 补齐 1m bar gap，并把修复结果落盘。
         #    策略:
         #    - 内部 gap ≤1h: klines API（OHLCV，秒下）
         #    - 内部 gap >1h / 昨天及以前: Binance Vision（后台重试）
         #    - 今天的部分: klines API
         #    注: ticks（buy/sell 拆分）只通过 Vision 下载或本地上传获取
         if (
-            "ticks_1min" in result
-            and len(result["ticks_1min"]) > 0
+            "bars_1min" in result
+            and len(result["bars_1min"]) > 0
             and self.data_gap_filler
         ):
-            ticks = result["ticks_1min"].copy()
+            bars_1min = result["bars_1min"].copy()
 
             # 确保时区一致
-            if ticks["timestamp"].dt.tz is None:
-                ticks["timestamp"] = ticks["timestamp"].dt.tz_localize("UTC")
-            ticks = ticks.sort_values("timestamp").reset_index(drop=True)
+            bars_1min["timestamp"] = pd.to_datetime(
+                bars_1min["timestamp"], utc=True
+            )
+            bars_1min = bars_1min.sort_values("timestamp").reset_index(drop=True)
 
             now = pd.Timestamp.now(tz="UTC")
             ccxt_symbol = self._convert_symbol(symbol)
@@ -355,7 +356,7 @@ class GapFiller:
             from src.live_data_stream.system_mode import SystemModeManager
 
             temp_mgr = SystemModeManager()
-            internal_gaps = temp_mgr._detect_gaps(ticks)
+            internal_gaps = temp_mgr._detect_gaps(bars_1min)
             large_internal = [g for g in internal_gaps if g["minutes"] > 5]
 
             if large_internal:
@@ -378,27 +379,30 @@ class GapFiller:
                             symbol, gap_start, gap_end, timeframe="1m"
                         )
                         if len(fill_data) > 0:
-                            ticks = pd.concat([ticks, fill_data])
+                            bars_1min = pd.concat([bars_1min, fill_data])
+                            self._save_filled_data(symbol, fill_data)
                             total_filled += len(fill_data)
                     else:
                         print(f"  📦 内部 gap {gap_hours:.1f}h > 1h → 后台 Vision 重试")
-                        self._pending_vision_gaps.append(
-                            {
-                                "symbol": ccxt_symbol,
-                                "raw_symbol": symbol,
-                                "start": gap_start,
-                                "end": gap_end,
-                            }
+                        self._queue_pending_vision_gap(
+                            ccxt_symbol=ccxt_symbol,
+                            raw_symbol=symbol,
+                            start=gap_start,
+                            end=gap_end,
                         )
 
                 if total_filled > 0:
-                    ticks = ticks.drop_duplicates(subset=["timestamp"], keep="last")
-                    ticks = ticks.sort_values("timestamp").reset_index(drop=True)
+                    bars_1min = bars_1min.drop_duplicates(
+                        subset=["timestamp"], keep="last"
+                    )
+                    bars_1min = bars_1min.sort_values("timestamp").reset_index(
+                        drop=True
+                    )
                     print(f"  ✅ 内部 gap 补充: {total_filled} 条 bars")
 
             # 3b. 补充末尾 gap（最后数据到当前时间）
             #    策略: 昨天及以前 → Vision, 今天 → klines API
-            last_timestamp = ticks["timestamp"].max()
+            last_timestamp = bars_1min["timestamp"].max()
             tail_gap_seconds = (now - last_timestamp).total_seconds()
 
             if tail_gap_seconds > 300:
@@ -420,11 +424,9 @@ class GapFiller:
                         )
                     )
                     if len(fill_vision) > 0:
-                        ticks = pd.concat([ticks, fill_vision])
+                        bars_1min = pd.concat([bars_1min, fill_vision])
+                        self._save_filled_data(symbol, fill_vision, raw_ticks)
                         total_filled += len(fill_vision)
-                        # 保存原始 ticks 到磁盘
-                        if len(raw_ticks) > 0:
-                            self._save_raw_ticks(symbol, raw_ticks)
                         # Vision 可能只覆盖了部分天（某些天 404）
                         vision_last = fill_vision["timestamp"].max()
                         remaining_hours = (
@@ -436,13 +438,11 @@ class GapFiller:
                                 f"  📦 Vision 覆盖到 {vision_last.strftime('%m-%d %H:%M')}，"
                                 f"剩余 {remaining_hours:.1f}h → 后台 Vision 重试"
                             )
-                            self._pending_vision_gaps.append(
-                                {
-                                    "symbol": ccxt_symbol,
-                                    "raw_symbol": symbol,
-                                    "start": remaining_start,
-                                    "end": vision_end,
-                                }
+                            self._queue_pending_vision_gap(
+                                ccxt_symbol=ccxt_symbol,
+                                raw_symbol=symbol,
+                                start=remaining_start,
+                                end=vision_end,
                             )
                         elif remaining_hours > 0.08:  # >5min 用 klines 快速补
                             remaining_start = vision_last + timedelta(minutes=1)
@@ -450,7 +450,8 @@ class GapFiller:
                                 symbol, remaining_start, vision_end, timeframe="1m"
                             )
                             if len(fill_small) > 0:
-                                ticks = pd.concat([ticks, fill_small])
+                                bars_1min = pd.concat([bars_1min, fill_small])
+                                self._save_filled_data(symbol, fill_small)
                                 total_filled += len(fill_small)
                     else:
                         # Vision 完全失败
@@ -461,19 +462,18 @@ class GapFiller:
                                 symbol, gap_start, vision_end, timeframe="1m"
                             )
                             if len(fill_kl) > 0:
-                                ticks = pd.concat([ticks, fill_kl])
+                                bars_1min = pd.concat([bars_1min, fill_kl])
+                                self._save_filled_data(symbol, fill_kl)
                                 total_filled += len(fill_kl)
                         else:
                             print(
                                 f"  📦 Vision 失败，{gap_hours:.1f}h → 后台 Vision 重试"
                             )
-                            self._pending_vision_gaps.append(
-                                {
-                                    "symbol": ccxt_symbol,
-                                    "raw_symbol": symbol,
-                                    "start": gap_start,
-                                    "end": vision_end,
-                                }
+                            self._queue_pending_vision_gap(
+                                ccxt_symbol=ccxt_symbol,
+                                raw_symbol=symbol,
+                                start=gap_start,
+                                end=vision_end,
                             )
                     gap_start = today_start
 
@@ -490,16 +490,19 @@ class GapFiller:
                         symbol, fill_start, now, timeframe="1m"
                     )
                     if len(fill_today) > 0:
-                        ticks = pd.concat([ticks, fill_today])
+                        bars_1min = pd.concat([bars_1min, fill_today])
+                        self._save_filled_data(symbol, fill_today)
                         total_filled += len(fill_today)
 
-                ticks = ticks.drop_duplicates(subset=["timestamp"], keep="last")
-                ticks = ticks.sort_values("timestamp").reset_index(drop=True)
+                bars_1min = bars_1min.drop_duplicates(
+                    subset=["timestamp"], keep="last"
+                )
+                bars_1min = bars_1min.sort_values("timestamp").reset_index(drop=True)
 
             if total_filled > 0:
-                result["ticks_1min"] = ticks
+                result["bars_1min"] = bars_1min
                 print(
-                    f"✅ 补数据总计: {total_filled} 条 bars，数据连续到 {ticks['timestamp'].max()}"
+                    f"✅ 补数据总计: {total_filled} 条 bars，数据连续到 {bars_1min['timestamp'].max()}"
                 )
             elif tail_gap_seconds > 300:
                 print(f"⚠️ 补数据全部失败，将依赖自动升级机制")
@@ -535,6 +538,45 @@ class GapFiller:
         self._pending_vision_gaps = remaining
         return len(remaining) == 0
 
+    def _queue_pending_vision_gap(
+        self,
+        *,
+        ccxt_symbol: str,
+        raw_symbol: str,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+    ) -> None:
+        """Queue a Vision repair gap once; feature-bus retries these in background."""
+        start = pd.Timestamp(start)
+        end = pd.Timestamp(end)
+        if start.tzinfo is None:
+            start = start.tz_localize("UTC")
+        else:
+            start = start.tz_convert("UTC")
+        if end.tzinfo is None:
+            end = end.tz_localize("UTC")
+        else:
+            end = end.tz_convert("UTC")
+
+        key = (raw_symbol, int(start.timestamp()), int(end.timestamp()))
+        for gap in self._pending_vision_gaps:
+            existing = (
+                gap["raw_symbol"],
+                int(pd.Timestamp(gap["start"]).timestamp()),
+                int(pd.Timestamp(gap["end"]).timestamp()),
+            )
+            if existing == key:
+                return
+
+        self._pending_vision_gaps.append(
+            {
+                "symbol": ccxt_symbol,
+                "raw_symbol": raw_symbol,
+                "start": start,
+                "end": end,
+            }
+        )
+
     def _save_filled_data(
         self, symbol: str, bars: pd.DataFrame, raw_ticks: pd.DataFrame | None = None
     ) -> None:
@@ -545,6 +587,7 @@ class GapFiller:
             return
 
         bars_copy = bars.copy()
+        bars_copy["timestamp"] = pd.to_datetime(bars_copy["timestamp"], utc=True)
         bars_copy["_date"] = bars_copy["timestamp"].dt.strftime("%Y-%m-%d")
         for date_str, day_bars in bars_copy.groupby("_date"):
             day_data = day_bars.drop(columns=["_date"])
@@ -562,6 +605,7 @@ class GapFiller:
         if self.storage_manager is None or len(raw_ticks) == 0:
             return
         ticks_copy = raw_ticks.copy()
+        ticks_copy["timestamp"] = pd.to_datetime(ticks_copy["timestamp"], utc=True)
         ticks_copy["_date"] = ticks_copy["timestamp"].dt.strftime("%Y-%m-%d")
         for date_str, day_ticks in ticks_copy.groupby("_date"):
             day_data = day_ticks.drop(columns=["_date"])

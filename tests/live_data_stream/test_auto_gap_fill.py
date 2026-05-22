@@ -7,6 +7,7 @@ from src.live_data_stream.auto_gap_fill import (
     detect_large_bar_gaps,
     detect_large_tick_gaps,
     fill_large_bar_gaps,
+    run_auto_gap_fill_once,
 )
 from src.live_data_stream.feature_storage import StorageManager
 from src.live_data_stream.gap_filler import GapFiller
@@ -15,6 +16,8 @@ from src.live_data_stream.gap_filler import GapFiller
 class FakeGapFiller:
     def __init__(self) -> None:
         self.data_gap_filler = None
+        self._pending_vision_gaps = []
+        self.retry_calls = 0
 
     def fill_from_binance_api(
         self,
@@ -44,6 +47,11 @@ class FakeGapFiller:
     ) -> pd.DataFrame:
         return pd.DataFrame()
 
+    def retry_pending_gaps(self) -> bool:
+        self.retry_calls += 1
+        self._pending_vision_gaps = []
+        return True
+
 
 class FakeAggTradeBackend:
     def _aggregate_trades_to_1min(self, trades: pd.DataFrame) -> pd.DataFrame:
@@ -61,6 +69,20 @@ class FakeAggTradeBackend:
                 "sell_volume": 0.0,
                 "trade_count": 1,
                 "delta": 1.0,
+            }
+        )
+
+
+class FakeKlineDownloader:
+    def download_missing_bars(self, symbol, missing_timestamps, timeframe):
+        return pd.DataFrame(
+            {
+                "timestamp": pd.to_datetime(missing_timestamps, utc=True),
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "close": 100.5,
+                "volume": 1.0,
             }
         )
 
@@ -267,3 +289,81 @@ def test_gap_filler_uses_minute_frequency_for_ccxt_1m(tmp_path):
 
     assert fake.expected_count == 3
     assert len(out) == 3
+
+
+def test_warmup_persists_kline_bar_repairs_without_polluting_ticks(tmp_path):
+    storage = StorageManager(tmp_path)
+    now = pd.Timestamp.now(tz="UTC").floor("min")
+    date_str = now.strftime("%Y-%m-%d")
+    storage.bar_1min.append(
+        "ETHUSDT",
+        date_str,
+        _bars(
+            [
+                (now - pd.Timedelta(minutes=20)).isoformat(),
+                (now - pd.Timedelta(minutes=19)).isoformat(),
+                (now - pd.Timedelta(minutes=10)).isoformat(),
+                (now - pd.Timedelta(minutes=1)).isoformat(),
+            ]
+        ),
+    )
+    storage.ticks.append(
+        "ETHUSDT",
+        date_str,
+        pd.DataFrame(
+            {
+                "timestamp": [now - pd.Timedelta(minutes=20)],
+                "price": [100.0],
+                "volume": [1.0],
+                "side": [1],
+            }
+        ),
+    )
+    filler = GapFiller(storage)
+    filler.data_gap_filler = FakeKlineDownloader()
+
+    result = filler.warmup("ETHUSDT", days=1, end_date=date_str)
+
+    saved_bars = storage.bar_1min.load("ETHUSDT", date_str)
+    saved_ticks = storage.ticks.load("ETHUSDT", date_str)
+    assert len(result["bars_1min"]) > 4
+    assert pd.Timestamp(now - pd.Timedelta(minutes=18)) in set(saved_bars["timestamp"])
+    assert list(saved_ticks.columns) == ["timestamp", "price", "volume", "side"]
+
+
+def test_run_auto_gap_fill_once_retries_pending_and_scans_deep_history(tmp_path):
+    storage = StorageManager(tmp_path)
+    storage.bar_1min.append(
+        "ETHUSDT",
+        "2026-05-18",
+        _bars(
+            [
+                "2026-05-18T00:00:00Z",
+                "2026-05-18T00:01:00Z",
+                "2026-05-18T03:10:00Z",
+            ]
+        ),
+    )
+    gap_filler = FakeGapFiller()
+    gap_filler._pending_vision_gaps = [
+        {
+            "symbol": "ETH/USDT:USDT",
+            "raw_symbol": "ETHUSDT",
+            "start": pd.Timestamp("2026-05-17T00:00:00Z"),
+            "end": pd.Timestamp("2026-05-17T01:00:00Z"),
+        }
+    ]
+
+    written = run_auto_gap_fill_once(
+        storage,
+        gap_filler,  # type: ignore[arg-type]
+        ["ETHUSDT"],
+        lookback_hours=96,
+        min_gap_minutes=60,
+        now=pd.Timestamp("2026-05-21T00:00:00Z"),
+    )
+
+    assert gap_filler.retry_calls == 1
+    assert written > 0
+    saved = storage.bar_1min.load_range("ETHUSDT", "2026-05-18", "2026-05-18")
+    assert pd.Timestamp("2026-05-18T00:02:00Z") in set(saved["timestamp"])

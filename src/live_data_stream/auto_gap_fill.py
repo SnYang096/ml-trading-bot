@@ -340,6 +340,63 @@ def fill_large_bar_gaps(
     return written
 
 
+def run_auto_gap_fill_once(
+    storage: StorageManager,
+    gap_filler: GapFiller,
+    symbols: Iterable[str],
+    *,
+    lookback_hours: float = 48.0,
+    min_gap_minutes: float = 60.0,
+    max_gaps_per_run: int = 24,
+    now: Optional[pd.Timestamp] = None,
+) -> int:
+    """Run one repair pass for pending Vision gaps plus scanned bar/tick gaps."""
+    symbol_list = [str(s).upper() for s in symbols]
+
+    pending_count = len(getattr(gap_filler, "_pending_vision_gaps", []))
+    if pending_count:
+        logger.warning(
+            "auto-gap-fill: retrying %d queued Vision gaps before scan",
+            pending_count,
+        )
+        gap_filler.retry_pending_gaps()
+
+    gaps = detect_large_bar_gaps(
+        storage,
+        symbol_list,
+        lookback_hours=lookback_hours,
+        min_gap_minutes=min_gap_minutes,
+        now=now,
+    )
+    gaps.extend(
+        detect_large_tick_gaps(
+            storage,
+            symbol_list,
+            lookback_hours=lookback_hours,
+            min_gap_minutes=min_gap_minutes,
+            now=now,
+        )
+    )
+    gaps = _dedupe_gaps(gaps)
+    if not gaps:
+        logger.info("auto-gap-fill: no gaps >= %.1f min", min_gap_minutes)
+        return 0
+
+    written = fill_large_bar_gaps(
+        storage,
+        gap_filler,
+        gaps,
+        max_gaps_per_run=max_gaps_per_run,
+        now=now,
+    )
+    logger.warning(
+        "auto-gap-fill: run complete gaps=%d written_bars=%d",
+        len(gaps),
+        written,
+    )
+    return written
+
+
 async def auto_gap_fill_loop(
     storage: StorageManager,
     gap_filler: GapFiller,
@@ -347,7 +404,9 @@ async def auto_gap_fill_loop(
     *,
     interval_seconds: float = 3600.0,
     lookback_hours: float = 48.0,
+    startup_lookback_hours: Optional[float] = None,
     min_gap_minutes: float = 60.0,
+    max_gaps_per_run: int = 24,
     initial_delay_seconds: float = 300.0,
 ) -> None:
     if initial_delay_seconds > 0:
@@ -355,37 +414,27 @@ async def auto_gap_fill_loop(
 
     loop = asyncio.get_running_loop()
     symbol_list = [str(s).upper() for s in symbols]
+    first_run = True
     while True:
         try:
+            scan_lookback = (
+                float(startup_lookback_hours)
+                if first_run and startup_lookback_hours is not None
+                else float(lookback_hours)
+            )
 
             def _run_once() -> int:
-                gaps = detect_large_bar_gaps(
+                return run_auto_gap_fill_once(
                     storage,
+                    gap_filler,
                     symbol_list,
-                    lookback_hours=lookback_hours,
+                    lookback_hours=scan_lookback,
                     min_gap_minutes=min_gap_minutes,
+                    max_gaps_per_run=max_gaps_per_run,
                 )
-                gaps.extend(
-                    detect_large_tick_gaps(
-                        storage,
-                        symbol_list,
-                        lookback_hours=lookback_hours,
-                        min_gap_minutes=min_gap_minutes,
-                    )
-                )
-                gaps = _dedupe_gaps(gaps)
-                if not gaps:
-                    logger.info("auto-gap-fill: no gaps >= %.1f min", min_gap_minutes)
-                    return 0
-                written = fill_large_bar_gaps(storage, gap_filler, gaps)
-                logger.warning(
-                    "auto-gap-fill: run complete gaps=%d written_bars=%d",
-                    len(gaps),
-                    written,
-                )
-                return written
 
             await loop.run_in_executor(None, _run_once)
+            first_run = False
         except asyncio.CancelledError:
             break
         except Exception:
