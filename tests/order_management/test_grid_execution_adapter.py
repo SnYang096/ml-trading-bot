@@ -254,6 +254,25 @@ def test_cancel_requires_symbol_and_calls_exchange() -> None:
     assert result.status == "canceled"
 
 
+def test_cancel_treats_unknown_order_as_already_gone() -> None:
+    api = _api()
+    api.cancel_order.side_effect = Exception(
+        'binance {"code":-2011,"msg":"Unknown order sent."}'
+    )
+    adapter = GridExecutionAdapter(api)
+
+    result = adapter.execute_action(
+        {
+            "action": "cancel",
+            "symbol": "BNBUSDT",
+            "order_id": "2000000972847548",
+            "reason": "orphan_exchange_order",
+        }
+    )
+
+    assert result.status == "canceled"
+
+
 def test_simulation_fill_and_take_profit_are_ignored() -> None:
     api = _api()
     adapter = GridExecutionAdapter(api)

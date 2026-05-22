@@ -47,6 +47,15 @@ def _market_exit_reason_bucket(action: Dict[str, Any]) -> str:
     return "other"
 
 
+def _is_order_already_gone(exc: BaseException) -> bool:
+    """True when cancel target is already filled/canceled (Binance -2011, etc.)."""
+    name = type(exc).__name__.lower()
+    if "ordernotfound" in name or "order not found" in name:
+        return True
+    msg = str(exc).lower()
+    return "unknown order" in msg or "-2011" in msg or "order does not exist" in msg
+
+
 def _is_binance_rate_limit_detail(text: str) -> bool:
     """Recognize Binance / ccxt wording for REST rate limits (-1003, HTTP 429)."""
     chunk = str(text or "")
@@ -327,7 +336,22 @@ class MultiLegExecutionAdapter:
             )
             self._persist_order_result(action, result, purpose="cancel")
             return result
-        ok = self.binance_api.cancel_order(order_id, symbol)
+        try:
+            ok = self.binance_api.cancel_order(order_id, symbol)
+        except Exception as exc:
+            if _is_order_already_gone(exc):
+                logger.info(
+                    "multi-leg cancel: order already gone (%s): strategy=%s "
+                    "symbol=%s order_id=%s reason=%s",
+                    exc,
+                    self.strategy_name,
+                    symbol,
+                    order_id,
+                    reason or "unspecified",
+                )
+                ok = True
+            else:
+                raise
         result = MultiLegExecutionResult(
             action="cancel",
             status="canceled" if ok else "not_canceled",
