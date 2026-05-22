@@ -69,10 +69,10 @@ class TestDataGapFiller:
 
         missing = gap_filler.detect_missing_bars(df, timeframe="15T")
 
-        # 应该检测到2个缺失的时间戳
+        # 应该检测到2个缺失的时间戳（统一为 UTC-aware）
         assert len(missing) == 2
-        assert pd.Timestamp("2024-01-01 10:30:00") in missing
-        assert pd.Timestamp("2024-01-01 10:45:00") in missing
+        assert pd.Timestamp("2024-01-01 10:30:00", tz="UTC") in missing
+        assert pd.Timestamp("2024-01-01 10:45:00", tz="UTC") in missing
 
     def test_detect_missing_bars_large_gap(self, gap_filler):
         """测试检测缺失数据 - 大间隔缺失"""
@@ -96,11 +96,11 @@ class TestDataGapFiller:
         # 应该检测到5个缺失的时间戳
         assert len(missing) == 5
         expected_times = [
-            pd.Timestamp("2024-01-01 10:15:00"),
-            pd.Timestamp("2024-01-01 10:30:00"),
-            pd.Timestamp("2024-01-01 10:45:00"),
-            pd.Timestamp("2024-01-01 11:00:00"),
-            pd.Timestamp("2024-01-01 11:15:00"),
+            pd.Timestamp("2024-01-01 10:15:00", tz="UTC"),
+            pd.Timestamp("2024-01-01 10:30:00", tz="UTC"),
+            pd.Timestamp("2024-01-01 10:45:00", tz="UTC"),
+            pd.Timestamp("2024-01-01 11:00:00", tz="UTC"),
+            pd.Timestamp("2024-01-01 11:15:00", tz="UTC"),
         ]
         for expected in expected_times:
             assert expected in missing
@@ -201,6 +201,32 @@ class TestDataGapFiller:
         assert "low" in result.columns
         assert "close" in result.columns
         assert "volume" in result.columns
+
+    @patch("src.live_data_stream.data_gap_filler.CCXT_AVAILABLE", True)
+    def test_download_missing_bars_tz_aware_missing(self, mock_exchange):
+        """tz-aware missing timestamps must match naive API OHLCV (no subtract error)."""
+        gap_filler = DataGapFiller(mock_exchange)
+
+        ts_10_15 = int(pd.Timestamp("2024-01-01 10:15:00", tz="UTC").timestamp() * 1000)
+        ts_10_30 = int(pd.Timestamp("2024-01-01 10:30:00", tz="UTC").timestamp() * 1000)
+        mock_exchange.fetch_ohlcv.return_value = [
+            [ts_10_15, 50100, 50200, 50000, 50150, 110],
+            [ts_10_30, 50200, 50300, 50100, 50250, 120],
+        ]
+
+        missing_timestamps = [
+            pd.Timestamp("2024-01-01 10:15:00", tz="UTC"),
+            pd.Timestamp("2024-01-01 10:30:00", tz="UTC"),
+        ]
+
+        result = gap_filler.download_missing_bars(
+            symbol="BTC/USDT:USDT",
+            missing_timestamps=missing_timestamps,
+            timeframe="15T",
+        )
+
+        assert len(result) == 2
+        assert result["timestamp"].dt.tz is not None
 
     @patch("src.live_data_stream.data_gap_filler.CCXT_AVAILABLE", True)
     def test_download_missing_bars_empty(self, mock_exchange):

@@ -25,6 +25,14 @@ except ImportError:
     print("⚠️ ccxt not installed. Install with: pip install ccxt")
 
 
+def _utc_timestamp(value: pd.Timestamp | str) -> pd.Timestamp:
+    """Normalize to tz-aware UTC (live storage uses UTC-aware timestamps)."""
+    ts = pd.Timestamp(value)
+    if ts.tzinfo is None:
+        return ts.tz_localize("UTC")
+    return ts.tz_convert("UTC")
+
+
 class DataGapFiller:
     """
     数据缺失补全器
@@ -78,8 +86,8 @@ class DataGapFiller:
         missing_timestamps = []
 
         for i in range(len(df_sorted) - 1):
-            current_time = pd.Timestamp(df_sorted.iloc[i]["timestamp"])
-            next_time = pd.Timestamp(df_sorted.iloc[i + 1]["timestamp"])
+            current_time = _utc_timestamp(df_sorted.iloc[i]["timestamp"])
+            next_time = _utc_timestamp(df_sorted.iloc[i + 1]["timestamp"])
 
             # 计算实际间隔
             gap = next_time - current_time
@@ -119,6 +127,8 @@ class DataGapFiller:
         if not missing_timestamps:
             return pd.DataFrame()
 
+        missing_timestamps = [_utc_timestamp(ts) for ts in missing_timestamps]
+
         # 转换时间框架格式
         ccxt_timeframe = self._convert_timeframe(timeframe)
 
@@ -154,7 +164,7 @@ class DataGapFiller:
                     ohlcv,
                     columns=["timestamp", "open", "high", "low", "close", "volume"],
                 )
-                df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+                df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
 
                 # 过滤出缺失的时间戳（允许小的时间误差）
                 tolerance = pd.Timedelta(timeframe) * 0.1
@@ -210,6 +220,9 @@ class DataGapFiller:
         Returns:
             trades 数据 DataFrame，列: [timestamp, price, volume, side]
         """
+        start_time = _utc_timestamp(start_time)
+        end_time = _utc_timestamp(end_time)
+
         all_trades = []
         current_start = int(start_time.timestamp() * 1000)
         end_ms = int(end_time.timestamp() * 1000)
@@ -300,6 +313,9 @@ class DataGapFiller:
             1min bars DataFrame，列: [timestamp, open, high, low, close, volume,
                                       buy_volume, sell_volume, delta, trade_count]
         """
+        start_time = _utc_timestamp(start_time)
+        end_time = _utc_timestamp(end_time)
+
         gap_hours = (end_time - start_time).total_seconds() / 3600
         print(
             f"📥 aggTrades 补数据: {symbol} {start_time} → {end_time} ({gap_hours:.1f}h)"
@@ -415,6 +431,9 @@ class DataGapFiller:
         except ImportError:
             print("⚠️ requests 未安装，无法使用 Binance Vision")
             return _empty
+
+        start_time = _utc_timestamp(start_time)
+        end_time = _utc_timestamp(end_time)
 
         # 转换符号: BTC/USDT:USDT → BTCUSDT
         raw_symbol = symbol.replace("/", "").replace(":USDT", "")
@@ -560,6 +579,10 @@ class DataGapFiller:
         """
         if len(df) == 0:
             return df
+
+        df = df.copy()
+        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+        expected_timestamps = [_utc_timestamp(ts) for ts in expected_timestamps]
 
         tolerance = pd.Timedelta(timeframe) * 0.1
         validated = []

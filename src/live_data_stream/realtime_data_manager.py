@@ -495,9 +495,11 @@ class RealtimeDataManager:
         expected_interval = pd.Timedelta(self.timeframe)
         tolerance = expected_interval * 0.1
 
-        # 检查最后一条数据和新数据之间的间隔
-        last_timestamp = pd.Timestamp(self.history_df["timestamp"].iloc[-1])
-        new_timestamp = pd.Timestamp(new_bar["timestamp"].iloc[0])
+        # 检查最后一条数据和新数据之间的间隔（统一 UTC，避免 naive/aware 混用）
+        last_timestamp = pd.to_datetime(
+            self.history_df["timestamp"].iloc[-1], utc=True
+        )
+        new_timestamp = pd.to_datetime(new_bar["timestamp"].iloc[0], utc=True)
 
         gap = new_timestamp - last_timestamp
 
