@@ -362,6 +362,7 @@ def trade_map_bundle(
             cols,
             start=overlay_start,
             end=overlay_end,
+            candles=ohlcv.get("candles"),
         )
     main_keys = parse_main_overlay_keys(main_overlays)
     main_ol: dict = {}

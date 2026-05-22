@@ -25,7 +25,9 @@ const Core = ctx.globalThis.MLBotTradeMapCore;
 const markers = [
   { id: 'trend:orders:1', time: 1, scope: 'trend', event: 'entry', side: 'long', status: 'filled' },
   { id: 'spot:spot_orders:2', time: 2, scope: 'spot', event: 'exit', side: 'long', status: 'pending', pnl_usdt: -1 },
-  { id: 'multi_leg:orders:3', time: 3, scope: 'multi_leg', strategy: 'chop_grid', event: 'tp', side: 'short', status: 'pending', detail: { leg_id: 'BNBUSDT_grid_L1_tp' } },
+  { id: 'multi_leg:orders:3', time: 3, scope: 'multi_leg', strategy: 'chop_grid', event: 'tp', side: 'short', status: 'pending', detail: { leg_label: 'L1_tp' } },
+  { id: 'multi_leg:orders:4', time: 4, scope: 'multi_leg', strategy: 'chop_grid', event: 'grid', side: 'long', status: 'pending', detail: { leg_label: 'L2' } },
+  { id: 'multi_leg:orders:5', time: 5, scope: 'multi_leg', strategy: 'chop_grid', event: 'entry', side: 'short', status: 'filled', detail: { leg_label: 'S1' } },
 ];
 const lwc = Core.markersToLwc(markers);
 const scopes = Core.scopesFromLayers({ trend: true, spot: false, multiLeg: true, pending: false });
@@ -80,6 +82,13 @@ console.log(JSON.stringify({
   mergedFirst: merged[0].time,
   mergedLast: merged[1].time,
   tpText: Core.markersToLwc(markers)[2].text,
+  l2Pending: Core.markersToLwc(markers)[3].text,
+  s1Filled: Core.markersToLwc(markers)[4].text,
+  segPts: Core.chopSegmentedLinePoints(
+    [{ start: 100, end: 200 }, { start: 300, end: 400 }],
+    640.5,
+    7200
+  ),
 }));
 """
 
@@ -97,7 +106,7 @@ def test_trade_map_core_node():
     )
     out = json.loads(proc.stdout.strip())
     assert out["scopes"] == "trend,multi_leg"
-    assert out["lwcCount"] == 3
+    assert out["lwcCount"] == 5
     assert out["pendingShape"] == "circle"
     assert out["spacing"] == 4
     assert out["vis"] == 320
@@ -120,4 +129,8 @@ def test_trade_map_core_node():
     assert out["mergedLen"] == 2
     assert out["mergedFirst"] == 100
     assert out["mergedLast"] == 200
-    assert out["tpText"] == "chop_grid:tp:L1:pending"
+    assert out["tpText"] == "L1_TP"
+    assert out["l2Pending"] == "L2 挂单"
+    assert out["s1Filled"] == "S1 成交"
+    assert len(out["segPts"]) >= 4
+    assert out["segPts"][2]["value"] is None  # NaN segment gap

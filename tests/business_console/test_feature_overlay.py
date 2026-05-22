@@ -56,6 +56,45 @@ def test_resolve_weekly_ema_alias_column(tmp_path):
     assert data["point_count"] >= 1
 
 
+def test_align_feature_points_to_candles(tmp_path):
+    import pandas as pd
+
+    from mlbot_console.services.feature_overlay import (
+        _align_points_to_candles,
+        load_feature_overlays,
+    )
+
+    feat_dir = tmp_path / "features" / "primary"
+    feat_dir.mkdir(parents=True)
+    start = pd.Timestamp("2024-01-01", tz="UTC")
+    rows = [
+        {
+            "timestamp": start + pd.Timedelta(hours=i * 2),
+            "regime_score": 0.1 + i * 0.05,
+        }
+        for i in range(5)
+    ]
+    pd.DataFrame(rows).to_parquet(feat_dir / "ETHUSDT.parquet", index=False)
+
+    candles = [
+        {"time": int((start + pd.Timedelta(hours=i * 2)).timestamp()), "close": 100 + i}
+        for i in range(5)
+    ]
+    overlays = load_feature_overlays(
+        tmp_path,
+        "ETHUSDT",
+        "2h",
+        ["regime_score"],
+        start=start,
+        end=start + pd.Timedelta(days=1),
+        candles=candles,
+    )
+    data = overlays["regime_score"]
+    assert data["aligned"] is True
+    assert data["point_count"] == len(candles)
+    assert len(data["points"]) == len(candles)
+
+
 def test_load_multiple_overlays(bus_root):
     overlays = load_feature_overlays(
         bus_root,

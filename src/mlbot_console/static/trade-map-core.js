@@ -150,12 +150,42 @@
     return best;
   }
 
+  function chopGridMarkerDisplayText(m, pending) {
+    const strat = (m.strategy || "").toLowerCase();
+    if (strat !== "chop_grid") return "";
+    const leg = String((m.detail && m.detail.leg_label) || "").trim().toUpperCase();
+    if (!leg) return "";
+    const ev = String(m.event || "").toLowerCase();
+    if (ev === "tp") return leg.endsWith("_TP") ? leg : `${leg}_TP`;
+    if (ev === "entry" && !pending) return `${leg} 成交`;
+    if (pending || ev === "grid") return `${leg} 挂单`;
+    return leg;
+  }
+
+  function chopSegmentedLinePoints(regions, price, barSec) {
+    const px = Number(price);
+    if (!Number.isFinite(px) || !regions?.length) return [];
+    const gap = Math.max(1, Number(barSec) || 7200);
+    const pts = [];
+    const sorted = [...regions].sort((a, b) => Number(a.start) - Number(b.start));
+    for (const r of sorted) {
+      const start = Number(r.start);
+      const end = Number(r.end);
+      if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+      pts.push({ time: start, value: px });
+      pts.push({ time: end, value: px });
+      pts.push({ time: end + gap, value: NaN });
+    }
+    return pts;
+  }
+
   function markersToLwc(markers, selectedId) {
     return (markers || []).map((m) => {
       const role = markerRole(m);
       const pending = (m.status || "filled").toLowerCase() === "pending";
       const selected = selectedId && m.id === selectedId;
       const strat = (m.strategy || m.scope || "").toLowerCase();
+      const chopText = chopGridMarkerDisplayText(m, pending);
       const leg =
         (m.detail && (m.detail.leg_label || m.detail.leg_id)) || "";
       let legToken = "";
@@ -167,7 +197,9 @@
         }
       }
       const legTag = legToken ? `:${legToken}` : "";
-      const baseText = `${strat}:${m.event}${legTag}${pending ? ":pending" : ""}`;
+      const baseText = chopText
+        ? chopText
+        : `${strat}:${m.event}${legTag}${pending ? ":pending" : ""}`;
       const aboveBar = role === "exit" || role === "tp";
       return {
         time: m.time,
@@ -715,6 +747,8 @@
     clampCandleOhlc,
     priceRangeForVisibleCandles,
     barSpacingForCount,
+    chopSegmentedLinePoints,
+    chopGridMarkerDisplayText,
     DEFAULT_VISIBLE_BARS,
     FEATURE_PRESETS,
     ACCOUNT_LAYER_ORDER,

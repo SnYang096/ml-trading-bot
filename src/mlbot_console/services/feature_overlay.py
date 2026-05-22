@@ -49,6 +49,68 @@ REFERENCE_Y_BY_COLUMN: Dict[str, float] = {
 }
 
 
+def _align_points_to_candles(
+    points: List[Dict[str, Any]],
+    candles: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """merge_asof feature values onto OHLCV bar times (no future leak)."""
+    if not points or not candles:
+        return list(points or [])
+    src = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(
+                [int(p["time"]) for p in points], unit="s", utc=True
+            ),
+            "value": [p["value"] for p in points],
+        }
+    ).dropna(subset=["value"])
+    if src.empty:
+        return []
+    tgt = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(
+                [int(c["time"]) for c in candles], unit="s", utc=True
+            ),
+            "ord": range(len(candles)),
+        }
+    )
+    merged = pd.merge_asof(
+        tgt.sort_values("timestamp"),
+        src.sort_values("timestamp"),
+        on="timestamp",
+        direction="backward",
+    ).sort_values("ord")
+    out: List[Dict[str, Any]] = []
+    for _, row in merged.iterrows():
+        val = row.get("value")
+        if val is None or (isinstance(val, float) and val != val):
+            continue
+        out.append(
+            {
+                "time": int(row["timestamp"].timestamp()),
+                "value": float(val),
+            }
+        )
+    return out
+
+
+def _reference_lines_for_column(column: str) -> List[Dict[str, Any]]:
+    from mlbot_console.services.feature_thresholds import build_reference_lines_by_column
+
+    ref_map = build_reference_lines_by_column()
+    lines = ref_map.get(column) or []
+    if not lines and column in REFERENCE_Y_BY_COLUMN:
+        y = REFERENCE_Y_BY_COLUMN[column]
+        return [{"y": y, "label": f"{column}={y:g}", "operator": ""}]
+    return [dict(x) for x in lines]
+
+
+def _semantic_hint(column: str, latest: Optional[float]) -> str:
+    from mlbot_console.services.feature_thresholds import semantic_hint_for_column
+
+    return semantic_hint_for_column(column, latest)
+
+
 def _resolve_feature_path(feature_bus_root: Path, symbol: str, timeframe: str) -> Optional[Path]:
     sym = symbol.upper()
     for sub in FEATURE_DIRS.get(str(timeframe).strip(), []):
@@ -194,6 +256,7 @@ def load_feature_overlays(
     *,
     start: Optional[pd.Timestamp] = None,
     end: Optional[pd.Timestamp] = None,
+    candles: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Dict[str, Any]]:
     path = _resolve_feature_path(feature_bus_root, symbol, timeframe)
     out: Dict[str, Dict[str, Any]] = {}
@@ -202,22 +265,26 @@ def load_feature_overlays(
         return out
     if path is None:
         for col in requested:
+            ref_lines = _reference_lines_for_column(col)
             out[col] = {
                 "available": False,
                 "column": col,
                 "points": [],
                 "reference_y": REFERENCE_Y_BY_COLUMN.get(col),
+                "reference_lines": ref_lines,
             }
         return out
 
     df = pd.read_parquet(path)
     if df.empty or "timestamp" not in df.columns:
         for col in requested:
+            ref_lines = _reference_lines_for_column(col)
             out[col] = {
                 "available": False,
                 "column": col,
                 "points": [],
                 "reference_y": REFERENCE_Y_BY_COLUMN.get(col),
+                "reference_lines": ref_lines,
                 "path": str(path),
             }
         return out
@@ -232,6 +299,7 @@ def load_feature_overlays(
 
     for col in requested:
         ref_y = REFERENCE_Y_BY_COLUMN.get(col)
+        ref_lines = _reference_lines_for_column(col)
         parquet_col = _resolve_parquet_column(df, col)
         if parquet_col is None:
             out[col] = {
@@ -240,6 +308,7 @@ def load_feature_overlays(
                 "points": [],
                 "point_count": 0,
                 "reference_y": ref_y,
+                "reference_lines": ref_lines,
                 "path": str(path),
             }
             continue
@@ -250,6 +319,9 @@ def load_feature_overlays(
                 continue
             ts = _utc_ts(row["timestamp"])
             points.append({"time": int(ts.timestamp()), "value": float(val)})
+        aligned = bool(candles)
+        if aligned:
+            points = _align_points_to_candles(points, candles)
         latest_val = points[-1]["value"] if points else None
         out[col] = {
             "available": bool(points),
@@ -258,7 +330,10 @@ def load_feature_overlays(
             "points": points,
             "point_count": len(points),
             "reference_y": ref_y,
+            "reference_lines": ref_lines,
             "latest": latest_val,
+            "semantic_hint": _semantic_hint(col, latest_val),
+            "aligned": aligned,
             "path": str(path),
             "timeframe_dir": path.parent.name,
         }

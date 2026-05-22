@@ -269,6 +269,18 @@
     return s;
   }
 
+  function isSlLegLabel(label) {
+    const s = String(label || "").trim().toLowerCase();
+    return s.endsWith("_sl") || s.includes("_sl_");
+  }
+
+  function legBadgeClassForLabel(label) {
+    const s = String(label || "").trim().toLowerCase();
+    if (s.endsWith("_tp")) return "leg-badge leg-tp";
+    if (isSlLegLabel(s)) return "leg-badge leg-sl";
+    return "leg-badge";
+  }
+
   function legBadge(row) {
     const parts = [];
     const purpose = String(row?.purpose || "").toLowerCase();
@@ -280,14 +292,22 @@
     }
     const label = String(row?.leg_label || "").trim();
     if (label) {
-      const cls = label.endsWith("_tp") ? "leg-badge leg-tp" : "leg-badge";
-      parts.push(`<span class="${cls}" title="网格档位">${escHtml(label)}</span>`);
+      const cls = legBadgeClassForLabel(label);
+      parts.push(
+        `<span class="${cls}" title="网格档位">${escHtml(label.toUpperCase())}</span>`
+      );
     }
     return parts.join(" ");
   }
 
   function isTpLegRow(row) {
-    return String(row?.leg_label || "").trim().endsWith("_tp");
+    return String(row?.leg_label || "").trim().toLowerCase().endsWith("_tp");
+  }
+
+  function isSlLegRow(row) {
+    const purpose = String(row?.purpose || "").toLowerCase();
+    if (purpose === "stop_loss") return true;
+    return isSlLegLabel(row?.leg_label);
   }
 
   function ordersLegCell(row, esc) {
@@ -326,10 +346,12 @@
       const mid = r.marker_id || "";
       const symCell = showSymbol ? `<td>${esc(r.symbol || "")}</td>` : "";
       const tpRow = isTpLegRow(r);
+      const slRow = isSlLegRow(r);
+      const rowCls = tpRow ? "orders-leg-tp-row" : slRow ? "orders-leg-sl-row" : "";
       parts.push(
         `<tr data-idx="${i}" data-marker-id="${esc(mid)}" data-symbol="${esc(r.symbol || "")}"` +
           (batch ? ` data-grid-batch="${esc(batch)}"` : "") +
-          (tpRow ? ` class="orders-leg-tp-row"` : "") +
+          (rowCls ? ` class="${rowCls}"` : "") +
           `>
           ${ordersLegCell(r, esc)}
           ${symCell}
