@@ -473,6 +473,33 @@ class PositionTracker:
             )
         )
 
+    @staticmethod
+    def _client_order_id_from_order(order: Dict[str, Any]) -> str:
+        info = order.get("info") if isinstance(order.get("info"), dict) else {}
+        return str(
+            order.get("client_order_id")
+            or info.get("clientOrderId")
+            or info.get("clientAlgoId")
+            or ""
+        ).strip()
+
+    @staticmethod
+    def _is_owned_stop_or_tp_conditional(order: Dict[str, Any]) -> bool:
+        """Fallback cleanup only touches bot-managed STOP/TP unless explicitly broadened."""
+        if not PositionTracker._is_stop_or_tp_conditional(order):
+            return False
+        raw = os.getenv("MLBOT_EXCHANGE_SL_CLEAN_ALL_STOP_TP", "0").strip().lower()
+        if raw not in {"0", "false", "off", "no"}:
+            return True
+        cid = PositionTracker._client_order_id_from_order(order)
+        if not cid:
+            return False
+        prefix = (
+            os.getenv("MLBOT_LIVE_CLIENT_ORDER_PREFIX", "tl").strip() or "tl"
+        ).replace("-", "")
+        prefix = "".join(c for c in prefix if str(c).isalnum())[:12] or "tl"
+        return cid.startswith(f"{prefix}_")
+
     def _cancel_open_close_position_conditionals(
         self,
         *,
@@ -499,7 +526,7 @@ class PositionTracker:
                 continue
             if not include_all_stop_tp and not self._order_info_close_position(order):
                 continue
-            if include_all_stop_tp and not self._is_stop_or_tp_conditional(order):
+            if include_all_stop_tp and not self._is_owned_stop_or_tp_conditional(order):
                 continue
             info = order.get("info") if isinstance(order.get("info"), dict) else {}
             order_pos_side = str(info.get("positionSide") or "BOTH").upper()

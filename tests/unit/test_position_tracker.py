@@ -456,6 +456,7 @@ class TestSyncExchangeSL:
         om.binance_api.get_open_orders.return_value = [
             {
                 "order_id": "777",
+                "client_order_id": "tl_stop_777",
                 "side": "sell",
                 "type": "stop_market",
                 "info": {"positionSide": "LONG", "type": "STOP_MARKET"},
@@ -471,6 +472,28 @@ class TestSyncExchangeSL:
 
         assert om.place_order.call_count == 2
         om.binance_api.cancel_order.assert_called_with("777", "BTCUSDT")
+
+    def test_4130_fallback_does_not_cancel_unowned_stop_tp(self):
+        om = _make_om()
+        tracker = _make_tracker(om)
+        order = {
+            "order_id": "manual1",
+            "client_order_id": "manual_stop_1",
+            "side": "sell",
+            "type": "stop_market",
+            "info": {"positionSide": "LONG", "type": "STOP_MARKET"},
+        }
+        om.binance_api.get_open_orders.return_value = [order]
+
+        cancelled = tracker._cancel_open_close_position_conditionals(
+            position_side="LONG",
+            include_all_stop_tp=True,
+        )
+
+        assert PositionTracker._is_stop_or_tp_conditional(order) is True
+        assert PositionTracker._is_owned_stop_or_tp_conditional(order) is False
+        assert cancelled == 0
+        om.binance_api.cancel_order.assert_not_called()
 
     def test_sync_exchange_sl_retries_after_4130(self):
         om = _make_om()
