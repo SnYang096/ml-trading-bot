@@ -17,14 +17,14 @@
     },
     {
       "type": "logs",
-      "title": "journald (quant-feature-bus / trend / hedge / spot)",
+      "title": "journald / docker (quant-* + cms)",
       "id": 2,
       "gridPos": { "h": 12, "w": 24, "x": 0, "y": 1 },
       "datasource": { "type": "loki", "uid": "loki-monitoring" },
       "targets": [
         {
           "refId": "A",
-          "expr": "{job=\"systemd-journal\", unit=~\"quant-${service:regex}.*\"}",
+          "expr": "{unit=~\"quant-${service:regex}.*\"}",
           "legendFormat": ""
         }
       ],
@@ -83,7 +83,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "{job=\"systemd-journal\", unit=~\"quant-${service:regex}.*\"} |~ \"(?i)(error|reconcile not ok|traceback|exception|api_error|orphan|critical features)\"",
+          "expr": "{unit=~\"quant-${service:regex}.*\"} |~ \"(?i)(error|reconcile not ok|traceback|exception|api_error|orphan|critical features)\"",
           "legendFormat": ""
         }
       ],
@@ -104,12 +104,13 @@
         "name": "service",
         "type": "custom",
         "label": "systemd unit",
-        "query": "feature-bus,trend-swing,hedge-multileg,spot-accum",
+        "query": "feature-bus,trend-swing,hedge-multileg,spot-accum,business-console",
         "options": [
           { "text": "feature-bus", "value": "feature-bus", "selected": true },
           { "text": "trend-swing", "value": "trend-swing", "selected": false },
           { "text": "hedge-multileg", "value": "hedge-multileg", "selected": false },
           { "text": "spot-accum", "value": "spot-accum", "selected": false },
+          { "text": "cms", "value": "business-console", "selected": false },
           { "text": "all", "value": ".*", "selected": false }
         ],
         "current": { "text": "feature-bus", "value": "feature-bus" },
