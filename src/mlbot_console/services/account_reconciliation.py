@@ -2,12 +2,40 @@
 
 from __future__ import annotations
 
+import json
 import logging
-from typing import Any, Dict, List, Optional
+import os
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set
 
+from mlbot_console.services.db import query_rows
 from mlbot_console.services.exchange_balances import fetch_scope_exchange_balance
 
 logger = logging.getLogger(__name__)
+
+
+def _spot_tracked_assets(spot_db: Optional[Path], spot_ledger_db: Optional[Path]) -> Set[str]:
+    """Assets the spot strategy ledger / orders care about (not full wallet)."""
+    assets: Set[str] = set()
+    if spot_ledger_db and spot_ledger_db.is_file():
+        from mlbot_console.services.spot_ledger_book import fetch_spot_ledger_holdings
+
+        for h in fetch_spot_ledger_holdings(spot_ledger_db, {}).get("holdings") or []:
+            a = str(h.get("asset") or "").upper()
+            if a:
+                assets.add(a)
+    if spot_db and spot_db.is_file():
+        rows = query_rows(
+            spot_db,
+            "SELECT DISTINCT symbol FROM spot_orders WHERE status IN ('open','filled','partial')",
+        )
+        for row in rows:
+            sym = str(row.get("symbol") or "").upper()
+            if sym.endswith("USDT"):
+                assets.add(sym[:-4])
+            elif sym:
+                assets.add(sym)
+    return assets
 
 
 def reconcile_account(
@@ -38,76 +66,120 @@ def reconcile_account(
     
     if scope == "spot":
         from mlbot_console.services.spot_ledger_book import fetch_spot_ledger_holdings
+
         local_ledger = fetch_spot_ledger_holdings(spot_ledger_db, mark_prices or {})
-        local_snapshot = local_ledger
-        
+        tracked = _spot_tracked_assets(spot_db, spot_ledger_db)
+        local_snapshot = {
+            **local_ledger,
+            "tracked_assets": sorted(tracked),
+        }
+
         exchange_holdings = {h["asset"]: h for h in exchange.get("holdings", [])}
         local_holdings = {h["asset"]: h for h in local_ledger.get("holdings", [])}
-        
-        all_assets = set(exchange_holdings.keys()) | set(local_holdings.keys())
-        
-        for asset in all_assets:
+
+        # Only reconcile assets the strategy books; ignore stray wallet balances (e.g. fee ETH).
+        compare_assets = tracked if tracked else set(local_holdings.keys())
+
+        for asset in compare_assets:
             ex_h = exchange_holdings.get(asset) or {"qty": 0.0, "value_usdt": 0.0}
             loc_h = local_holdings.get(asset) or {"qty": 0.0, "value_usdt": 0.0}
-            
-            qty_diff = ex_h["qty"] - loc_h["qty"]
-            # Tolerance: 1e-6 or 0.1% of qty
-            tol = max(1e-6, max(ex_h["qty"], loc_h["qty"]) * 0.001)
-            
+
+            qty_diff = float(ex_h.get("qty") or 0) - float(loc_h.get("qty") or 0)
+            tol = max(1e-6, max(float(ex_h.get("qty") or 0), float(loc_h.get("qty") or 0)) * 0.001)
+
             if abs(qty_diff) > tol:
-                issues.append({
-                    "kind": "qty_mismatch",
-                    "asset": asset,
-                    "exchange": ex_h["qty"],
-                    "local": loc_h["qty"],
-                    "delta": qty_diff,
-                })
-                
+                issues.append(
+                    {
+                        "kind": "qty_mismatch",
+                        "asset": asset,
+                        "exchange": ex_h.get("qty"),
+                        "local": loc_h.get("qty"),
+                        "delta": qty_diff,
+                    }
+                )
+
+        min_usdt = float(os.getenv("MLBOT_RECON_WALLET_EXTRA_MIN_USDT", "5"))
+        for asset, ex_h in exchange_holdings.items():
+            if asset in compare_assets:
+                continue
+            val = float(ex_h.get("value_usdt") or 0)
+            if val >= min_usdt:
+                issues.append(
+                    {
+                        "kind": "wallet_extra",
+                        "asset": asset,
+                        "exchange": ex_h.get("qty"),
+                        "local": 0.0,
+                        "delta": ex_h.get("qty"),
+                        "note": "交易所余额未纳入 spot_accum 母仓",
+                    }
+                )
+
     elif scope == "multi_leg":
-        # For multi-leg, we can read the latest reconciliation snapshot from the DB
-        from mlbot_console.services.db import query_rows
         if multi_leg_db and multi_leg_db.is_file():
             rows = query_rows(
                 multi_leg_db,
-                "SELECT report_json, created_at FROM multi_leg_reconciliation_snapshots ORDER BY created_at DESC LIMIT 1"
+                """
+                SELECT raw_json, created_at, strategy, symbol, ok
+                FROM multi_leg_reconciliation_snapshots
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
             )
-            if rows:
-                import json
+            if not rows:
+                local_snapshot = {"note": "尚无引擎对账快照（multi_leg 进程运行后会写入）"}
+            else:
+                row = rows[0]
+                local_snapshot = {
+                    "last_reconciliation_at": row.get("created_at"),
+                    "strategy": row.get("strategy"),
+                    "symbol": row.get("symbol"),
+                    "engine_ok": bool(row.get("ok")),
+                }
                 try:
-                    report = json.loads(rows[0]["report_json"])
-                    local_snapshot = {"last_reconciliation_at": rows[0]["created_at"]}
-                    
-                    missing = report.get("missing_exchange_orders", [])
-                    orphans = report.get("orphan_exchange_orders", [])
-                    mismatches = report.get("position_mismatches", [])
-                    
-                    for m in missing:
-                        issues.append({
-                            "kind": "missing_exchange_order",
-                            "order_id": m.get("order_id"),
-                            "symbol": m.get("symbol"),
-                            "side": m.get("side"),
-                        })
-                        
-                    for o in orphans:
-                        issues.append({
-                            "kind": "orphan_exchange_order",
-                            "order_id": o.get("order_id") or o.get("orderId"),
-                            "symbol": o.get("symbol"),
-                            "side": o.get("side"),
-                        })
-                        
-                    for p in mismatches:
-                        issues.append({
-                            "kind": "position_mismatch",
-                            "symbol": p.get("symbol"),
-                            "side": p.get("side"),
-                            "exchange": p.get("exchange_quantity"),
-                            "local": p.get("local_quantity"),
-                            "delta": float(p.get("exchange_quantity") or 0) - float(p.get("local_quantity") or 0),
-                        })
-                except Exception as e:
-                    logger.warning("Failed to parse multi_leg_reconciliation_snapshots: %s", e)
+                    report = json.loads(str(row.get("raw_json") or "{}"))
+                    for m in report.get("missing_exchange_orders") or []:
+                        if not isinstance(m, dict):
+                            continue
+                        issues.append(
+                            {
+                                "kind": "missing_exchange_order",
+                                "order_id": m.get("order_id"),
+                                "symbol": m.get("symbol"),
+                                "side": m.get("side"),
+                            }
+                        )
+                    for o in report.get("orphan_exchange_orders") or []:
+                        if not isinstance(o, dict):
+                            continue
+                        issues.append(
+                            {
+                                "kind": "orphan_exchange_order",
+                                "order_id": o.get("order_id") or o.get("orderId"),
+                                "symbol": o.get("symbol"),
+                                "side": o.get("side"),
+                            }
+                        )
+                    for p in report.get("position_mismatches") or []:
+                        if not isinstance(p, dict):
+                            continue
+                        ex_q = float(p.get("exchange_quantity") or 0)
+                        loc_q = float(p.get("local_quantity") or 0)
+                        issues.append(
+                            {
+                                "kind": "position_mismatch",
+                                "symbol": p.get("symbol"),
+                                "side": p.get("side"),
+                                "exchange": ex_q,
+                                "local": loc_q,
+                                "delta": ex_q - loc_q,
+                            }
+                        )
+                except (json.JSONDecodeError, TypeError) as exc:
+                    logger.warning(
+                        "Failed to parse multi_leg_reconciliation_snapshots: %s", exc
+                    )
+                    local_snapshot["parse_error"] = str(exc)
                     
     elif scope == "trend":
         # For trend, we can compare positions table with exchange positions

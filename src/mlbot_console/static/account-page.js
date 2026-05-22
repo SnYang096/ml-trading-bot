@@ -323,6 +323,9 @@ async function refreshReconciliation() {
             return `<tr><td>孤儿单</td><td>${iss.symbol}</td><td>${iss.order_id}</td><td>—</td><td>—</td></tr>`;
           } else if (iss.kind === "position_mismatch") {
             return `<tr><td>仓位不符</td><td>${iss.symbol}</td><td>${iss.exchange}</td><td>${iss.local}</td><td>${fmtPnlNum(iss.delta)}</td></tr>`;
+          } else if (iss.kind === "wallet_extra") {
+            const note = iss.note ? ` <span class="muted">${Shell.escHtml(iss.note)}</span>` : "";
+            return `<tr><td>钱包未入账</td><td>${iss.asset}${note}</td><td>${iss.exchange}</td><td>—</td><td>—</td></tr>`;
           }
           return `<tr><td colspan="5">${JSON.stringify(iss)}</td></tr>`;
         }).join("");
