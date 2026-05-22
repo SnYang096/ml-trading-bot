@@ -85,6 +85,17 @@ def _env_float(name: str, default: float) -> float:
         return float(default)
 
 
+def _is_insufficient_funds(exc: BaseException) -> bool:
+    try:
+        from ccxt.base.errors import InsufficientFunds
+    except ImportError:
+        InsufficientFunds = ()  # type: ignore[misc,assignment]
+    if isinstance(exc, InsufficientFunds):
+        return True
+    msg = str(exc).lower()
+    return "insufficient balance" in msg or "insufficient funds" in msg
+
+
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.getenv(name, str(default)))
@@ -312,6 +323,30 @@ def _utc_day_key(ts: Any) -> str:
     else:
         t = t.tz_convert("UTC")
     return t.strftime("%Y-%m-%d")
+
+
+def _spot_available_usdt_for_buy(
+    om: SpotOrderManager,
+    positions: Dict[str, Dict[str, Any]],
+) -> Optional[float]:
+    """Free USDT on exchange minus quote reserved by open limit buys."""
+    if om.api is None or om.shadow:
+        return None
+    try:
+        free = om.api.get_free_balances()
+        usdt = float(free.get("USDT", 0.0) or 0.0)
+        reserved = 0.0
+        for pos in positions.values():
+            if not has_blocking_pending_buy(pos):
+                continue
+            pending = pos.get("_pending_buy") if isinstance(pos, dict) else None
+            if not isinstance(pending, dict):
+                continue
+            reserved += float(pending.get("quote_reserved", 0.0) or 0.0)
+        return max(0.0, usdt - reserved)
+    except Exception:
+        logger.warning("spot: failed to read free USDT balance", exc_info=True)
+        return None
 
 
 def _symbol_base_asset(symbol: str) -> str:
@@ -1031,6 +1066,7 @@ def main() -> int:
                         ages,
                     )
             loop_day_key = _utc_day_key(datetime.now(timezone.utc))
+            free_usdt = _spot_available_usdt_for_buy(om, positions)
             pending_stats = _spot_process_pending_buys(
                 om=om,
                 positions=positions,
@@ -1193,6 +1229,7 @@ def main() -> int:
                     intents=intents,
                     om_shadow=om.shadow,
                     planned_usdt=planned,
+                    free_usdt=free_usdt,
                 )
                 log_spot_new_buy_eligibility(elig)
 
@@ -1253,13 +1290,25 @@ def main() -> int:
                         logger.info("[%s] buy-skip qty<=0 after precision", sym)
                     continue
 
-                buy_result = om.place_order(
-                    symbol=sym,
-                    side="buy",
-                    order_type=order_type,
-                    quantity=qty,
-                    price=(entry_px if order_type == "limit" else None),
-                )
+                try:
+                    buy_result = om.place_order(
+                        symbol=sym,
+                        side="buy",
+                        order_type=order_type,
+                        quantity=qty,
+                        price=(entry_px if order_type == "limit" else None),
+                    )
+                except Exception as exc:
+                    if _is_insufficient_funds(exc):
+                        logger.warning(
+                            "[%s] buy skipped: insufficient USDT (planned=%.2f free=%s): %s",
+                            sym,
+                            planned,
+                            f"{free_usdt:.2f}" if free_usdt is not None else "n/a",
+                            exc,
+                        )
+                        continue
+                    raise
                 pos = positions.get(sym) or new_position_shell(
                     sym, profit_take_ladder_cfg=budget.profit_take_ladder_cfg
                 )
@@ -1384,7 +1433,12 @@ def main() -> int:
             ledger.save_positions(positions)
             return 0
         except Exception as exc:
-            logger.exception("spot runner loop error: %s", exc)
+            if _is_insufficient_funds(exc):
+                logger.warning(
+                    "spot runner: insufficient balance, no order sent: %s", exc
+                )
+            else:
+                logger.exception("spot runner loop error: %s", exc)
             time.sleep(max(1.0, poll_seconds))
 
 

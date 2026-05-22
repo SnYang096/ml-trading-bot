@@ -267,6 +267,7 @@ def collect_spot_new_buy_report(
     intents: List[Any],
     om_shadow: bool,
     planned_usdt: float = 0.0,
+    free_usdt: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Dry-run all spot new-buy gates; used for one-line eligibility logging."""
     from src.time_series_model.live.spot_accum_simple import (
@@ -352,6 +353,17 @@ def collect_spot_new_buy_report(
     if signal_long and not blockers and planned <= 0.0:
         blockers.append("planned_quote_zero(budget_cap_or_decay)")
 
+    free_quote: Optional[float] = None
+    if free_usdt is not None:
+        try:
+            free_quote = max(0.0, float(free_usdt))
+        except (TypeError, ValueError):
+            free_quote = None
+    if planned > 0.0 and free_quote is not None and planned > free_quote + 1e-6:
+        blockers.append(
+            f"insufficient_free_usdt:need={planned:.2f} free={free_quote:.2f}"
+        )
+
     can_submit = signal_long and not blockers and planned > 0.0 and close_px > 0.0
     return {
         "symbol": sym,
@@ -366,6 +378,7 @@ def collect_spot_new_buy_report(
         "layers": summarize_layers(funnel),
         "block_stage": infer_block_stage(funnel),
         "planned_usdt": round(planned, 2),
+        "free_usdt": round(free_quote, 2) if free_quote is not None else None,
         "close": round(close_px, 6) if close_px > 0 else None,
         "can_submit_new_buy": can_submit,
         "shadow_mode": bool(om_shadow),

@@ -63,6 +63,21 @@ class SpotBinanceAPI:
                     out[str(asset).upper()] = fv
         return out
 
+    def get_free_balances(self) -> Dict[str, float]:
+        """Free (available) balances — use for buy affordability checks."""
+        bal = self.exchange.fetch_balance()
+        raw = bal.get("free") if isinstance(bal, dict) else {}
+        out: Dict[str, float] = {}
+        if isinstance(raw, dict):
+            for asset, qty in raw.items():
+                try:
+                    fv = float(qty or 0.0)
+                except (TypeError, ValueError):
+                    continue
+                if fv > 0.0:
+                    out[str(asset).upper()] = fv
+        return out
+
     def get_market_limits(self, symbol: str) -> Dict[str, float]:
         market = self.exchange.market(symbol.upper())
         limits = market.get("limits") if isinstance(market, dict) else {}
