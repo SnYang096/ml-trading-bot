@@ -87,3 +87,14 @@ def strategy_title(strategy_id: str) -> str:
 def strategies_for_account_layer(account_layer: str) -> List[Dict[str, str]]:
     layer = str(account_layer or "").strip().lower()
     return [s for s in get_console_strategies() if s.get("account_layer") == layer]
+
+
+def spot_strategy_ids() -> List[str]:
+    """Spot strategy slugs from constitution (spot.strategies), in declaration order."""
+    ids = [str(s["id"]).strip().lower() for s in strategies_for_account_layer("spot")]
+    return ids or ["spot_accum_simple"]
+
+
+def default_spot_strategy_id() -> str:
+    ids = spot_strategy_ids()
+    return ids[0] if ids else "spot_accum_simple"

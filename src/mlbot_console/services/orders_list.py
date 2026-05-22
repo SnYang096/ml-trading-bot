@@ -118,6 +118,10 @@ def _normalize(
         "leg_id": row.get("leg_id"),
         "time": t,
         "marker_id": _marker_id(scope, source, marker_key) if oid else None,
+        "pnl_usdt": row.get("pnl_usdt"),
+        "realized_pnl": row.get("realized_pnl"),
+        "unrealized_pnl": row.get("unrealized_pnl"),
+        "pnl_hint": row.get("pnl_hint"),
     }
     if scope == "multi_leg":
         tp_px, tp_hint = resolve_take_profit_display(row)
@@ -184,6 +188,9 @@ def _trend_position_event_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any
                         "filled_quantity": None,
                         "created_at": row.get("exit_time"),
                         "strategy_id": strat,
+                        "realized_pnl": row.get("realized_pnl"),
+                        "pnl_usdt": row.get("realized_pnl"),
+                        "pnl_hint": "已实现" if row.get("realized_pnl") is not None else None,
                         "_marker_source": "positions",
                     },
                 )
@@ -396,6 +403,34 @@ def multi_leg_orders_list(
     return out
 
 
+def _attach_pnl_fields(
+    rows: List[Dict[str, Any]],
+    *,
+    trend_map: Dict[str, Dict[str, Any]],
+    spot_map: Dict[str, Dict[str, Any]],
+    multileg_map: Dict[str, Dict[str, Any]],
+) -> None:
+    for row in rows:
+        if row.get("pnl_usdt") is not None:
+            continue
+        scope = str(row.get("scope") or "")
+        oid = str(row.get("order_id") or "")
+        rec = (
+            trend_map.get(oid)
+            if scope == "trend"
+            else spot_map.get(oid)
+            if scope == "spot"
+            else multileg_map.get(oid)
+            if scope == "multi_leg"
+            else None
+        )
+        if not rec:
+            continue
+        for key in ("pnl_usdt", "realized_pnl", "unrealized_pnl", "pnl_hint"):
+            if rec.get(key) is not None:
+                row[key] = rec.get(key)
+
+
 def collect_orders(
     *,
     trend_db: Path,
@@ -406,6 +441,7 @@ def collect_orders(
     status: Optional[str] = None,
     exclude_statuses: Optional[List[str]] = None,
     limit: int = 100,
+    feature_bus_root: Optional[Path] = None,
 ) -> List[Dict[str, Any]]:
     merged: List[Dict[str, Any]] = []
     scope_set = {s.strip().lower() for s in scopes if s.strip()}
@@ -428,4 +464,21 @@ def collect_orders(
         )
     merged.sort(key=lambda r: r.get("time") or 0, reverse=True)
     merged = _exclude_statuses(merged, exclude_statuses)
-    return merged[: int(limit)]
+    merged = merged[: int(limit)]
+    if feature_bus_root is not None:
+        from mlbot_console.services.account_summary import build_order_pnl_maps
+
+        trend_map, spot_map, multileg_map = build_order_pnl_maps(
+            trend_db=trend_db,
+            spot_db=spot_db,
+            multi_leg_db=multi_leg_db,
+            feature_bus_root=feature_bus_root,
+            symbol=symbol,
+        )
+        _attach_pnl_fields(
+            merged,
+            trend_map=trend_map,
+            spot_map=spot_map,
+            multileg_map=multileg_map,
+        )
+    return merged

@@ -16,6 +16,7 @@
     { id: "signals", href: "/signals", label: "策略信号" },
     { id: "trade-map", href: "/trade-map", label: "交易地图" },
     { id: "orders", href: "/orders", label: "订单" },
+    { id: "account", href: "/account", label: "账户总览" },
   ];
 
   async function api(path) {
@@ -227,6 +228,7 @@
       ["价格", o.average_price ?? o.price],
       ["止盈价", formatTpPrice(o)],
       ["止损价", formatSlPrice(o)],
+      ["盈亏", formatPnl(o)],
       ["用途", o.purpose ?? o.order_type],
       ["策略", o.strategy],
       ["成交时间", formatOrderTime(o.time)],
@@ -273,6 +275,7 @@
           <td>${esc(String(r.average_price ?? r.price ?? ""))}</td>
           <td>${esc(formatTpPrice(r))}</td>
           <td>${esc(formatSlPrice(r))}</td>
+          <td class="${pnlClass(r)}">${esc(formatPnl(r))}</td>
           <td class="id-cell" title="${esc(r.order_id || "")}">${esc(r.order_id || "")}</td>
         </tr>`;
       })
@@ -297,8 +300,27 @@
     return `${n}${hint}`;
   }
 
+  function formatPnl(row) {
+    const v = row?.pnl_usdt ?? row?.realized_pnl ?? row?.unrealized_pnl;
+    if (v == null || v === "") return "—";
+    const n = Number(v);
+    if (!Number.isFinite(n)) return "—";
+    const hint = row?.pnl_hint ? ` (${row.pnl_hint})` : "";
+    const sign = n > 0 ? "+" : "";
+    return `${sign}${n.toFixed(2)}${hint}`;
+  }
+
+  function pnlClass(row) {
+    const v = row?.pnl_usdt ?? row?.realized_pnl ?? row?.unrealized_pnl;
+    const n = Number(v);
+    if (!Number.isFinite(n)) return "pnl-cell";
+    if (n > 0) return "pnl-cell pnl-pos";
+    if (n < 0) return "pnl-cell pnl-neg";
+    return "pnl-cell";
+  }
+
   function ordersTableColspan(showSymbol) {
-    return showSymbol ? 10 : 9;
+    return showSymbol ? 11 : 10;
   }
 
   function formatOrderTime(ts) {
@@ -329,5 +351,7 @@
     ordersTableColspan,
     formatTpPrice,
     formatSlPrice,
+    formatPnl,
+    pnlClass,
   };
 })(typeof globalThis !== "undefined" ? globalThis : window);

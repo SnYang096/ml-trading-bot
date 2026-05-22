@@ -56,9 +56,36 @@ function rowsSignature(rows) {
         r.filled_quantity,
         r.take_profit_price,
         r.stop_loss_price,
+        r.pnl_usdt,
+        r.realized_pnl,
+        r.unrealized_pnl,
       ].join("|")
     )
     .join("\n");
+}
+
+function fmtSummaryPnl(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return "—";
+  const sign = v > 0 ? "+" : "";
+  return `${sign}${v.toFixed(2)}`;
+}
+
+async function refreshSummaryStrip(symbol) {
+  const el = document.getElementById("ordersSummaryStrip");
+  if (!el) return;
+  try {
+    const q = new URLSearchParams({ symbol, lookback_days: "0" });
+    const { data } = await Shell.api(`/api/account/summary?${q}`);
+    const t = data?.totals || {};
+    el.innerHTML =
+      `全部汇总 · 已实现 <strong class="${t.realized_pnl > 0 ? "pnl-pos" : t.realized_pnl < 0 ? "pnl-neg" : ""}">${fmtSummaryPnl(t.realized_pnl)}</strong> USDT` +
+      ` · 浮盈 <strong>${fmtSummaryPnl(t.unrealized_pnl)}</strong> USDT` +
+      ` · 已平仓 ${t.closed_trades ?? 0} 笔` +
+      ` · <a href="/account">账户总览</a>`;
+  } catch {
+    el.textContent = "";
+  }
 }
 
 function persistScopes() {
@@ -195,6 +222,7 @@ async function refreshOrders(opts = {}) {
     }
     if (!silent) setStatus(toastMsg);
     showPollToast(toastMsg, 2500);
+    refreshSummaryStrip(symbol).catch(() => {});
   } catch (e) {
     tbody.innerHTML = `<tr><td colspan="${colspan}" class="muted">${Shell.escHtml(String(e))}</td></tr>`;
     countEl.textContent = "";

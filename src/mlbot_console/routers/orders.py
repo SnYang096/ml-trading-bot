@@ -38,6 +38,7 @@ def orders_list(
         status=status,
         exclude_statuses=exclude_statuses or None,
         limit=limit,
+        feature_bus_root=SETTINGS.feature_bus_root,
     )
     sym_meta = "ALL" if str(symbol).strip().upper() in {"", "*", "ALL", "__ALL__"} else symbol.upper()
     return ok(rows, meta={"count": len(rows), "symbol": sym_meta})

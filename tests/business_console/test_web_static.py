@@ -37,8 +37,26 @@ def test_orders_html_served(client):
     assert "ordersTable" in body
     assert "ordersThSymbol" in body
     assert "止损价" in body
+    assert "盈亏" in body
     assert "order-detail-body" in body
     assert "appNav" in body
+
+
+def test_account_html_served(client):
+    r = client.get("/account")
+    assert r.status_code == 200
+    body = r.text
+    assert "账户总览" in body
+    assert "account-page.js" in body
+    assert "kpiRow" in body
+    assert "appNav" in body
+
+
+def test_console_shell_has_account_nav(client):
+    r = client.get("/static/console-shell.js")
+    assert r.status_code == 200
+    assert 'href: "/account"' in r.text
+    assert "formatPnl" in r.text
 
 
 def test_root_redirects_to_signals(client):

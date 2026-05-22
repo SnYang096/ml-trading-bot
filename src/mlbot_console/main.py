@@ -10,7 +10,16 @@ from fastapi.staticfiles import StaticFiles
 
 from mlbot_console.auth import BasicAuthMiddleware
 from mlbot_console.config import SETTINGS
-from mlbot_console.routers import bus, constitution, health, links, orders, spot, trade_map
+from mlbot_console.routers import (
+    account,
+    bus,
+    constitution,
+    health,
+    links,
+    orders,
+    spot,
+    trade_map,
+)
 
 app = FastAPI(
     title="MLBot Business Console",
@@ -31,6 +40,7 @@ app.include_router(bus.router)
 app.include_router(trade_map.router)
 app.include_router(spot.router)
 app.include_router(orders.router)
+app.include_router(account.router)
 app.include_router(links.router)
 
 _FRONTEND = Path(__file__).resolve().parent / "static"
@@ -56,3 +66,8 @@ def orders_page() -> FileResponse:
 @app.get("/signals")
 def signals_page() -> FileResponse:
     return FileResponse(_FRONTEND / "signals.html")
+
+
+@app.get("/account")
+def account_page() -> FileResponse:
+    return FileResponse(_FRONTEND / "account.html")

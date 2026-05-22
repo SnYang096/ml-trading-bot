@@ -281,6 +281,7 @@ def client(console_settings, monkeypatch):
         "mlbot_console.routers.constitution",
         "mlbot_console.routers.spot",
         "mlbot_console.routers.orders",
+        "mlbot_console.routers.account",
         "mlbot_console.routers.links",
     ):
         monkeypatch.setattr(f"{mod}.SETTINGS", console_settings)

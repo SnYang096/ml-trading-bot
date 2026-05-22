@@ -204,3 +204,37 @@ def test_collect_orders_scopes(trend_db, spot_db, multi_leg_db):
     scopes = {r["scope"] for r in all_rows}
     assert "trend" in scopes
     assert "spot" in scopes
+
+
+def test_collect_orders_entry_row_has_no_trend_exit_pnl(
+    trend_db, spot_db, multi_leg_db, bus_root
+):
+    rows = collect_orders(
+        trend_db=trend_db,
+        spot_db=spot_db,
+        multi_leg_db=multi_leg_db,
+        symbol="ETHUSDT",
+        scopes=["trend"],
+        limit=50,
+        feature_bus_root=bus_root,
+    )
+    entry_row = next(r for r in rows if r["order_id"] == "p1:entry")
+    assert entry_row.get("pnl_usdt") is None
+
+
+def test_collect_orders_attaches_trend_exit_pnl(
+    trend_db, spot_db, multi_leg_db, bus_root
+):
+    rows = collect_orders(
+        trend_db=trend_db,
+        spot_db=spot_db,
+        multi_leg_db=multi_leg_db,
+        symbol="ETHUSDT",
+        scopes=["trend"],
+        limit=50,
+        feature_bus_root=bus_root,
+    )
+    exit_row = next(r for r in rows if r["order_id"] == "p1:exit")
+    assert exit_row["realized_pnl"] == 12.5
+    assert exit_row["pnl_usdt"] == 12.5
+    assert exit_row["pnl_hint"] == "已实现"

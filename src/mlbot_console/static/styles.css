@@ -701,3 +701,99 @@ main {
 .page-trade-map main.trade-map-main {
   height: calc(100vh - 112px);
 }
+
+.toolbar-link {
+  color: #58a6ff;
+  font-size: 0.78rem;
+  text-decoration: none;
+  margin-left: 8px;
+}
+.toolbar-link:hover { text-decoration: underline; }
+
+.orders-summary-strip {
+  padding: 6px 16px;
+  font-size: 0.78rem;
+  border-bottom: 1px solid #21262d;
+  background: #0d1117;
+}
+.orders-summary-strip a { color: #58a6ff; }
+
+.pnl-cell { font-variant-numeric: tabular-nums; }
+.pnl-pos { color: #3fb950; }
+.pnl-neg { color: #f85149; }
+
+.page-account .account-main {
+  flex: 1;
+  padding: 12px 16px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+}
+.account-kpi-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+.account-kpi-card {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.account-kpi-label { font-size: 0.72rem; color: #8b949e; }
+.account-kpi-value {
+  font-size: 1.35rem;
+  font-weight: 600;
+  margin: 4px 0;
+  font-variant-numeric: tabular-nums;
+}
+.account-kpi-hint { font-size: 0.68rem; }
+.account-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 900px) {
+  .account-grid { grid-template-columns: 1fr; }
+}
+.account-panel h3 { margin: 0 0 10px; font-size: 0.9rem; }
+.account-table-wrap { overflow: auto; }
+.account-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+.account-table th,
+.account-table td {
+  border-bottom: 1px solid #30363d;
+  padding: 6px 8px;
+  text-align: left;
+}
+.account-notes {
+  margin: 10px 0 0;
+  font-size: 0.7rem;
+  white-space: pre-wrap;
+}
+.daily-pnl-chart { min-height: 100px; }
+.daily-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 80px;
+  padding: 8px 0;
+}
+.daily-bar {
+  flex: 1;
+  min-width: 4px;
+  border-radius: 2px 2px 0 0;
+}
+.daily-bar.bar-pos { background: #238636; }
+.daily-bar.bar-neg { background: #da3633; }
+.daily-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.65rem;
+  color: #8b949e;
+}
