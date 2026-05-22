@@ -11,6 +11,7 @@ import time
 from src.live_data_stream.websocket_client import (
     BinanceWebSocketClient,
     BinanceTick,
+    configure_binance_ws_queue_size,
     create_and_run_websocket,
 )
 
@@ -89,6 +90,14 @@ class TestBinanceWebSocketClient:
         assert client.symbols == ["BTCUSDT", "ETHUSDT"]
         assert client.use_futures is True
         assert len(client._callbacks) == 0
+
+    def test_configure_binance_ws_queue_size(self, monkeypatch):
+        monkeypatch.setenv("MLBOT_BINANCE_WS_MAX_QUEUE", "800")
+        size = configure_binance_ws_queue_size()
+        assert size == 800
+        from binance.ws.reconnecting_websocket import ReconnectingWebsocket
+
+        assert ReconnectingWebsocket.MAX_QUEUE_SIZE == 800
 
     def test_init_empty_symbols(self):
         """测试空符号列表"""

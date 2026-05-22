@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional
@@ -37,6 +38,23 @@ from .connection_monitor import ConnectionMonitor, HealthStatus
 logger = logging.getLogger(__name__)
 
 FUTURES_WS_BASE = "wss://fstream.binance.com"
+
+
+def configure_binance_ws_queue_size() -> int:
+    """Raise python-binance internal WS queue (default 100) to reduce QueueOverflow."""
+    try:
+        from binance.ws.reconnecting_websocket import ReconnectingWebsocket
+
+        size = max(100, int(os.getenv("MLBOT_BINANCE_WS_MAX_QUEUE", "512")))
+        ReconnectingWebsocket.MAX_QUEUE_SIZE = size
+        logger.info("Binance WS MAX_QUEUE_SIZE=%d", size)
+        return size
+    except Exception as exc:
+        logger.debug("Binance WS queue size patch skipped: %s", exc)
+        return 100
+
+
+configure_binance_ws_queue_size()
 
 
 @dataclass

@@ -545,6 +545,9 @@ async def async_main() -> None:
         logger.info("auto-gap-fill: disabled")
 
     ws_client = BinanceWebSocketClient(symbols=symbols, use_futures=args.use_futures)
+    tick_queue: asyncio.Queue[BinanceTick] = asyncio.Queue(
+        maxsize=max(1000, int(os.getenv("MLBOT_TICK_DISPATCH_QUEUE", "20000")))
+    )
 
     def _set_ws_connected(value: int) -> None:
         for symbol in symbols:
@@ -554,19 +557,40 @@ async def async_main() -> None:
         status_value = getattr(status, "value", str(status))
         _set_ws_connected(0 if status_value in {"unhealthy", "dead"} else 1)
 
-    def _handle_tick(tick: BinanceTick) -> None:
-        fast_emitter.on_tick(tick)
-        manager.on_trade_tick(tick.symbol, _tick_to_listener_tick(tick))
+    def _enqueue_tick(tick: BinanceTick) -> None:
+        try:
+            tick_queue.put_nowait(tick)
+        except asyncio.QueueFull:
+            logger.warning(
+                "tick dispatch queue full (%d); drop %s",
+                tick_queue.maxsize,
+                tick.symbol,
+            )
 
-    ws_client.add_callback(_handle_tick)
+    async def _tick_consumer() -> None:
+        while True:
+            tick = await tick_queue.get()
+            try:
+                fast_emitter.on_tick(tick)
+                manager.on_trade_tick(tick.symbol, _tick_to_listener_tick(tick))
+            except Exception:
+                logger.exception("tick consumer failed for %s", tick.symbol)
+            finally:
+                tick_queue.task_done()
+
+    ws_client.add_callback(_enqueue_tick)
     ws_client.add_health_callback(_on_ws_health)
     ws_client.add_reconnect_callback(lambda: _set_ws_connected(1))
     stop_event = asyncio.Event()
     metrics_task = asyncio.create_task(_periodic_process_metrics())
+    tick_consumer_task = asyncio.create_task(_tick_consumer())
     try:
         _set_ws_connected(1)
         await ws_client.run(stop_event)
     finally:
+        tick_consumer_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await tick_consumer_task
         if auto_gap_task is not None:
             auto_gap_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
