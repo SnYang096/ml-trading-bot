@@ -58,7 +58,7 @@ def test_normalize_rest_order_status(raw, expected: str) -> None:
 
 def test_run_backfill_once_updates_rows() -> None:
     class _API:
-        def get_order(self, order_id: str, symbol: str):
+        def get_order(self, order_id: str, symbol: str, **kwargs):
             assert order_id == "111"
             assert symbol == "ETHUSDT"
             return {
@@ -105,10 +105,13 @@ def test_run_backfill_once_updates_rows() -> None:
 
 def test_run_backfill_once_skips_bad_candidate_and_continues() -> None:
     class _API:
-        def get_order(self, order_id: str, _symbol: str):
+        def get_order(self, order_id: str, _symbol: str, **kwargs):
             if order_id == "bad":
                 raise RuntimeError("temporary exchange error")
             return {"order_id": order_id, "status": "open", "filled": 0.0}
+
+        def get_open_orders(self, _symbol: str):
+            return []
 
     class _Storage:
         def __init__(self) -> None:
@@ -116,8 +119,20 @@ def test_run_backfill_once_skips_bad_candidate_and_continues() -> None:
 
         def get_recent_orders_for_backfill(self, **_kwargs):
             return [
-                {"symbol": "ETHUSDT", "exchange_order_id": "bad"},
-                {"symbol": "ETHUSDT", "exchange_order_id": "ok"},
+                {
+                    "symbol": "ETHUSDT",
+                    "exchange_order_id": "bad",
+                    "status": "open",
+                    "updated_at": "2026-05-19 13:41:12",
+                    "created_at": "2026-05-19 13:41:12",
+                },
+                {
+                    "symbol": "ETHUSDT",
+                    "exchange_order_id": "ok",
+                    "status": "open",
+                    "updated_at": "2026-05-19 13:41:12",
+                    "created_at": "2026-05-19 13:41:12",
+                },
             ]
 
         def apply_execution_report(self, payload):
@@ -141,7 +156,10 @@ def test_run_backfill_marks_stale_missing_order_expired(
     monkeypatch.setenv("MLBOT_MULTI_LEG_STALE_OPEN_GRACE_SECONDS", "0")
 
     class _API:
-        def get_order(self, _order_id: str, _symbol: str):
+        def get_order(self, _order_id: str, _symbol: str, **kwargs):
+            return None
+
+        def get_order_by_client_id(self, _cid: str, _symbol: str):
             return None
 
         def get_open_orders(self, _symbol: str):
@@ -182,13 +200,71 @@ def test_run_backfill_marks_stale_missing_order_expired(
     assert storage.payloads[0]["reject_reason"] == "exchange_order_missing"
 
 
+def test_run_backfill_fills_from_client_id_when_exchange_lookup_empty() -> None:
+    class _API:
+        def get_order(self, _order_id: str, _symbol: str, **kwargs):
+            return None
+
+        def get_order_by_client_id(self, cid: str, _symbol: str):
+            if cid != "cg_40e9a57b8ef7":
+                return None
+            return {
+                "order_id": "90414532831",
+                "client_order_id": cid,
+                "status": "closed",
+                "filled": 0.31,
+                "average_price": 649.99,
+                "timestamp": 1710000000,
+                "update_time": 1710000060,
+            }
+
+        def get_open_orders(self, _symbol: str):
+            return []
+
+    class _Storage:
+        def __init__(self) -> None:
+            self.payloads = []
+
+        def get_recent_orders_for_backfill(self, **_kwargs):
+            return [
+                {
+                    "run_id": "mlr_1",
+                    "strategy": "chop_grid",
+                    "symbol": "BNBUSDT",
+                    "exchange_order_id": "90414532831",
+                    "client_order_id": "cg_40e9a57b8ef7",
+                    "status": "expired",
+                    "updated_at": "2026-05-19 13:41:12",
+                    "created_at": "2026-05-19 13:41:12",
+                }
+            ]
+
+        def apply_execution_report(self, payload):
+            self.payloads.append(dict(payload))
+            return 1
+
+    storage = _Storage()
+    changed = run_multi_leg_backfill_once(
+        api=_API(),
+        storage=storage,
+        lookback_hours=24,
+        limit=100,
+    )
+    assert changed == 1
+    assert storage.payloads[0]["status"] == "filled"
+    assert storage.payloads[0]["avg_price"] == 649.99
+
+
 def test_run_backfill_skips_stale_when_get_open_orders_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("MLBOT_MULTI_LEG_STALE_OPEN_GRACE_SECONDS", "0")
 
     class _API:
-        def get_order(self, _order_id: str, _symbol: str):
+        def get_order(self, _order_id: str, _symbol: str, **kwargs):
+            return None
+
+        def get_order_by_client_id(self, _cid: str, _symbol: str):
             return None
 
         def get_open_orders(self, _symbol: str):
@@ -231,7 +307,10 @@ def test_run_backfill_repairs_open_row_from_open_snapshot_when_get_order_empty()
     None
 ):
     class _API:
-        def get_order(self, _order_id: str, _symbol: str):
+        def get_order(self, _order_id: str, _symbol: str, **kwargs):
+            return None
+
+        def get_order_by_client_id(self, _cid: str, _symbol: str):
             return None
 
         def get_open_orders_for_sl_cleanup(self, _symbol: str):

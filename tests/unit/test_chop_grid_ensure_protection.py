@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from src.time_series_model.live.chop_grid_live_engine import (
     ChopGridLiveEngine,
     GridPosition,
@@ -208,3 +210,42 @@ def test_stale_protection_id_does_not_block_replacement_tp(tmp_path: Path) -> No
     tp_actions = [a for a in actions if a.get("protection_type") == "take_profit"]
     assert len(tp_actions) == 1
     assert tp_actions[0]["side"] == "SHORT"
+
+
+def test_partial_tp_qty_does_not_count_as_full_protection(tmp_path: Path) -> None:
+    engine = ChopGridLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        bar_simulation=False,
+    )
+    engine.state.active = True
+    engine.state.symbol = "BNBUSDT"
+    engine.state.spacing = 6.4355
+    engine.state.inventory.append(
+        GridPosition(
+            symbol="BNBUSDT",
+            side="SHORT",
+            level=1,
+            entry_price=653.205,
+            quantity=0.62,
+            entry_time="2026-05-21T00:00:00+00:00",
+            leg_id="BNBUSDT_2026-05-19 08:40:00+00:00_S1",
+        )
+    )
+    tp_px = engine._tp_price_for_position(engine.state.inventory[0])
+    actions = engine.actions_ensure_protection(
+        exchange_positions=[],
+        exchange_orders=[
+            {
+                "symbol": "BNBUSDT",
+                "client_order_id": "cg_16738f8fae98",
+                "side": "buy",
+                "price": tp_px,
+                "quantity": 0.31,
+                "info": {"positionSide": "SHORT", "reduceOnly": "true"},
+            }
+        ],
+    )
+    tp_actions = [a for a in actions if a.get("protection_type") == "take_profit"]
+    assert len(tp_actions) == 1
+    assert float(tp_actions[0]["quantity"]) == pytest.approx(0.62, rel=1e-6)

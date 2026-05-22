@@ -99,6 +99,57 @@ def _fetch_open_order_rows(api: Any, symbol: str) -> list[dict[str, Any]] | None
         return None
 
 
+def _resolve_rest_order_snapshot(
+    api: Any,
+    row: dict[str, Any],
+    *,
+    symbol: str,
+    exchange_order_id: str,
+) -> tuple[str, dict[str, Any] | None]:
+    """
+    Return (kind, snapshot).
+
+    kind:
+      - ``ok``: snapshot dict to apply
+      - ``missing``: REST + client id both empty (candidate for stale expire)
+      - ``error``: API failure; do not mark expired
+    """
+    client_order_id = str(row.get("client_order_id") or "").strip()
+    try:
+        snap = api.get_order(
+            exchange_order_id,
+            symbol,
+            client_order_id=client_order_id or None,
+        )
+    except Exception:
+        logger.debug(
+            "multi-leg REST backfill: get_order failed symbol=%s exchange=%s",
+            symbol,
+            exchange_order_id,
+            exc_info=True,
+        )
+        return "error", None
+    if snap:
+        return "ok", snap
+    if client_order_id:
+        fetch_cid = getattr(api, "get_order_by_client_id", None)
+        if callable(fetch_cid):
+            try:
+                snap = fetch_cid(client_order_id, symbol)
+            except Exception:
+                logger.debug(
+                    "multi-leg REST backfill: get_order_by_client_id failed "
+                    "symbol=%s client=%s",
+                    symbol,
+                    client_order_id,
+                    exc_info=True,
+                )
+                return "error", None
+            if snap:
+                return "ok", snap
+    return "missing", None
+
+
 def _is_stale_missing_exchange_order(
     row: dict[str, Any],
     *,
@@ -176,16 +227,12 @@ def run_multi_leg_backfill_once(
         if not ex_id or not symbol:
             continue
         try:
-            try:
-                snap = api.get_order(ex_id, symbol)
-            except Exception:
-                logger.debug(
-                    "multi-leg REST backfill: get_order failed symbol=%s exchange=%s",
-                    symbol,
-                    ex_id,
-                    exc_info=True,
-                )
-                snap = None
+            kind, snap = _resolve_rest_order_snapshot(
+                api, row, symbol=symbol, exchange_order_id=ex_id
+            )
+            if kind == "error":
+                api_error_count += 1
+                continue
             if not snap:
                 open_rows = open_rows_by_symbol.get(symbol)
                 local_status = str(row.get("status") or "").strip().lower()

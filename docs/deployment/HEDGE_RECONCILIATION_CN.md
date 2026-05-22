@@ -207,12 +207,12 @@ flowchart TD
     Cand --> BySym["按 symbol 拉 open 快照<br/>get_open_orders_for_sl_cleanup"]
 
     BySym --> Loop["对每条候选 DB 行"]
-    Loop --> GetOrder["api.get_order(exchange_id, symbol)"]
+    Loop --> GetOrder["api.get_order(exchange_id)<br/>失败则 get_order_by_client_id"]
 
     GetOrder -->|成功| Apply["apply_execution_report<br/>更新 status/成交量/均价"]
-    GetOrder -->|失败| SkipRow["跳过该行，不抬高 api_error"]
+    GetOrder -->|API 异常| SkipRow["跳过该行，不标 expired"]
 
-    GetOrder -->|返回空| OpenSnap{"该 symbol open 快照可用?"}
+    GetOrder -->|两次都空| OpenSnap{"该 symbol open 快照可用?"}
     OpenSnap -->|订单仍在 open 列表| RepairOpen["用 open 列表行写回 status=open"]
     OpenSnap -->|不在 open 且超过 grace| MarkExpired["标 expired<br/>reason=exchange_order_missing"]
     OpenSnap -->|open 快照拉取失败| SkipStale["不标过期，避免误杀"]
@@ -229,7 +229,7 @@ flowchart TD
 |------|------|
 | `get_open_orders_for_sl_cleanup` | 与对账同一套 open 列表，含 algo 条件单 |
 | `api_error` | 仅当 **整 symbol** 拉 open 失败时计数，单笔 `get_order` 失败不再把全局标红 |
-| `exchange_order_missing` | 仅当 REST 查不到单 **且** open 快照里也没有 **且** 超过 `MLBOT_MULTI_LEG_STALE_OPEN_GRACE_SECONDS`（默认 6h）才标 `expired` |
+| `exchange_order_missing` | 仅当 exchange id **与** client id REST 都查不到 **且** open 快照里也没有 **且** 超过 grace 才标 `expired`；`get_order` 抛错则不标 |
 | DB 已 `expired` 但交易所仍 open | backfill **不会**改回 open；留给主对账标 orphan 并（对 chop_grid）自动 cancel |
 
 ---

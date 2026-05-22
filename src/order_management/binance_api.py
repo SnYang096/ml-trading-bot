@@ -1156,46 +1156,92 @@ class BinanceAPI:
             logger.error(f"撤销所有订单失败: {e}")
             raise
 
-    def get_order(self, order_id: str, symbol: str) -> Optional[Dict[str, Any]]:
+    def _normalize_fetched_order(self, order: Dict[str, Any]) -> Dict[str, Any]:
+        info = order.get("info", {}) or {}
+        return {
+            "order_id": order["id"],
+            "client_order_id": order.get("clientOrderId")
+            or info.get("clientOrderId"),
+            "symbol": order["symbol"],
+            "side": order["side"],
+            "type": order["type"],
+            "status": order["status"],
+            "quantity": order.get("amount"),
+            "price": order.get("price"),
+            "filled": order.get("filled", 0),
+            "remaining": order.get("remaining", 0),
+            "average_price": order.get("average"),
+            "created_at": self._normalize_timestamp(order.get("timestamp")),
+            "timestamp": self._normalize_timestamp(order.get("timestamp")),
+            "update_time": self._normalize_timestamp(info.get("updateTime")),
+            "reject_reason": info.get("rejectReason") or info.get("r"),
+            "error_message": info.get("msg"),
+            "info": info,
+        }
+
+    def get_order(
+        self,
+        order_id: str,
+        symbol: str,
+        *,
+        client_order_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         """
         查询订单
 
         Args:
             order_id: 订单ID
             symbol: 交易对符号
+            client_order_id: 可选；exchange id 查不到时用 origClientOrderId 再查一次
 
         Returns:
             订单信息
         """
+        snap = self._fetch_order_by_exchange_id(order_id, symbol)
+        if snap is not None:
+            return snap
+        cid = str(client_order_id or "").strip()
+        if cid:
+            return self.get_order_by_client_id(cid, symbol)
+        return None
+
+    def _fetch_order_by_exchange_id(
+        self, order_id: str, symbol: str
+    ) -> Optional[Dict[str, Any]]:
         try:
             ccxt_sym = _ccxt_linear_usdt_perp_symbol(symbol) or symbol
             order = self.exchange.fetch_order(order_id, ccxt_sym)
-            info = order.get("info", {}) or {}
-            return {
-                "order_id": order["id"],
-                "client_order_id": order.get("clientOrderId")
-                or info.get("clientOrderId"),
-                "symbol": order["symbol"],
-                "side": order["side"],
-                "type": order["type"],
-                "status": order["status"],
-                "quantity": order["amount"],
-                "price": order.get("price"),
-                "filled": order.get("filled", 0),
-                "remaining": order.get("remaining", 0),
-                "average_price": order.get("average"),
-                "created_at": self._normalize_timestamp(order.get("timestamp")),
-                "timestamp": self._normalize_timestamp(order.get("timestamp")),
-                "update_time": self._normalize_timestamp(info.get("updateTime")),
-                "reject_reason": info.get("rejectReason") or info.get("r"),
-                "error_message": info.get("msg"),
-                "info": info,
-            }
+            return self._normalize_fetched_order(order)
         except Exception as e:
             err = str(e).lower()
             if "not found" in err or "-2013" in str(e):
                 return None
             logger.error(f"查询订单失败: {e}")
+            raise
+
+    def get_order_by_client_id(
+        self, client_order_id: str, symbol: str
+    ) -> Optional[Dict[str, Any]]:
+        """Query futures order by origClientOrderId (filled/canceled history)."""
+        cid = str(client_order_id or "").strip()
+        if not cid:
+            return None
+        try:
+            ccxt_sym = _ccxt_linear_usdt_perp_symbol(symbol) or symbol
+            market = self.exchange.market(ccxt_sym)
+            binance_sym = market.get("id") or str(symbol).replace("/", "")
+            raw = self.exchange.fapiPrivateGetOrder(
+                {"symbol": binance_sym, "origClientOrderId": cid}
+            )
+            if not raw:
+                return None
+            order = self.exchange.parse_order(raw, market)
+            return self._normalize_fetched_order(order)
+        except Exception as e:
+            err = str(e).lower()
+            if "not found" in err or "-2013" in str(e):
+                return None
+            logger.error("查询订单失败 client_order_id=%s: %s", cid, e)
             raise
 
     def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:

@@ -439,6 +439,10 @@ class ChopGridLiveEngine:
             client_id=str(report.get("client_order_id") or ""),
         )
         if order is None:
+            leg_hint = str(report.get("leg_id") or report.get("local_order_id") or "")
+            if leg_hint:
+                order = self._find_order(local_id=leg_hint)
+        if order is None:
             return
         status = str(report.get("status") or "").upper()
         filled_qty = _as_float(report.get("filled_qty"), order.filled_quantity)
@@ -651,6 +655,7 @@ class ChopGridLiveEngine:
             ]
             protection_ids = {str(oid) for oid in pos.protection_order_ids if str(oid)}
         pos_side = str(pos.side).upper()
+        covered_qty = 0.0
         for order in open_orders:
             if protection_ids and _exchange_order_keys(order).isdisjoint(
                 protection_ids
@@ -676,11 +681,22 @@ class ChopGridLiveEngine:
             price = _as_float(order.get("price"), 0.0)
             if price <= 0:
                 continue
+            o_qty = _as_float(
+                order.get("quantity") or order.get("remaining"),
+                0.0,
+            )
+            if o_qty <= 0:
+                o_qty = _as_float(order.get("filled"), 0.0)
+            if o_qty <= 0:
+                continue
             if abs(price - tp_px) <= max(self.state.spacing * 0.15, price * 0.001):
-                return True
-            if abs(price - tp_px) <= self.state.spacing * 2:
-                return True
-        return False
+                covered_qty += o_qty
+            elif abs(price - tp_px) <= self.state.spacing * 2:
+                covered_qty += o_qty
+        need = float(pos.quantity or 0.0)
+        if need <= 0:
+            return False
+        return covered_qty >= need * 0.99
 
     def _is_chop_grid_exchange_order(self, order: Mapping[str, Any]) -> bool:
         info = order.get("info") or {}
