@@ -85,10 +85,26 @@ def _allowed_sides_mask(allowed_sides: List[str], direction: pd.Series) -> pd.Se
     return mask
 
 
+def _resolve_predictions_path(
+    results_root: Path,
+    strategy: str,
+    override: Path | None,
+) -> Path:
+    if override is not None:
+        path = override.resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"predictions not found: {path}")
+        return path
+    return _find_latest_predictions(results_root, strategy)
+
+
 def analyze_regime(
-    strategy: str, results_root: Path, config_root: Path
+    strategy: str,
+    results_root: Path,
+    config_root: Path,
+    predictions_path: Path | None = None,
 ) -> Dict[str, Any]:
-    pred = _find_latest_predictions(results_root, strategy)
+    pred = _resolve_predictions_path(results_root, strategy, predictions_path)
     df = pd.read_parquet(pred)
     if "success_no_rr_extreme" not in df.columns:
         raise KeyError(f"{strategy}: missing label `success_no_rr_extreme` in {pred}")
@@ -239,6 +255,11 @@ def main() -> int:
     p.add_argument("--results-root", default="results")
     p.add_argument("--config-root", default="config/strategies")
     p.add_argument("--out-dir", default="")
+    p.add_argument(
+        "--predictions",
+        default="",
+        help="Override predictions.parquet path",
+    )
     args = p.parse_args()
 
     strategies = [s.strip() for s in args.strategies.split(",") if s.strip()]
@@ -252,7 +273,13 @@ def main() -> int:
     )
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    report = [analyze_regime(s, results_root, config_root) for s in strategies]
+    pred_override = (
+        Path(args.predictions).resolve() if str(args.predictions).strip() else None
+    )
+    report = [
+        analyze_regime(s, results_root, config_root, predictions_path=pred_override)
+        for s in strategies
+    ]
 
     out_json = out_dir / "report.json"
     out_md = out_dir / "report.md"

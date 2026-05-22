@@ -10,6 +10,10 @@ from fastapi.staticfiles import StaticFiles
 
 from mlbot_console.auth import BasicAuthMiddleware
 from mlbot_console.config import SETTINGS
+from mlbot_console.services.env_bootstrap import load_console_env_files
+
+load_console_env_files(SETTINGS.repo_root)
+
 from mlbot_console.routers import (
     account,
     bus,

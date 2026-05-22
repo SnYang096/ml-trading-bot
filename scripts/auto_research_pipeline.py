@@ -8079,14 +8079,31 @@ def _run_pre_deploy_contract_checks_if_configured(
     from scripts.pre_deploy_contract_checks import run_pre_deploy_contract_checks
 
     pred_map: Dict[str, Path] = {}
+    train_final_base = PROJECT_ROOT / "results" / "train_final"
     for strat in strategies:
+        found: Optional[Path] = None
         for candidate in (
             run_root / strat / "predictions.parquet",
-            run_root.parent.parent / "train_final" / strat / "predictions.parquet",
+            run_root
+            / strat
+            / "threshold_calibration"
+            / "strategies"
+            / strat
+            / "predictions.parquet",
         ):
             if candidate.is_file():
-                pred_map[strat] = candidate
+                found = candidate
                 break
+        if found is None:
+            strat_dir = train_final_base / strat
+            if strat_dir.is_dir():
+                runs = sorted(
+                    strat_dir.glob("train_final_*/{}/predictions.parquet".format(strat))
+                )
+                if runs:
+                    found = runs[-1]
+        if found is not None:
+            pred_map[strat] = found
 
     summary = run_pre_deploy_contract_checks(
         cfg=cfg,

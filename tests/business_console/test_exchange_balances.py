@@ -114,12 +114,17 @@ def test_account_summary_includes_exchange_ledger(
     with patch(
         "mlbot_console.services.account_summary.build_exchange_ledger",
         return_value=fake_ledger,
+    ), patch(
+        "mlbot_console.services.spot_ledger_book.fetch_spot_ledger_holdings",
+        return_value={"holdings": [], "holdings_value_usdt": 0.0},
     ):
         from mlbot_console.services.account_summary import build_account_summary
+        from pathlib import Path
 
         data = build_account_summary(
             trend_db=trend_db,
             spot_db=spot_db,
+            spot_ledger_db=Path("/dev/null"),
             multi_leg_db=multi_leg_db,
             feature_bus_root=bus_root,
             lookback_days=0,

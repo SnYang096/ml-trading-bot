@@ -138,6 +138,7 @@ def _trend_stats(
     trend_db: Path,
     *,
     symbol: Optional[str],
+    mark_prices: Mapping[str, float],
     since_ts: Optional[int],
 ) -> Dict[str, Any]:
     if not trend_db.is_file():
@@ -150,7 +151,7 @@ def _trend_stats(
     rows = query_rows(
         trend_db,
         f"""
-        SELECT position_id, symbol, side, entry_time, exit_time,
+        SELECT position_id, symbol, side, current_size, entry_time, exit_time,
                entry_price, exit_price, realized_pnl, status, strategy_id
         FROM positions
         {where}
@@ -176,6 +177,22 @@ def _trend_stats(
         if st == "open" or not row.get("exit_time"):
             open_count += 1
             by_strategy[strat]["open_positions"] += 1
+            
+            # Calculate unrealized PnL
+            sym = str(row.get("symbol") or "").upper()
+            qty = float(row.get("current_size") or 0.0)
+            entry_px = float(row.get("entry_price") or 0.0)
+            mark_px = float(mark_prices.get(sym) or 0.0)
+            
+            if qty > 0 and entry_px > 0 and mark_px > 0:
+                side = str(row.get("side") or "").lower()
+                if side in {"buy", "long"}:
+                    upnl = (mark_px - entry_px) * qty
+                else:
+                    upnl = (entry_px - mark_px) * qty
+                unrealized += upnl
+                by_strategy[strat]["unrealized_pnl"] += upnl
+                
             continue
         if rpnl is None:
             closed_count += 1
@@ -269,6 +286,7 @@ def _multileg_stats(
     multi_leg_db: Path,
     *,
     symbol: Optional[str],
+    mark_prices: Mapping[str, float],
     since_ts: Optional[int],
 ) -> Dict[str, Any]:
     if not multi_leg_db.is_file():
@@ -277,13 +295,53 @@ def _multileg_stats(
     if symbol and not _is_all_symbols(symbol):
         symbols = [symbol.upper()]
     realized = 0.0
+    unrealized = 0.0
     closed = 0
+    open_positions = 0
     by_strategy: Dict[str, Dict[str, float]] = defaultdict(
         lambda: {"realized_pnl": 0.0, "unrealized_pnl": 0.0, "closed_trades": 0.0, "open_positions": 0.0}
     )
     daily: Dict[str, float] = defaultdict(float)
 
+    from mlbot_console.services.multileg_leg_pnl import multileg_pnl_by_order_id
+    from mlbot_console.services.db import query_rows
+
     for sym in symbols:
+        # Use multileg_pnl_by_order_id to get both realized and unrealized PnL
+        pnl_map = multileg_pnl_by_order_id(multi_leg_db, sym, mark_prices=dict(mark_prices))
+        
+        # We need to know the strategy for each order to aggregate correctly
+        # Let's fetch the orders to get their strategy and exit_time
+        rows = query_rows(
+            multi_leg_db,
+            "SELECT local_order_id, strategy, filled_at FROM multi_leg_orders WHERE symbol = ?",
+            (sym,)
+        )
+        order_meta = {str(r["local_order_id"]): r for r in rows if r.get("local_order_id")}
+        
+        # Track which orders we've processed to avoid double counting (since exit and entry both get the realized pnl)
+        processed_realized = set()
+        
+        for oid, rec in pnl_map.items():
+            meta = order_meta.get(oid) or {}
+            strat = str(meta.get("strategy") or "multi_leg").lower()
+            
+            r = rec.get("realized_pnl")
+            u = rec.get("unrealized_pnl")
+            
+            if r is not None:
+                # We only want to count each realized PnL once per pair.
+                # multileg_pnl_by_order_id assigns the same PnL to both entry and exit.
+                # We can just sum them and divide by 2, or track processed.
+                # Actually, the easiest way is to just use _multileg_realized_rows for realized PnL like before,
+                # and use pnl_map ONLY for unrealized PnL.
+                pass
+                
+            if u is not None:
+                unrealized += float(u)
+                by_strategy[strat]["unrealized_pnl"] += float(u)
+
+        # Now get realized PnL using the old reliable method
         for item in _multileg_realized_rows(multi_leg_db, sym):
             exit_ts = int(item.get("exit_time") or 0)
             if since_ts is not None and exit_ts < since_ts:
@@ -297,13 +355,25 @@ def _multileg_stats(
             if exit_ts:
                 day = datetime.fromtimestamp(exit_ts, tz=timezone.utc).strftime("%Y-%m-%d")
                 daily[day] += pnl
+                
+        # Get open positions count
+        open_rows = query_rows(
+            multi_leg_db,
+            "SELECT strategy, COUNT(*) as cnt FROM multi_leg_positions WHERE status = 'open' AND symbol = ? GROUP BY strategy",
+            (sym,)
+        )
+        for r in open_rows:
+            strat = str(r.get("strategy") or "multi_leg").lower()
+            cnt = int(r.get("cnt") or 0)
+            open_positions += cnt
+            by_strategy[strat]["open_positions"] += cnt
 
     return {
         "scope": "multi_leg",
         "label": _SCOPE_LABELS["multi_leg"],
         "realized_pnl": realized,
-        "unrealized_pnl": 0.0,
-        "open_positions": 0,
+        "unrealized_pnl": unrealized,
+        "open_positions": open_positions,
         "closed_trades": closed,
         "by_strategy": dict(by_strategy),
         "daily_realized": [{"date": d, "pnl": daily[d]} for d in sorted(daily)],
@@ -335,6 +405,7 @@ def build_account_summary(
     *,
     trend_db: Path,
     spot_db: Path,
+    spot_ledger_db: Path,
     multi_leg_db: Path,
     feature_bus_root: Path,
     symbol: str = "*",
@@ -349,14 +420,16 @@ def build_account_summary(
     symbols = _discover_symbols(
         trend_db=trend_db, spot_db=spot_db, multi_leg_db=multi_leg_db
     )
-    marks = latest_close_prices(feature_bus_root, symbols)
+    
+    from mlbot_console.services.mark_prices import fetch_mark_prices
+    marks = fetch_mark_prices(feature_bus_root, symbols)
 
     sym_arg = None if _is_all_symbols(symbol) else symbol
-    trend = _trend_stats(trend_db, symbol=sym_arg, since_ts=since_ts)
+    trend = _trend_stats(trend_db, symbol=sym_arg, mark_prices=marks, since_ts=since_ts)
     spot = _spot_stats(
         spot_db, symbol=sym_arg, mark_prices=marks, since_ts=since_ts
     )
-    multileg = _multileg_stats(multi_leg_db, symbol=sym_arg, since_ts=since_ts)
+    multileg = _multileg_stats(multi_leg_db, symbol=sym_arg, mark_prices=marks, since_ts=since_ts)
 
     scopes = [trend, spot, multileg]
     total_realized = sum(float(s["realized_pnl"]) for s in scopes)
@@ -384,9 +457,16 @@ def build_account_summary(
 
     ledger = build_exchange_ledger(mark_prices=marks)
     exchange_by_scope = {str(a["scope"]): a for a in ledger.get("accounts") or []}
+    
+    from mlbot_console.services.spot_ledger_book import fetch_spot_ledger_holdings
+    spot_ledger_data = fetch_spot_ledger_holdings(spot_ledger_db, marks)
+    
     for scope_block in scopes:
         ex = exchange_by_scope.get(str(scope_block.get("scope") or ""))
         if ex:
+            if scope_block["scope"] == "spot":
+                ex["ledger_holdings"] = spot_ledger_data["holdings"]
+                ex["ledger_holdings_value_usdt"] = spot_ledger_data["holdings_value_usdt"]
             scope_block["exchange"] = ex
 
     ledger_totals = dict(ledger.get("totals") or {})

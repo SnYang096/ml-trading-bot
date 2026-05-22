@@ -760,6 +760,17 @@ jobs:
               chmod 600 /opt/quant-engine/.env
               echo "✅ 已修正 /opt/quant-engine/.env 属主为 $(whoami)"
             fi
+            
+            # 断言必备密钥
+            if ! grep -q "BINANCE_API_KEY=" /opt/quant-engine/.env; then
+              echo "::error::/opt/quant-engine/.env 缺少 BINANCE_API_KEY，请重新运行 deploy 的 Write API keys 步骤。"
+              exit 1
+            fi
+            if ! grep -q "MULTI_LEG_BINANCE_FUTURES_API_KEY=" /opt/quant-engine/.env; then
+              echo "::error::/opt/quant-engine/.env 缺少 MULTI_LEG_BINANCE_FUTURES_API_KEY，请重新运行 deploy 的 Write API keys 步骤。"
+              exit 1
+            fi
+
             cd /opt/quant-engine/deploy/business-console
             docker compose up -d --build --remove-orphans
             echo ""

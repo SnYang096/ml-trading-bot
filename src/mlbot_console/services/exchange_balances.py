@@ -97,7 +97,7 @@ def _fetch_spot_equity(
     api_key: str,
     api_secret: str,
     mark_prices: Mapping[str, float],
-) -> Dict[str, float]:
+) -> Dict[str, Any]:
     from order_management.spot_binance_api import SpotBinanceAPI
 
     api = SpotBinanceAPI(api_key=api_key, api_secret=api_secret, testnet=False)
@@ -105,11 +105,17 @@ def _fetch_spot_equity(
     usdt = bal.get("USDT") if isinstance(bal.get("USDT"), dict) else {}
     free_usdt = float(usdt.get("free") or 0.0)
     total_usdt = float(usdt.get("total") or free_usdt)
-    equity = total_usdt
+    
+    holdings = []
+    holdings_value_usdt = 0.0
+    
     totals = bal.get("total") if isinstance(bal.get("total"), dict) else {}
+    
+    # Check if we need fallback tickers
+    missing_assets = []
     for asset, qty in totals.items():
         sym_asset = str(asset or "").upper()
-        if sym_asset in {"", "USDT"}:
+        if sym_asset in {"", "USDT", "USDC", "BUSD"}:
             continue
         try:
             q = float(qty or 0.0)
@@ -117,14 +123,67 @@ def _fetch_spot_equity(
             continue
         if q <= 0:
             continue
-        px = float(mark_prices.get(f"{sym_asset}USDT") or 0.0)
-        if px > 0:
-            equity += q * px
+        px = float(mark_prices.get(f"{sym_asset}USDT") or mark_prices.get(sym_asset) or 0.0)
+        if px <= 0:
+            missing_assets.append(sym_asset)
+            
+    fallback_marks = {}
+    if missing_assets:
+        try:
+            tickers = api.exchange.fetch_tickers()
+            for sym in missing_assets:
+                ccxt_sym = f"{sym}/USDT"
+                ticker = tickers.get(ccxt_sym)
+                if ticker:
+                    px = ticker.get("last") or ticker.get("close")
+                    if px:
+                        fallback_marks[sym] = float(px)
+        except Exception as e:
+            logger.warning("Failed to fetch fallback tickers for %s: %s", missing_assets, e)
+
+    for asset, qty in totals.items():
+        sym_asset = str(asset or "").upper()
+        if sym_asset == "":
+            continue
+            
+        try:
+            q = float(qty or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if q <= 0:
+            continue
+            
+        if sym_asset in {"USDT", "USDC", "BUSD"}:
+            px = 1.0
+            src = "stablecoin"
+        else:
+            px = float(mark_prices.get(f"{sym_asset}USDT") or mark_prices.get(sym_asset) or 0.0)
+            src = "bars_1min"
+            if px <= 0:
+                px = fallback_marks.get(sym_asset, 0.0)
+                src = "ticker" if px > 0 else "missing"
+                
+        val = q * px
+        if sym_asset != "USDT":
+            holdings_value_usdt += val
+            holdings.append({
+                "asset": sym_asset,
+                "qty": q,
+                "price_usdt": px,
+                "value_usdt": val,
+                "price_source": src
+            })
+        
+    equity = total_usdt + holdings_value_usdt
+    
     return {
-        "wallet_balance_usdt": total_usdt,
+        "wallet_balance_usdt": equity,  # Total equity in USDT
         "equity_usdt": equity,
         "available_usdt": free_usdt,
         "unrealized_pnl_usdt": 0.0,
+        "usdt_cash": total_usdt,
+        "holdings": sorted(holdings, key=lambda x: x["value_usdt"], reverse=True),
+        "holdings_value_usdt": holdings_value_usdt,
     }
 
 
@@ -138,6 +197,7 @@ def _snapshot_shell(scope: str) -> Dict[str, Any]:
         "configured": False,
         "ok": False,
         "error": None,
+        "error_code": None,
         "wallet_balance_usdt": None,
         "equity_usdt": None,
         "available_usdt": None,
@@ -161,6 +221,7 @@ def fetch_scope_exchange_balance(
     out["configured"] = bool(api_key and api_secret)
     if not out["configured"]:
         out["error"] = "API 密钥未配置"
+        out["error_code"] = "not_configured"
         return out
     try:
         if meta["account_type"] == "futures_usdtm":
@@ -178,6 +239,7 @@ def fetch_scope_exchange_balance(
     except Exception as exc:
         logger.debug("exchange balance fetch failed scope=%s", scope, exc_info=True)
         out["error"] = str(exc)[:200]
+        out["error_code"] = "network_or_auth"
     return out
 
 

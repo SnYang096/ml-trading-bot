@@ -8,7 +8,10 @@ from fastapi import APIRouter, Query
 
 from mlbot_console.config import SETTINGS
 from mlbot_console.responses import ok
+from mlbot_console.services.account_reconciliation import reconcile_account
 from mlbot_console.services.account_summary import build_account_summary
+from mlbot_console.services.mark_prices import fetch_mark_prices
+from mlbot_console.services.universe import load_universe_symbols
 
 router = APIRouter(tags=["account"])
 
@@ -26,9 +29,28 @@ def account_summary(
     data = build_account_summary(
         trend_db=SETTINGS.trend_order_db,
         spot_db=SETTINGS.spot_order_db,
+        spot_ledger_db=SETTINGS.spot_ledger_db,
         multi_leg_db=SETTINGS.multi_leg_db,
         feature_bus_root=SETTINGS.feature_bus_root,
         symbol=symbol,
         lookback_days=lookback_days,
     )
     return ok(data, meta={"symbol": data.get("symbol"), "lookback_days": lookback_days})
+
+
+@router.get("/api/account/reconciliation")
+def account_reconciliation(
+    scope: str = Query(..., description="trend, spot, or multi_leg"),
+) -> dict:
+    symbols = load_universe_symbols(SETTINGS.universe_yaml)
+    marks = fetch_mark_prices(SETTINGS.feature_bus_root, symbols)
+    
+    data = reconcile_account(
+        scope=scope,
+        trend_db=SETTINGS.trend_order_db,
+        spot_db=SETTINGS.spot_order_db,
+        spot_ledger_db=SETTINGS.spot_ledger_db,
+        multi_leg_db=SETTINGS.multi_leg_db,
+        mark_prices=marks,
+    )
+    return ok(data)

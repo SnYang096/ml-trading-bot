@@ -182,7 +182,7 @@ def test_trend_open_position_draws_current_price_link(trend_db):
         INSERT INTO positions VALUES (
             'p_open', 'ETHUSDT', 'long',
             '2024-01-02T10:00:00+00:00', NULL,
-            110.0, NULL, NULL, 'open', 'bpc', NULL, NULL
+            110.0, NULL, NULL, 'open', 'bpc', NULL, NULL, 1.0
         )
         """
     )
@@ -265,7 +265,7 @@ def test_collect_trade_links_includes_spot_and_open_trend(
         INSERT INTO positions VALUES (
             'p_open2', 'ETHUSDT', 'long',
             '2024-01-02T10:00:00+00:00', NULL,
-            110.0, NULL, NULL, 'open', 'bpc', NULL, NULL
+            110.0, NULL, NULL, 'open', 'bpc', NULL, NULL, 1.0
         )
         """
     )

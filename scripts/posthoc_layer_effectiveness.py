@@ -42,6 +42,19 @@ def _find_latest_predictions(results_root: Path, strategy: str) -> Path:
     return candidates[-1]
 
 
+def _resolve_predictions_path(
+    results_root: Path,
+    strategy: str,
+    override: Path | None,
+) -> Path:
+    if override is not None:
+        path = override.resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"predictions not found: {path}")
+        return path
+    return _find_latest_predictions(results_root, strategy)
+
+
 def _to_numeric_series(df: pd.DataFrame, col: str, size: int) -> pd.Series:
     if col not in df.columns:
         return pd.Series(np.nan, index=df.index if len(df.index) == size else None)
@@ -234,9 +247,12 @@ def _load_yaml(path: Path) -> Dict[str, Any]:
 
 
 def analyze_strategy(
-    results_root: Path, config_root: Path, strategy: str
+    results_root: Path,
+    config_root: Path,
+    strategy: str,
+    predictions_path: Path | None = None,
 ) -> Dict[str, Any]:
-    pred_path = _find_latest_predictions(results_root, strategy)
+    pred_path = _resolve_predictions_path(results_root, strategy, predictions_path)
     df = pd.read_parquet(pred_path)
     if "success_no_rr_extreme" not in df.columns:
         raise KeyError(
@@ -294,6 +310,21 @@ def analyze_strategy(
                     success[scope_mask],
                 )
             )
+    rg_layer_flag = pd.Series(True, index=df.index)
+    for f in rg_flags:
+        rg_layer_flag &= f
+    for scope_name, scope_mask in scopes.items():
+        stats.append(
+            _build_stat(
+                strategy,
+                "regime",
+                scope_name,
+                "__layer_all_rules__",
+                "allow",
+                rg_layer_flag[scope_mask],
+                success[scope_mask],
+            )
+        )
 
     # Prefilter
     pre_rules = prefilter_cfg.get("rules", []) or []
@@ -532,6 +563,7 @@ def _write_markdown(report: List[Dict[str, Any]], out_md: Path) -> None:
         for scope in ("all", "bull_ema1200", "bear_ema1200"):
             lines.append(f"- {scope}:")
             for layer, layer_key in (
+                ("regime", "__layer_all_rules__"),
                 ("prefilter", "__layer_all_rules__"),
                 ("gate", "__layer_gate_pass__"),
                 ("entry_filter", "__layer_entry_pass__"),
@@ -547,7 +579,7 @@ def _write_markdown(report: List[Dict[str, Any]], out_md: Path) -> None:
                     f"  - {layer}: effect={_fmt_pct(row['effect'])}, p={row['p_value']:.4g}, "
                     f"pass_rate={_fmt_pct(row['true_rate'])}, succ_pass={_fmt_pct(row['success_true'])}, succ_fail={_fmt_pct(row['success_false'])}"
                 )
-            for layer in ("prefilter", "gate", "entry_filter"):
+            for layer in ("regime", "prefilter", "gate", "entry_filter"):
                 bad = _top_lines(stats, scope, layer, n=2)
                 if bad:
                     lines.append(f"  - weakest {layer} rules:")
@@ -564,6 +596,11 @@ def main() -> int:
     parser.add_argument("--results-root", default="results")
     parser.add_argument("--config-root", default="config/strategies")
     parser.add_argument("--out-dir", default="")
+    parser.add_argument(
+        "--predictions",
+        default="",
+        help="Override predictions.parquet path (single strategy or shared file)",
+    )
     parser.add_argument(
         "--strict-locked-features",
         action="store_true",
@@ -585,9 +622,20 @@ def main() -> int:
     )
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    pred_override = (
+        Path(args.predictions).resolve() if str(args.predictions).strip() else None
+    )
+
     report: List[Dict[str, Any]] = []
     for strategy in strategies:
-        report.append(analyze_strategy(results_root, config_root, strategy))
+        report.append(
+            analyze_strategy(
+                results_root,
+                config_root,
+                strategy,
+                predictions_path=pred_override,
+            )
+        )
 
     out_json = out_dir / "report.json"
     out_md = out_dir / "report.md"

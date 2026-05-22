@@ -39,27 +39,33 @@ def _run_strict_locked_features(
     strategy: str,
     *,
     predictions: Path,
-    strategies_root: Path,
+    config_root: Path,
     results_root: Path,
 ) -> Tuple[bool, str]:
     cmd = [
         sys.executable,
         str(PROJECT_ROOT / "scripts" / "posthoc_layer_effectiveness.py"),
-        "--strategy",
+        "--strategies",
         strategy,
         "--predictions",
         str(predictions),
-        "--strategies-root",
-        str(strategies_root),
+        "--config-root",
+        str(config_root),
         "--results-root",
         str(results_root),
         "--strict-locked-features",
     ]
+    env = dict(**{k: v for k, v in __import__("os").environ.items()})
+    src_scripts = f"{PROJECT_ROOT / 'src'}:{PROJECT_ROOT / 'scripts'}"
+    env["PYTHONPATH"] = (
+        f"{src_scripts}:{env['PYTHONPATH']}" if env.get("PYTHONPATH") else src_scripts
+    )
     proc = subprocess.run(
         cmd,
         cwd=str(PROJECT_ROOT),
         capture_output=True,
         text=True,
+        env=env,
     )
     if proc.returncode != 0:
         tail = (proc.stdout or "") + (proc.stderr or "")
@@ -121,7 +127,7 @@ def run_pre_deploy_contract_checks(
                 ok, msg = _run_strict_locked_features(
                     strat,
                     predictions=pred,
-                    strategies_root=strategies_root,
+                    config_root=strategies_root,
                     results_root=results_root,
                 )
                 st["checks"]["locked_features"] = {"ok": ok, "detail": msg[:500]}

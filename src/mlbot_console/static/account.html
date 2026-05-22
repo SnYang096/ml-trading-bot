@@ -55,20 +55,31 @@
 
       <div class="account-grid">
         <section class="panel account-panel">
-          <h3>账户层汇总</h3>
+          <h3>账户层汇总 <span class="muted" style="font-size: 0.8em; font-weight: normal;">(本地 DB)</span></h3>
           <div id="scopesTable" class="account-table-wrap muted">—</div>
         </section>
         <section class="panel account-panel">
-          <h3>策略汇总</h3>
+          <h3>策略汇总 <span class="muted" style="font-size: 0.8em; font-weight: normal;">(本地 DB)</span></h3>
           <div id="strategiesTable" class="account-table-wrap muted">—</div>
         </section>
       </div>
+      
+      <div id="spotHoldingsContainer" class="account-grid" style="margin-top: 16px;"></div>
 
-      <section class="panel account-panel">
+      <section class="panel account-panel" style="margin-top: 16px;">
         <h3>已实现盈亏（按日）</h3>
         <div id="dailyChart" class="daily-pnl-chart muted">—</div>
         <p id="accountNotes" class="account-notes muted"></p>
       </section>
+      
+      <header class="account-scoped-head" style="margin-top: 32px;">
+        <div>
+          <h2>交易所对账</h2>
+          <p class="muted account-section-note">比对币安 API 实际资产与本地数据库记录的差异。</p>
+        </div>
+      </header>
+      <div id="reconciliationContainer"></div>
+      
     </section>
   </main>
   <script src="/static/console-shell.js"></script>

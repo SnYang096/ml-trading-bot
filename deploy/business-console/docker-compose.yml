@@ -18,6 +18,7 @@ services:
       # deploy.yml「Write API keys」写入；由 live/binance_*_mainnet.env 合并生成
       - /opt/quant-engine/.env
     environment:
+      - MLBOT_CONSOLE_ENV_FILE=/opt/quant-engine/.env
       - MLBOT_CONSOLE_PORT=8800
       - MLBOT_CONSOLE_FEATURE_BUS_ROOT=/data/feature_bus
       - MLBOT_CONSOLE_LIVE_DATA_ROOT=/data/live_data

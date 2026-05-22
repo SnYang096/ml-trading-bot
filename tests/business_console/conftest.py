@@ -89,7 +89,8 @@ def trend_db(tmp_path: Path) -> Path:
             status TEXT,
             strategy_id TEXT,
             stop_loss_price REAL,
-            take_profit_price REAL
+            take_profit_price REAL,
+            current_size REAL
         );
         CREATE TABLE position_operations (
             operation_id TEXT PRIMARY KEY,
@@ -125,7 +126,7 @@ def trend_db(tmp_path: Path) -> Path:
         INSERT INTO positions VALUES (
             'p1', 'ETHUSDT', 'long',
             '2024-01-01T10:00:00+00:00', '2024-01-01T14:00:00+00:00',
-            100.0, 105.0, 12.5, 'closed', 'tpc', 98.5, 106.0
+            100.0, 105.0, 12.5, 'closed', 'tpc', 98.5, 106.0, 2.5
         )
         """
     )
@@ -260,8 +261,34 @@ def multi_leg_db(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def spot_ledger_db(tmp_path: Path) -> Path:
+    import sqlite3
+
+    p = tmp_path / "spot_accum_ledger.db"
+    conn = sqlite3.connect(p)
+    conn.executescript(
+        """
+        CREATE TABLE state_kv (
+            k TEXT PRIMARY KEY,
+            v TEXT
+        );
+        CREATE TABLE daily_counters (
+            day_key TEXT,
+            symbol TEXT,
+            buy_entries INTEGER,
+            deploy_usdt REAL,
+            PRIMARY KEY (day_key, symbol)
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+    return p
+
+
+@pytest.fixture
 def console_settings(
-    bus_root, trend_db, spot_db, multi_leg_db, tmp_path
+    bus_root, trend_db, spot_db, spot_ledger_db, multi_leg_db, tmp_path
 ) -> "ConsoleSettings":
     from mlbot_console.config import ConsoleSettings
 
@@ -281,7 +308,7 @@ def console_settings(
         trend_order_db=trend_db,
         live_monitor_db=tmp_path / "live_monitor.db",
         spot_order_db=spot_db,
-        spot_ledger_db=tmp_path / "spot_accum_ledger.db",
+        spot_ledger_db=spot_ledger_db,
         multi_leg_db=multi_leg_db,
         max_ohlcv_days=7,
         live_storage_bars_root=tmp_path / "bars",

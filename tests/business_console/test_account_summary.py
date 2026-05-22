@@ -15,10 +15,13 @@ from mlbot_console.services.account_summary import (
 )
 
 
-def test_build_account_summary(trend_db, spot_db, multi_leg_db, bus_root) -> None:
+def test_build_account_summary(
+    trend_db, spot_db, spot_ledger_db, multi_leg_db, bus_root
+) -> None:
     data = build_account_summary(
         trend_db=trend_db,
         spot_db=spot_db,
+        spot_ledger_db=spot_ledger_db,
         multi_leg_db=multi_leg_db,
         feature_bus_root=bus_root,
         symbol="ETHUSDT",
@@ -34,11 +37,12 @@ def test_build_account_summary(trend_db, spot_db, multi_leg_db, bus_root) -> Non
 
 
 def test_account_summary_lookback_zero_includes_all_history(
-    trend_db, spot_db, multi_leg_db, bus_root
+    trend_db, spot_db, spot_ledger_db, multi_leg_db, bus_root
 ) -> None:
     data = build_account_summary(
         trend_db=trend_db,
         spot_db=spot_db,
+        spot_ledger_db=spot_ledger_db,
         multi_leg_db=multi_leg_db,
         feature_bus_root=bus_root,
         symbol="ETHUSDT",
@@ -52,11 +56,12 @@ def test_account_summary_lookback_zero_includes_all_history(
 
 
 def test_account_summary_lookback_filters_old_trend_exit(
-    trend_db, spot_db, multi_leg_db, bus_root
+    trend_db, spot_db, spot_ledger_db, multi_leg_db, bus_root
 ) -> None:
     data = build_account_summary(
         trend_db=trend_db,
         spot_db=spot_db,
+        spot_ledger_db=spot_ledger_db,
         multi_leg_db=multi_leg_db,
         feature_bus_root=bus_root,
         symbol="ETHUSDT",
@@ -68,7 +73,7 @@ def test_account_summary_lookback_filters_old_trend_exit(
 
 
 def test_account_summary_recent_exit_included(
-    trend_db, spot_db, multi_leg_db, bus_root
+    trend_db, spot_db, spot_ledger_db, multi_leg_db, bus_root
 ) -> None:
     recent_exit = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
     conn = sqlite3.connect(trend_db)
@@ -86,6 +91,7 @@ def test_account_summary_recent_exit_included(
     data = build_account_summary(
         trend_db=trend_db,
         spot_db=spot_db,
+        spot_ledger_db=spot_ledger_db,
         multi_leg_db=multi_leg_db,
         feature_bus_root=bus_root,
         symbol="ETHUSDT",

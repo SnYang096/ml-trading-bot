@@ -135,10 +135,20 @@ function renderLedgerPanel(ledger) {
   const lt = ledger?.totals || {};
   const ok = lt.accounts_ok ?? 0;
   const total = lt.accounts_total ?? 0;
-  const hint =
-    ok < total
-      ? `<p class="muted">已连接 ${ok}/${total} 个币安账户；未配置的账户请在容器环境变量中设置对应 API Key。</p>`
-      : "";
+  
+  let hint = "";
+  if (ok < total) {
+    const errs = [];
+    (ledger?.accounts || []).forEach(a => {
+      if (!a.ok) {
+        errs.push(`${a.label}: ${a.error || "未配置"}`);
+      }
+    });
+    hint = `<p class="muted" style="color: #f85149">已连接 ${ok}/${total} 个币安账户。失败: ${errs.join(" | ")}</p>`;
+  } else if (total > 0) {
+    hint = `<p class="muted" style="color: #3fb950">已连接 ${ok}/${total} 个币安账户</p>`;
+  }
+  
   return `<div class="account-ledger-strip">
     <span>总账权益 <strong>${Shell.escHtml(fmtUsdt(lt.equity_usdt))}</strong> USDT</span>
     <span>总钱包 <strong>${Shell.escHtml(fmtUsdt(lt.wallet_balance_usdt))}</strong></span>
@@ -210,6 +220,132 @@ async function refreshGlobalAccount() {
   }
 }
 
+function renderSpotHoldings(scopes) {
+  const spot = (scopes || []).find(s => s.scope === "spot");
+  if (!spot || !spot.exchange || !spot.exchange.ok) return "";
+  
+  const ex = spot.exchange;
+  const holdings = ex.holdings || [];
+  if (!holdings.length) return "";
+  
+  const totalValue = ex.holdings_value_usdt || 0;
+  
+  const rows = holdings.map(h => {
+    const pct = totalValue > 0 ? (h.value_usdt / totalValue) * 100 : 0;
+    const src = h.price_source === "ticker" ? " (API)" : (h.price_source === "stablecoin" ? "" : " (Parquet)");
+    return `<tr>
+      <td>${Shell.escHtml(h.asset)}</td>
+      <td>${Shell.escHtml(String(h.qty))}</td>
+      <td>${Shell.escHtml(fmtUsdt(h.price_usdt))}<span class="muted" style="font-size: 0.85em">${src}</span></td>
+      <td>${Shell.escHtml(fmtUsdt(h.value_usdt))}</td>
+      <td>${pct.toFixed(1)}%</td>
+    </tr>`;
+  }).join("");
+  
+  // Create a stacked bar chart for holdings
+  const colors = ["#58a6ff", "#3fb950", "#f0883e", "#d2a8ff", "#f85149", "#e3b341"];
+  let chartHtml = "";
+  if (totalValue > 0) {
+    const segments = holdings.map((h, i) => {
+      const pct = (h.value_usdt / totalValue) * 100;
+      const color = colors[i % colors.length];
+      return `<div style="width: ${pct}%; background-color: ${color}; height: 100%; float: left;" title="${h.asset}: ${pct.toFixed(1)}%"></div>`;
+    }).join("");
+    chartHtml = `<div style="height: 12px; width: 100%; background: #21262d; border-radius: 6px; overflow: hidden; margin-top: 10px; margin-bottom: 10px;">${segments}</div>`;
+  }
+  
+  let ledgerDiff = "";
+  if (ex.ledger_holdings) {
+    const diff = ex.holdings_value_usdt - (ex.ledger_holdings_value_usdt || 0);
+    ledgerDiff = `<p class="muted" style="margin-top: 5px; font-size: 0.9em;">与本地母仓市值差额: ${fmtPnlNum(diff)} USDT</p>`;
+  }
+  
+  return `<section class="panel account-panel" style="grid-column: 1 / -1;">
+    <h3>现货持仓明细 (Spot)</h3>
+    ${chartHtml}
+    <div class="account-table-wrap">
+      <table class="account-table">
+        <thead><tr><th>资产</th><th>数量</th><th>现价 (USDT)</th><th>市值 (USDT)</th><th>占比</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    ${ledgerDiff}
+  </section>`;
+}
+
+async function refreshReconciliation() {
+  const container = document.getElementById("reconciliationContainer");
+  if (!container) return;
+  
+  container.innerHTML = '<p class="muted">正在对账...</p>';
+  
+  try {
+    const scopes = ["trend", "multi_leg", "spot"];
+    const promises = scopes.map(s => Shell.api(`/api/account/reconciliation?scope=${s}`).catch(e => ({ error: e })));
+    const results = await Promise.all(promises);
+    
+    let html = '<div class="account-grid">';
+    
+    results.forEach((res, i) => {
+      const scope = scopes[i];
+      const label = scope === "trend" ? "B·Trend" : (scope === "multi_leg" ? "C·Multi-leg" : "A·Spot");
+      
+      if (res.error || !res.data) {
+        html += `<section class="panel account-panel">
+          <h3>${label} 对账</h3>
+          <p class="muted" style="color: #f85149">失败: ${Shell.escHtml(String(res.error || "未知错误"))}</p>
+        </section>`;
+        return;
+      }
+      
+      const data = res.data;
+      if (!data.ok && data.error) {
+        html += `<section class="panel account-panel">
+          <h3>${label} 对账</h3>
+          <p class="muted" style="color: #f85149">交易所拉取失败: ${Shell.escHtml(data.error)}</p>
+        </section>`;
+        return;
+      }
+      
+      const issues = data.issues || [];
+      if (issues.length === 0) {
+        html += `<section class="panel account-panel">
+          <h3>${label} 对账</h3>
+          <p style="color: #3fb950; font-weight: bold;">✓ 交易所与本地数据一致</p>
+        </section>`;
+      } else {
+        const issueRows = issues.map(iss => {
+          if (iss.kind === "qty_mismatch") {
+            return `<tr><td>数量不符</td><td>${iss.asset}</td><td>${iss.exchange}</td><td>${iss.local}</td><td>${fmtPnlNum(iss.delta)}</td></tr>`;
+          } else if (iss.kind === "missing_exchange_order") {
+            return `<tr><td>交易所缺单</td><td>${iss.symbol}</td><td>—</td><td>${iss.order_id}</td><td>—</td></tr>`;
+          } else if (iss.kind === "orphan_exchange_order") {
+            return `<tr><td>孤儿单</td><td>${iss.symbol}</td><td>${iss.order_id}</td><td>—</td><td>—</td></tr>`;
+          } else if (iss.kind === "position_mismatch") {
+            return `<tr><td>仓位不符</td><td>${iss.symbol}</td><td>${iss.exchange}</td><td>${iss.local}</td><td>${fmtPnlNum(iss.delta)}</td></tr>`;
+          }
+          return `<tr><td colspan="5">${JSON.stringify(iss)}</td></tr>`;
+        }).join("");
+        
+        html += `<section class="panel account-panel">
+          <h3>${label} 对账 <span style="color: #f85149; font-size: 0.8em; font-weight: normal;">(⚠ ${issues.length} 项差异)</span></h3>
+          <div class="account-table-wrap">
+            <table class="account-table" style="font-size: 0.9em">
+              <thead><tr><th>类型</th><th>资产/标的</th><th>交易所</th><th>本地</th><th>差额</th></tr></thead>
+              <tbody>${issueRows}</tbody>
+            </table>
+          </div>
+        </section>`;
+      }
+    });
+    
+    html += '</div>';
+    container.innerHTML = html;
+  } catch (e) {
+    container.innerHTML = `<p class="muted" style="color: #f85149">对账请求失败: ${Shell.escHtml(String(e))}</p>`;
+  }
+}
+
 async function refreshScopedAccount() {
   const symbol = document.getElementById("symbolSelect").value;
   const lookback = document.getElementById("lookbackSelect").value;
@@ -227,6 +363,12 @@ async function refreshScopedAccount() {
     document.getElementById("strategiesTable").innerHTML = renderStrategiesTable(
       scopedData.strategies
     );
+    
+    const spotHoldingsContainer = document.getElementById("spotHoldingsContainer");
+    if (spotHoldingsContainer) {
+      spotHoldingsContainer.innerHTML = renderSpotHoldings(scopedData.scopes);
+    }
+    
     document.getElementById("dailyChart").innerHTML = renderDailyChart(scopedData.daily_realized);
     const notes = (scopedData.notes || []).map((n) => `· ${n}`).join("\n");
     document.getElementById("accountNotes").textContent = notes;
@@ -243,6 +385,7 @@ async function refreshAccount() {
   await Promise.all([
     refreshGlobalAccount(),
     refreshScopedAccount(),
+    refreshReconciliation(),
   ]);
 }
 

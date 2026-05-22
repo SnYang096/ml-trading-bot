@@ -6,6 +6,7 @@ from mlbot_console.config import SETTINGS
 from mlbot_console.responses import ok
 from mlbot_console.services import ohlcv_reader
 from mlbot_console.services.db import db_status
+from mlbot_console.services.env_bootstrap import credentials_status
 from mlbot_console.services.universe import load_universe_symbols
 
 router = APIRouter(tags=["health"])
@@ -30,6 +31,7 @@ def health() -> dict:
                 "spot_ledger": db_status(SETTINGS.spot_ledger_db),
                 "multi_leg": db_status(SETTINGS.multi_leg_db),
             },
+            "exchange_credentials": credentials_status(),
         }
     )
 
