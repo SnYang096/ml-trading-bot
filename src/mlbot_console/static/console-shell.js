@@ -275,6 +275,9 @@
     if (purpose === "inventory" || String(row?.order_type || "") === "inventory_leg") {
       parts.push('<span class="leg-badge leg-inv" title="引擎库存腿">库存</span>');
     }
+    if (row?.is_repair_tp) {
+      parts.push('<span class="leg-badge leg-repair-tp" title="手动补挂止盈">补挂</span>');
+    }
     const label = String(row?.leg_label || "").trim();
     if (label) {
       const cls = label.includes("tp") ? "leg-badge leg-tp" : "leg-badge";

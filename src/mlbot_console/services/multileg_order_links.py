@@ -84,6 +84,7 @@ def _protection_tp_rows(
 ) -> List[Dict[str, Any]]:
     eid = str(entry_order_id or "")
     out: List[Dict[str, Any]] = []
+    seen: set[str] = set()
     for row in legs:
         oid = str(row.get("order_id") or "")
         purpose = str(row.get("purpose") or "").lower()
@@ -91,6 +92,15 @@ def _protection_tp_rows(
         if oid.startswith(f"{eid}_tp") or (
             "take_profit" in purpose and leg == eid
         ):
+            if oid not in seen:
+                seen.add(oid)
+                out.append(row)
+    from mlbot_console.services.multileg_repair_tp import repair_tp_rows_for_entry
+
+    for row in repair_tp_rows_for_entry(legs, eid):
+        oid = str(row.get("order_id") or "")
+        if oid and oid not in seen:
+            seen.add(oid)
             out.append(row)
     return out
 
@@ -143,14 +153,21 @@ def annotate_leg_group(legs: List[Dict[str, Any]]) -> None:
             tp_rows = _protection_tp_rows(legs, oid)
         planned = _pick_planned_tp(tp_rows)
         exit_row = _pick_filled_tp(tp_rows)
+        if exit_row is None:
+            from mlbot_console.services.multileg_repair_tp import pick_repair_filled_tp
+
+            exit_row = pick_repair_filled_tp(legs, eid)
         if planned is not None:
             row["_link_tp_price"] = _price(planned)
             row["_link_tp_leg"] = leg_suffix(str(planned.get("order_id") or ""))
             row["_link_tp_status"] = str(planned.get("status") or "")
         if exit_row is not None:
+            from mlbot_console.services.multileg_repair_tp import is_repair_tp_row
+
             row["_link_exit_price"] = _price(exit_row)
             row["_link_exit_leg"] = str(exit_row.get("order_id") or "")
             row["_link_exit_status"] = str(exit_row.get("status") or "")
+            row["_link_exit_is_repair"] = is_repair_tp_row(exit_row)
 
 
 def row_group_key(row: Dict[str, Any]) -> Optional[str]:
@@ -196,6 +213,10 @@ def build_leg_link_index(rows: List[Dict[str, Any]]) -> Dict[str, List[Dict[str,
 
 
 def _is_tp_protection_row(row: Dict[str, Any]) -> bool:
+    from mlbot_console.services.multileg_repair_tp import is_repair_tp_row
+
+    if is_repair_tp_row(row):
+        return True
     purpose = str(row.get("purpose") or "").lower()
     if "take_profit" in purpose:
         return True
@@ -214,7 +235,9 @@ def resolve_take_profit_display(row: Dict[str, Any]) -> Tuple[Optional[float], s
     if exit_px is not None and exit_px == exit_px:
         hint = "已平仓"
         leg = row.get("_link_exit_leg")
-        if leg:
+        if row.get("_link_exit_is_repair"):
+            hint = "补挂止盈"
+        elif leg:
             hint = f"已平·{str(leg)[-6:]}"
         return float(exit_px), hint
 
@@ -254,7 +277,7 @@ def enrich_multileg_rows_for_symbol(
     sql = """
         SELECT local_order_id AS order_id, symbol, side, status, order_type, purpose,
                quantity, price, stop_price, filled_quantity, average_price, created_at,
-               filled_at, strategy, leg_id
+               filled_at, strategy, leg_id, client_order_id
         FROM multi_leg_orders
         WHERE symbol = ?
     """
@@ -279,6 +302,7 @@ def enrich_multileg_rows_for_symbol(
             "_link_exit_price",
             "_link_exit_leg",
             "_link_exit_status",
+            "_link_exit_is_repair",
         ):
             if key in src:
                 item[key] = src[key]

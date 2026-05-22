@@ -314,7 +314,7 @@ function initMainChart() {
     const l = data.low;
     const c = data.close;
     const timeStr = Shell.formatOrderTime(param.time);
-    
+
     const pct = ((c - o) / o * 100).toFixed(2);
     const cls = c >= o ? "legend-pos" : "legend-neg";
     const sign = c >= o ? "+" : "";
@@ -511,9 +511,9 @@ function applyMainOverlays(mainOverlays, opts = {}) {
       mainOverlaySeries.set(key, line);
     }
     const next = spec.points.map((p) => ({
-        time: p.time,
-        value: p.value,
-      }));
+      time: p.time,
+      value: p.value,
+    }));
     const points = merge ? mergeOverlayPoints(mainOverlayData.get(key) || [], next) : next;
     mainOverlayData.set(key, points);
     line.setData(points);
@@ -1524,12 +1524,12 @@ function bindControls() {
         resetMarkerQueryRange();
         chartFitPending = true;
         if (id.startsWith("layer")) renderFeaturePicker();
-        if (ordersDockOpen) refreshOrdersList().catch(() => {});
+        if (ordersDockOpen) refreshOrdersList().catch(() => { });
         rerunAll();
         return;
       }
       if (id.startsWith("layer")) renderFeaturePicker();
-      if (ordersDockOpen) refreshOrdersList().catch(() => {});
+      if (ordersDockOpen) refreshOrdersList().catch(() => { });
       rerun();
     })
   );
@@ -1562,7 +1562,7 @@ function bindControls() {
     await Shell.loadExtLinks();
     await Shell.loadSymbols("symbolSelect");
     Shell.bindOrdersFilterSync(() => {
-      if (ordersDockOpen) refreshOrdersList().catch(() => {});
+      if (ordersDockOpen) refreshOrdersList().catch(() => { });
     });
     const pageUrl = new URL(window.location.href);
     const symParam = pageUrl.searchParams.get("symbol");

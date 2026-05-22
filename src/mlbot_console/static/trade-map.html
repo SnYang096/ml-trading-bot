@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -7,6 +8,7 @@
   <link rel="stylesheet" href="/static/styles.css" />
   <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 </head>
+
 <body class="page-trade-map">
   <header class="toolbar toolbar-global">
     <div class="toolbar-row-global">
@@ -39,8 +41,10 @@
           <option value="1w">1w</option>
         </select>
       </label>
-      <label class="chk-pill" title="2h 特征 bus 的 EMA1200 价格线，叠加在当前周期主图"><input type="checkbox" id="mainEma1200" /> EMA1200</label>
-      <label class="chk-pill" title="周线 EMA200 价格线（2h 特征 bus），叠加在当前周期主图"><input type="checkbox" id="mainWeeklyEma200" /> 周线EMA200</label>
+      <label class="chk-pill" title="2h 特征 bus 的 EMA1200 价格线，叠加在当前周期主图"><input type="checkbox" id="mainEma1200" />
+        EMA1200</label>
+      <label class="chk-pill" title="周线 EMA200 价格线（2h 特征 bus），叠加在当前周期主图"><input type="checkbox" id="mainWeeklyEma200" />
+        周线EMA200</label>
     </div>
 
     <div class="module module-accounts" title="账户层 A/B/C：控制主图成交标记">
@@ -48,14 +52,17 @@
       <label><input type="checkbox" id="layerTrend" checked /> B·Trend</label>
       <label><input type="checkbox" id="layerSpot" checked /> A·Spot</label>
       <label><input type="checkbox" id="layerMultiLeg" checked /> C·Multi-leg</label>
-      <label title="在已成交标记之外，叠加显示 open/pending 网格限价单与 TP 保护单（不含 expired/canceled）"><input type="checkbox" id="layerPending" /> 含挂单</label>
-      <label class="chk-pill" title="chop_grid 中心/档位/成交/TP 价格线 + 震荡(chop)区间底色（需勾选 C·Multi-leg）"><input type="checkbox" id="layerChopGrid" checked /> 网格线</label>
+      <label title="在已成交标记之外，叠加显示 open/pending 网格限价单与 TP 保护单（不含 expired/canceled）"><input type="checkbox"
+          id="layerPending" /> 含挂单</label>
+      <label class="chk-pill" title="chop_grid 中心/档位/成交/TP 价格线 + 震荡(chop)区间底色（需勾选 C·Multi-leg）"><input type="checkbox"
+          id="layerChopGrid" checked /> 网格线</label>
     </div>
 
     <div class="module module-subcharts">
       <span class="module-label">附图</span>
       <label class="chk-pill"><input type="checkbox" id="paneVolume" /> 成交量</label>
-      <button type="button" id="featurePanelBtn" class="feature-panel-btn" aria-expanded="false" aria-controls="featureDrawer">
+      <button type="button" id="featurePanelBtn" class="feature-panel-btn" aria-expanded="false"
+        aria-controls="featureDrawer">
         特征 <span id="featurePickerHint" class="feature-count-badge">…</span>
       </button>
     </div>
@@ -102,7 +109,8 @@
       <div class="orders-dock-head">
         <span>订单 <span id="ordersDockCount" class="muted"></span></span>
         <label class="chk-pill orders-filter-chk"><input type="checkbox" id="hideExpired" checked /> 隐藏 expired</label>
-        <label class="chk-pill orders-filter-chk"><input type="checkbox" id="hideCanceled" checked /> 隐藏 canceled</label>
+        <label class="chk-pill orders-filter-chk"><input type="checkbox" id="hideCanceled" checked /> 隐藏
+          canceled</label>
         <span class="muted">点击行与 K 线标记联动</span>
       </div>
       <div class="orders-table-wrap">
@@ -121,7 +129,9 @@
             </tr>
           </thead>
           <tbody id="ordersDockBody">
-            <tr><td colspan="8" class="muted">展开订单表后加载</td></tr>
+            <tr>
+              <td colspan="8" class="muted">展开订单表后加载</td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -131,4 +141,5 @@
   <script src="/static/trade-map-core.js"></script>
   <script src="/static/trade-map.js"></script>
 </body>
+
 </html>

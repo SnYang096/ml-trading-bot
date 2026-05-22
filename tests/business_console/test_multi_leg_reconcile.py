@@ -402,3 +402,62 @@ def test_expired_short_not_on_chart_by_default(multi_leg_db):
     assert not any(
         m.get("detail", {}).get("local_order_id") == "bnb_s1_exp" for m in markers
     )
+
+
+def test_l1_entry_shows_repair_tp_as_l1_tp(multi_leg_db):
+    from src.order_management.multi_leg_storage import MultiLegStorage
+
+    storage = MultiLegStorage(str(multi_leg_db))
+    run_id = storage.create_run(
+        mode="testnet",
+        strategies=["chop_grid"],
+        symbols=["BNBUSDT"],
+        run_id="mlr_repair_tp",
+    )
+    group = "BNBUSDT_2026-05-19 08:40:00+00:00"
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": f"{group}_L1",
+            "symbol": "BNBUSDT",
+            "side": "BUY",
+            "purpose": "entry",
+            "quantity": 0.31,
+            "price": 637.11,
+            "status": "filled",
+            "filled_quantity": 0.31,
+            "average_price": 637.11,
+        }
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": f"{group}_L1_tp",
+            "leg_id": f"{group}_L1",
+            "symbol": "BNBUSDT",
+            "side": "LONG",
+            "purpose": "take_profit",
+            "quantity": 0.31,
+            "price": 643.55,
+            "status": "filled",
+            "filled_quantity": 0.31,
+            "average_price": 652.67,
+            "client_order_id": "cg_repair_long_tp2",
+        }
+    )
+    rows = collect_orders(
+        trend_db=multi_leg_db.parent / "missing_trend.db",
+        spot_db=multi_leg_db.parent / "missing_spot.db",
+        multi_leg_db=multi_leg_db,
+        symbol="BNBUSDT",
+        scopes=["multi_leg"],
+        limit=50,
+    )
+    l1 = next(r for r in rows if r["order_id"].endswith("_L1"))
+    tp = next(r for r in rows if r["order_id"].endswith("_L1_tp"))
+    assert l1["take_profit_price"] == 652.67
+    assert "补挂" in (l1.get("take_profit_hint") or "")
+    assert tp["leg_label"] == "L1_tp"
+    assert tp.get("is_repair_tp") is True

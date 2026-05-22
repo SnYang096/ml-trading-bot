@@ -16,6 +16,10 @@ from mlbot_console.services.multileg_order_links import (
     resolve_take_profit_display,
     row_group_key,
 )
+from mlbot_console.services.multileg_repair_tp import (
+    is_repair_tp_row,
+    repair_display_leg_label,
+)
 from mlbot_console.services.trade_markers import _marker_id, _parse_ts
 
 _ALL_SYMBOLS = frozenset({"", "*", "ALL", "__ALL__"})
@@ -141,8 +145,13 @@ def _normalize(
         oid = str(row.get("order_id") or row.get("local_order_id") or "")
         lid = str(row.get("leg_id") or "")
         item["grid_batch"] = row_group_key(row)
-        item["leg_label"] = leg_suffix(oid) or leg_suffix(lid)
+        if is_repair_tp_row(row):
+            item["leg_label"] = repair_display_leg_label(row)
+        else:
+            item["leg_label"] = leg_suffix(oid) or leg_suffix(lid)
         item["leg_index"] = leg_index(oid) or leg_index(lid)
+        if is_repair_tp_row(row):
+            item["is_repair_tp"] = True
     return item
 
 
@@ -399,6 +408,37 @@ def _inventory_row_from_position(pos: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _query_repair_tp_orders(db_path: Path, symbol: str) -> List[Dict[str, Any]]:
+    sym = symbol.upper()
+    sql = """
+        SELECT local_order_id AS order_id, symbol, side, status, order_type, purpose,
+               quantity, price, stop_price, filled_quantity, average_price, created_at,
+               filled_at, strategy, leg_id, client_order_id
+        FROM multi_leg_orders
+        WHERE symbol = ?
+          AND (
+            client_order_id LIKE 'cg_repair%'
+            OR local_order_id LIKE 'cg_repair%'
+          )
+    """
+    return query_rows(db_path, sql, (sym,))
+
+
+def _supplement_multileg_repair_tp(
+    db_path: Path,
+    symbol: str,
+    rows: List[Dict[str, Any]],
+) -> None:
+    if _is_all_symbols(symbol) or not db_path.is_file():
+        return
+    known = {str(r.get("order_id") or "") for r in rows}
+    for row in _query_repair_tp_orders(db_path, symbol):
+        oid = str(row.get("order_id") or "")
+        if oid and oid not in known:
+            rows.append(row)
+            known.add(oid)
+
+
 def _supplement_multileg_inventory_entries(
     db_path: Path,
     symbol: str,
@@ -595,7 +635,7 @@ def fetch_multileg_raw_rows(
     sql = """
         SELECT local_order_id AS order_id, symbol, side, status, order_type, purpose,
                quantity, price, stop_price, filled_quantity, average_price, created_at,
-               filled_at, strategy, leg_id
+               filled_at, strategy, leg_id, client_order_id
         FROM multi_leg_orders
         WHERE symbol = ?
         ORDER BY COALESCE(filled_at, created_at) ASC
@@ -604,6 +644,7 @@ def fetch_multileg_raw_rows(
     _supplement_multileg_inventory_entries(
         db_path, sym, rows, engine_data_root=engine_data_root
     )
+    _supplement_multileg_repair_tp(db_path, sym, rows)
     return rows
 
 
@@ -623,7 +664,7 @@ def multi_leg_orders_list(
         sql = f"""
             SELECT local_order_id AS order_id, symbol, side, status, order_type, purpose,
                    quantity, price, stop_price, filled_quantity, average_price, created_at,
-                   filled_at, strategy, leg_id
+                   filled_at, strategy, leg_id, client_order_id
             FROM multi_leg_orders
             WHERE 1=1{status_clause}
             ORDER BY COALESCE(filled_at, created_at) DESC
@@ -635,7 +676,7 @@ def multi_leg_orders_list(
         sql = f"""
             SELECT local_order_id AS order_id, symbol, side, status, order_type, purpose,
                    quantity, price, stop_price, filled_quantity, average_price, created_at,
-                   filled_at, strategy, leg_id
+                   filled_at, strategy, leg_id, client_order_id
             FROM multi_leg_orders
             WHERE symbol = ?{status_clause}
             ORDER BY COALESCE(filled_at, created_at) DESC
@@ -645,6 +686,7 @@ def multi_leg_orders_list(
     _supplement_multileg_inventory_entries(
         db_path, symbol, rows, engine_data_root=engine_data_root
     )
+    _supplement_multileg_repair_tp(db_path, symbol, rows)
     enrich_multileg_rows_for_symbol(db_path, symbol, rows)
     out = []
     for r in rows:
