@@ -1219,10 +1219,33 @@ class BinanceAPI:
             logger.error(f"查询订单失败: {e}")
             raise
 
+    def get_algo_order_by_client_id(
+        self, client_order_id: str, symbol: str
+    ) -> Optional[Dict[str, Any]]:
+        """Query open/historical algo (conditional) order by ``clientAlgoId``."""
+        cid = str(client_order_id or "").strip()
+        mid = self._futures_market_id(symbol)
+        if not cid or not mid:
+            return None
+        try:
+            raw = self._fapi_signed_get(
+                "/fapi/v1/algoOrder",
+                {"symbol": mid, "clientAlgoId": cid},
+            )
+        except Exception as e:
+            err = str(e).lower()
+            if "not found" in err or "-2013" in str(e) or "-2011" in str(e):
+                return None
+            logger.error("查询 algo 订单失败 client_order_id=%s: %s", cid, e)
+            raise
+        if not isinstance(raw, dict) or not raw:
+            return None
+        return self._open_algo_order_from_binance_rest(raw)
+
     def get_order_by_client_id(
         self, client_order_id: str, symbol: str
     ) -> Optional[Dict[str, Any]]:
-        """Query futures order by origClientOrderId (filled/canceled history)."""
+        """Query futures order by origClientOrderId (regular + algo conditional)."""
         cid = str(client_order_id or "").strip()
         if not cid:
             return None
@@ -1233,16 +1256,15 @@ class BinanceAPI:
             raw = self.exchange.fapiPrivateGetOrder(
                 {"symbol": binance_sym, "origClientOrderId": cid}
             )
-            if not raw:
-                return None
-            order = self.exchange.parse_order(raw, market)
-            return self._normalize_fetched_order(order)
+            if raw:
+                order = self.exchange.parse_order(raw, market)
+                return self._normalize_fetched_order(order)
         except Exception as e:
             err = str(e).lower()
-            if "not found" in err or "-2013" in str(e):
-                return None
-            logger.error("查询订单失败 client_order_id=%s: %s", cid, e)
-            raise
+            if "not found" not in err and "-2013" not in str(e):
+                logger.error("查询订单失败 client_order_id=%s: %s", cid, e)
+                raise
+        return self.get_algo_order_by_client_id(cid, symbol)
 
     def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         """

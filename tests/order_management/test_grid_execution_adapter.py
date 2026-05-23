@@ -274,6 +274,41 @@ def test_duplicate_protection_client_id_reuses_live_order() -> None:
     assert (result.raw or {}).get("local_order_id") == "leg_s1_tp_supp"
 
 
+def test_duplicate_protection_algo_stop_reuses_live_order() -> None:
+    api = _api()
+    api.place_order.side_effect = Exception(
+        'binance {"code":-4116,"msg":"ClientOrderId is duplicated."}'
+    )
+    api.get_order_by_client_id.return_value = None
+    api.get_open_orders_for_sl_cleanup = MagicMock(
+        return_value=[
+            {
+                "order_id": "90535381642",
+                "client_order_id": "cg_c6340a24bcce",
+                "symbol": "BNBUSDT",
+                "status": "new",
+                "info": {"clientAlgoId": "cg_c6340a24bcce"},
+                "_is_algo_order": True,
+            }
+        ]
+    )
+    adapter = MultiLegExecutionAdapter(api)
+    action = {
+        "action": "place_protection",
+        "symbol": "BNBUSDT",
+        "side": "LONG",
+        "quantity": 0.02,
+        "trigger_price": 600.0,
+        "protection_type": "stop_loss",
+        "order_id": "BNBUSDT_2026-05-19 08:40:00+00:00_S1_sl",
+    }
+    result = adapter.execute_action(action)
+
+    assert result.status == "new"
+    assert result.order_id == "90535381642"
+    assert result.client_order_id == "cg_c6340a24bcce"
+
+
 def test_cancel_requires_symbol_and_calls_exchange() -> None:
     api = _api()
     adapter = GridExecutionAdapter(api)

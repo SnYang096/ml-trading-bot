@@ -60,7 +60,36 @@ def _is_live_order_status(status: Any) -> bool:
         "accepted",
         "partially_filled",
         "partial",
+        "working",
+        "pending",
+        "triggered",
     }
+
+
+def _find_protection_order_by_client_id(
+    binance_api: Any, client_order_id: str, symbol: str
+) -> Optional[Dict[str, Any]]:
+    """Resolve an existing protection order (regular limit or algo conditional)."""
+    cid = str(client_order_id or "").strip()
+    if not cid:
+        return None
+    fetch = getattr(binance_api, "get_order_by_client_id", None)
+    if callable(fetch):
+        order = fetch(cid, symbol)
+        if order and _is_live_order_status(order.get("status")):
+            return order
+    scan = getattr(binance_api, "get_open_orders_for_sl_cleanup", None)
+    if callable(scan):
+        for row in scan(symbol) or []:
+            row_cid = str(
+                row.get("client_order_id")
+                or (row.get("info") or {}).get("clientAlgoId")
+                or (row.get("info") or {}).get("clientOrderId")
+                or ""
+            ).strip()
+            if row_cid == cid and _is_live_order_status(row.get("status")):
+                return row
+    return None
 
 
 def _is_order_already_gone(exc: BaseException) -> bool:
@@ -539,11 +568,10 @@ class MultiLegExecutionAdapter:
         except Exception as exc:
             if not _is_duplicate_client_order_id_error(exc):
                 raise
-            fetch_by_client_id = getattr(self.binance_api, "get_order_by_client_id", None)
-            if not callable(fetch_by_client_id):
-                raise
-            order = fetch_by_client_id(client_order_id, symbol)
-            if not order or not _is_live_order_status(order.get("status")):
+            order = _find_protection_order_by_client_id(
+                self.binance_api, client_order_id, symbol
+            )
+            if not order:
                 raise
             logger.warning(
                 "multi-leg protection order already exists: local_order_id=%s "
