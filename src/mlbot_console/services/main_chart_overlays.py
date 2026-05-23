@@ -1,25 +1,17 @@
-"""Slow-scale MA lines on Trade Map main chart (2h EMA1200, weekly EMA200)."""
+"""Slow-scale MA lines on Trade Map main chart (CMS-local, no feature-bus columns)."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
+from mlbot_console.services.feature_overlay import _align_points_to_candles, _utc_ts
 from mlbot_console.services.macro_spot_daily import MacroSpotDailyLoader
 
-from mlbot_console.services.feature_overlay import (
-    COLUMN_ALIASES,
-    _align_points_to_candles,
-    _resolve_feature_path,
-    _resolve_parquet_column,
-    _utc_ts,
-)
-
-# Always sourced from 2h feature bus (120T), overlaid on any chart timeframe.
-SOURCE_FEATURE_TF = "2h"
 EMA1200_SPAN_BARS = 1200
+SOURCE_FEATURE_TF = "2h"
 # Seed parquet older than chart end by this much is treated stale (flat 374 bug).
 STALE_WEEKLY_SEED_LAG = pd.Timedelta(days=21)
 
@@ -28,14 +20,10 @@ MAIN_OVERLAY_KEYS = frozenset({"ema_1200", "weekly_ema_200"})
 _OVERLAY_SPECS: Dict[str, Dict[str, Any]] = {
     "ema_1200": {
         "label": "EMA1200 (2h)",
-        "price_columns": ["ema_1200"],
-        "position_columns": ["ema_1200_position", "ema_1200_position_f"],
         "color": "#ffb74d",
-        "use_macro_seed": False,
     },
     "weekly_ema_200": {
         "label": "周线 EMA200",
-        "position_columns": ["weekly_ema_200_position", "weekly_ema_200_position_f"],
         "color": "#64b5f6",
         "use_macro_seed": True,
         "seed_ema_column": "weekly_ema_200",
@@ -54,82 +42,8 @@ def parse_main_overlay_keys(raw: Optional[str]) -> List[str]:
     return out
 
 
-def _position_to_ma_price(close: pd.Series, position: pd.Series) -> pd.Series:
-    """position = (close - ma) / close  =>  ma = close * (1 - position)."""
-    c = pd.to_numeric(close, errors="coerce")
-    p = pd.to_numeric(position, errors="coerce")
-    return c * (1.0 - p)
-
-
 def _utc_datetime64ns(series: pd.Series) -> pd.Series:
-    """Normalize timestamps for merge_asof (parquet ns vs candle unit=s)."""
     return pd.to_datetime(series, utc=True).astype("datetime64[ns, UTC]")
-
-
-def _resolve_position_column(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
-    for name in candidates:
-        col = _resolve_parquet_column(df, name)
-        if col is not None:
-            return col
-    return None
-
-
-def _resolve_price_column(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
-    for name in candidates:
-        if name in df.columns:
-            return name
-        col = _resolve_parquet_column(df, name)
-        if col is not None:
-            return col
-    return None
-
-
-def _parquet_columns_to_read(path: Any, want: List[str]) -> List[str]:
-    try:
-        import pyarrow.parquet as pq
-
-        names = set(pq.read_schema(path).names)
-    except (ImportError, OSError, ValueError):
-        return want
-    cols = ["timestamp"]
-    for w in want:
-        if w in names:
-            cols.append(w)
-    return list(dict.fromkeys(cols))
-
-
-def _load_source_features(
-    feature_bus_root: Any,
-    symbol: str,
-    *,
-    start: Optional[pd.Timestamp],
-    end: Optional[pd.Timestamp],
-    position_columns: Optional[List[str]] = None,
-    price_columns: Optional[List[str]] = None,
-) -> pd.DataFrame:
-    path = _resolve_feature_path(feature_bus_root, symbol, SOURCE_FEATURE_TF)
-    if path is None:
-        return pd.DataFrame()
-    want = ["timestamp", "close"]
-    if price_columns:
-        want.extend(price_columns)
-    if position_columns:
-        want.extend(position_columns)
-    read_cols = _parquet_columns_to_read(path, want)
-    try:
-        df = pd.read_parquet(path, columns=read_cols)
-    except (OSError, ValueError, KeyError):
-        df = pd.read_parquet(path)
-    if df.empty or "timestamp" not in df.columns:
-        return pd.DataFrame()
-    df = df.copy()
-    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
-    df = df.sort_values("timestamp")
-    if start is not None:
-        df = df[df["timestamp"] >= _utc_ts(start)]
-    if end is not None:
-        df = df[df["timestamp"] <= _utc_ts(end)]
-    return df.reset_index(drop=True)
 
 
 def _candle_time_bounds(
@@ -145,7 +59,6 @@ def _native_points_from_series(
     timestamps: pd.Series,
     values: pd.Series,
 ) -> List[Dict[str, Any]]:
-    """One point per source timestamp (full EMA history, not a single level)."""
     points: List[Dict[str, Any]] = []
     for t, v in zip(timestamps, values):
         val = pd.to_numeric(v, errors="coerce")
@@ -179,7 +92,6 @@ def _seed_last_timestamp(seed: pd.DataFrame) -> Optional[pd.Timestamp]:
 
 
 def _seed_is_stale_for_chart(seed: pd.DataFrame, candles: List[Dict[str, Any]]) -> bool:
-    """Stale seed (e.g. 2025-01) must not ffilled across 2026 candles as a flat line."""
     last = _seed_last_timestamp(seed)
     _, c_end = _candle_time_bounds(candles)
     if last is None or c_end is None:
@@ -192,7 +104,6 @@ def _weekly_ema_from_spot_daily(
     symbol: str,
     candles: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """Recompute weekly EMA200 from Vision spot 1d ZIPs (curve, ~565 on BNB)."""
     from src.live_data_stream.spot_weekly_ema_seed import compute_weekly_ema_table
 
     c_start, c_end = _candle_time_bounds(candles)
@@ -221,7 +132,6 @@ def _ema1200_from_candle_closes(
     *,
     span: int = EMA1200_SPAN_BARS,
 ) -> List[Dict[str, Any]]:
-    """EMA(span) on chart OHLC closes — full-width curve when feature bus is short."""
     rows: List[tuple[int, float]] = []
     for c in candles:
         close = c.get("close")
@@ -244,40 +154,96 @@ def _ema1200_from_candle_closes(
     return _native_points_from_series(ema.index, ema.values)
 
 
-def _align_weekly_ema_seed_to_candles(
-    macro_seed_root: Any,
+def _resample_candles_to_2h(candles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    rows: List[tuple[pd.Timestamp, float]] = []
+    for c in candles:
+        t = c.get("time")
+        close = c.get("close")
+        if t is None or close is None:
+            continue
+        try:
+            rows.append((_utc_ts(pd.Timestamp(int(t), unit="s", tz="UTC")), float(close)))
+        except (TypeError, ValueError):
+            continue
+    if not rows:
+        return []
+    idx = pd.DatetimeIndex([r[0] for r in rows]).sort_values()
+    closes = pd.Series([r[1] for r in rows], index=idx, dtype=float)
+    bars = closes.resample("2h", label="right", closed="right").last().dropna()
+    return [
+        {"time": int(ts.timestamp()), "close": float(v)}
+        for ts, v in bars.items()
+        if float(v) > 0
+    ]
+
+
+def _fetch_2h_candles(
+    feature_bus_root: Path,
     symbol: str,
     candles: List[Dict[str, Any]],
     *,
-    ema_column: str = "weekly_ema_200",
+    live_storage_bars_root: Optional[Path] = None,
+    start: Optional[pd.Timestamp] = None,
+    end: Optional[pd.Timestamp] = None,
 ) -> List[Dict[str, Any]]:
-    """Plot weekly EMA200 price from Vision spot macro seed (authoritative)."""
-    try:
-        from src.live_data_stream.spot_weekly_ema_seed import load_weekly_ema_seed
-    except ImportError:
-        return []
-    seed = load_weekly_ema_seed(macro_seed_root, symbol)
-    if seed is None or seed.empty or ema_column not in seed.columns:
-        return []
-    if _seed_is_stale_for_chart(seed, candles):
-        return []
-    ema = pd.to_numeric(seed[ema_column], errors="coerce").dropna()
-    if ema.empty:
-        return []
-    if isinstance(ema.index, pd.DatetimeIndex):
-        ts = ema.index
-    elif "week_ts" in seed.columns:
-        ts = pd.to_datetime(seed["week_ts"], utc=True, errors="coerce")
-    else:
-        return []
+    from mlbot_console.services.ohlcv_reader import fetch_ohlcv
+
     c_start, c_end = _candle_time_bounds(candles)
-    if c_start is not None and c_end is not None:
-        mask = (ts >= c_start) & (ts <= c_end)
-        if mask.any():
-            ema = ema[mask]
-            ts = ema.index
-    native = _native_points_from_series(ts, ema)
-    return _overlay_points_for_chart(native, candles)
+    win_start = c_start or start
+    win_end = c_end or end
+    if win_start is not None:
+        win_start = win_start - pd.Timedelta(hours=EMA1200_SPAN_BARS * 2)
+    pack = fetch_ohlcv(
+        feature_bus_root,
+        symbol,
+        SOURCE_FEATURE_TF,
+        start=win_start,
+        end=win_end,
+        full_range=False,
+        live_storage_bars_root=live_storage_bars_root,
+    )
+    return list(pack.get("candles") or [])
+
+
+def _ema1200_points_local(
+    symbol: str,
+    chart_candles: List[Dict[str, Any]],
+    *,
+    chart_timeframe: str,
+    feature_bus_root: Any = None,
+    live_storage_bars_root: Any = None,
+    start: Optional[pd.Timestamp] = None,
+    end: Optional[pd.Timestamp] = None,
+) -> tuple[List[Dict[str, Any]], str]:
+    """EMA(1200) on 2h closes, aligned to the visible chart."""
+    tf = str(chart_timeframe or "2h").strip()
+    src_candles: List[Dict[str, Any]]
+    source = "candle_ewm_2h"
+    if tf in ("2h", "120T"):
+        src_candles = chart_candles
+    elif feature_bus_root and Path(feature_bus_root).is_dir():
+        src_candles = _fetch_2h_candles(
+            Path(feature_bus_root),
+            symbol,
+            chart_candles,
+            live_storage_bars_root=(
+                Path(live_storage_bars_root) if live_storage_bars_root else None
+            ),
+            start=start,
+            end=end,
+        )
+        source = "bars_1min_2h"
+    else:
+        src_candles = _resample_candles_to_2h(chart_candles)
+        source = "chart_resample_2h"
+    native = _ema1200_from_candle_closes(src_candles)
+    return _overlay_points_for_chart(native, chart_candles), source
+
+
+def _position_to_ma_price(close: pd.Series, position: pd.Series) -> pd.Series:
+    c = pd.to_numeric(close, errors="coerce")
+    p = pd.to_numeric(position, errors="coerce")
+    return c * (1.0 - p)
 
 
 def _align_ma_to_candles(
@@ -287,6 +253,7 @@ def _align_ma_to_candles(
     *,
     use_candle_close: bool = False,
 ) -> List[Dict[str, Any]]:
+    """Legacy helper (tests); live overlays do not invert feature-bus position."""
     if feat.empty or pos_col not in feat.columns or not candles:
         return []
     pos = pd.to_numeric(feat[pos_col], errors="coerce")
@@ -320,11 +287,10 @@ def _align_ma_to_candles(
             p = float(row.get("position") or 0)
             if c_close <= 0 or not (p == p):
                 continue
-            val = c_close * (1.0 - p)
             points.append(
                 {
                     "time": int(row["timestamp"].timestamp()),
-                    "value": val,
+                    "value": c_close * (1.0 - p),
                 }
             )
         return points
@@ -335,18 +301,55 @@ def _align_ma_to_candles(
     return _overlay_points_for_chart(native, candles)
 
 
+def _align_weekly_ema_seed_to_candles(
+    macro_seed_root: Any,
+    symbol: str,
+    candles: List[Dict[str, Any]],
+    *,
+    ema_column: str = "weekly_ema_200",
+) -> List[Dict[str, Any]]:
+    try:
+        from src.live_data_stream.spot_weekly_ema_seed import load_weekly_ema_seed
+    except ImportError:
+        return []
+    seed = load_weekly_ema_seed(macro_seed_root, symbol)
+    if seed is None or seed.empty or ema_column not in seed.columns:
+        return []
+    if _seed_is_stale_for_chart(seed, candles):
+        return []
+    ema = pd.to_numeric(seed[ema_column], errors="coerce").dropna()
+    if ema.empty:
+        return []
+    if isinstance(ema.index, pd.DatetimeIndex):
+        ts = ema.index
+    elif "week_ts" in seed.columns:
+        ts = pd.to_datetime(seed["week_ts"], utc=True, errors="coerce")
+    else:
+        return []
+    _, c_end = _candle_time_bounds(candles)
+    if c_end is not None:
+        keep = ts <= c_end
+        if keep.any():
+            ema = ema[keep]
+            ts = ema.index
+    native = _native_points_from_series(ts, ema)
+    return _overlay_points_for_chart(native, candles)
+
+
 def load_main_chart_overlays(
-    feature_bus_root: Any,
     symbol: str,
     candles: List[Dict[str, Any]],
     overlay_keys: List[str],
     *,
+    chart_timeframe: str = "2h",
     macro_seed_root: Any = None,
     macro_spot_kline_root: Any = None,
+    feature_bus_root: Any = None,
+    live_storage_bars_root: Any = None,
     start: Optional[pd.Timestamp] = None,
     end: Optional[pd.Timestamp] = None,
 ) -> Dict[str, Dict[str, Any]]:
-    """Build price-level MA series aligned to chart candles."""
+    """Build MA price series from CMS-local OHLC / macro (never feature-bus columns)."""
     requested = [k for k in overlay_keys if k in MAIN_OVERLAY_KEYS]
     out: Dict[str, Dict[str, Any]] = {}
     for key in requested:
@@ -362,45 +365,21 @@ def load_main_chart_overlays(
     if not requested or not candles:
         return out
 
-    candle_start, candle_end = _candle_time_bounds(candles)
-    feat_start = start
-    feat_end = end
-    if candle_start is not None:
-        feat_start = (
-            min(_utc_ts(feat_start), candle_start)
-            if feat_start is not None
-            else candle_start
-        )
-    if candle_end is not None:
-        feat_end = max(_utc_ts(feat_end), candle_end) if feat_end is not None else candle_end
-
-    all_pos_cols: List[str] = []
-    all_price_cols: List[str] = []
-    for key in requested:
-        all_pos_cols.extend(_OVERLAY_SPECS[key]["position_columns"])
-        for alias in _OVERLAY_SPECS[key]["position_columns"]:
-            all_pos_cols.extend(COLUMN_ALIASES.get(alias, []))
-        all_price_cols.extend(_OVERLAY_SPECS[key].get("price_columns") or [])
-    feat = _load_source_features(
-        feature_bus_root,
-        symbol,
-        start=feat_start,
-        end=feat_end,
-        position_columns=all_pos_cols,
-        price_columns=all_price_cols,
-    )
-    path = _resolve_feature_path(feature_bus_root, symbol, SOURCE_FEATURE_TF)
     for key in requested:
         spec = _OVERLAY_SPECS[key]
-        candidates: List[str] = []
-        for name in spec["position_columns"]:
-            candidates.append(name)
-            candidates.extend(COLUMN_ALIASES.get(name, []))
-        pos_col = _resolve_position_column(feat, candidates)
         entry = out[key]
-        entry["path"] = str(path) if path else None
         points: List[Dict[str, Any]] = []
-        if spec.get("use_macro_seed"):
+        if key == "ema_1200":
+            points, entry["source"] = _ema1200_points_local(
+                symbol,
+                candles,
+                chart_timeframe=chart_timeframe,
+                feature_bus_root=feature_bus_root,
+                live_storage_bars_root=live_storage_bars_root,
+                start=start,
+                end=end,
+            )
+        elif spec.get("use_macro_seed"):
             if macro_seed_root:
                 points = _align_weekly_ema_seed_to_candles(
                     macro_seed_root,
@@ -416,34 +395,6 @@ def load_main_chart_overlays(
                 )
                 if points:
                     entry["source"] = "spot_daily_weekly"
-        elif key == "ema_1200":
-            price_col = _resolve_price_column(
-                feat, list(spec.get("price_columns") or [])
-            )
-            if price_col and not feat.empty:
-                native = _native_points_from_series(
-                    feat["timestamp"], feat[price_col]
-                )
-                points = _overlay_points_for_chart(native, candles)
-                entry["source"] = "feature_bus_price"
-                entry["parquet_column"] = price_col
-            if not points:
-                points = _ema1200_from_candle_closes(candles)
-                entry["source"] = "candle_ewm"
-            if not points and not feat.empty and pos_col:
-                points = _align_ma_to_candles(
-                    feat, pos_col, candles, use_candle_close=False
-                )
-                entry["parquet_column"] = pos_col
-                entry["source"] = "position_inverted"
-        if not points and spec.get("use_macro_seed"):
-            if feat.empty or pos_col is None:
-                continue
-            points = _align_ma_to_candles(
-                feat, pos_col, candles, use_candle_close=True
-            )
-            entry["parquet_column"] = pos_col
-            entry["source"] = "position_inverted"
         entry["points"] = points
         entry["available"] = bool(points)
         if points:

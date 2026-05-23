@@ -41,10 +41,10 @@
           <option value="1w">1w</option>
         </select>
       </label>
-      <label class="chk-pill" title="2h 特征 bus 的 EMA1200 价格线，叠加在当前周期主图"><input type="checkbox" id="mainEma1200" />
-        EMA1200</label>
-      <label class="chk-pill" title="周线 EMA200 价格线（2h 特征 bus），叠加在当前周期主图"><input type="checkbox" id="mainWeeklyEma200" />
-        周线EMA200</label>
+      <label class="chk-pill" title="EMA(1200) on 2h closes — CMS 本地计算，不读 feature bus"><input type="checkbox"
+          id="mainEma1200" checked /> EMA1200</label>
+      <label class="chk-pill" title="周线 EMA200 — macro seed / Vision 现货日线，不读 feature bus"><input type="checkbox"
+          id="mainWeeklyEma200" checked /> 周线EMA200</label>
     </div>
 
     <div class="module module-accounts" title="账户层 A/B/C：控制主图成交标记">
@@ -56,6 +56,10 @@
           id="layerPending" /> 含挂单</label>
       <label class="chk-pill" title="chop_grid 中心/档位/成交/TP 价格线 + 震荡(chop)区间底色（需勾选 C·Multi-leg）"><input type="checkbox"
           id="layerChopGrid" checked /> 网格线</label>
+      <label class="chk-pill" title="按 archetype 在主图标出 Prefilter 通过区间（chop_grid 含 chop+box 规则）"><input
+          type="checkbox" id="layerPrefilter" checked /> Prefilter区</label>
+      <label class="chk-pill" title="按 gate.yaml 在主图标出 Gate 通过区间（Trend 策略）"><input type="checkbox"
+          id="layerGate" /> Gate区</label>
     </div>
 
     <div class="module module-subcharts">
@@ -77,6 +81,10 @@
     </div>
     <div class="feature-panel-head">
       <input type="search" id="featureSearch" class="feature-search" placeholder="搜索特征列…" autocomplete="off" />
+      <label class="feature-strategy-focus">
+        <span class="feature-strategy-focus-label">策略筛选</span>
+        <select id="featureStrategySelect" title="附图列表仅显示该策略相关特征列"></select>
+      </label>
       <div class="feature-panel-actions">
         <button type="button" class="btn-ghost" data-feature-action="preset-spot">Spot</button>
         <button type="button" class="btn-ghost" data-feature-action="preset-tpc">TPC</button>

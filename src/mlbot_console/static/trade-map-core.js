@@ -125,6 +125,13 @@
     return new Date(Number(sec) * 1000).toISOString();
   }
 
+  function stageRegionsQueryParam(prefilter, gate) {
+    const parts = [];
+    if (prefilter) parts.push("prefilter");
+    if (gate) parts.push("gate");
+    return parts.length ? parts.join(",") : "";
+  }
+
   function mainOverlaysQueryParam(ema1200, weeklyEma200) {
     const parts = [];
     if (ema1200) parts.push("ema_1200");
@@ -280,6 +287,46 @@
       .toLowerCase();
     if (!q) return columns || [];
     return (columns || []).filter((c) => String(c).toLowerCase().includes(q));
+  }
+
+  /** Strategies selectable in the feature drawer for the enabled account layers. */
+  function listStrategiesForLayers(layers) {
+    if (featureTaxonomy && featureTaxonomy.strategies) {
+      return featureTaxonomy.strategies.filter((s) =>
+        isLayerEnabled(s.account_layer, layers)
+      );
+    }
+    return [];
+  }
+
+  /**
+   * Picker columns: optional single-strategy focus; otherwise enabled layers only (no shared flood).
+   */
+  function filterColumnsForFeaturePicker(columns, layers, strategyFocus) {
+    const focus = strategyFocus ? String(strategyFocus).trim() : "";
+    return (columns || []).filter((col) => {
+      const m = lookupFeatureMeta(col);
+      if (focus) {
+        return m.strategy === focus;
+      }
+      if (m.account_layer === "shared" || m.strategy === "shared") {
+        return false;
+      }
+      return isLayerEnabled(m.account_layer, layers);
+    });
+  }
+
+  function inferStrategyFocusFromLayers(layers) {
+    const enabled = ACCOUNT_LAYER_ORDER.filter((id) => isLayerEnabled(id, layers));
+    if (enabled.length !== 1) return null;
+    if (enabled[0] === "multi_leg") return "chop_grid";
+    if (enabled[0] === "spot") return "spot_accum_simple";
+    return null;
+  }
+
+  function strategyFocusLabel(strategyId) {
+    if (!strategyId) return "全部（当前账户层）";
+    return strategyMeta(strategyId).title || strategyId;
   }
 
   const ACCOUNT_LAYER_ORDER = ["trend", "spot", "multi_leg", "shared"];
@@ -714,8 +761,8 @@
   }
 
   const FEATURE_PRESETS = {
-    default: ["weekly_ema_200_position"],
-    trend: ["tpc_pullback_depth", "tpc_semantic_chop", "bpc_pullback_depth"],
+    default: ["weekly_ema_200_position", "ema_1200_position"],
+    trend: ["ema_1200_position", "tpc_pullback_depth", "tpc_semantic_chop", "bpc_pullback_depth"],
     spot: ["weekly_ema_200_position"],
     multi_leg: ["bpc_semantic_chop", "box_pos_60", "trend_confidence"],
   };
@@ -732,6 +779,7 @@
     mergeCandlesByTime,
     isoFromUnixSec,
     mainOverlaysQueryParam,
+    stageRegionsQueryParam,
     scrollIndexForTime,
     markerColor,
     markerShape,
@@ -742,6 +790,10 @@
     featureColumnsParam,
     parseStoredLayout,
     filterFeatureColumns,
+    filterColumnsForFeaturePicker,
+    listStrategiesForLayers,
+    inferStrategyFocusFromLayers,
+    strategyFocusLabel,
     setFeatureTaxonomy,
     lookupFeatureMeta,
     classifyFeatureColumn,

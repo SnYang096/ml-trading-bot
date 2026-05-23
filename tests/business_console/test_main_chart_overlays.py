@@ -41,30 +41,41 @@ def test_align_ma_to_candles_merges_second_and_nanosecond_timestamps() -> None:
     assert points[1]["value"] == pytest.approx(98.98)
 
 
-def test_ema1200_overlay_uses_feature_bus_price_column(bus_root) -> None:
-    """EMA1200 must plot parquet ema_1200 (~664), not position×close inversion."""
+def test_ema1200_overlay_uses_candle_ewm(bus_root) -> None:
     t0 = pd.Timestamp("2024-01-01 02:00", tz="UTC")
-    candles = [{"time": int(t0.timestamp()), "close": 700.0}]
+    t1 = pd.Timestamp("2024-01-01 14:00", tz="UTC")
+    candles = [
+        {"time": int(t0.timestamp()), "close": 700.0},
+        {"time": int(t1.timestamp()), "close": 710.0},
+    ]
     out = load_main_chart_overlays(
-        bus_root,
         "ETHUSDT",
         candles,
         ["ema_1200"],
+        chart_timeframe="2h",
     )
     assert out["ema_1200"]["available"]
-    assert out["ema_1200"]["source"] == "feature_bus_price"
-    assert out["ema_1200"]["parquet_column"] == "ema_1200"
-    # conftest @ 02:00: close=102.4, ema_1200=close*0.95
-    assert out["ema_1200"]["latest"] == pytest.approx(102.4 * 0.95)
+    assert out["ema_1200"]["source"] == "candle_ewm_2h"
+    assert out["ema_1200"]["latest"] == pytest.approx(700.0166527893422)
 
 
 def test_ema1200_overlay_curve_has_varying_values(bus_root) -> None:
-    """EMA line must use full 2h history, not one flat level across the chart."""
     candles = [
-        {"time": int(pd.Timestamp("2024-01-01 02:00", tz="UTC").timestamp())},
-        {"time": int(pd.Timestamp("2024-01-01 14:00", tz="UTC").timestamp())},
+        {
+            "time": int(pd.Timestamp("2024-01-01 02:00", tz="UTC").timestamp()),
+            "close": 100.0,
+        },
+        {
+            "time": int(pd.Timestamp("2024-01-01 14:00", tz="UTC").timestamp()),
+            "close": 110.0,
+        },
     ]
-    out = load_main_chart_overlays(bus_root, "ETHUSDT", candles, ["ema_1200"])
+    out = load_main_chart_overlays(
+        "ETHUSDT",
+        candles,
+        ["ema_1200"],
+        chart_timeframe="2h",
+    )
     pts = out["ema_1200"]["points"]
     assert len(pts) == 2
     assert pts[0]["value"] != pts[1]["value"]
@@ -72,14 +83,20 @@ def test_ema1200_overlay_curve_has_varying_values(bus_root) -> None:
 
 def test_load_main_overlays_aligns_to_candles(bus_root):
     candles = [
-        {"time": int(pd.Timestamp("2024-01-01 10:00", tz="UTC").timestamp())},
-        {"time": int(pd.Timestamp("2024-01-01 14:00", tz="UTC").timestamp())},
+        {
+            "time": int(pd.Timestamp("2024-01-01 10:00", tz="UTC").timestamp()),
+            "close": 100.0,
+        },
+        {
+            "time": int(pd.Timestamp("2024-01-01 14:00", tz="UTC").timestamp()),
+            "close": 105.0,
+        },
     ]
     out = load_main_chart_overlays(
-        bus_root,
         "ETHUSDT",
         candles,
-        ["ema_1200", "weekly_ema_200"],
+        ["ema_1200"],
+        chart_timeframe="2h",
     )
     assert out["ema_1200"]["available"]
     assert len(out["ema_1200"]["points"]) == 2
@@ -106,11 +123,8 @@ def test_weekly_ema_seed_curve_steps_over_weeks(tmp_path) -> None:
 
 
 def test_stale_weekly_seed_uses_spot_daily_not_flat_line(tmp_path) -> None:
-    """Seed ending 2025-01 must not ffilled to 374 across 2026 candles."""
     import io
     import zipfile
-
-    from mlbot_console.services.macro_spot_daily import parse_kline_zip_bytes
 
     seed_root = tmp_path / "seed"
     seed_root.mkdir(parents=True)
@@ -146,7 +160,6 @@ def test_stale_weekly_seed_uses_spot_daily_not_flat_line(tmp_path) -> None:
         },
     ]
     out = load_main_chart_overlays(
-        tmp_path,
         "ETHUSDT",
         candles,
         ["weekly_ema_200"],
@@ -162,7 +175,6 @@ def test_stale_weekly_seed_uses_spot_daily_not_flat_line(tmp_path) -> None:
 
 
 def test_weekly_ema_overlay_uses_macro_seed_not_bus_close(tmp_path, bus_root) -> None:
-    """Seed weekly_ema_200 (~565) must not be inverted with stale 2h bus close (~374)."""
     seed_root = tmp_path / "macro" / "spot_weekly_ema200"
     seed_root.mkdir(parents=True, exist_ok=True)
     week = pd.Timestamp("2024-01-01", tz="UTC")
@@ -180,7 +192,6 @@ def test_weekly_ema_overlay_uses_macro_seed_not_bus_close(tmp_path, bus_root) ->
     assert points[0]["value"] == pytest.approx(565.0)
 
     out = load_main_chart_overlays(
-        bus_root,
         "ETHUSDT",
         candles,
         ["weekly_ema_200"],
@@ -191,17 +202,14 @@ def test_weekly_ema_overlay_uses_macro_seed_not_bus_close(tmp_path, bus_root) ->
     assert out["weekly_ema_200"]["latest"] == pytest.approx(565.0)
 
 
-def test_weekly_ema_fallback_uses_chart_candle_close(bus_root) -> None:
-    """Without seed, invert position with chart close (not 2h bus close)."""
+def test_weekly_ema_unavailable_without_macro(bus_root) -> None:
     t0 = pd.Timestamp("2024-01-01 02:00", tz="UTC")
     candles = [{"time": int(t0.timestamp()), "close": 617.0}]
     out = load_main_chart_overlays(
-        bus_root,
         "ETHUSDT",
         candles,
         ["weekly_ema_200"],
         macro_seed_root=None,
+        macro_spot_kline_root=None,
     )
-    assert out["weekly_ema_200"]["available"]
-    # position -0.05 at first bar => 617 * 1.05 = 647.85
-    assert out["weekly_ema_200"]["latest"] == pytest.approx(647.85)
+    assert not out["weekly_ema_200"]["available"]

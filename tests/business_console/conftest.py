@@ -67,6 +67,18 @@ def bus_root(tmp_path: Path) -> Path:
         f'{{"timestamp": "{last_ts.isoformat()}", "kind": "bars_1min", "rows": {len(rows)}}}',
         encoding="utf-8",
     )
+
+    from src.live_data_stream.spot_weekly_ema_seed import seed_parquet_path
+
+    seed_dir = tmp_path / "macro" / "spot_weekly_ema200"
+    seed_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        {
+            "week_ts": [start - pd.Timedelta(days=7), start],
+            "weekly_ema_200": [94.0, 95.0],
+        }
+    ).to_parquet(seed_parquet_path(seed_dir, sym), index=False)
+
     return tmp_path
 
 

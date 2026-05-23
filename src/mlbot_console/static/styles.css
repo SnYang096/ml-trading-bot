@@ -1213,6 +1213,30 @@ main {
   align-items: stretch;
 }
 
+.feature-strategy-focus {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+  font-size: 0.8rem;
+}
+
+.feature-strategy-focus-label {
+  color: var(--muted, #8b949e);
+  white-space: nowrap;
+}
+
+.feature-strategy-focus select {
+  flex: 1;
+  min-width: 0;
+  padding: 0.25rem 0.4rem;
+  font-size: 0.8rem;
+  background: var(--panel, #161b22);
+  color: var(--text, #e6edf3);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 4px;
+}
+
 .feature-drawer .feature-panel-actions {
   flex-wrap: wrap;
 }

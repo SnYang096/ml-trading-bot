@@ -32,6 +32,7 @@ from mlbot_console.services.chop_grid_overlay import (
     load_chop_grid_map_overlay,
     load_chop_regime_regions,
 )
+from mlbot_console.services.strategy_stage_regions import load_bundle_stage_regions
 from mlbot_console.services.trade_markers import (
     align_markers_to_candles,
     collect_markers,
@@ -230,7 +231,7 @@ def trade_map_bundle(
     overlay_weekly_ema: bool = Query(False),
     main_overlays: Optional[str] = Query(
         None,
-        description="Comma-separated: ema_1200, weekly_ema_200 (2h feature bus)",
+        description="Comma-separated: ema_1200, weekly_ema_200 (CMS-local OHLC/macro)",
     ),
     full_range: bool = Query(False),
     include_ohlcv: str = Query(
@@ -240,6 +241,10 @@ def trade_map_bundle(
     ohlcv_from: Optional[str] = Query(None, alias="ohlcv_from"),
     ohlcv_to: Optional[str] = Query(None, alias="ohlcv_to"),
     include_features: bool = Query(True),
+    stage_regions: Optional[str] = Query(
+        None,
+        description="Comma-separated stages to shade on main chart: prefilter, gate",
+    ),
 ) -> dict:
     ohlcv_mode = (include_ohlcv or "full").strip().lower()
     if ohlcv_mode not in ("full", "tail", "none"):
@@ -366,7 +371,7 @@ def trade_map_bundle(
         )
     main_keys = parse_main_overlay_keys(main_overlays)
     main_ol: dict = {}
-    if main_keys and include_features and ohlcv.get("candles"):
+    if main_keys and ohlcv.get("candles"):
         feat_start = start
         feat_end = end
         if feat_start is None and ohlcv.get("range_start"):
@@ -375,12 +380,14 @@ def trade_map_bundle(
             feat_end = pd.Timestamp(str(ohlcv["range_end"]))
         try:
             main_ol = load_main_chart_overlays(
-                SETTINGS.feature_bus_root,
                 symbol,
                 ohlcv["candles"],
                 main_keys,
+                chart_timeframe=tf,
                 macro_seed_root=SETTINGS.macro_weekly_ema_seed_root,
                 macro_spot_kline_root=SETTINGS.macro_spot_kline_root,
+                feature_bus_root=SETTINGS.feature_bus_root,
+                live_storage_bars_root=SETTINGS.live_storage_bars_root,
                 start=feat_start,
                 end=feat_end,
             )
@@ -397,6 +404,36 @@ def trade_map_bundle(
             }
     chop_grid_overlay: dict = {"batches": []}
     chop_regime_regions: list = []
+    strategy_stage_regions: dict = {}
+    stage_parts = {
+        p.strip().lower()
+        for p in (stage_regions or "").split(",")
+        if p.strip()
+    }
+    include_prefilter_regions = "prefilter" in stage_parts
+    include_gate_regions = "gate" in stage_parts
+    if (include_prefilter_regions or include_gate_regions) and ohlcv.get("candles"):
+        feat_start = start
+        feat_end = end
+        if feat_start is None and ohlcv.get("range_start"):
+            feat_start = pd.Timestamp(str(ohlcv["range_start"]))
+        if feat_end is None and ohlcv.get("range_end"):
+            feat_end = pd.Timestamp(str(ohlcv["range_end"]))
+        try:
+            strategy_stage_regions = load_bundle_stage_regions(
+                SETTINGS.feature_bus_root,
+                SETTINGS.strategies_root,
+                symbol,
+                tf,
+                scopes=scope_list,
+                include_prefilter=include_prefilter_regions,
+                include_gate=include_gate_regions,
+                start=feat_start,
+                end=feat_end,
+            )
+        except Exception as exc:
+            logger.exception("strategy_stage_regions failed symbol=%s", symbol)
+            strategy_stage_regions = {"error": str(exc)}
     if "multi_leg" in scope_list:
         try:
             chop_grid_overlay = load_chop_grid_map_overlay(
@@ -434,6 +471,7 @@ def trade_map_bundle(
             "main_overlays": main_ol,
             "chop_grid_overlay": chop_grid_overlay,
             "chop_regime_regions": chop_regime_regions,
+            "strategy_stage_regions": strategy_stage_regions,
         },
         meta={
             "poll_seconds": SETTINGS.map_poll_seconds,

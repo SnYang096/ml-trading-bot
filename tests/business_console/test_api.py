@@ -120,8 +120,14 @@ def test_trade_map_bundle_main_overlays(client):
     assert r.status_code == 200
     main = r.json()["data"]["main_overlays"]
     assert main["ema_1200"]["available"] is True
+    assert main["ema_1200"]["source"] in (
+        "candle_ewm_2h",
+        "bars_1min_2h",
+        "chart_resample_2h",
+    )
     assert len(main["ema_1200"]["points"]) >= 1
     assert main["weekly_ema_200"]["available"] is True
+    assert main["weekly_ema_200"]["source"] == "macro_seed"
 
 
 def test_trade_map_bundle_1d_full_range_uses_macro(
@@ -272,6 +278,7 @@ def test_markers_missing_db(client, tmp_path, monkeypatch):
         live_storage_bars_root=tmp_path / "bars",
         stitch_live_storage=True,
         macro_spot_kline_root=tmp_path / "macro" / "spot_klines",
+        macro_weekly_ema_seed_root=tmp_path / "macro" / "weekly_ema",
         daily_ohlcv_start=__import__("datetime").date(2017, 1, 1),
         max_daily_ohlcv_days=3650,
         map_poll_seconds=10.0,

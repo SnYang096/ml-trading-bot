@@ -40,26 +40,40 @@ SKIP_COLUMNS: Set[str] = {
     "symbol",
 }
 
-# Default sub-chart when client sends no feature_columns
-DEFAULT_SUBCHART_COLUMNS: List[str] = ["weekly_ema_200_position"]
+# Default sub-chart when client sends no feature_columns (strategy uses position, not raw EMA price)
+DEFAULT_SUBCHART_COLUMNS: List[str] = [
+    "weekly_ema_200_position",
+    "ema_1200_position",
+]
 
 # Horizontal reference lines (e.g. Spot prefilter threshold)
 REFERENCE_Y_BY_COLUMN: Dict[str, float] = {
     "weekly_ema_200_position": 0.0,
+    "ema_1200_position": 0.0,
 }
+
+
+def _utc_datetime64ns(series: pd.Series) -> pd.Series:
+    """Normalize timestamps for merge_asof (parquet ns vs candle unit=s)."""
+    return pd.to_datetime(series, utc=True).astype("datetime64[ns, UTC]")
 
 
 def _align_points_to_candles(
     points: List[Dict[str, Any]],
     candles: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """merge_asof feature values onto OHLCV bar times (no future leak)."""
+    """merge_asof feature values onto OHLCV bar times (no future leak).
+
+    Uses backward as-of per bar, then forward-fills so candles after the last
+    feature row still show the latest known value (OHLC often extends past a
+  lagging feature bus).
+    """
     if not points or not candles:
         return list(points or [])
     src = pd.DataFrame(
         {
-            "timestamp": pd.to_datetime(
-                [int(p["time"]) for p in points], unit="s", utc=True
+            "timestamp": _utc_datetime64ns(
+                pd.to_datetime([int(p["time"]) for p in points], unit="s", utc=True)
             ),
             "value": [p["value"] for p in points],
         }
@@ -68,8 +82,8 @@ def _align_points_to_candles(
         return []
     tgt = pd.DataFrame(
         {
-            "timestamp": pd.to_datetime(
-                [int(c["time"]) for c in candles], unit="s", utc=True
+            "timestamp": _utc_datetime64ns(
+                pd.to_datetime([int(c["time"]) for c in candles], unit="s", utc=True)
             ),
             "ord": range(len(candles)),
         }
@@ -80,14 +94,18 @@ def _align_points_to_candles(
         on="timestamp",
         direction="backward",
     ).sort_values("ord")
+    merged["value"] = pd.to_numeric(merged["value"], errors="coerce").ffill()
     out: List[Dict[str, Any]] = []
     for _, row in merged.iterrows():
         val = row.get("value")
         if val is None or (isinstance(val, float) and val != val):
             continue
+        ts = pd.Timestamp(row["timestamp"])
+        if ts.tzinfo is None:
+            ts = ts.tz_localize("UTC")
         out.append(
             {
-                "time": int(row["timestamp"].timestamp()),
+                "time": int(ts.timestamp()),
                 "value": float(val),
             }
         )
@@ -323,6 +341,9 @@ def load_feature_overlays(
         if aligned:
             points = _align_points_to_candles(points, candles)
         latest_val = points[-1]["value"] if points else None
+        feat_end = None
+        if not df.empty:
+            feat_end = _utc_ts(df["timestamp"].max()).isoformat()
         out[col] = {
             "available": bool(points),
             "column": col,
@@ -336,5 +357,6 @@ def load_feature_overlays(
             "aligned": aligned,
             "path": str(path),
             "timeframe_dir": path.parent.name,
+            "feature_range_end": feat_end,
         }
     return out

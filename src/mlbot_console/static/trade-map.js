@@ -32,8 +32,14 @@ let tradeLinkSeries = [];
 let chopGridPriceLines = [];
 /** @type {import('lightweight-charts').ISeriesApi<'Area'>|null} */
 let chopBandAreaSeries = null;
+/** @type {import('lightweight-charts').ISeriesApi<'Area'>|null} */
+let prefilterBandAreaSeries = null;
+/** @type {import('lightweight-charts').ISeriesApi<'Area'>|null} */
+let gateBandAreaSeries = null;
 
 const CHOP_REGIME_FILL = "rgba(115, 191, 105, 0.16)";
+const PREFILTER_STAGE_FILL = "rgba(239, 68, 68, 0.14)";
+const GATE_STAGE_FILL = "rgba(124, 58, 237, 0.11)";
 
 /** Overlay series must not participate in main price autoscale. */
 function overlayAutoscaleInfoProvider() {
@@ -73,6 +79,8 @@ let lastChopMapData = null;
 let availableFeatureColumns = [];
 let selectedFeatureColumns = [];
 let featureSearchQuery = "";
+/** @type {string|null} single strategy id, or null = all strategies on enabled account layers */
+let featureStrategyFocus = null;
 const MAX_FEATURE_SUBCHARTS = 8;
 
 /** Loaded OHLCV window (ISO); null → use per-TF initial window. */
@@ -91,10 +99,13 @@ let historyLoadTimer = null;
 
 const defaultLayout = () => ({
   volume: false,
-  features: ["weekly_ema_200_position"],
-  mainEma1200: false,
-  mainWeeklyEma200: false,
+  features: ["weekly_ema_200_position", "ema_1200_position"],
+  mainEma1200: true,
+  mainWeeklyEma200: true,
   chopGrid: true,
+  layerPrefilter: true,
+  layerGate: false,
+  featureStrategyFocus: null,
   ordersDock: false,
 });
 
@@ -114,6 +125,9 @@ function saveLayout() {
     mainEma1200: !!document.getElementById("mainEma1200")?.checked,
     mainWeeklyEma200: !!document.getElementById("mainWeeklyEma200")?.checked,
     chopGrid: !!document.getElementById("layerChopGrid")?.checked,
+    layerPrefilter: !!document.getElementById("layerPrefilter")?.checked,
+    layerGate: !!document.getElementById("layerGate")?.checked,
+    featureStrategyFocus,
     ordersDock: ordersDockOpen,
   };
   localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
@@ -125,10 +139,18 @@ function applyLayoutToControls(layout) {
   document.getElementById("paneVolume").checked = !!layout.volume;
   const ema1200 = document.getElementById("mainEma1200");
   const wkEma = document.getElementById("mainWeeklyEma200");
-  if (ema1200) ema1200.checked = !!layout.mainEma1200;
-  if (wkEma) wkEma.checked = !!layout.mainWeeklyEma200;
+  if (ema1200) ema1200.checked = layout.mainEma1200 !== false;
+  if (wkEma) wkEma.checked = layout.mainWeeklyEma200 !== false;
   const chopGrid = document.getElementById("layerChopGrid");
   if (chopGrid) chopGrid.checked = layout.chopGrid !== false;
+  const layerPf = document.getElementById("layerPrefilter");
+  const layerGt = document.getElementById("layerGate");
+  if (layerPf) layerPf.checked = layout.layerPrefilter !== false;
+  if (layerGt) layerGt.checked = !!layout.layerGate;
+  featureStrategyFocus =
+    layout.featureStrategyFocus != null && String(layout.featureStrategyFocus).trim()
+      ? String(layout.featureStrategyFocus).trim()
+      : null;
   selectedFeatureColumns = Array.isArray(layout.features) ? [...layout.features] : [];
   ordersDockOpen = !!layout.ordersDock;
   Shell.applyOrdersFilterToControls(Shell.loadOrdersFilter());
@@ -412,6 +434,42 @@ function mergeOverlayPoints(existing, incoming) {
   return [...byTime.values()].sort((a, b) => a.time - b.time);
 }
 
+function applyMainOverlays(mainOverlays, opts = {}) {
+  const merge = !!opts.merge;
+  if (!merge) clearMainOverlaySeries();
+  const emaOn = document.getElementById("mainEma1200")?.checked;
+  const wkOn = document.getElementById("mainWeeklyEma200")?.checked;
+  const want = [];
+  if (emaOn) want.push("ema_1200");
+  if (wkOn) want.push("weekly_ema_200");
+  for (const key of want) {
+    const spec = (mainOverlays || {})[key];
+    if (!spec?.available || !spec.points?.length) continue;
+    let line = mainOverlaySeries.get(key);
+    if (!line) {
+      line = chart.addLineSeries(
+        mainChartOverlaySeriesOptions({
+          color: spec.color || "#888",
+          lineWidth: 2,
+          lastValueVisible: true,
+          title: spec.label || key,
+        })
+      );
+      mainOverlaySeries.set(key, line);
+    } else {
+      line.applyOptions(mainChartOverlaySeriesOptions());
+    }
+    const next = spec.points.map((p) => ({
+      time: p.time,
+      value: p.value,
+    }));
+    const points = merge ? mergeOverlayPoints(mainOverlayData.get(key) || [], next) : next;
+    mainOverlayData.set(key, points);
+    line.setData(points);
+  }
+  refreshMainPriceAutoscale();
+}
+
 function clearChopGridOverlay() {
   for (const pl of chopGridPriceLines) {
     try {
@@ -435,6 +493,87 @@ function clearChopGridOverlay() {
     } catch (_) {
       /* */
     }
+  }
+  for (const s of [prefilterBandAreaSeries, gateBandAreaSeries]) {
+    if (s) {
+      try {
+        s.setData([]);
+      } catch (_) {
+        /* */
+      }
+    }
+  }
+}
+
+function flattenStageRegions(byStrategy, stage) {
+  const spans = [];
+  if (!byStrategy || typeof byStrategy !== "object") return spans;
+  for (const strat of Object.keys(byStrategy)) {
+    const block = byStrategy[strat];
+    if (!block || typeof block !== "object") continue;
+    for (const r of block[stage] || []) {
+      if (r && r.start != null && r.end != null) spans.push(r);
+    }
+  }
+  return spans;
+}
+
+function ensureStageBandSeries(kind) {
+  if (kind === "prefilter") {
+    if (prefilterBandAreaSeries) return prefilterBandAreaSeries;
+    prefilterBandAreaSeries = chart.addAreaSeries(
+      mainChartOverlaySeriesOptions({
+        lineColor: "rgba(239, 68, 68, 0.35)",
+        topColor: PREFILTER_STAGE_FILL,
+        bottomColor: "rgba(239, 68, 68, 0.02)",
+        lineWidth: 1,
+        lastValueVisible: false,
+        priceLineVisible: false,
+      })
+    );
+    return prefilterBandAreaSeries;
+  }
+  if (gateBandAreaSeries) return gateBandAreaSeries;
+  gateBandAreaSeries = chart.addAreaSeries(
+    mainChartOverlaySeriesOptions({
+      lineColor: "rgba(124, 58, 237, 0.35)",
+      topColor: GATE_STAGE_FILL,
+      bottomColor: "rgba(124, 58, 237, 0.02)",
+      lineWidth: 1,
+      lastValueVisible: false,
+      priceLineVisible: false,
+    })
+  );
+  return gateBandAreaSeries;
+}
+
+function applyStagePriceBand(stage, spans, candles) {
+  if (!candles?.length || !spans?.length) return;
+  const envelope = chopRegimePriceEnvelope(candles, spans);
+  if (!envelope) return;
+  const { top, bottom } = envelope;
+  const series =
+    stage === "gate" ? ensureStageBandSeries("gate") : ensureStageBandSeries("prefilter");
+  if (!series) return;
+  series.applyOptions({ baseValue: { type: "price", price: bottom } });
+  const data = candles.map((c) => {
+    const t = c.time;
+    const inSpan = spans.some(
+      (r) => t >= Number(r.start) && t <= Number(r.end)
+    );
+    return { time: t, value: inSpan ? top : NaN };
+  });
+  series.setData(data);
+}
+
+function applyStrategyStageRegions(data, candles) {
+  const by = data?.strategy_stage_regions;
+  if (!by || by.error) return;
+  if (document.getElementById("layerPrefilter")?.checked) {
+    applyStagePriceBand("prefilter", flattenStageRegions(by, "prefilter"), candles);
+  }
+  if (document.getElementById("layerGate")?.checked) {
+    applyStagePriceBand("gate", flattenStageRegions(by, "gate"), candles);
   }
 }
 
@@ -583,46 +722,13 @@ function applyChopGridOverlay(overlay, regions) {
 
 function applyChopMapLayers(data, candles) {
   clearChopGridOverlay();
-  if (!chopGridOverlayEnabled() || !data) return;
+  if (!data) return;
   const regions = data.chop_regime_regions || [];
-  applyChopPriceBand(regions, candles, data.chop_grid_overlay || {});
-  applyChopGridOverlay(data.chop_grid_overlay || {}, regions);
-  refreshMainPriceAutoscale();
-}
-
-function applyMainOverlays(mainOverlays, opts = {}) {
-  const merge = !!opts.merge;
-  if (!merge) clearMainOverlaySeries();
-  const emaOn = document.getElementById("mainEma1200")?.checked;
-  const wkOn = document.getElementById("mainWeeklyEma200")?.checked;
-  const want = [];
-  if (emaOn) want.push("ema_1200");
-  if (wkOn) want.push("weekly_ema_200");
-  for (const key of want) {
-    const spec = (mainOverlays || {})[key];
-    if (!spec?.available || !spec.points?.length) continue;
-    let line = mainOverlaySeries.get(key);
-    if (!line) {
-      line = chart.addLineSeries(
-        mainChartOverlaySeriesOptions({
-          color: spec.color || "#888",
-          lineWidth: 2,
-          lastValueVisible: true,
-          title: spec.label || key,
-        })
-      );
-      mainOverlaySeries.set(key, line);
-    } else {
-      line.applyOptions(mainChartOverlaySeriesOptions());
-    }
-    const next = spec.points.map((p) => ({
-      time: p.time,
-      value: p.value,
-    }));
-    const points = merge ? mergeOverlayPoints(mainOverlayData.get(key) || [], next) : next;
-    mainOverlayData.set(key, points);
-    line.setData(points);
+  if (chopGridOverlayEnabled()) {
+    applyChopPriceBand(regions, candles, data.chop_grid_overlay || {});
+    applyChopGridOverlay(data.chop_grid_overlay || {}, regions);
   }
+  applyStrategyStageRegions(data, candles);
   refreshMainPriceAutoscale();
 }
 
@@ -1040,8 +1146,12 @@ function formatOverlayStatus(overlays) {
     const latest =
       o.latest != null && o.latest === o.latest ? Number(o.latest).toFixed(3) : "?";
     const hint = o.semantic_hint ? ` ${o.semantic_hint}` : "";
+    const lag =
+      o.feature_range_end && o.aligned
+        ? ` · bus至${String(o.feature_range_end).slice(0, 10)}`
+        : "";
     const aligned = o.aligned ? "" : " (未对齐K线)";
-    return `${col}=${latest}${hint}${aligned}`;
+    return `${col}=${latest}${hint}${lag}${aligned}`;
   });
   return ` · 特征:${parts.join("; ")}`;
 }
@@ -1286,6 +1396,40 @@ function toggleFeatureDrawer(forceOpen) {
   btn.setAttribute("aria-expanded", open ? "true" : "false");
 }
 
+function pickerSourceColumns() {
+  return Core.filterColumnsForFeaturePicker(
+    availableFeatureColumns,
+    layersState(),
+    featureStrategyFocus
+  );
+}
+
+function syncFeatureStrategySelectOptions() {
+  const sel = document.getElementById("featureStrategySelect");
+  if (!sel) return;
+  const layers = layersState();
+  const strategies = Core.listStrategiesForLayers(layers);
+  const prev = featureStrategyFocus || "";
+  const options = [
+    `<option value="">全部（当前账户层）</option>`,
+    ...strategies.map(
+      (s) =>
+        `<option value="${escHtml(s.id)}"${s.id === prev ? " selected" : ""}>${escHtml(s.title || s.id)}</option>`
+    ),
+  ];
+  sel.innerHTML = options.join("");
+}
+
+function setFeatureStrategyFocus(strategyId, { refreshPicker = true } = {}) {
+  featureStrategyFocus =
+    strategyId != null && String(strategyId).trim()
+      ? String(strategyId).trim()
+      : null;
+  syncFeatureStrategySelectOptions();
+  if (refreshPicker) renderFeaturePicker();
+  saveLayout();
+}
+
 function setSelectedFeatures(cols, { refresh = true } = {}) {
   selectedFeatureColumns = [...new Set(cols.filter(Boolean))];
   renderFeaturePicker();
@@ -1324,10 +1468,16 @@ function renderFeaturePicker() {
     hint.textContent = "0";
     return;
   }
-  hint.textContent = `${selectedFeatureColumns.length}/${availableFeatureColumns.length}`;
-  const filtered = Core.filterFeatureColumns(availableFeatureColumns, featureSearchQuery);
+  const pool = pickerSourceColumns();
+  const focusLabel = Core.strategyFocusLabel(featureStrategyFocus);
+  hint.textContent = featureStrategyFocus
+    ? `${selectedFeatureColumns.length}/${pool.length} · ${focusLabel}`
+    : `${selectedFeatureColumns.length}/${pool.length}`;
+  const filtered = Core.filterFeatureColumns(pool, featureSearchQuery);
   if (!filtered.length) {
-    list.innerHTML = '<p class="muted">无匹配列</p>';
+    list.innerHTML = featureStrategyFocus
+      ? `<p class="muted">当前策略「${escHtml(focusLabel)}」无匹配列；可改策略筛选或搜索</p>`
+      : '<p class="muted">无匹配列</p>';
     return;
   }
   const groups = Core.groupFeatureColumnsByStrategy(filtered, layersState());
@@ -1388,6 +1538,13 @@ function bindFeaturePanel() {
     featureSearchQuery = ev.target.value;
     renderFeaturePicker();
   });
+  const stratSel = document.getElementById("featureStrategySelect");
+  if (stratSel) {
+    stratSel.addEventListener("change", () => {
+      const v = stratSel.value;
+      setFeatureStrategyFocus(v || null);
+    });
+  }
   drawer.querySelectorAll("[data-feature-action]").forEach((el) => {
     el.addEventListener("click", () => {
       const action = el.getAttribute("data-feature-action");
@@ -1407,35 +1564,31 @@ function bindFeaturePanel() {
           "trend_scalp",
           "spot_accum_simple",
         ]);
+        if (strategyPresets.has(key)) {
+          setFeatureStrategyFocus(key, { refreshPicker: false });
+        }
+        const pool = pickerSourceColumns();
         let picks = [];
         if (strategyPresets.has(key)) {
-          picks = Core.presetColumnsForStrategy(
-            key,
-            availableFeatureColumns,
-            MAX_FEATURE_SUBCHARTS
-          );
+          picks = Core.presetColumnsForStrategy(key, pool, MAX_FEATURE_SUBCHARTS);
         } else {
-          picks = Core.presetColumnsForAccountLayer(
-            key,
-            availableFeatureColumns,
-            MAX_FEATURE_SUBCHARTS
-          );
+          picks = Core.presetColumnsForAccountLayer(key, pool, MAX_FEATURE_SUBCHARTS);
         }
         if (!picks.length) {
           const preset = Core.FEATURE_PRESETS[key] || Core.FEATURE_PRESETS.default;
           for (const name of preset) {
-            if (availableFeatureColumns.includes(name)) picks.push(name);
+            if (pool.includes(name)) picks.push(name);
           }
         }
         if (key === "default" || key === "spot") {
-          for (const c of availableFeatureColumns) {
+          for (const c of pool) {
             if (String(c).toLowerCase().includes("weekly_ema") && !picks.includes(c)) {
               picks.push(c);
             }
           }
         }
-        if (!picks.length && availableFeatureColumns.length) {
-          picks.push(availableFeatureColumns[0]);
+        if (!picks.length && pool.length) {
+          picks.push(pool[0]);
         }
         if (action.startsWith("preset-") && action !== "preset-default") {
           const merged = [...selectedFeatureColumns];
@@ -1473,6 +1626,11 @@ async function loadFeatureColumns() {
   } catch (_) {
     availableFeatureColumns = [];
   }
+  if (!featureStrategyFocus) {
+    const inferred = Core.inferStrategyFocusFromLayers(layersState());
+    if (inferred) featureStrategyFocus = inferred;
+  }
+  syncFeatureStrategySelectOptions();
   renderFeaturePicker();
   saveLayout();
 }
@@ -1523,6 +1681,10 @@ async function refreshBundle(opts = {}) {
     document.getElementById("mainEma1200")?.checked,
     document.getElementById("mainWeeklyEma200")?.checked
   );
+  const stageRg = Core.stageRegionsQueryParam(
+    document.getElementById("layerPrefilter")?.checked,
+    document.getElementById("layerGate")?.checked
+  );
   if (mode === "full") {
     setStatusLoading();
     if (opts.resetMarkerRange) {
@@ -1564,6 +1726,7 @@ async function refreshBundle(opts = {}) {
     }
     if (featParam) q.set("feature_columns", featParam);
     if (mainOl) q.set("main_overlays", mainOl);
+    if (stageRg) q.set("stage_regions", stageRg);
   }
 
   const { data, meta } = await Shell.api(`/api/trade-map/bundle?${q}`);
@@ -1585,10 +1748,16 @@ async function refreshBundle(opts = {}) {
       if (prevLast != null && t < prevLast) continue;
       candleSeries.update(c);
     }
-    if (data.chop_grid_overlay || data.chop_regime_regions) {
+    if (
+      data.chop_grid_overlay ||
+      data.chop_regime_regions ||
+      data.strategy_stage_regions
+    ) {
       lastChopMapData = {
+        ...(lastChopMapData || {}),
         chop_grid_overlay: data.chop_grid_overlay,
         chop_regime_regions: data.chop_regime_regions,
+        strategy_stage_regions: data.strategy_stage_regions,
       };
     }
     applyChopMapLayers(lastChopMapData || data, lastCandles);
@@ -1612,6 +1781,7 @@ async function refreshBundle(opts = {}) {
     lastChopMapData = {
       chop_grid_overlay: data.chop_grid_overlay,
       chop_regime_regions: data.chop_regime_regions,
+      strategy_stage_regions: data.strategy_stage_regions,
     };
     syncSubcharts(candles, lastOverlays);
   }
@@ -1680,6 +1850,8 @@ function bindControls() {
     "timeframeSelect",
     "mainEma1200",
     "mainWeeklyEma200",
+    "layerPrefilter",
+    "layerGate",
     "layerTrend",
     "layerSpot",
     "layerMultiLeg",
@@ -1700,12 +1872,22 @@ function bindControls() {
         resetOhlcvLoadedRange();
         resetMarkerQueryRange();
         chartFitPending = true;
-        if (id.startsWith("layer")) renderFeaturePicker();
+        if (id.startsWith("layer")) {
+          const inferred = Core.inferStrategyFocusFromLayers(layersState());
+          if (inferred) setFeatureStrategyFocus(inferred, { refreshPicker: true });
+          else syncFeatureStrategySelectOptions();
+          renderFeaturePicker();
+        }
         if (ordersDockOpen) refreshOrdersList().catch(() => { });
         rerunAll();
         return;
       }
-      if (id.startsWith("layer")) renderFeaturePicker();
+      if (id.startsWith("layer")) {
+        const inferred = Core.inferStrategyFocusFromLayers(layersState());
+        if (inferred) setFeatureStrategyFocus(inferred, { refreshPicker: true });
+        else syncFeatureStrategySelectOptions();
+        renderFeaturePicker();
+      }
       if (ordersDockOpen) refreshOrdersList().catch(() => { });
       rerun();
     })

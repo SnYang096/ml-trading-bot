@@ -100,11 +100,17 @@ def test_trade_map_js_layer_toggle_does_not_reset_history(client):
     assert "opts.resetMarkerRange" in body
     assert '!ohlcvLoadedFrom || mode === "full"' not in body
     assert "!ohlcvLoadedFrom || opts.resetOhlcvRange" in body
-    idx = body.find('"mainEma1200"')
+    idx = body.find('"layerChopGrid"')
     assert idx >= 0
     block = body[idx : idx + 1200]
     assert "resetOhlcvLoadedRange" not in block
     assert "rerunAll" not in block
+    idx_ema = body.find('"mainEma1200"')
+    assert idx_ema >= 0
+    ema_block = body[idx_ema : idx_ema + 1200]
+    assert "resetOhlcvLoadedRange" not in ema_block
+    assert "rerunAll" not in ema_block
+    assert "main_overlays" in body
     assert "lastMarkerPollSince" in body
     assert 'mode === "poll"' in body
     assert "mergeMarkersById" in body

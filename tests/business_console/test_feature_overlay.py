@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from mlbot_console.services.feature_overlay import (
     list_feature_columns,
@@ -93,6 +94,39 @@ def test_align_feature_points_to_candles(tmp_path):
     assert data["aligned"] is True
     assert data["point_count"] == len(candles)
     assert len(data["points"]) == len(candles)
+
+
+def test_align_ffill_after_last_feature_row(tmp_path):
+    """Candles after the last feature timestamp should show last known value."""
+    feat_dir = tmp_path / "features" / "primary"
+    feat_dir.mkdir(parents=True)
+    start = pd.Timestamp("2024-01-01", tz="UTC")
+    rows = [
+        {
+            "timestamp": start + pd.Timedelta(hours=i * 2),
+            "regime_score": 0.2 + i * 0.1,
+        }
+        for i in range(3)
+    ]
+    pd.DataFrame(rows).to_parquet(feat_dir / "ETHUSDT.parquet", index=False)
+
+    candles = [
+        {"time": int((start + pd.Timedelta(hours=i * 2)).timestamp()), "close": 100 + i}
+        for i in range(6)
+    ]
+    overlays = load_feature_overlays(
+        tmp_path,
+        "ETHUSDT",
+        "2h",
+        ["regime_score"],
+        start=start,
+        end=start + pd.Timedelta(hours=12),
+        candles=candles,
+    )
+    pts = overlays["regime_score"]["points"]
+    assert len(pts) == 6
+    assert pts[-1]["value"] == pytest.approx(pts[2]["value"])
+    assert pts[-2]["value"] == pytest.approx(pts[2]["value"])
 
 
 def test_load_multiple_overlays(bus_root):
