@@ -15,7 +15,10 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from src.config.multileg_config import load_multileg_effective_config
 from src.config.strategy_layout import resolve_strategy_config_input
-from src.order_management.grid_execution_adapter import GridExecutionResult
+from src.order_management.grid_execution_adapter import (
+    GridExecutionResult,
+    derive_multileg_client_order_id,
+)
 from src.order_management.multi_leg_reconciliation import (
     LocalOrderSnapshot,
     LocalPositionSnapshot,
@@ -116,6 +119,24 @@ def _exchange_order_keys(order: Mapping[str, Any]) -> set[str]:
             or ""
         ),
     } - {""}
+
+
+def _open_exchange_client_order_ids(
+    open_orders: Iterable[Mapping[str, Any]],
+) -> set[str]:
+    out: set[str] = set()
+    for order in open_orders:
+        info = order.get("info") if isinstance(order.get("info"), dict) else {}
+        for key in (
+            order.get("client_order_id"),
+            order.get("clientOrderId"),
+            info.get("clientOrderId"),
+            info.get("clientAlgoId"),
+        ):
+            cid = str(key or "").strip()
+            if cid:
+                out.add(cid)
+    return out
 
 
 def _load_grid_config(path: str | Path) -> GridEngineConfig:
@@ -525,24 +546,16 @@ class ChopGridLiveEngine:
                 pos=action_pos,
                 timestamp=ts,
             )
-            # 过滤掉已存在的保护单类型
-            existing_types = set()
-            for order in open_orders:
-                if str(order.get("client_order_id") or "").startswith(pos.leg_id):
-                    if str(order.get("client_order_id") or "").endswith("_tp"):
-                        existing_types.add("take_profit")
-                    elif str(order.get("client_order_id") or "").endswith("_sl"):
-                        existing_types.add("stop_loss")
-
+            open_client_ids = _open_exchange_client_order_ids(open_orders)
             filtered_actions = []
             for action in new_actions:
-                ptype = str(action.get("protection_type") or "")
-                if ptype not in existing_types:
-                    if ptype == "take_profit":
-                        # Catch-up protection must close if price already crossed TP.
-                        action["post_only"] = False
-                        action["time_in_force"] = "GTC"
-                    filtered_actions.append(action)
+                if derive_multileg_client_order_id(action) in open_client_ids:
+                    continue
+                if str(action.get("protection_type") or "") == "take_profit":
+                    # Catch-up protection must close if price already crossed TP.
+                    action["post_only"] = False
+                    action["time_in_force"] = "GTC"
+                filtered_actions.append(action)
             actions.extend(filtered_actions)
         if actions:
             logger.info(

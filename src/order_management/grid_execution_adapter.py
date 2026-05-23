@@ -52,6 +52,24 @@ def _is_duplicate_client_order_id_error(exc: Exception) -> bool:
     return "-4116" in text or "clientorderid is duplicated" in text
 
 
+def derive_multileg_client_order_id(
+    action: Dict[str, Any], *, client_id_prefix: str = "cg"
+) -> str:
+    """Deterministic exchange client id (must match MultiLegExecutionAdapter)."""
+    raw = str(
+        action.get("client_order_id")
+        or action.get("order_id")
+        or (
+            f"{action.get('symbol','')}-{action.get('side','')}-"
+            f"{action.get('level','')}-{action.get('purpose','')}-"
+            f"{action.get('action','')}-{action.get('timestamp','')}"
+        )
+    )
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+    prefix = str(client_id_prefix or "cg")[:8]
+    return f"{prefix}_{digest}"[:36]
+
+
 def _is_live_order_status(status: Any) -> bool:
     return str(status or "").strip().lower() in {
         "open",
@@ -539,6 +557,33 @@ class MultiLegExecutionAdapter:
             self._persist_order_result(action, result, purpose=purpose)
             return result
 
+        existing = _find_protection_order_by_client_id(
+            self.binance_api, client_order_id, symbol
+        )
+        if existing:
+            logger.debug(
+                "multi-leg protection already open: local_order_id=%s "
+                "client_order_id=%s exchange_order_id=%s",
+                action.get("order_id"),
+                client_order_id,
+                existing.get("order_id"),
+            )
+            result = MultiLegExecutionResult(
+                action="place_protection",
+                status=str(existing.get("status", "submitted")),
+                symbol=symbol,
+                order_id=str(existing.get("order_id", "")),
+                client_order_id=str(existing.get("client_order_id") or client_order_id),
+                raw={
+                    **existing,
+                    "purpose": purpose,
+                    "local_order_id": action.get("order_id"),
+                    "leg_id": action.get("leg_id") or action.get("order_id"),
+                },
+            )
+            self._persist_order_result(action, result, purpose=purpose)
+            return result
+
         try:
             order = self.binance_api.place_order(
                 symbol=symbol,
@@ -597,18 +642,9 @@ class MultiLegExecutionAdapter:
         return result
 
     def _client_order_id(self, action: Dict[str, Any]) -> str:
-        raw = str(
-            action.get("client_order_id")
-            or action.get("order_id")
-            or (
-                f"{action.get('symbol','')}-{action.get('side','')}-"
-                f"{action.get('level','')}-{action.get('purpose','')}-"
-                f"{action.get('action','')}-{action.get('timestamp','')}"
-            )
+        return derive_multileg_client_order_id(
+            action, client_id_prefix=self.client_id_prefix
         )
-        digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
-        prefix = self.client_id_prefix[:8]
-        return f"{prefix}_{digest}"[:36]
 
     def _persist_order_result(
         self,

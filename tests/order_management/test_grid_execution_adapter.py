@@ -239,6 +239,35 @@ def test_place_take_profit_protection_for_short_uses_post_only_limit_buy() -> No
     assert kwargs["time_in_force"] == "GTX"
 
 
+def test_place_protection_skips_when_order_already_open() -> None:
+    api = _api()
+    api.get_order_by_client_id.return_value = {
+        "order_id": "ex_existing",
+        "client_order_id": "cg_existing",
+        "symbol": "BTCUSDT",
+        "status": "open",
+        "price": 95000.0,
+    }
+    adapter = MultiLegExecutionAdapter(api)
+    action = {
+        "action": "place_protection",
+        "symbol": "BTCUSDT",
+        "side": "SHORT",
+        "quantity": 0.02,
+        "price": 95000.0,
+        "trigger_price": 95000.0,
+        "order_type": "limit",
+        "protection_type": "take_profit",
+        "order_id": "leg_s1_tp_supp",
+    }
+
+    result = adapter.execute_action(action)
+
+    api.place_order.assert_not_called()
+    assert result.status == "open"
+    assert result.order_id == "ex_existing"
+
+
 def test_duplicate_protection_client_id_reuses_live_order() -> None:
     api = _api()
     api.place_order.side_effect = Exception(

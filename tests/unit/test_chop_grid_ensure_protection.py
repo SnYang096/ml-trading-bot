@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from src.order_management.grid_execution_adapter import derive_multileg_client_order_id
 from src.time_series_model.live.chop_grid_live_engine import (
     ChopGridLiveEngine,
     GridPosition,
@@ -212,6 +213,65 @@ def test_stale_protection_id_does_not_block_replacement_tp(tmp_path: Path) -> No
     assert tp_actions[0]["side"] == "SHORT"
 
 
+def test_ensure_protection_skips_when_hashed_client_ids_on_exchange(
+    tmp_path: Path,
+) -> None:
+    engine = ChopGridLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        bar_simulation=False,
+    )
+    engine.state.active = True
+    engine.state.symbol = "BNBUSDT"
+    engine.state.spacing = 6.4355
+    leg_id = "BNBUSDT_2026-05-19 08:40:00+00:00_S1"
+    engine.state.inventory.append(
+        GridPosition(
+            symbol="BNBUSDT",
+            side="LONG",
+            level=1,
+            entry_price=637.11,
+            quantity=0.31,
+            entry_time="2026-05-21T00:00:00+00:00",
+            leg_id=leg_id,
+        )
+    )
+    template = engine._protection_actions(
+        order_id=leg_id,
+        pos=engine.state.inventory[0],
+        timestamp="2026-05-21T00:00:00+00:00",
+    )
+    tp_cid = derive_multileg_client_order_id(
+        next(a for a in template if a["protection_type"] == "take_profit")
+    )
+    sl_cid = derive_multileg_client_order_id(
+        next(a for a in template if a["protection_type"] == "stop_loss")
+    )
+    tp_px = float(template[0]["price"])
+
+    actions = engine.actions_ensure_protection(
+        exchange_positions=[],
+        exchange_orders=[
+            {
+                "symbol": "BNBUSDT",
+                "client_order_id": tp_cid,
+                "side": "sell",
+                "price": tp_px,
+                "quantity": 0.31,
+                "info": {"positionSide": "LONG", "reduceOnly": "true"},
+            },
+            {
+                "symbol": "BNBUSDT",
+                "client_order_id": sl_cid,
+                "side": "sell",
+                "quantity": 0.31,
+                "info": {"positionSide": "LONG", "clientAlgoId": sl_cid},
+            },
+        ],
+    )
+    assert actions == []
+
+
 def test_partial_tp_qty_does_not_count_as_full_protection(tmp_path: Path) -> None:
     engine = ChopGridLiveEngine(
         config_path=_config(tmp_path),
@@ -247,6 +307,9 @@ def test_partial_tp_qty_does_not_count_as_full_protection(tmp_path: Path) -> Non
         ],
     )
     tp_actions = [a for a in actions if a.get("protection_type") == "take_profit"]
-    assert len(tp_actions) == 1
-    assert float(tp_actions[0]["quantity"]) == pytest.approx(0.31, rel=1e-6)
-    assert tp_actions[0]["order_id"].endswith("_S1_tp")
+    sl_actions = [a for a in actions if a.get("protection_type") == "stop_loss"]
+    # Partial TP already live under the deterministic cg_* client id — do not duplicate.
+    assert len(tp_actions) == 0
+    assert len(sl_actions) == 1
+    assert float(sl_actions[0]["quantity"]) == pytest.approx(0.31, rel=1e-6)
+    assert sl_actions[0]["order_id"].endswith("_S1_sl")
