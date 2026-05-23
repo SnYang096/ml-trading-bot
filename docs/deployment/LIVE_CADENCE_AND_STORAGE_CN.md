@@ -65,6 +65,21 @@ Feature Bus 路径：
 
 注意：`primary` 不是一个自然时间周期；它是消费者侧配置中选择的特征快照名 / 默认入口。真实特征时间框架仍取决于 publisher 写入的 `<timeframe>`。
 
+### Live storage：原子写与单币种隔离
+
+`live/highcap/data/ticks` 与 `bars` 下的按日 parquet 使用 **原子写**（临时文件 + `rename`），避免 OOM/强杀时留下 4 字节等半截文件。Feature Bus 的 `features/`、`bars_1min/` 同样走原子写。
+
+`quant-feature-bus` 启动时（`MLBOT_PARQUET_SANITIZE_LOOKBACK_DAYS`，默认 3）会扫描最近 N 天的 tick/bar 日文件，**自动删除不可读 parquet** 并打日志，再继续 warmup。单个 symbol（例如 ETH）历史文件损坏时：
+
+- 该 symbol warmup 可能降级为空数据；
+- **其它 symbol 照常 warmup、WebSocket、写 bus**；
+- startup `auto-gap-fill` 扫描按 symbol 容错，repair 失败不会阻止 `start_all`。
+
+运维（与代码无关但常见占盘）：
+
+- `/var/lib/apport/coredump` 为崩溃 core，可安全删除；可用 `systemctl disable apport` 减少再生；
+- 根分区 `Used` 常含 **swapfile**（例如 16G）与 `data/warmup_raw`（180 天 warmup 缓存）；可 `docker builder prune` 回收 build cache。
+
 ## `quant-trend-fattail`: bus 消费、信号、账户与订单同步
 
 部署命令见 `.github/workflows/deploy.yml` 中 `quant-trend-fattail.service`：

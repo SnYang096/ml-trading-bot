@@ -15,6 +15,8 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
 
+from src.live_data_stream.parquet_io import atomic_write_parquet
+
 
 def effective_max_rows_for_warmup(max_rows: int, warmup_days: int) -> int:
     """Parquet rolling cap must cover warmup window or console only sees ~2d of 1m bars."""
@@ -69,21 +71,6 @@ def _utc_timestamp(value: Any) -> pd.Timestamp:
     if ts.tzinfo is None:
         return ts.tz_localize("UTC")
     return ts.tz_convert("UTC")
-
-
-def _atomic_write_parquet(df: pd.DataFrame, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
-    )
-    os.close(fd)
-    tmp = Path(tmp_name)
-    try:
-        df.to_parquet(tmp, index=False)
-        os.replace(tmp, path)
-    finally:
-        if tmp.exists():
-            tmp.unlink()
 
 
 def _atomic_write_json(obj: Dict[str, Any], path: Path) -> None:
@@ -156,7 +143,7 @@ class FeatureBusWriter:
             df = df.sort_values("timestamp").tail(self.max_rows).reset_index(drop=True)
         else:
             df = new_df.sort_values("timestamp").reset_index(drop=True)
-        _atomic_write_parquet(df, path)
+        atomic_write_parquet(df, path)
         return df
 
     def _write_latest(

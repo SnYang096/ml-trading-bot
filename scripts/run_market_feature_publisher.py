@@ -457,8 +457,13 @@ async def _startup_gap_repair(
             max_gaps_per_run=args.auto_gap_fill_max_gaps_per_run,
         )
 
-    written = await loop.run_in_executor(None, _run_once)
-    logger.info("auto-gap-fill: startup repair done written_bars=%d", written)
+    try:
+        written = await loop.run_in_executor(None, _run_once)
+        logger.info("auto-gap-fill: startup repair done written_bars=%d", written)
+    except Exception:
+        logger.exception(
+            "auto-gap-fill: startup repair failed; continuing to start_all"
+        )
 
 
 async def _periodic_process_metrics() -> None:
@@ -508,6 +513,14 @@ async def async_main() -> None:
         )
     writer = FeatureBusWriter(args.feature_bus_root, max_rows=max_rows)
     manager = build_feature_bus_manager(args, writer)
+    from src.live_data_stream.feature_storage import sanitize_dated_parquet_for_symbols
+
+    sanitize_lookback = int(os.getenv("MLBOT_PARQUET_SANITIZE_LOOKBACK_DAYS", "3"))
+    sanitize_dated_parquet_for_symbols(
+        manager.storage_manager,
+        symbols,
+        lookback_days=sanitize_lookback,
+    )
     fast_emitter = FastMoveBarEmitter(
         writer,
         threshold_pct=args.fast_bar_threshold_pct,

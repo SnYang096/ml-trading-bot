@@ -145,7 +145,16 @@ def detect_large_bar_gaps(
 
     for raw_symbol in symbols:
         symbol = str(raw_symbol).upper()
-        bars = _load_recent_bars(storage, symbol, start=start, end=end)
+        try:
+            bars = _load_recent_bars(storage, symbol, start=start, end=end)
+        except Exception:
+            logger.warning(
+                "auto-gap-fill: bar scan failed for %s in last %.1fh",
+                symbol,
+                lookback_hours,
+                exc_info=True,
+            )
+            continue
         if bars.empty:
             logger.warning(
                 "auto-gap-fill: no recent bars for %s in last %.1fh",
@@ -185,7 +194,16 @@ def detect_large_tick_gaps(
 
     for raw_symbol in symbols:
         symbol = str(raw_symbol).upper()
-        ticks = _load_recent_ticks(storage, symbol, start=start, end=end)
+        try:
+            ticks = _load_recent_ticks(storage, symbol, start=start, end=end)
+        except Exception:
+            logger.warning(
+                "auto-gap-fill: tick scan failed for %s in last %.1fh",
+                symbol,
+                lookback_hours,
+                exc_info=True,
+            )
+            continue
         if ticks.empty:
             logger.warning(
                 "auto-gap-fill: no recent ticks for %s in last %.1fh",
@@ -352,7 +370,31 @@ def run_auto_gap_fill_once(
 ) -> int:
     """Run one repair pass for pending Vision gaps plus scanned bar/tick gaps."""
     symbol_list = [str(s).upper() for s in symbols]
+    try:
+        return _run_auto_gap_fill_once_impl(
+            storage,
+            gap_filler,
+            symbol_list,
+            lookback_hours=lookback_hours,
+            min_gap_minutes=min_gap_minutes,
+            max_gaps_per_run=max_gaps_per_run,
+            now=now,
+        )
+    except Exception:
+        logger.exception("auto-gap-fill: run failed")
+        return 0
 
+
+def _run_auto_gap_fill_once_impl(
+    storage: StorageManager,
+    gap_filler: GapFiller,
+    symbol_list: List[str],
+    *,
+    lookback_hours: float,
+    min_gap_minutes: float,
+    max_gaps_per_run: int,
+    now: Optional[pd.Timestamp],
+) -> int:
     pending_count = len(getattr(gap_filler, "_pending_vision_gaps", []))
     if pending_count:
         logger.warning(

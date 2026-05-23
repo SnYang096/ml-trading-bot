@@ -213,6 +213,12 @@ class MultiSymbolManager:
                 )
                 results[symbol] = {}
 
+        failed = [sym for sym, data in results.items() if not data]
+        if failed:
+            logger.warning(
+                "warmup: failed_symbols=%s (other symbols continue)",
+                ",".join(failed),
+            )
         return results
 
     def decide_startup_mode(
@@ -286,12 +292,18 @@ class MultiSymbolManager:
     async def start_all(self) -> None:
         """启动所有listener"""
         tasks = []
+        symbols_order: List[str] = []
         for symbol, listener in self.listeners.items():
+            symbols_order.append(symbol)
             tasks.append(listener.start())
         if self.user_stream is not None:
+            symbols_order.append("__user_stream__")
             tasks.append(self.user_stream.start())
 
-        await asyncio.gather(*tasks)
+        outcomes = await asyncio.gather(*tasks, return_exceptions=True)
+        for sym, outcome in zip(symbols_order, outcomes):
+            if isinstance(outcome, BaseException):
+                logger.error("start_all: %s failed: %s", sym, outcome)
 
     async def stop_all(self) -> None:
         """停止所有listener"""

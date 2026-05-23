@@ -15,15 +15,66 @@
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, Iterable, List, Optional, Any
 from datetime import datetime, timedelta
 import pandas as pd
-import numpy as np
+
+from src.live_data_stream.parquet_io import (
+    atomic_write_parquet,
+    is_unreadable_parquet,
+    quarantine_corrupt_parquet,
+    read_parquet_safe,
+)
 
 _logger = logging.getLogger(__name__)
+
+_TICK_EMPTY = pd.DataFrame(columns=["timestamp", "price", "volume", "side"])
+
+
+def _normalize_timestamp_column(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or "timestamp" not in df.columns:
+        return df
+    out = df.copy()
+    out["timestamp"] = pd.to_datetime(out["timestamp"], utc=True)
+    return out
+
+
+def sanitize_dated_parquet_for_symbols(
+    storage: "StorageManager",
+    symbols: Iterable[str],
+    *,
+    lookback_days: int = 3,
+) -> int:
+    """Quarantine corrupt tick/bar day files for recent dates before warmup."""
+    removed = 0
+    cutoff = datetime.now() - timedelta(days=max(1, int(lookback_days)))
+    roots = (storage.ticks.root, storage.bar_1min.root)
+    sym_set = {str(s).upper() for s in symbols}
+    for root in roots:
+        if not root.exists():
+            continue
+        for symbol_dir in root.iterdir():
+            if not symbol_dir.is_dir():
+                continue
+            if sym_set and symbol_dir.name.upper() not in sym_set:
+                continue
+            for path in symbol_dir.glob("*.parquet"):
+                try:
+                    file_date = datetime.strptime(path.stem, "%Y-%m-%d")
+                except ValueError:
+                    continue
+                if file_date < cutoff:
+                    continue
+                if is_unreadable_parquet(path):
+                    if quarantine_corrupt_parquet(path, logger=_logger):
+                        removed += 1
+    if removed:
+        _logger.warning(
+            "sanitize: quarantined %d corrupt tick/bar parquet file(s)", removed
+        )
+    return removed
 
 
 def _cleanup_dated_parquet(root: Path, days: int) -> int:
@@ -87,30 +138,22 @@ class Feature4HStorage:
         """
         target = self._path(symbol, trading_date)
 
-        # 如果文件已存在，合并数据（去重）
         if target.exists():
-            existing = pd.read_parquet(target)
-            # 合并，去重（基于timestamp）
+            existing = read_parquet_safe(target, logger=_logger)
             combined = pd.concat([existing, features])
             combined = combined.drop_duplicates(subset=["timestamp"], keep="last")
             combined = combined.sort_values("timestamp").reset_index(drop=True)
-            combined.to_parquet(target, index=False)
         else:
-            features = features.sort_values("timestamp").reset_index(drop=True)
-            features.to_parquet(target, index=False)
-
+            combined = features.sort_values("timestamp").reset_index(drop=True)
+        atomic_write_parquet(combined, target)
         return target
 
     def load(self, symbol: str, trading_date: str) -> pd.DataFrame:
         """加载4小时特征"""
         target = self._path(symbol, trading_date)
-        if not target.exists():
-            return pd.DataFrame()
-        df = pd.read_parquet(target)
-        # 统一为 tz-aware UTC
-        if "timestamp" in df.columns:
-            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
-        return df
+        return _normalize_timestamp_column(
+            read_parquet_safe(target, logger=_logger)
+        )
 
     def load_range(self, symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
         """加载日期范围内的4小时特征"""
@@ -176,30 +219,22 @@ class Feature15MinStorage:
         """
         target = self._path(symbol, trading_date)
 
-        # 如果文件已存在，合并数据（去重）
         if target.exists():
-            existing = pd.read_parquet(target)
-            # 合并，去重（基于timestamp）
+            existing = read_parquet_safe(target, logger=_logger)
             combined = pd.concat([existing, features])
             combined = combined.drop_duplicates(subset=["timestamp"], keep="last")
             combined = combined.sort_values("timestamp").reset_index(drop=True)
-            combined.to_parquet(target, index=False)
         else:
-            features = features.sort_values("timestamp").reset_index(drop=True)
-            features.to_parquet(target, index=False)
-
+            combined = features.sort_values("timestamp").reset_index(drop=True)
+        atomic_write_parquet(combined, target)
         return target
 
     def load(self, symbol: str, trading_date: str) -> pd.DataFrame:
         """加载15分钟特征"""
         target = self._path(symbol, trading_date)
-        if not target.exists():
-            return pd.DataFrame()
-        df = pd.read_parquet(target)
-        # 统一为 tz-aware UTC
-        if "timestamp" in df.columns:
-            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
-        return df
+        return _normalize_timestamp_column(
+            read_parquet_safe(target, logger=_logger)
+        )
 
     def load_range(self, symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
         """加载日期范围内的15分钟特征"""
@@ -288,39 +323,24 @@ class TickStorage:
 
         target = self._path(symbol, trading_date)
 
-        # 如果文件已存在，合并数据
         if target.exists():
-            try:
-                existing = pd.read_parquet(target)
-            except Exception:
-                # 文件损坏，删除后重写
-                target.unlink(missing_ok=True)
-                ticks = ticks.sort_values("timestamp").reset_index(drop=True)
-                ticks.to_parquet(target, index=False)
-                return target
+            existing = read_parquet_safe(target, empty=_TICK_EMPTY, logger=_logger)
             combined = pd.concat([existing, ticks])
-            # 去重（基于timestamp和side），保留最新的
             combined = combined.drop_duplicates(
                 subset=["timestamp", "side"], keep="last"
             )
             combined = combined.sort_values("timestamp").reset_index(drop=True)
-            combined.to_parquet(target, index=False)
         else:
-            ticks = ticks.sort_values("timestamp").reset_index(drop=True)
-            ticks.to_parquet(target, index=False)
-
+            combined = ticks.sort_values("timestamp").reset_index(drop=True)
+        atomic_write_parquet(combined, target)
         return target
 
     def load(self, symbol: str, trading_date: str) -> pd.DataFrame:
         """加载1分钟聚合tick数据"""
         target = self._path(symbol, trading_date)
-        if not target.exists():
-            return pd.DataFrame(columns=["timestamp", "price", "volume", "side"])
-        df = pd.read_parquet(target)
-        # 统一为 tz-aware UTC，避免 tz-naive / tz-aware 混用
-        if "timestamp" in df.columns:
-            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
-        return df
+        return _normalize_timestamp_column(
+            read_parquet_safe(target, empty=_TICK_EMPTY.copy(), logger=_logger)
+        )
 
     def load_range(self, symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
         """加製日期范围内的1分钟聚合tick数据"""
@@ -393,54 +413,30 @@ class Tick1MinStorage:
         """
         target = self._path(symbol, trading_date)
 
-        # 如果文件已存在，合并数据
         if target.exists():
-            try:
-                existing = pd.read_parquet(target)
-            except Exception:
-                # 文件损坏，删除后重写
-                target.unlink(missing_ok=True)
-                bars = bars.sort_values("timestamp").reset_index(drop=True)
-                bars.to_parquet(target, index=False)
-                return target
-
-            # 如果include_incomplete=True，保留未完成的bar（最后一条）
-            # 否则，只保留已完成的bar
+            existing = read_parquet_safe(target, logger=_logger)
             if include_incomplete and len(existing) > 0:
-                # 检查最后一条是否是未完成的bar
                 last_existing = existing.iloc[-1]
                 last_new = bars.iloc[-1] if len(bars) > 0 else None
-
-                # 如果最后一条的时间戳相同，说明是更新未完成的bar
                 if (
                     last_new is not None
                     and last_existing["timestamp"] == last_new["timestamp"]
                 ):
-                    # 移除旧的未完成bar，添加新的
                     existing = existing.iloc[:-1]
-
-            # 合并数据
             combined = pd.concat([existing, bars])
-            # 去重（基于timestamp），保留最新的
             combined = combined.drop_duplicates(subset=["timestamp"], keep="last")
             combined = combined.sort_values("timestamp").reset_index(drop=True)
-            combined.to_parquet(target, index=False)
         else:
-            bars = bars.sort_values("timestamp").reset_index(drop=True)
-            bars.to_parquet(target, index=False)
-
+            combined = bars.sort_values("timestamp").reset_index(drop=True)
+        atomic_write_parquet(combined, target)
         return target
 
     def load(self, symbol: str, trading_date: str) -> pd.DataFrame:
-        """加载1分钟聚合tick数据"""
+        """加载1分钟聚合bar数据"""
         target = self._path(symbol, trading_date)
-        if not target.exists():
-            return pd.DataFrame()
-        df = pd.read_parquet(target)
-        # 统一为 tz-aware UTC，避免 tz-naive / tz-aware 混用
-        if "timestamp" in df.columns:
-            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
-        return df
+        return _normalize_timestamp_column(
+            read_parquet_safe(target, logger=_logger)
+        )
 
     def load_range(self, symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
         """加载日期范围内的1分钟聚合tick数据"""
