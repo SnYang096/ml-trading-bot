@@ -35,6 +35,7 @@ class ConsoleSettings:
     live_storage_bars_root: Path
     stitch_live_storage: bool
     macro_spot_kline_root: Path
+    macro_weekly_ema_seed_root: Path
     daily_ohlcv_start: date
     max_daily_ohlcv_days: int
     map_poll_seconds: float
@@ -123,6 +124,12 @@ class ConsoleSettings:
                 os.getenv(
                     "MLBOT_CONSOLE_MACRO_SPOT_KLINE_ROOT",
                     str(live_data / "macro" / "spot_klines"),
+                )
+            ),
+            macro_weekly_ema_seed_root=Path(
+                os.getenv(
+                    "MLBOT_CONSOLE_MACRO_WEEKLY_EMA_SEED_ROOT",
+                    str(live_data / "macro" / "spot_weekly_ema200"),
                 )
             ),
             daily_ohlcv_start=date.fromisoformat(

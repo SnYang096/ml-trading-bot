@@ -21,13 +21,17 @@ MAIN_OVERLAY_KEYS = frozenset({"ema_1200", "weekly_ema_200"})
 _OVERLAY_SPECS: Dict[str, Dict[str, Any]] = {
     "ema_1200": {
         "label": "EMA1200 (2h)",
+        "price_columns": ["ema_1200"],
         "position_columns": ["ema_1200_position", "ema_1200_position_f"],
         "color": "#ffb74d",
+        "use_macro_seed": False,
     },
     "weekly_ema_200": {
         "label": "周线 EMA200",
         "position_columns": ["weekly_ema_200_position", "weekly_ema_200_position_f"],
         "color": "#64b5f6",
+        "use_macro_seed": True,
+        "seed_ema_column": "weekly_ema_200",
     },
 }
 
@@ -63,6 +67,16 @@ def _resolve_position_column(df: pd.DataFrame, candidates: List[str]) -> Optiona
     return None
 
 
+def _resolve_price_column(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
+    for name in candidates:
+        if name in df.columns:
+            return name
+        col = _resolve_parquet_column(df, name)
+        if col is not None:
+            return col
+    return None
+
+
 def _parquet_columns_to_read(path: Any, want: List[str]) -> List[str]:
     try:
         import pyarrow.parquet as pq
@@ -84,11 +98,14 @@ def _load_source_features(
     start: Optional[pd.Timestamp],
     end: Optional[pd.Timestamp],
     position_columns: Optional[List[str]] = None,
+    price_columns: Optional[List[str]] = None,
 ) -> pd.DataFrame:
     path = _resolve_feature_path(feature_bus_root, symbol, SOURCE_FEATURE_TF)
     if path is None:
         return pd.DataFrame()
     want = ["timestamp", "close"]
+    if price_columns:
+        want.extend(price_columns)
     if position_columns:
         want.extend(position_columns)
     read_cols = _parquet_columns_to_read(path, want)
@@ -108,21 +125,18 @@ def _load_source_features(
     return df.reset_index(drop=True)
 
 
-def _align_ma_to_candles(
-    feat: pd.DataFrame,
-    pos_col: str,
+def _align_value_series_to_candles(
+    timestamps: pd.Series,
+    values: pd.Series,
     candles: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    if feat.empty or "close" not in feat.columns or not candles:
-        return []
-    ma = _position_to_ma_price(feat["close"], feat[pos_col])
     src = pd.DataFrame(
         {
-            "timestamp": _utc_datetime64ns(feat["timestamp"]),
-            "value": ma,
+            "timestamp": _utc_datetime64ns(timestamps),
+            "value": pd.to_numeric(values, errors="coerce"),
         }
     ).dropna(subset=["value"])
-    if src.empty:
+    if src.empty or not candles:
         return []
     tgt = pd.DataFrame(
         {
@@ -152,12 +166,94 @@ def _align_ma_to_candles(
     return points
 
 
+def _align_weekly_ema_seed_to_candles(
+    macro_seed_root: Any,
+    symbol: str,
+    candles: List[Dict[str, Any]],
+    *,
+    ema_column: str = "weekly_ema_200",
+) -> List[Dict[str, Any]]:
+    """Plot weekly EMA200 price from Vision spot macro seed (authoritative)."""
+    try:
+        from src.live_data_stream.spot_weekly_ema_seed import load_weekly_ema_seed
+    except ImportError:
+        return []
+    seed = load_weekly_ema_seed(macro_seed_root, symbol)
+    if seed is None or seed.empty or ema_column not in seed.columns:
+        return []
+    ema = pd.to_numeric(seed[ema_column], errors="coerce").dropna()
+    if ema.empty:
+        return []
+    if isinstance(ema.index, pd.DatetimeIndex):
+        ts = ema.index
+    elif "week_ts" in seed.columns:
+        ts = pd.to_datetime(seed["week_ts"], utc=True, errors="coerce")
+    else:
+        return []
+    return _align_value_series_to_candles(ts, ema.values, candles)
+
+
+def _align_ma_to_candles(
+    feat: pd.DataFrame,
+    pos_col: str,
+    candles: List[Dict[str, Any]],
+    *,
+    use_candle_close: bool = False,
+) -> List[Dict[str, Any]]:
+    if feat.empty or pos_col not in feat.columns or not candles:
+        return []
+    pos = pd.to_numeric(feat[pos_col], errors="coerce")
+    if use_candle_close:
+        tgt = pd.DataFrame(
+            {
+                "timestamp": _utc_datetime64ns(
+                    pd.to_datetime([int(c["time"]) for c in candles], unit="s", utc=True)
+                ),
+                "close": [float(c.get("close") or 0) for c in candles],
+                "ord": range(len(candles)),
+            }
+        )
+        src = pd.DataFrame(
+            {
+                "timestamp": _utc_datetime64ns(feat["timestamp"]),
+                "position": pos,
+            }
+        ).dropna(subset=["position"])
+        if src.empty:
+            return []
+        merged = pd.merge_asof(
+            tgt.sort_values("timestamp"),
+            src.sort_values("timestamp"),
+            on="timestamp",
+            direction="backward",
+        ).sort_values("ord")
+        points: List[Dict[str, Any]] = []
+        for _, row in merged.iterrows():
+            c_close = float(row.get("close") or 0)
+            p = float(row.get("position") or 0)
+            if c_close <= 0 or not (p == p):
+                continue
+            val = c_close * (1.0 - p)
+            points.append(
+                {
+                    "time": int(row["timestamp"].timestamp()),
+                    "value": val,
+                }
+            )
+        return points
+    if "close" not in feat.columns:
+        return []
+    ma = _position_to_ma_price(feat["close"], pos)
+    return _align_value_series_to_candles(feat["timestamp"], ma, candles)
+
+
 def load_main_chart_overlays(
     feature_bus_root: Any,
     symbol: str,
     candles: List[Dict[str, Any]],
     overlay_keys: List[str],
     *,
+    macro_seed_root: Any = None,
     start: Optional[pd.Timestamp] = None,
     end: Optional[pd.Timestamp] = None,
 ) -> Dict[str, Dict[str, Any]]:
@@ -178,16 +274,19 @@ def load_main_chart_overlays(
         return out
 
     all_pos_cols: List[str] = []
+    all_price_cols: List[str] = []
     for key in requested:
         all_pos_cols.extend(_OVERLAY_SPECS[key]["position_columns"])
         for alias in _OVERLAY_SPECS[key]["position_columns"]:
             all_pos_cols.extend(COLUMN_ALIASES.get(alias, []))
+        all_price_cols.extend(_OVERLAY_SPECS[key].get("price_columns") or [])
     feat = _load_source_features(
         feature_bus_root,
         symbol,
         start=start,
         end=end,
         position_columns=all_pos_cols,
+        price_columns=all_price_cols,
     )
     path = _resolve_feature_path(feature_bus_root, symbol, SOURCE_FEATURE_TF)
     for key in requested:
@@ -199,12 +298,43 @@ def load_main_chart_overlays(
         pos_col = _resolve_position_column(feat, candidates)
         entry = out[key]
         entry["path"] = str(path) if path else None
-        if feat.empty or pos_col is None:
-            continue
-        points = _align_ma_to_candles(feat, pos_col, candles)
+        points: List[Dict[str, Any]] = []
+        if spec.get("use_macro_seed") and macro_seed_root:
+            points = _align_weekly_ema_seed_to_candles(
+                macro_seed_root,
+                symbol,
+                candles,
+                ema_column=str(spec.get("seed_ema_column") or "weekly_ema_200"),
+            )
+            if points:
+                entry["source"] = "macro_seed"
+        if not points and not feat.empty:
+            price_col = _resolve_price_column(
+                feat, list(spec.get("price_columns") or [])
+            )
+            if price_col:
+                points = _align_value_series_to_candles(
+                    feat["timestamp"], feat[price_col], candles
+                )
+                if points:
+                    entry["source"] = "feature_bus_price"
+                    entry["parquet_column"] = price_col
+        if not points:
+            if feat.empty or pos_col is None:
+                continue
+            # Weekly position uses spot seed EMA vs chart close; EMA1200 position
+            # is defined on the same 2h bus close as the overlay source.
+            use_candle_close = bool(spec.get("use_macro_seed"))
+            points = _align_ma_to_candles(
+                feat,
+                pos_col,
+                candles,
+                use_candle_close=use_candle_close,
+            )
+            entry["parquet_column"] = pos_col
+            entry["source"] = "position_inverted"
         entry["points"] = points
         entry["available"] = bool(points)
-        entry["parquet_column"] = pos_col
         if points:
             entry["latest"] = points[-1]["value"]
     return out

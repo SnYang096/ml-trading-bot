@@ -379,6 +379,7 @@ def trade_map_bundle(
                 symbol,
                 ohlcv["candles"],
                 main_keys,
+                macro_seed_root=SETTINGS.macro_weekly_ema_seed_root,
                 start=feat_start,
                 end=feat_end,
             )

@@ -53,6 +53,7 @@ def bus_root(tmp_path: Path) -> Path:
                 "timestamp": ts,
                 "close": close,
                 "weekly_ema_200_position": -0.05 if i < 600 else 0.12,
+                "ema_1200": close * 0.95,
                 "ema_1200_position": 0.02,
                 "regime_score": 0.1 + (i % 100) * 0.001,
             }
@@ -314,6 +315,7 @@ def console_settings(
         live_storage_bars_root=tmp_path / "bars",
         stitch_live_storage=True,
         macro_spot_kline_root=tmp_path / "macro" / "spot_klines",
+        macro_weekly_ema_seed_root=tmp_path / "macro" / "spot_weekly_ema200",
         daily_ohlcv_start=date(2017, 1, 1),
         max_daily_ohlcv_days=3650,
         map_poll_seconds=10.0,
