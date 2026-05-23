@@ -83,6 +83,130 @@ def test_chop_grid_overlay_from_engine_state(multi_leg_db, engine_data_root):
     assert levels["S2"]["grid_price"] == pytest.approx(643.55 + 6.44 * 2)
 
 
+def test_s2_short_tp_below_entry_when_tp_order_mispriced(
+    multi_leg_db, engine_data_root
+):
+    """Short S2 TP must plot below entry; coerce if DB TP is above entry."""
+    from src.order_management.multi_leg_storage import MultiLegStorage
+
+    storage = MultiLegStorage(str(multi_leg_db))
+    run_id = storage.create_run(
+        mode="testnet",
+        strategies=["chop_grid"],
+        symbols=["BNBUSDT"],
+        run_id="overlay_s2_tp",
+    )
+    group = "BNBUSDT_2026-05-19 08:40:00+00:00"
+    state_path = (
+        engine_data_root / "multi_leg_live" / "state" / "chop_grid_BNBUSDT.json"
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["inventory"] = [
+        {
+            "leg_id": f"{group}_S2",
+            "side": "SHORT",
+            "entry_price": 656.285,
+            "quantity": 0.31,
+        }
+    ]
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": f"{group}_S2_tp",
+            "leg_id": f"{group}_S2",
+            "symbol": "BNBUSDT",
+            "side": "BUY",
+            "purpose": "take_profit",
+            "price": 662.0,
+            "status": "open",
+        }
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": f"{group}_S1_tp",
+            "leg_id": f"{group}_S1",
+            "symbol": "BNBUSDT",
+            "side": "BUY",
+            "purpose": "take_profit",
+            "price": 643.5545,
+            "status": "open",
+        }
+    )
+    out = load_chop_grid_map_overlay(
+        multi_leg_db=multi_leg_db,
+        engine_data_root=engine_data_root,
+        symbol="BNBUSDT",
+    )
+    s2 = next(lv for lv in out["batches"][0]["levels"] if lv["leg"] == "S2")
+    assert s2["entry_price"] == pytest.approx(656.285)
+    assert s2["tp_price"] == pytest.approx(656.285 - 6.44)
+    assert s2["tp_price"] < s2["entry_price"]
+
+
+def test_s2_does_not_use_s1_tp(multi_leg_db, engine_data_root):
+    from src.order_management.multi_leg_storage import MultiLegStorage
+
+    storage = MultiLegStorage(str(multi_leg_db))
+    run_id = storage.create_run(
+        mode="testnet",
+        strategies=["chop_grid"],
+        symbols=["BNBUSDT"],
+        run_id="overlay_s2_isolate",
+    )
+    group = "BNBUSDT_2026-05-19 08:40:00+00:00"
+    state_path = (
+        engine_data_root / "multi_leg_live" / "state" / "chop_grid_BNBUSDT.json"
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["inventory"] = [
+        {
+            "leg_id": f"{group}_S2",
+            "side": "SHORT",
+            "entry_price": 656.285,
+            "quantity": 0.31,
+        }
+    ]
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": f"{group}_S2_tp",
+            "leg_id": f"{group}_S2",
+            "symbol": "BNBUSDT",
+            "side": "BUY",
+            "purpose": "take_profit",
+            "price": 649.845,
+            "status": "open",
+        }
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": f"{group}_S1_tp",
+            "leg_id": f"{group}_S1",
+            "symbol": "BNBUSDT",
+            "side": "BUY",
+            "purpose": "take_profit",
+            "price": 643.5545,
+            "status": "open",
+        }
+    )
+    out = load_chop_grid_map_overlay(
+        multi_leg_db=multi_leg_db,
+        engine_data_root=engine_data_root,
+        symbol="BNBUSDT",
+    )
+    s2 = next(lv for lv in out["batches"][0]["levels"] if lv["leg"] == "S2")
+    assert s2["tp_price"] == pytest.approx(649.845)
+    assert s2["tp_price"] != pytest.approx(643.5545)
+
+
 def test_chop_regime_regions_from_feature_bus(bus_root):
     sym = "ETHUSDT"
     feat_dir = bus_root / "features" / "120T"

@@ -9,9 +9,14 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from mlbot_console.services.db import query_rows
 from mlbot_console.services.feature_overlay import _resolve_feature_path
-from mlbot_console.services.multileg_order_links import leg_group_key, row_group_key
+from mlbot_console.services.multileg_order_links import (
+    leg_group_key,
+    leg_suffix,
+    row_group_key,
+)
 
 _TP_RE = re.compile(r"_(L|S)(\d+)_tp$", re.I)
+_SLOT_RE = re.compile(r"^([LS])(\d+)", re.I)
 _DEFAULT_MAX_LEVELS = 2
 _CHOP_ENTRY_MIN = 0.50
 
@@ -107,6 +112,53 @@ def _inventory_legs(
     return out
 
 
+def _leg_slot(val: str) -> Optional[str]:
+    """Normalize L1/S2 from order_id, leg_id, or group bucket keys."""
+    suf = leg_suffix(str(val or ""))
+    if not suf:
+        return None
+    m = _SLOT_RE.match(suf)
+    return f"{m.group(1).upper()}{m.group(2)}" if m else None
+
+
+def _orders_for_slot(
+    by_leg: Dict[str, List[Dict[str, Any]]], slot: str
+) -> List[Dict[str, Any]]:
+    seen: Set[int] = set()
+    out: List[Dict[str, Any]] = []
+    for key, rows in by_leg.items():
+        if _leg_slot(key) != slot:
+            continue
+        for row in rows:
+            row_id = id(row)
+            if row_id in seen:
+                continue
+            seen.add(row_id)
+            out.append(row)
+    return out
+
+
+def _coerce_tp_price(
+    *,
+    side_name: str,
+    entry_px: Optional[float],
+    spacing: float,
+    tp_px: Optional[float],
+) -> Optional[float]:
+    if tp_px is None or tp_px != tp_px:
+        return None
+    if entry_px is None or entry_px <= 0 or spacing <= 0:
+        return tp_px
+    planned = (
+        entry_px + spacing if side_name == "long" else entry_px - spacing
+    )
+    if side_name == "long" and tp_px < entry_px:
+        return planned
+    if side_name == "short" and tp_px > entry_px:
+        return planned
+    return tp_px
+
+
 def _order_by_leg(orders: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
     by_leg: Dict[str, List[Dict[str, Any]]] = {}
     for row in orders:
@@ -128,11 +180,11 @@ def _entry_status(
     rows: List[Dict[str, Any]],
     inventory: Dict[str, Dict[str, Any]],
     *,
-    leg_key: str = "",
+    slot: str = "",
 ) -> str:
-    if leg_key:
+    if slot:
         for lid in inventory:
-            if str(lid).endswith(leg_key):
+            if _leg_slot(lid) == slot:
                 return "filled"
     leg_id = ""
     for row in rows:
@@ -157,11 +209,22 @@ def _entry_status(
     return "missing"
 
 
-def _tp_info(rows: List[Dict[str, Any]]) -> Tuple[Optional[float], str]:
+def _tp_info(
+    rows: List[Dict[str, Any]],
+    *,
+    slot: str,
+    side_name: str,
+    entry_px: Optional[float],
+    spacing: float,
+) -> Tuple[Optional[float], str]:
     for row in rows:
         purpose = str(row.get("purpose") or "").lower()
         oid = str(row.get("order_id") or "")
+        lid = str(row.get("leg_id") or "")
         if "take_profit" not in purpose and not _TP_RE.search(oid):
+            continue
+        row_slot = _leg_slot(oid) or _leg_slot(lid)
+        if row_slot and row_slot != slot:
             continue
         price = row.get("average_price") or row.get("price")
         try:
@@ -170,6 +233,12 @@ def _tp_info(rows: List[Dict[str, Any]]) -> Tuple[Optional[float], str]:
             px = None
         status = str(row.get("status") or "").lower()
         if px is not None and px == px:
+            px = _coerce_tp_price(
+                side_name=side_name,
+                entry_px=entry_px,
+                spacing=spacing,
+                tp_px=px,
+            )
             return px, status or "unknown"
     return None, ""
 
@@ -186,50 +255,59 @@ def _level_rows(
     levels: List[Dict[str, Any]] = []
     for side_code, side_name in (("L", "long"), ("S", "short")):
         for idx in range(1, max_levels + 1):
-            leg_key = f"_{side_code}{idx}"
+            slot = f"{side_code}{idx}"
             price = (
                 center - spacing * idx if side_code == "L" else center + spacing * idx
             )
-            matched: List[Dict[str, Any]] = []
-            seen_rows: Set[int] = set()
+            matched = _orders_for_slot(by_leg, slot)
             inv_row = None
-
-            def extend_unique(rows: List[Dict[str, Any]]) -> None:
-                for row in rows:
-                    row_id = id(row)
-                    if row_id in seen_rows:
-                        continue
-                    seen_rows.add(row_id)
-                    matched.append(row)
-
             for lid, inv in inventory.items():
-                if lid.endswith(leg_key):
+                if _leg_slot(lid) == slot:
                     inv_row = inv
-                    extend_unique(by_leg.get(lid, []))
-            for oid, rows in by_leg.items():
-                if oid.endswith(leg_key):
-                    extend_unique(rows)
+                    break
             entry_px = None
             if inv_row and inv_row.get("entry_price"):
                 entry_px = float(inv_row["entry_price"])
             else:
+                filled_px: List[float] = []
+                open_px: List[float] = []
                 for row in matched:
                     if "take_profit" in str(row.get("purpose") or "").lower():
                         continue
+                    oid = str(row.get("order_id") or "")
+                    if _TP_RE.search(oid):
+                        continue
                     val = row.get("average_price") or row.get("price")
-                    if val is not None:
-                        entry_px = float(val)
-                        break
-            tp_px, tp_st = _tp_info(matched)
+                    if val is None:
+                        continue
+                    try:
+                        px = float(val)
+                    except (TypeError, ValueError):
+                        continue
+                    status = str(row.get("status") or "").lower()
+                    filled = float(row.get("filled_quantity") or 0)
+                    if status in {"filled", "closed"} or filled > 0:
+                        filled_px.append(px)
+                    elif status in {"open", "pending", "new", "submitted", "shadow"}:
+                        open_px.append(px)
+                if filled_px:
+                    entry_px = filled_px[0]
+                elif open_px:
+                    entry_px = open_px[0]
+            tp_px, tp_st = _tp_info(
+                matched,
+                slot=slot,
+                side_name=side_name,
+                entry_px=entry_px,
+                spacing=spacing,
+            )
             levels.append(
                 {
-                    "leg": f"{side_code}{idx}",
+                    "leg": slot,
                     "side": side_name,
                     "grid_price": round(price, 6),
                     "entry_price": entry_px,
-                    "entry_status": _entry_status(
-                        matched, inventory, leg_key=leg_key
-                    ),
+                    "entry_status": _entry_status(matched, inventory, slot=slot),
                     "tp_price": tp_px,
                     "tp_status": tp_st,
                 }
