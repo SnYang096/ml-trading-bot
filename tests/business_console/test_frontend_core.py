@@ -91,6 +91,10 @@ console.log(JSON.stringify({
     640.5,
     7200
   ),
+  prAuto2: Core.priceRangeForChartAutoscale(
+    [{ time: 100, low: 600, high: 620, close: 610 }, { time: 200, low: 610, high: 630, close: 625 }],
+    { from: 0, to: 1 }
+  ),
 }));
 """
 
@@ -137,3 +141,5 @@ def test_trade_map_core_node():
     assert out["s1Filled"] == "S1 成交"
     assert len(out["segPts"]) >= 4
     assert out["segPts"][2]["value"] is None  # NaN segment gap
+    assert out["prAuto2"]["minValue"] < 600
+    assert out["prAuto2"]["maxValue"] > 625

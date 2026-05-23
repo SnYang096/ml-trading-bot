@@ -39,6 +39,30 @@ const CHOP_REGIME_FILL = "rgba(115, 191, 105, 0.16)";
 function overlayAutoscaleInfoProvider() {
   return null;
 }
+
+function mainChartOverlaySeriesOptions(extra = {}) {
+  return {
+    priceLineVisible: false,
+    crosshairMarkerVisible: false,
+    autoscaleInfoProvider: overlayAutoscaleInfoProvider,
+    ...extra,
+  };
+}
+
+/** Lock Y-axis to visible OHLC only (EMA/grid lines must not stretch the scale). */
+function refreshMainPriceAutoscale() {
+  if (!chart || !lastCandles?.length) return;
+  const logical = chart.timeScale().getVisibleLogicalRange();
+  const pr = Core.priceRangeForChartAutoscale(lastCandles, logical);
+  if (!pr) return;
+  const ps = chart.priceScale("right");
+  ps.applyOptions({ autoScale: false });
+  if (typeof ps.setVisibleRange === "function") {
+    ps.setVisibleRange({ from: pr.minValue, to: pr.maxValue });
+  } else {
+    ps.applyOptions({ autoScale: true });
+  }
+}
 /** @type {import('lightweight-charts').ISeriesApi<'Line'>[]} */
 let chopSegmentSeries = [];
 /** Cached feature overlays for poll/history sub-chart sync. */
@@ -245,7 +269,7 @@ function applyChartViewport(barCount) {
   if (range) {
     chart.timeScale().setVisibleLogicalRange(range);
     syncSubchartsToMainRange();
-    chart.priceScale("right").applyOptions({ autoScale: true });
+    refreshMainPriceAutoscale();
   }
 }
 
@@ -429,6 +453,24 @@ function chopGridBandExtents(batch) {
   };
 }
 
+/** Regime chop tint envelope from OHLC inside chop_regime_regions (not grid spacing height). */
+function chopRegimePriceEnvelope(candles, spans) {
+  let top = -Infinity;
+  let bottom = Infinity;
+  for (const c of candles) {
+    const t = Number(c.time);
+    if (!spans.some((r) => t >= Number(r.start) && t <= Number(r.end))) continue;
+    const lo = Number(c.low);
+    const hi = Number(c.high);
+    if (Number.isFinite(lo)) bottom = Math.min(bottom, lo);
+    if (Number.isFinite(hi)) top = Math.max(top, hi);
+  }
+  if (!Number.isFinite(top) || !Number.isFinite(bottom) || top <= bottom) return null;
+  const span = Math.max(top - bottom, top * 0.0005);
+  const pad = Math.max(span * 0.04, top * 0.002);
+  return { top: top + pad, bottom: bottom - pad };
+}
+
 function chopGridOverlayEnabled() {
   return (
     !!document.getElementById("layerChopGrid")?.checked &&
@@ -459,34 +501,25 @@ function addChopSegmentLine(regions, price, opts = {}) {
     Core.barDurationSec(tf)
   );
   if (!pts.length) return;
-  const series = chart.addLineSeries({
-    color: opts.color || "#888",
-    lineWidth: opts.lineWidth ?? 1,
-    lineStyle: opts.lineStyle ?? 2,
-    priceLineVisible: false,
-    lastValueVisible: false,
-    crosshairMarkerVisible: false,
-    autoscaleInfoProvider: overlayAutoscaleInfoProvider,
-  });
+  const series = chart.addLineSeries(
+    mainChartOverlaySeriesOptions({
+      color: opts.color || "#888",
+      lineWidth: opts.lineWidth ?? 1,
+      lineStyle: opts.lineStyle ?? 2,
+      lastValueVisible: false,
+    })
+  );
   series.setData(pts);
   chopSegmentSeries.push(series);
 }
 
-function applyChopPriceBand(regions, candles, overlay) {
+function applyChopPriceBand(regions, candles, _overlay) {
   if (!chopGridOverlayEnabled() || !candles?.length) return;
   const spans = regions || [];
   if (!spans.length) return;
-  const batches = overlay?.batches || [];
-  if (!batches.length) return;
-  let top = -Infinity;
-  let bottom = Infinity;
-  for (const batch of batches) {
-    const ext = chopGridBandExtents(batch);
-    if (!ext) continue;
-    top = Math.max(top, ext.top);
-    bottom = Math.min(bottom, ext.bottom);
-  }
-  if (!Number.isFinite(top) || !Number.isFinite(bottom) || top <= bottom) return;
+  const envelope = chopRegimePriceEnvelope(candles, spans);
+  if (!envelope) return;
+  const { top, bottom } = envelope;
   ensureChopBandAreaSeries();
   if (!chopBandAreaSeries) return;
   chopBandAreaSeries.applyOptions({
@@ -554,6 +587,7 @@ function applyChopMapLayers(data, candles) {
   const regions = data.chop_regime_regions || [];
   applyChopPriceBand(regions, candles, data.chop_grid_overlay || {});
   applyChopGridOverlay(data.chop_grid_overlay || {}, regions);
+  refreshMainPriceAutoscale();
 }
 
 function applyMainOverlays(mainOverlays, opts = {}) {
@@ -569,14 +603,17 @@ function applyMainOverlays(mainOverlays, opts = {}) {
     if (!spec?.available || !spec.points?.length) continue;
     let line = mainOverlaySeries.get(key);
     if (!line) {
-      line = chart.addLineSeries({
-        color: spec.color || "#888",
-        lineWidth: 2,
-        priceLineVisible: false,
-        lastValueVisible: true,
-        title: spec.label || key,
-      });
+      line = chart.addLineSeries(
+        mainChartOverlaySeriesOptions({
+          color: spec.color || "#888",
+          lineWidth: 2,
+          lastValueVisible: true,
+          title: spec.label || key,
+        })
+      );
       mainOverlaySeries.set(key, line);
+    } else {
+      line.applyOptions(mainChartOverlaySeriesOptions());
     }
     const next = spec.points.map((p) => ({
       time: p.time,
@@ -586,6 +623,7 @@ function applyMainOverlays(mainOverlays, opts = {}) {
     mainOverlayData.set(key, points);
     line.setData(points);
   }
+  refreshMainPriceAutoscale();
 }
 
 function resetOhlcvLoadedRange() {
@@ -737,7 +775,7 @@ function bindTimeScaleSync() {
     for (const pane of subcharts.values()) {
       pane.chart.timeScale().setVisibleLogicalRange(range);
     }
-    chart.priceScale("right").applyOptions({ autoScale: true });
+    refreshMainPriceAutoscale();
     scheduleHistoryPrefetch(range);
   });
 }
@@ -1102,20 +1140,21 @@ function applyTradeLinks(links) {
     }
     const color = lk.color || "#73BF69";
     const open = String(lk.status || "").toLowerCase() === "open";
-    const series = chart.addLineSeries({
-      color,
-      lineWidth: 1,
-      lineStyle: open ? 2 : 0,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
-    });
+    const series = chart.addLineSeries(
+      mainChartOverlaySeriesOptions({
+        color,
+        lineWidth: 1,
+        lineStyle: open ? 2 : 0,
+        lastValueVisible: false,
+      })
+    );
     series.setData([
       { time: t0, value: p0 },
       { time: t1, value: p1 },
     ]);
     tradeLinkSeries.push(series);
   }
+  refreshMainPriceAutoscale();
 }
 
 function scrollChartToMarker(markerTime) {
@@ -1555,6 +1594,7 @@ async function refreshBundle(opts = {}) {
       };
     }
     applyChopMapLayers(lastChopMapData || data, lastCandles);
+    refreshMainPriceAutoscale();
     syncSubcharts(lastCandles, lastOverlays);
     ohlcvLoadedTo = meta.range_end || new Date().toISOString();
   } else if (mode !== "poll") {
@@ -1567,6 +1607,8 @@ async function refreshBundle(opts = {}) {
     if (chartFitPending) {
       applyChartViewport(candles.length);
       chartFitPending = false;
+    } else {
+      refreshMainPriceAutoscale();
     }
     lastOverlays = data.overlays || {};
     lastChopMapData = {
