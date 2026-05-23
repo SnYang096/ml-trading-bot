@@ -105,6 +105,62 @@ def test_weekly_ema_seed_curve_steps_over_weeks(tmp_path) -> None:
     assert len({p["value"] for p in points}) >= 2
 
 
+def test_stale_weekly_seed_uses_spot_daily_not_flat_line(tmp_path) -> None:
+    """Seed ending 2025-01 must not ffilled to 374 across 2026 candles."""
+    import io
+    import zipfile
+
+    from mlbot_console.services.macro_spot_daily import parse_kline_zip_bytes
+
+    seed_root = tmp_path / "seed"
+    seed_root.mkdir(parents=True)
+    pd.DataFrame(
+        {
+            "week_ts": [pd.Timestamp("2025-01-05", tz="UTC")],
+            "weekly_ema_200": [374.0],
+        }
+    ).to_parquet(seed_parquet_path(seed_root, "ETHUSDT"), index=False)
+
+    kroot = tmp_path / "klines" / "ETHUSDT" / "monthly" / "1d"
+    kroot.mkdir(parents=True)
+    rows = []
+    t0 = int(pd.Timestamp("2025-06-01", tz="UTC").timestamp() * 1000)
+    for i in range(400):
+        t = t0 + i * 86_400_000
+        price = 500.0 + i * 0.5
+        rows.append([t, price, price + 1, price - 1, price, 1000.0] + [0] * 6)
+    body = "\n".join(",".join(str(v) for v in r) for r in rows)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("k.csv", body)
+    (kroot / "ETHUSDT-1d-2025-06.zip").write_bytes(buf.getvalue())
+
+    candles = [
+        {
+            "time": int((pd.Timestamp("2026-05-20 02:00", tz="UTC")).timestamp()),
+            "close": 650.0,
+        },
+        {
+            "time": int((pd.Timestamp("2026-05-23 02:00", tz="UTC")).timestamp()),
+            "close": 655.0,
+        },
+    ]
+    out = load_main_chart_overlays(
+        tmp_path,
+        "ETHUSDT",
+        candles,
+        ["weekly_ema_200"],
+        macro_seed_root=seed_root,
+        macro_spot_kline_root=tmp_path / "klines",
+    )
+    wk = out["weekly_ema_200"]
+    assert wk["available"]
+    assert wk["source"] == "spot_daily_weekly"
+    vals = {round(p["value"], 1) for p in wk["points"]}
+    assert 374.0 not in vals or len(vals) > 1
+    assert max(vals) > 400
+
+
 def test_weekly_ema_overlay_uses_macro_seed_not_bus_close(tmp_path, bus_root) -> None:
     """Seed weekly_ema_200 (~565) must not be inverted with stale 2h bus close (~374)."""
     seed_root = tmp_path / "macro" / "spot_weekly_ema200"

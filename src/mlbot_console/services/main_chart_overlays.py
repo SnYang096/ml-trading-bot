@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 import pandas as pd
+
+from mlbot_console.services.macro_spot_daily import MacroSpotDailyLoader
 
 from mlbot_console.services.feature_overlay import (
     COLUMN_ALIASES,
@@ -16,6 +19,9 @@ from mlbot_console.services.feature_overlay import (
 
 # Always sourced from 2h feature bus (120T), overlaid on any chart timeframe.
 SOURCE_FEATURE_TF = "2h"
+EMA1200_SPAN_BARS = 1200
+# Seed parquet older than chart end by this much is treated stale (flat 374 bug).
+STALE_WEEKLY_SEED_LAG = pd.Timedelta(days=21)
 
 MAIN_OVERLAY_KEYS = frozenset({"ema_1200", "weekly_ema_200"})
 
@@ -162,6 +168,82 @@ def _overlay_points_for_chart(
     return _align_points_to_candles(native_points, candles)
 
 
+def _seed_last_timestamp(seed: pd.DataFrame) -> Optional[pd.Timestamp]:
+    if seed is None or seed.empty:
+        return None
+    if isinstance(seed.index, pd.DatetimeIndex):
+        return _utc_ts(seed.index.max())
+    if "week_ts" in seed.columns:
+        return _utc_ts(pd.to_datetime(seed["week_ts"], utc=True, errors="coerce").max())
+    return None
+
+
+def _seed_is_stale_for_chart(seed: pd.DataFrame, candles: List[Dict[str, Any]]) -> bool:
+    """Stale seed (e.g. 2025-01) must not ffilled across 2026 candles as a flat line."""
+    last = _seed_last_timestamp(seed)
+    _, c_end = _candle_time_bounds(candles)
+    if last is None or c_end is None:
+        return False
+    return last < c_end - STALE_WEEKLY_SEED_LAG
+
+
+def _weekly_ema_from_spot_daily(
+    macro_kline_root: Any,
+    symbol: str,
+    candles: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Recompute weekly EMA200 from Vision spot 1d ZIPs (curve, ~565 on BNB)."""
+    from src.live_data_stream.spot_weekly_ema_seed import compute_weekly_ema_table
+
+    c_start, c_end = _candle_time_bounds(candles)
+    if c_end is None:
+        return []
+    load_start = (c_start or c_end) - pd.Timedelta(days=200 * 7 + 60)
+    loader = MacroSpotDailyLoader(Path(macro_kline_root))
+    daily = loader.load_symbol_daily(
+        symbol,
+        start_date=load_start.date(),
+        end_date=c_end.date(),
+    )
+    if daily.empty or "close" not in daily.columns:
+        return []
+    weekly = compute_weekly_ema_table(daily["close"], ema_span_weeks=200)
+    if weekly.empty or "weekly_ema_200" not in weekly.columns:
+        return []
+    ts = pd.to_datetime(weekly["week_ts"], utc=True, errors="coerce")
+    ema = pd.to_numeric(weekly["weekly_ema_200"], errors="coerce")
+    native = _native_points_from_series(ts, ema)
+    return _overlay_points_for_chart(native, candles)
+
+
+def _ema1200_from_candle_closes(
+    candles: List[Dict[str, Any]],
+    *,
+    span: int = EMA1200_SPAN_BARS,
+) -> List[Dict[str, Any]]:
+    """EMA(span) on chart OHLC closes — full-width curve when feature bus is short."""
+    rows: List[tuple[int, float]] = []
+    for c in candles:
+        close = c.get("close")
+        t = c.get("time")
+        if t is None or close is None:
+            continue
+        try:
+            px = float(close)
+            ti = int(t)
+        except (TypeError, ValueError):
+            continue
+        if px > 0 and ti > 0:
+            rows.append((ti, px))
+    if not rows:
+        return []
+    rows.sort(key=lambda x: x[0])
+    idx = pd.to_datetime([r[0] for r in rows], unit="s", utc=True)
+    closes = pd.Series([r[1] for r in rows], index=idx, dtype=float)
+    ema = closes.ewm(span=max(2, int(span)), adjust=False).mean()
+    return _native_points_from_series(ema.index, ema.values)
+
+
 def _align_weekly_ema_seed_to_candles(
     macro_seed_root: Any,
     symbol: str,
@@ -176,6 +258,8 @@ def _align_weekly_ema_seed_to_candles(
         return []
     seed = load_weekly_ema_seed(macro_seed_root, symbol)
     if seed is None or seed.empty or ema_column not in seed.columns:
+        return []
+    if _seed_is_stale_for_chart(seed, candles):
         return []
     ema = pd.to_numeric(seed[ema_column], errors="coerce").dropna()
     if ema.empty:
@@ -258,6 +342,7 @@ def load_main_chart_overlays(
     overlay_keys: List[str],
     *,
     macro_seed_root: Any = None,
+    macro_spot_kline_root: Any = None,
     start: Optional[pd.Timestamp] = None,
     end: Optional[pd.Timestamp] = None,
 ) -> Dict[str, Dict[str, Any]]:
@@ -315,36 +400,47 @@ def load_main_chart_overlays(
         entry = out[key]
         entry["path"] = str(path) if path else None
         points: List[Dict[str, Any]] = []
-        if spec.get("use_macro_seed") and macro_seed_root:
-            points = _align_weekly_ema_seed_to_candles(
-                macro_seed_root,
-                symbol,
-                candles,
-                ema_column=str(spec.get("seed_ema_column") or "weekly_ema_200"),
-            )
-            if points:
-                entry["source"] = "macro_seed"
-        if not points and not feat.empty:
+        if spec.get("use_macro_seed"):
+            if macro_seed_root:
+                points = _align_weekly_ema_seed_to_candles(
+                    macro_seed_root,
+                    symbol,
+                    candles,
+                    ema_column=str(spec.get("seed_ema_column") or "weekly_ema_200"),
+                )
+                if points:
+                    entry["source"] = "macro_seed"
+            if not points and macro_spot_kline_root:
+                points = _weekly_ema_from_spot_daily(
+                    macro_spot_kline_root, symbol, candles
+                )
+                if points:
+                    entry["source"] = "spot_daily_weekly"
+        elif key == "ema_1200":
             price_col = _resolve_price_column(
                 feat, list(spec.get("price_columns") or [])
             )
-            if price_col:
-                native = _native_points_from_series(feat["timestamp"], feat[price_col])
+            if price_col and not feat.empty:
+                native = _native_points_from_series(
+                    feat["timestamp"], feat[price_col]
+                )
                 points = _overlay_points_for_chart(native, candles)
-                if points:
-                    entry["source"] = "feature_bus_price"
-                    entry["parquet_column"] = price_col
-        if not points:
+                entry["source"] = "feature_bus_price"
+                entry["parquet_column"] = price_col
+            if not points:
+                points = _ema1200_from_candle_closes(candles)
+                entry["source"] = "candle_ewm"
+            if not points and not feat.empty and pos_col:
+                points = _align_ma_to_candles(
+                    feat, pos_col, candles, use_candle_close=False
+                )
+                entry["parquet_column"] = pos_col
+                entry["source"] = "position_inverted"
+        if not points and spec.get("use_macro_seed"):
             if feat.empty or pos_col is None:
                 continue
-            # Weekly position uses spot seed EMA vs chart close; EMA1200 position
-            # is defined on the same 2h bus close as the overlay source.
-            use_candle_close = bool(spec.get("use_macro_seed"))
             points = _align_ma_to_candles(
-                feat,
-                pos_col,
-                candles,
-                use_candle_close=use_candle_close,
+                feat, pos_col, candles, use_candle_close=True
             )
             entry["parquet_column"] = pos_col
             entry["source"] = "position_inverted"
@@ -352,4 +448,11 @@ def load_main_chart_overlays(
         entry["available"] = bool(points)
         if points:
             entry["latest"] = points[-1]["value"]
+            vals = [p["value"] for p in points]
+            entry["point_count"] = len(points)
+            entry["value_range"] = {
+                "min": float(min(vals)),
+                "max": float(max(vals)),
+            }
+            entry["coverage_from"] = int(points[0]["time"])
     return out
