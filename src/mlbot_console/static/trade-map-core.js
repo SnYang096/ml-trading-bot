@@ -692,6 +692,17 @@
     return { minValue: minV - pad, maxValue: maxV + pad };
   }
 
+  /** Visible-window range, else full series (never return null when candles exist). */
+  function priceRangeForChartAutoscale(candles, logicalRange) {
+    if (!Array.isArray(candles) || !candles.length) return null;
+    const vis = priceRangeForVisibleCandles(candles, logicalRange);
+    if (vis) return vis;
+    return priceRangeForVisibleCandles(candles, {
+      from: 0,
+      to: candles.length - 1,
+    });
+  }
+
   /** Bar spacing in px for the *visible* window (not full history length). */
   function barSpacingForCount(barCount) {
     const n = Math.max(0, Number(barCount) || 0);
@@ -746,6 +757,7 @@
     sanitizeCandlesForLwc,
     clampCandleOhlc,
     priceRangeForVisibleCandles,
+    priceRangeForChartAutoscale,
     barSpacingForCount,
     chopSegmentedLinePoints,
     chopGridMarkerDisplayText,

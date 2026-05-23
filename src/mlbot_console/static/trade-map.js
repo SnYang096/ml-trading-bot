@@ -30,8 +30,15 @@ let tradeLinkSeries = [];
 
 /** @type {import('lightweight-charts').IPriceLine[]} */
 let chopGridPriceLines = [];
-/** @type {import('lightweight-charts').ISeriesApi<'Histogram'>|null} */
-let chopBandFillSeries = null;
+/** @type {import('lightweight-charts').ISeriesApi<'Area'>|null} */
+let chopBandAreaSeries = null;
+
+const CHOP_REGIME_FILL = "rgba(115, 191, 105, 0.16)";
+
+/** Overlay series must not participate in main price autoscale. */
+function overlayAutoscaleInfoProvider() {
+  return null;
+}
 /** @type {import('lightweight-charts').ISeriesApi<'Line'>[]} */
 let chopSegmentSeries = [];
 /** Cached feature overlays for poll/history sub-chart sync. */
@@ -251,25 +258,38 @@ function syncSubchartsToMainRange() {
   }
 }
 
+function ensureChopBandAreaSeries() {
+  if (chopBandAreaSeries || !chart) return;
+  chopBandAreaSeries = chart.addAreaSeries({
+    lineColor: "transparent",
+    topColor: CHOP_REGIME_FILL,
+    bottomColor: CHOP_REGIME_FILL,
+    priceLineVisible: false,
+    lastValueVisible: false,
+    crosshairMarkerVisible: false,
+    autoscaleInfoProvider: overlayAutoscaleInfoProvider,
+  });
+  chopBandAreaSeries.setData([]);
+}
+
 function initMainChart() {
   const el = document.getElementById("chart");
   chart = LightweightCharts.createChart(el, chartBaseOptions());
+  ensureChopBandAreaSeries();
   candleSeries = chart.addCandlestickSeries({
     upColor: "#26a69a",
     downColor: "#ef5350",
     borderVisible: false,
     wickUpColor: "#26a69a",
     wickDownColor: "#ef5350",
-    autoscaleInfoProvider: (original) => {
+    autoscaleInfoProvider: () => {
       const range = chart.timeScale().getVisibleLogicalRange();
-      const custom = Core.priceRangeForVisibleCandles(lastCandles, range);
-      if (custom) {
-        return {
-          priceRange: custom,
-          margins: { above: 10, below: 10 },
-        };
-      }
-      return original();
+      const custom = Core.priceRangeForChartAutoscale(lastCandles, range);
+      if (!custom) return null;
+      return {
+        priceRange: custom,
+        margins: { above: 10, below: 10 },
+      };
     },
   });
   candleSeries.setMarkers([]);
@@ -385,14 +405,28 @@ function clearChopGridOverlay() {
     }
   }
   chopSegmentSeries = [];
-  if (chopBandFillSeries) {
+  if (chopBandAreaSeries) {
     try {
-      chart.removeSeries(chopBandFillSeries);
+      chopBandAreaSeries.setData([]);
     } catch (_) {
       /* */
     }
-    chopBandFillSeries = null;
   }
+}
+
+function chopGridBandExtents(batch) {
+  const center = Number(batch.center);
+  const spacing = Number(batch.spacing) || 0;
+  if (center <= 0 || spacing <= 0) return null;
+  let maxLv = 2;
+  for (const lv of batch.levels || []) {
+    const m = String(lv.leg || "").match(/(\d+)/);
+    if (m) maxLv = Math.max(maxLv, parseInt(m[1], 10));
+  }
+  return {
+    top: center + spacing * maxLv,
+    bottom: center - spacing * maxLv,
+  };
 }
 
 function chopGridOverlayEnabled() {
@@ -432,6 +466,7 @@ function addChopSegmentLine(regions, price, opts = {}) {
     priceLineVisible: false,
     lastValueVisible: false,
     crosshairMarkerVisible: false,
+    autoscaleInfoProvider: overlayAutoscaleInfoProvider,
   });
   series.setData(pts);
   chopSegmentSeries.push(series);
@@ -439,29 +474,24 @@ function addChopSegmentLine(regions, price, opts = {}) {
 
 function applyChopPriceBand(regions, candles, overlay) {
   if (!chopGridOverlayEnabled() || !candles?.length) return;
+  const spans = regions || [];
+  if (!spans.length) return;
   const batches = overlay?.batches || [];
   if (!batches.length) return;
   let top = -Infinity;
   let bottom = Infinity;
   for (const batch of batches) {
-    const center = Number(batch.center);
-    const spacing = Number(batch.spacing) || 0;
-    if (center <= 0 || spacing <= 0) continue;
-    const maxLv = (batch.levels || []).length || 2;
-    top = Math.max(top, center + spacing * maxLv);
-    bottom = Math.min(bottom, center - spacing * maxLv);
+    const ext = chopGridBandExtents(batch);
+    if (!ext) continue;
+    top = Math.max(top, ext.top);
+    bottom = Math.min(bottom, ext.bottom);
   }
   if (!Number.isFinite(top) || !Number.isFinite(bottom) || top <= bottom) return;
-  const barH = top - bottom;
-  const spans = regions || [];
-  if (!chopBandFillSeries) {
-    chopBandFillSeries = chart.addHistogramSeries({
-      priceFormat: { type: "price", precision: 2, minMove: 0.01 },
-      priceLineVisible: false,
-      lastValueVisible: false,
-    });
-  }
-  chopBandFillSeries.applyOptions({ base: bottom });
+  ensureChopBandAreaSeries();
+  if (!chopBandAreaSeries) return;
+  chopBandAreaSeries.applyOptions({
+    baseValue: { type: "price", price: bottom },
+  });
   const data = candles.map((c) => {
     const t = c.time;
     const inChop = spans.some(
@@ -469,11 +499,10 @@ function applyChopPriceBand(regions, candles, overlay) {
     );
     return {
       time: t,
-      value: inChop ? barH : 0,
-      color: inChop ? "rgba(115, 191, 105, 0.16)" : "rgba(0,0,0,0)",
+      value: inChop ? top : NaN,
     };
   });
-  chopBandFillSeries.setData(data);
+  chopBandAreaSeries.setData(data);
 }
 
 function applyChopGridOverlay(overlay, regions) {

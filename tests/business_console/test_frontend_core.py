@@ -42,6 +42,7 @@ const clean = Core.sanitizeCandlesForLwc([
   { time: 300, open: 2100, high: 9000, low: -3200, close: 2100 },
 ]);
 const pr = Core.priceRangeForVisibleCandles(clean, { from: 2, to: 3 });
+const prAuto = Core.priceRangeForChartAutoscale(clean, null);
 Core.setFeatureTaxonomy({
   strategies: [
     { id: "tpc", account_layer: "trend", title: "TPC", stages: { prefilter: ["tpc_pullback_depth"], gate: ["tpc_semantic_chop"] } },
@@ -70,6 +71,7 @@ console.log(JSON.stringify({
   scopes, lwcCount: lwc.length, pendingShape: lwc[1].shape, grafana, spacing,
   vis, range, cleanLen: clean.length, cleanTime: clean[1].time,
   prMin: pr && pr.minValue, prMax: pr && pr.maxValue,
+  prAutoMin: prAuto && prAuto.minValue, prAutoMax: prAuto && prAuto.maxValue,
   groupTitles: grouped.map((g) => g[0]),
   planTypes: plan.map((p) => p.type),
   metaStage: meta.stage,
@@ -115,6 +117,7 @@ def test_trade_map_core_node():
     assert out["cleanTime"] == 200
     assert out["prMin"] is not None and out["prMin"] > 2000
     assert out["prMax"] is not None and out["prMax"] < 2500
+    assert out["prAutoMin"] is not None and out["prAutoMax"] is not None
     assert "B·Trend › TPC › Prefilter" in out["groupTitles"][0]
     assert "Prefilter" in out["groupTitles"][1]
     assert out["metaStage"] == "prefilter"

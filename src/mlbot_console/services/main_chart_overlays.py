@@ -50,6 +50,11 @@ def _position_to_ma_price(close: pd.Series, position: pd.Series) -> pd.Series:
     return c * (1.0 - p)
 
 
+def _utc_datetime64ns(series: pd.Series) -> pd.Series:
+    """Normalize timestamps for merge_asof (parquet ns vs candle unit=s)."""
+    return pd.to_datetime(series, utc=True).astype("datetime64[ns, UTC]")
+
+
 def _resolve_position_column(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
     for name in candidates:
         col = _resolve_parquet_column(df, name)
@@ -113,7 +118,7 @@ def _align_ma_to_candles(
     ma = _position_to_ma_price(feat["close"], feat[pos_col])
     src = pd.DataFrame(
         {
-            "timestamp": feat["timestamp"],
+            "timestamp": _utc_datetime64ns(feat["timestamp"]),
             "value": ma,
         }
     ).dropna(subset=["value"])
@@ -121,8 +126,8 @@ def _align_ma_to_candles(
         return []
     tgt = pd.DataFrame(
         {
-            "timestamp": pd.to_datetime(
-                [int(c["time"]) for c in candles], unit="s", utc=True
+            "timestamp": _utc_datetime64ns(
+                pd.to_datetime([int(c["time"]) for c in candles], unit="s", utc=True)
             ),
             "ord": range(len(candles)),
         }
