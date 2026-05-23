@@ -7,7 +7,6 @@ const Shell = globalThis.MLBotConsole;
 const POLL_MS = 15000;
 
 let pollTimer;
-let pollToastTimer;
 let lastOrderRows = [];
 let lastRowsSignature = "";
 let selectedRowIdx = -1;
@@ -23,27 +22,6 @@ function layersState() {
 
 function scopesParam() {
   return Core.scopesFromLayers(layersState());
-}
-
-function setStatus(msg) {
-  const el = document.getElementById("statusLine");
-  if (el) el.textContent = msg;
-}
-
-function showPollToast(msg, autoHideMs = 0) {
-  let el = document.getElementById("pollToast");
-  if (!el) {
-    el = document.createElement("div");
-    el.id = "pollToast";
-    el.className = "poll-toast";
-    document.body.appendChild(el);
-  }
-  el.textContent = msg;
-  el.classList.add("visible");
-  if (pollToastTimer) clearTimeout(pollToastTimer);
-  if (autoHideMs > 0) {
-    pollToastTimer = setTimeout(() => el.classList.remove("visible"), autoHideMs);
-  }
 }
 
 function rowsSignature(rows) {
@@ -168,8 +146,6 @@ async function refreshOrders(opts = {}) {
   const countEl = document.getElementById("ordersCount");
   const colspan = Shell.ordersTableColspan(showSymbolColumn());
   updateOrdersTableHead();
-  if (silent) showPollToast("刷新中…");
-  else setStatus("加载中…");
   const q = new URLSearchParams({
     symbol,
     scopes,
@@ -182,12 +158,8 @@ async function refreshOrders(opts = {}) {
     const { data, meta } = await Shell.api(`/api/orders/list?${q}`);
     const rows = data || [];
     const sig = rowsSignature(rows);
-    const symLabel = Shell.isAllSymbols(symbol) ? "全部" : symbol;
-    const timeLabel = new Date().toLocaleTimeString();
-    const toastMsg = `${symLabel} · ${rows.length} 条 · ${scopes} · ${timeLabel}`;
     if (silent && sig === lastRowsSignature && rows.length) {
       countEl.textContent = `(${meta.count ?? rows.length})`;
-      showPollToast(toastMsg, 2500);
       return;
     }
     lastOrderRows = rows;
@@ -197,8 +169,6 @@ async function refreshOrders(opts = {}) {
       tbody.innerHTML = `<tr><td colspan="${colspan}" class="muted">无订单</td></tr>`;
       document.getElementById("orderDetailBody").innerHTML =
         '<p class="muted">选择一行查看详情</p>';
-      if (!silent) setStatus(`${symLabel} · 0 条 · ${timeLabel}`);
-      showPollToast(toastMsg, 2500);
       return;
     }
     tbody.innerHTML = Shell.buildOrdersTableRows(rows, {
@@ -217,18 +187,16 @@ async function refreshOrders(opts = {}) {
       const mid = tr.getAttribute("data-marker-id");
       showOrderDetail(rows[selectedRowIdx], mid || null);
     }
-    if (!silent) setStatus(toastMsg);
-    showPollToast(toastMsg, 2500);
     refreshSummaryStrip(symbol).catch(() => {});
   } catch (e) {
     tbody.innerHTML = `<tr><td colspan="${colspan}" class="muted">${Shell.escHtml(String(e))}</td></tr>`;
     countEl.textContent = "";
-    setStatus(String(e));
+    console.error(e);
   }
 }
 
 function bindControls() {
-  const rerun = () => refreshOrders({ silent: false }).catch((e) => setStatus(String(e)));
+  const rerun = () => refreshOrders({ silent: false }).catch((e) => console.error(e));
   [
     "symbolSelect",
     "statusFilter",
@@ -256,7 +224,7 @@ function bindControls() {
 function startPoll() {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(
-    () => refreshOrders({ silent: true }).catch((e) => showPollToast(String(e), 4000)),
+    () => refreshOrders({ silent: true }).catch((e) => console.error(e)),
     POLL_MS
   );
 }
@@ -274,7 +242,6 @@ function startPoll() {
     await refreshOrders();
     startPoll();
   } catch (e) {
-    setStatus(`启动失败: ${e}`);
-    console.error(e);
+    console.error("orders page init failed:", e);
   }
 })();
