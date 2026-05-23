@@ -58,6 +58,18 @@ def test_ema1200_overlay_uses_feature_bus_price_column(bus_root) -> None:
     assert out["ema_1200"]["latest"] == pytest.approx(102.4 * 0.95)
 
 
+def test_ema1200_overlay_curve_has_varying_values(bus_root) -> None:
+    """EMA line must use full 2h history, not one flat level across the chart."""
+    candles = [
+        {"time": int(pd.Timestamp("2024-01-01 02:00", tz="UTC").timestamp())},
+        {"time": int(pd.Timestamp("2024-01-01 14:00", tz="UTC").timestamp())},
+    ]
+    out = load_main_chart_overlays(bus_root, "ETHUSDT", candles, ["ema_1200"])
+    pts = out["ema_1200"]["points"]
+    assert len(pts) == 2
+    assert pts[0]["value"] != pts[1]["value"]
+
+
 def test_load_main_overlays_aligns_to_candles(bus_root):
     candles = [
         {"time": int(pd.Timestamp("2024-01-01 10:00", tz="UTC").timestamp())},
@@ -72,6 +84,25 @@ def test_load_main_overlays_aligns_to_candles(bus_root):
     assert out["ema_1200"]["available"]
     assert len(out["ema_1200"]["points"]) == 2
     assert out["ema_1200"]["points"][0]["value"] > 90
+
+
+def test_weekly_ema_seed_curve_steps_over_weeks(tmp_path) -> None:
+    seed_root = tmp_path / "macro" / "spot_weekly_ema200"
+    seed_root.mkdir(parents=True, exist_ok=True)
+    weeks = pd.date_range("2024-01-01", periods=4, freq="W-MON", tz="UTC")
+    pd.DataFrame(
+        {
+            "week_ts": weeks,
+            "weekly_ema_200": [500.0, 520.0, 540.0, 565.0],
+        }
+    ).to_parquet(seed_parquet_path(seed_root, "ETHUSDT"), index=False)
+    candles = [
+        {"time": int((weeks[0] + pd.Timedelta(days=d)).timestamp())}
+        for d in range(0, 22, 2)
+    ]
+    points = _align_weekly_ema_seed_to_candles(seed_root, "ETHUSDT", candles)
+    assert len(points) == len(candles)
+    assert len({p["value"] for p in points}) >= 2
 
 
 def test_weekly_ema_overlay_uses_macro_seed_not_bus_close(tmp_path, bus_root) -> None:

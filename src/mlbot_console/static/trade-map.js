@@ -1540,8 +1540,7 @@ async function refreshBundle(opts = {}) {
 
   if (mode === "poll") {
     q.set("include_ohlcv", "tail");
-    q.set("include_features", mainOl ? "true" : "false");
-    if (mainOl) q.set("main_overlays", mainOl);
+    q.set("include_features", "false");
     if (lastMarkerPollSince) q.set("since", lastMarkerPollSince);
     const lastT = lastCandles.length ? lastCandles[lastCandles.length - 1].time : null;
     if (lastT != null) {
@@ -1586,7 +1585,6 @@ async function refreshBundle(opts = {}) {
       if (prevLast != null && t < prevLast) continue;
       candleSeries.update(c);
     }
-    applyMainOverlays(data.main_overlays || {}, { merge: true });
     if (data.chop_grid_overlay || data.chop_regime_regions) {
       lastChopMapData = {
         chop_grid_overlay: data.chop_grid_overlay,

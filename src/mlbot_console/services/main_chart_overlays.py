@@ -8,6 +8,7 @@ import pandas as pd
 
 from mlbot_console.services.feature_overlay import (
     COLUMN_ALIASES,
+    _align_points_to_candles,
     _resolve_feature_path,
     _resolve_parquet_column,
     _utc_ts,
@@ -125,45 +126,40 @@ def _load_source_features(
     return df.reset_index(drop=True)
 
 
-def _align_value_series_to_candles(
+def _candle_time_bounds(
+    candles: List[Dict[str, Any]],
+) -> tuple[Optional[pd.Timestamp], Optional[pd.Timestamp]]:
+    if not candles:
+        return None, None
+    ts = pd.to_datetime([int(c["time"]) for c in candles], unit="s", utc=True)
+    return _utc_ts(ts.min()), _utc_ts(ts.max())
+
+
+def _native_points_from_series(
     timestamps: pd.Series,
     values: pd.Series,
-    candles: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    src = pd.DataFrame(
-        {
-            "timestamp": _utc_datetime64ns(timestamps),
-            "value": pd.to_numeric(values, errors="coerce"),
-        }
-    ).dropna(subset=["value"])
-    if src.empty or not candles:
-        return []
-    tgt = pd.DataFrame(
-        {
-            "timestamp": _utc_datetime64ns(
-                pd.to_datetime([int(c["time"]) for c in candles], unit="s", utc=True)
-            ),
-            "ord": range(len(candles)),
-        }
-    )
-    merged = pd.merge_asof(
-        tgt.sort_values("timestamp"),
-        src.sort_values("timestamp"),
-        on="timestamp",
-        direction="backward",
-    ).sort_values("ord")
+    """One point per source timestamp (full EMA history, not a single level)."""
     points: List[Dict[str, Any]] = []
-    for _, row in merged.iterrows():
-        val = row.get("value")
+    for t, v in zip(timestamps, values):
+        val = pd.to_numeric(v, errors="coerce")
         if val is None or (isinstance(val, float) and val != val):
             continue
-        points.append(
-            {
-                "time": int(row["timestamp"].timestamp()),
-                "value": float(val),
-            }
-        )
+        ts = _utc_ts(t)
+        points.append({"time": int(ts.timestamp()), "value": float(val)})
+    points.sort(key=lambda p: p["time"])
     return points
+
+
+def _overlay_points_for_chart(
+    native_points: List[Dict[str, Any]],
+    candles: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    if not native_points:
+        return []
+    if not candles:
+        return native_points
+    return _align_points_to_candles(native_points, candles)
 
 
 def _align_weekly_ema_seed_to_candles(
@@ -190,7 +186,14 @@ def _align_weekly_ema_seed_to_candles(
         ts = pd.to_datetime(seed["week_ts"], utc=True, errors="coerce")
     else:
         return []
-    return _align_value_series_to_candles(ts, ema.values, candles)
+    c_start, c_end = _candle_time_bounds(candles)
+    if c_start is not None and c_end is not None:
+        mask = (ts >= c_start) & (ts <= c_end)
+        if mask.any():
+            ema = ema[mask]
+            ts = ema.index
+    native = _native_points_from_series(ts, ema)
+    return _overlay_points_for_chart(native, candles)
 
 
 def _align_ma_to_candles(
@@ -244,7 +247,8 @@ def _align_ma_to_candles(
     if "close" not in feat.columns:
         return []
     ma = _position_to_ma_price(feat["close"], pos)
-    return _align_value_series_to_candles(feat["timestamp"], ma, candles)
+    native = _native_points_from_series(feat["timestamp"], ma)
+    return _overlay_points_for_chart(native, candles)
 
 
 def load_main_chart_overlays(
@@ -273,6 +277,18 @@ def load_main_chart_overlays(
     if not requested or not candles:
         return out
 
+    candle_start, candle_end = _candle_time_bounds(candles)
+    feat_start = start
+    feat_end = end
+    if candle_start is not None:
+        feat_start = (
+            min(_utc_ts(feat_start), candle_start)
+            if feat_start is not None
+            else candle_start
+        )
+    if candle_end is not None:
+        feat_end = max(_utc_ts(feat_end), candle_end) if feat_end is not None else candle_end
+
     all_pos_cols: List[str] = []
     all_price_cols: List[str] = []
     for key in requested:
@@ -283,8 +299,8 @@ def load_main_chart_overlays(
     feat = _load_source_features(
         feature_bus_root,
         symbol,
-        start=start,
-        end=end,
+        start=feat_start,
+        end=feat_end,
         position_columns=all_pos_cols,
         price_columns=all_price_cols,
     )
@@ -313,9 +329,8 @@ def load_main_chart_overlays(
                 feat, list(spec.get("price_columns") or [])
             )
             if price_col:
-                points = _align_value_series_to_candles(
-                    feat["timestamp"], feat[price_col], candles
-                )
+                native = _native_points_from_series(feat["timestamp"], feat[price_col])
+                points = _overlay_points_for_chart(native, candles)
                 if points:
                     entry["source"] = "feature_bus_price"
                     entry["parquet_column"] = price_col
