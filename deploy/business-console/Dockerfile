@@ -9,6 +9,8 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 COPY src/mlbot_console /app/src/mlbot_console
 COPY src/live_data_stream /app/src/live_data_stream
 COPY src/time_series_model /app/src/time_series_model
+# strategy_stage_regions → archetype.loader → src.config.strategy_layout
+COPY src/config /app/src/config
 COPY config/strategies /app/config/strategies
 
 ENV PYTHONPATH=/app/src

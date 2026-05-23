@@ -698,6 +698,7 @@ jobs:
             src/mlbot_console \
             src/live_data_stream \
             src/time_series_model \
+            src/config \
             live/highcap/universe.yaml \
             config/strategies; do
             test -e "${ROOT}/${p}" || { echo "::error::missing ${ROOT}/${p}"; exit 1; }
@@ -710,6 +711,7 @@ jobs:
               src/mlbot_console \
               src/live_data_stream \
               src/time_series_model \
+              src/config \
               live/highcap/universe.yaml \
               config/strategies
 
