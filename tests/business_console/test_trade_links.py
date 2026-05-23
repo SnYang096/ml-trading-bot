@@ -115,6 +115,57 @@ def test_filled_tp_closes_link(multi_leg_db):
     assert extras == []
 
 
+def test_filled_s2_short_tp_link(multi_leg_db):
+    from src.order_management.multi_leg_storage import MultiLegStorage
+
+    storage = MultiLegStorage(str(multi_leg_db))
+    run_id = storage.create_run(
+        mode="testnet",
+        strategies=["chop_grid"],
+        symbols=["BNBUSDT"],
+        run_id="mlr_link_s2_closed",
+    )
+    group = "BNBUSDT_2026-05-21T080000"
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": f"{group}_S2",
+            "symbol": "BNBUSDT",
+            "side": "SELL",
+            "purpose": "place",
+            "status": "filled",
+            "filled_quantity": 0.2,
+            "average_price": 656.42,
+            "filled_at": "2026-05-21 08:00:00+00:00",
+        }
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": f"{group}_S2_tp",
+            "leg_id": f"{group}_S2",
+            "symbol": "BNBUSDT",
+            "side": "BUY",
+            "purpose": "take_profit",
+            "status": "filled",
+            "filled_quantity": 0.2,
+            "average_price": 649.98,
+            "filled_at": "2026-05-21 10:00:00+00:00",
+        }
+    )
+    links, extras = multi_leg_trade_links(multi_leg_db, "BNBUSDT")
+    s2_links = [lk for lk in links if lk.get("leg") == "S2"]
+    assert len(s2_links) == 1
+    assert s2_links[0]["status"] == "closed"
+    assert s2_links[0]["exit_kind"] == "take_profit"
+    assert s2_links[0]["entry_price"] == 656.42
+    assert s2_links[0]["exit_price"] == 649.98
+    assert s2_links[0]["entry_price"] > s2_links[0]["exit_price"]
+    assert extras == []
+
+
 def test_links_outside_window_are_not_clipped_into_view(multi_leg_db):
     from src.order_management.multi_leg_storage import MultiLegStorage
 

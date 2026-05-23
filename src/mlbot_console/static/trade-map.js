@@ -617,35 +617,30 @@ function chopGridOverlayEnabled() {
   );
 }
 
-function addChopAxisLabel(price, opts = {}) {
-  if (!candleSeries || price == null || !Number.isFinite(Number(price))) return;
-  const pl = candleSeries.createPriceLine({
-    price: Number(price),
-    color: opts.color || "transparent",
-    lineWidth: 1,
-    lineStyle: 0,
-    lineVisible: false,
-    axisLabelVisible: true,
-    title: opts.title || "",
-  });
-  chopGridPriceLines.push(pl);
+function fullWidthPriceLine(candles, price) {
+  if (!candles?.length || price == null || !Number.isFinite(Number(price))) {
+    return [];
+  }
+  const px = Number(price);
+  const first = candles[0];
+  const last = candles[candles.length - 1];
+  return [
+    { time: first.time, value: px },
+    { time: last.time, value: px },
+  ];
 }
 
-function addChopSegmentLine(regions, price, opts = {}) {
+function addChopFullWidthLine(candles, price, opts = {}) {
   if (!chart || price == null || !Number.isFinite(Number(price))) return;
-  const tf = document.getElementById("timeframeSelect")?.value || "2h";
-  const pts = Core.chopSegmentedLinePoints(
-    regions,
-    price,
-    Core.barDurationSec(tf)
-  );
+  const pts = fullWidthPriceLine(candles, price);
   if (!pts.length) return;
   const series = chart.addLineSeries(
     mainChartOverlaySeriesOptions({
       color: opts.color || "#888",
       lineWidth: opts.lineWidth ?? 1,
       lineStyle: opts.lineStyle ?? 2,
-      lastValueVisible: false,
+      lastValueVisible: true,
+      title: opts.title || "",
     })
   );
   series.setData(pts);
@@ -677,18 +672,17 @@ function applyChopPriceBand(regions, candles, _overlay) {
   chopBandAreaSeries.setData(data);
 }
 
-function applyChopGridOverlay(overlay, regions) {
-  if (!chopGridOverlayEnabled()) return;
-  const spans = regions || [];
+function applyChopGridOverlay(overlay, candles) {
+  if (!chopGridOverlayEnabled() || !candles?.length) return;
   for (const batch of overlay?.batches || []) {
     const center = Number(batch.center);
     if (center > 0) {
-      addChopSegmentLine(spans, center, {
+      addChopFullWidthLine(candles, center, {
         color: "#94a3b8",
         lineWidth: 2,
         lineStyle: 2,
+        title: "中心",
       });
-      addChopAxisLabel(center, { title: "中心" });
     }
     for (const lv of batch.levels || []) {
       const leg = String(lv.leg || "").toUpperCase();
@@ -698,11 +692,11 @@ function applyChopGridOverlay(overlay, regions) {
         : "rgba(249, 115, 22, 0.55)";
       const gridPx = Number(lv.grid_price);
       if (Number.isFinite(gridPx) && gridPx > 0) {
-        addChopSegmentLine(spans, gridPx, {
+        addChopFullWidthLine(candles, gridPx, {
           color: gridColor,
           lineStyle: 2,
+          title: `${leg} 格`,
         });
-        addChopAxisLabel(gridPx, { title: `${leg} 格` });
       }
       const tpPx = lv.tp_price != null ? Number(lv.tp_price) : null;
       if (tpPx != null && tpPx > 0) {
@@ -710,11 +704,11 @@ function applyChopGridOverlay(overlay, regions) {
         const tpOpen = ["open", "pending", "new", "submitted", "shadow"].includes(
           tpSt
         );
-        addChopSegmentLine(spans, tpPx, {
+        addChopFullWidthLine(candles, tpPx, {
           color: tpOpen ? "#a855f7" : "#6b7280",
           lineStyle: 1,
+          title: `${leg}_TP`,
         });
-        addChopAxisLabel(tpPx, { title: `${leg}_TP` });
       }
     }
   }
@@ -726,7 +720,7 @@ function applyChopMapLayers(data, candles) {
   const regions = data.chop_regime_regions || [];
   if (chopGridOverlayEnabled()) {
     applyChopPriceBand(regions, candles, data.chop_grid_overlay || {});
-    applyChopGridOverlay(data.chop_grid_overlay || {}, regions);
+    applyChopGridOverlay(data.chop_grid_overlay || {}, candles);
   }
   applyStrategyStageRegions(data, candles);
   refreshMainPriceAutoscale();
@@ -1702,7 +1696,9 @@ async function refreshBundle(opts = {}) {
 
   if (mode === "poll") {
     q.set("include_ohlcv", "tail");
-    q.set("include_features", "false");
+    const pollFeatures = selectedFeatureColumns.length > 0;
+    q.set("include_features", pollFeatures ? "true" : "false");
+    if (pollFeatures && featParam) q.set("feature_columns", featParam);
     if (lastMarkerPollSince) q.set("since", lastMarkerPollSince);
     const lastT = lastCandles.length ? lastCandles[lastCandles.length - 1].time : null;
     if (lastT != null) {
@@ -1762,6 +1758,17 @@ async function refreshBundle(opts = {}) {
     }
     applyChopMapLayers(lastChopMapData || data, lastCandles);
     refreshMainPriceAutoscale();
+    if (data.overlays && Object.keys(data.overlays).length) {
+      const merged = { ...(lastOverlays || {}) };
+      for (const [col, spec] of Object.entries(data.overlays)) {
+        if (!spec?.points?.length) continue;
+        merged[col] = {
+          ...spec,
+          points: mergeOverlayPoints(merged[col]?.points, spec.points),
+        };
+      }
+      lastOverlays = merged;
+    }
     syncSubcharts(lastCandles, lastOverlays);
     ohlcvLoadedTo = meta.range_end || new Date().toISOString();
   } else if (mode !== "poll") {

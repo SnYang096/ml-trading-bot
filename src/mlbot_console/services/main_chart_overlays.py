@@ -219,10 +219,8 @@ def _ema1200_points_local(
     tf = str(chart_timeframe or "2h").strip()
     src_candles: List[Dict[str, Any]]
     source = "candle_ewm_2h"
-    if tf in ("2h", "120T"):
-        src_candles = chart_candles
-    elif feature_bus_root and Path(feature_bus_root).is_dir():
-        src_candles = _fetch_2h_candles(
+    if feature_bus_root and Path(feature_bus_root).is_dir():
+        fetched = _fetch_2h_candles(
             Path(feature_bus_root),
             symbol,
             chart_candles,
@@ -232,7 +230,16 @@ def _ema1200_points_local(
             start=start,
             end=end,
         )
-        source = "bars_1min_2h"
+        if fetched:
+            src_candles = fetched
+            source = "bars_1min_2h"
+        elif tf in ("2h", "120T"):
+            src_candles = chart_candles
+        else:
+            src_candles = _resample_candles_to_2h(chart_candles)
+            source = "chart_resample_2h"
+    elif tf in ("2h", "120T"):
+        src_candles = chart_candles
     else:
         src_candles = _resample_candles_to_2h(chart_candles)
         source = "chart_resample_2h"

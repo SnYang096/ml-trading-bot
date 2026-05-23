@@ -14,6 +14,7 @@ from mlbot_console.services.multileg_order_links import (
     annotate_leg_group,
     build_leg_link_index,
     entry_link_id,
+    is_entry_row,
     is_l_entry_row,
     leg_suffix,
 )
@@ -112,6 +113,88 @@ def _current_link_endpoint(
     return int(current_time), float(current_price)
 
 
+def _append_entry_tp_links(
+    links: List[Dict[str, Any]],
+    group_rows: List[Dict[str, Any]],
+    row: Dict[str, Any],
+    seen_entry: set[str],
+) -> None:
+    """Link filled L/S grid entry legs to their TP protection orders."""
+    if not is_entry_row(row) or not _is_filled_row(row):
+        return
+    entry_ts = _ts_row(row)
+    entry_px = _price(row)
+    if entry_ts is None or entry_px is None:
+        return
+    oid = str(row.get("local_order_id") or "")
+    ekey = entry_link_id(row)
+    if ekey in seen_entry:
+        return
+    seen_entry.add(ekey)
+
+    leg_label = leg_suffix(ekey) or leg_suffix(oid) or ""
+    entry_mid = _marker_id("multi_leg", "multi_leg_orders", oid or ekey)
+    tp_rows = _protection_tp_rows(group_rows, ekey)
+    if not tp_rows and oid:
+        tp_rows = _protection_tp_rows(group_rows, oid)
+    filled_tp = _pick_filled_tp(tp_rows)
+    if filled_tp is None:
+        from mlbot_console.services.multileg_repair_tp import pick_repair_filled_tp
+
+        filled_tp = pick_repair_filled_tp(group_rows, ekey)
+    strat = str(row.get("strategy") or "chop_grid")
+    if filled_tp is not None:
+        exit_ts = _ts_row(filled_tp)
+        exit_px = _price(filled_tp)
+        if exit_ts is None or exit_px is None:
+            return
+        exit_mid = _marker_id(
+            "multi_leg",
+            "multi_leg_orders",
+            str(filled_tp.get("local_order_id") or ""),
+        )
+        _append_link(
+            links,
+            strategy=strat,
+            leg=leg_label,
+            entry_time=entry_ts,
+            entry_price=entry_px,
+            exit_time=exit_ts,
+            exit_price=exit_px,
+            entry_marker_id=entry_mid,
+            exit_marker_id=exit_mid,
+            status="closed",
+            exit_kind="take_profit",
+        )
+        return
+
+    planned = _pick_planned_tp(tp_rows)
+    if planned is None:
+        return
+    exit_px = _price(planned)
+    exit_ts = _ts_row(planned) or entry_ts
+    if exit_px is None:
+        return
+    exit_mid = _marker_id(
+        "multi_leg",
+        "multi_leg_orders",
+        str(planned.get("local_order_id") or ""),
+    )
+    _append_link(
+        links,
+        strategy=strat,
+        leg=leg_label,
+        entry_time=entry_ts,
+        entry_price=entry_px,
+        exit_time=exit_ts,
+        exit_price=exit_px,
+        entry_marker_id=entry_mid,
+        exit_marker_id=exit_mid,
+        status="open",
+        exit_kind="take_profit_planned",
+    )
+
+
 def multi_leg_trade_links(
     db_path: Path,
     symbol: str,
@@ -132,78 +215,7 @@ def multi_leg_trade_links(
 
     for group_rows in by_group.values():
         for row in group_rows:
-            if not is_l_entry_row(row):
-                continue
-            if not _is_filled_row(row):
-                continue
-            entry_ts = _ts_row(row)
-            entry_px = _price(row)
-            if entry_ts is None or entry_px is None:
-                continue
-            oid = str(row.get("local_order_id") or "")
-            ekey = entry_link_id(row)
-            if ekey in seen_entry:
-                continue
-            seen_entry.add(ekey)
-
-            entry_mid = _marker_id("multi_leg", "multi_leg_orders", oid or ekey)
-            tp_rows = _protection_tp_rows(group_rows, ekey)
-            if not tp_rows and oid:
-                tp_rows = _protection_tp_rows(group_rows, oid)
-            filled_tp = _pick_filled_tp(tp_rows)
-            if filled_tp is None:
-                from mlbot_console.services.multileg_repair_tp import pick_repair_filled_tp
-
-                filled_tp = pick_repair_filled_tp(group_rows, ekey)
-            if filled_tp is not None:
-                exit_ts = _ts_row(filled_tp)
-                exit_px = _price(filled_tp)
-                if exit_ts is None or exit_px is None:
-                    continue
-                exit_mid = _marker_id(
-                    "multi_leg",
-                    "multi_leg_orders",
-                    str(filled_tp.get("local_order_id") or ""),
-                )
-                _append_link(
-                    links,
-                    strategy=str(row.get("strategy") or "chop_grid"),
-                    leg=leg_suffix(ekey) or leg_suffix(oid) or "L",
-                    entry_time=entry_ts,
-                    entry_price=entry_px,
-                    exit_time=exit_ts,
-                    exit_price=exit_px,
-                    entry_marker_id=entry_mid,
-                    exit_marker_id=exit_mid,
-                    status="closed",
-                    exit_kind="take_profit",
-                )
-                continue
-
-            planned = _pick_planned_tp(tp_rows)
-            if planned is not None:
-                exit_px = _price(planned)
-                exit_ts = _ts_row(planned) or entry_ts
-                if exit_px is None:
-                    continue
-                exit_mid = _marker_id(
-                    "multi_leg",
-                    "multi_leg_orders",
-                    str(planned.get("local_order_id") or ""),
-                )
-                _append_link(
-                    links,
-                    strategy=str(row.get("strategy") or "chop_grid"),
-                    leg=leg_suffix(ekey) or leg_suffix(oid) or "L",
-                    entry_time=entry_ts,
-                    entry_price=entry_px,
-                    exit_time=exit_ts,
-                    exit_price=exit_px,
-                    entry_marker_id=entry_mid,
-                    exit_marker_id=exit_mid,
-                    status="open",
-                    exit_kind="take_profit_planned",
-                )
+            _append_entry_tp_links(links, group_rows, row, seen_entry)
 
         # Grid flatten: market_exit rows close remaining longs at same timestamp.
         for row in group_rows:

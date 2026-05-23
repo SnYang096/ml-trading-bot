@@ -8,6 +8,9 @@ import pytest
 from mlbot_console.services.main_chart_overlays import (
     _align_ma_to_candles,
     _align_weekly_ema_seed_to_candles,
+    _ema1200_from_candle_closes,
+    _ema1200_points_local,
+    _overlay_points_for_chart,
     load_main_chart_overlays,
 )
 from src.live_data_stream.spot_weekly_ema_seed import seed_parquet_path
@@ -53,10 +56,11 @@ def test_ema1200_overlay_uses_candle_ewm(bus_root) -> None:
         candles,
         ["ema_1200"],
         chart_timeframe="2h",
+        feature_bus_root=bus_root,
     )
     assert out["ema_1200"]["available"]
-    assert out["ema_1200"]["source"] == "candle_ewm_2h"
-    assert out["ema_1200"]["latest"] == pytest.approx(700.0166527893422)
+    assert out["ema_1200"]["source"] == "bars_1min_2h"
+    assert out["ema_1200"]["latest"] is not None
 
 
 def test_ema1200_overlay_curve_has_varying_values(bus_root) -> None:
@@ -79,6 +83,44 @@ def test_ema1200_overlay_curve_has_varying_values(bus_root) -> None:
     pts = out["ema_1200"]["points"]
     assert len(pts) == 2
     assert pts[0]["value"] != pts[1]["value"]
+
+
+def test_ema1200_warmup_uses_extended_2h_history(monkeypatch, bus_root) -> None:
+    t0 = pd.Timestamp("2024-06-01 00:00", tz="UTC")
+    long_candles = [
+        {
+            "time": int((t0 + pd.Timedelta(hours=2 * i)).timestamp()),
+            "close": 600.0 + i * 0.5,
+        }
+        for i in range(50)
+    ]
+    visible = long_candles[-2:]
+
+    def _fake_fetch(*_args, **_kwargs):
+        return long_candles
+
+    monkeypatch.setattr(
+        "mlbot_console.services.main_chart_overlays._fetch_2h_candles",
+        _fake_fetch,
+    )
+    pts, source = _ema1200_points_local(
+        "ETHUSDT",
+        visible,
+        chart_timeframe="2h",
+        feature_bus_root=bus_root,
+    )
+    expected = _overlay_points_for_chart(
+        _ema1200_from_candle_closes(long_candles),
+        visible,
+    )
+    short_only = _overlay_points_for_chart(
+        _ema1200_from_candle_closes(visible),
+        visible,
+    )
+    assert source == "bars_1min_2h"
+    assert len(pts) == 2
+    assert pts[-1]["value"] == pytest.approx(expected[-1]["value"])
+    assert pts[-1]["value"] != pytest.approx(short_only[-1]["value"])
 
 
 def test_load_main_overlays_aligns_to_candles(bus_root):

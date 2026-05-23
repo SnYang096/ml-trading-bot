@@ -96,6 +96,32 @@ def test_align_feature_points_to_candles(tmp_path):
     assert len(data["points"]) == len(candles)
 
 
+def test_single_feature_row_aligns_to_multiple_candles(tmp_path):
+    feat_dir = tmp_path / "features" / "primary"
+    feat_dir.mkdir(parents=True)
+    start = pd.Timestamp("2024-01-01", tz="UTC")
+    pd.DataFrame([{"timestamp": start, "regime_score": 0.42}]).to_parquet(
+        feat_dir / "ETHUSDT.parquet", index=False
+    )
+
+    candles = [
+        {"time": int((start + pd.Timedelta(hours=i * 2)).timestamp()), "close": 100 + i}
+        for i in range(4)
+    ]
+    overlays = load_feature_overlays(
+        tmp_path,
+        "ETHUSDT",
+        "2h",
+        ["regime_score"],
+        start=start,
+        end=start + pd.Timedelta(hours=8),
+        candles=candles,
+    )
+    pts = overlays["regime_score"]["points"]
+    assert len(pts) == len(candles)
+    assert len(pts) > 1
+
+
 def test_align_ffill_after_last_feature_row(tmp_path):
     """Candles after the last feature timestamp should show last known value."""
     feat_dir = tmp_path / "features" / "primary"
