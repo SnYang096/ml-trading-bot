@@ -166,8 +166,8 @@ def test_trade_map_core_node():
     assert out["l2Pending"] == "L2 挂单"
     assert out["s1Filled"] == "S1 成交"
     assert out["s1Above"] == "aboveBar"
-    assert out["s2TpBelow"] == "belowBar"
-    assert out["l1TpAbove"] == "aboveBar"
+    assert out["s2TpBelow"] == "inBar"
+    assert out["l1TpAbove"] == "inBar"
     assert out["gridLabelLong"] == "below"
     assert out["gridLabelShortTp"] == "below"
     assert out["alignedLen"] == 2

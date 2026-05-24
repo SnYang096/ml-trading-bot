@@ -273,22 +273,27 @@
         ? chopText
         : `${strat}:${m.event}${legTag}${pending ? ":pending" : ""}`;
       let aboveBar = role === "exit" || role === "tp";
+      let position = aboveBar ? "aboveBar" : "belowBar";
       if (strat === "chop_grid") {
         const legSide = chopGridLegSide(
           (m.detail && m.detail.leg_label) || (m.detail && m.detail.leg_id) || legToken
         );
+        // chop_grid stacks: S entry + L TP collide aboveBar; L entry + S TP
+        // collide belowBar. Anchor filled entries on the leg's home side and
+        // route TPs through inBar so they sit on the candle body instead of
+        // piling onto the opposite-side entry.
         if (role === "tp") {
-          if (legSide === "short") aboveBar = false;
-          else if (legSide === "long") aboveBar = true;
+          position = "inBar";
         } else if (role === "entry" && !pending) {
-          // Filled grid entries: short (S1/S2) above bar, long below.
-          if (legSide === "short") aboveBar = true;
-          else if (legSide === "long") aboveBar = false;
+          if (legSide === "short") position = "aboveBar";
+          else if (legSide === "long") position = "belowBar";
+        } else {
+          position = aboveBar ? "aboveBar" : "belowBar";
         }
       }
       return {
         time: m.time,
-        position: aboveBar ? "aboveBar" : "belowBar",
+        position,
         color: selected ? "#ffeb3b" : markerColor(m),
         shape: pending ? "circle" : markerShape(m),
         text: selected ? `★ ${baseText}` : baseText,
