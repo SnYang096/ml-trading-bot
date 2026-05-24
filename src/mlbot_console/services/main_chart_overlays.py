@@ -127,6 +127,59 @@ def _weekly_ema_from_spot_daily(
     return _overlay_points_for_chart(native, candles)
 
 
+def _resample_candles_to_weekly_close(
+    candles: List[Dict[str, Any]],
+) -> pd.Series:
+    """Build a weekly-anchored close series from arbitrary chart candles.
+
+    Returns an empty series when there is no usable input. The resample anchor
+    matches Binance's Mon 00:00 UTC weekly bar so the EMA aligns with macro
+    seed weeks.
+    """
+    rows: List[tuple[pd.Timestamp, float]] = []
+    for c in candles or []:
+        t = c.get("time")
+        close = c.get("close")
+        if t is None or close is None:
+            continue
+        try:
+            ts = _utc_ts(pd.Timestamp(int(t), unit="s", tz="UTC"))
+            px = float(close)
+        except (TypeError, ValueError):
+            continue
+        if px > 0:
+            rows.append((ts, px))
+    if not rows:
+        return pd.Series(dtype=float)
+    idx = pd.DatetimeIndex([r[0] for r in rows])
+    series = pd.Series([r[1] for r in rows], index=idx, dtype=float).sort_index()
+    weekly = series.resample("W-MON", label="left", closed="left").last().dropna()
+    return weekly
+
+
+def _weekly_ema_from_chart_candles(
+    candles: List[Dict[str, Any]],
+    *,
+    span: int = 200,
+    min_weeks: int = 52,
+) -> List[Dict[str, Any]]:
+    """Last-resort EMA(200) directly from on-chart closes (resampled to weekly).
+
+    ``min_weeks`` guards against EWM warmup bias: a 1y minimum keeps the line
+    meaningful when macro seed / macro_kline parquet are stale (e.g. macro
+    refresher hasn't run for weeks). Returns ``[]`` if not enough weekly bars
+    are available — typical for 2h/15m chart windows that only span months.
+    """
+    weekly = _resample_candles_to_weekly_close(candles)
+    if weekly.empty or len(weekly) < int(min_weeks):
+        return []
+    ema = weekly.ewm(span=max(2, int(span)), adjust=False).mean().dropna()
+    if ema.empty:
+        return []
+    native = _native_points_from_series(ema.index, ema.values)
+    return _overlay_points_for_chart(native, candles)
+
+
 def _ema1200_from_candle_closes(
     candles: List[Dict[str, Any]],
     *,
@@ -435,6 +488,10 @@ def load_main_chart_overlays(
                 )
                 if points:
                     entry["source"] = "spot_daily_weekly"
+            if not points:
+                points = _weekly_ema_from_chart_candles(candles)
+                if points:
+                    entry["source"] = "chart_resample_weekly"
         entry["points"] = points
         entry["available"] = bool(points)
         if points:

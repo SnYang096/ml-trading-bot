@@ -394,6 +394,16 @@
     });
   }
 
+  /** Drop selected columns whose owning account_layer is now disabled (keeps shared cols). */
+  function filterSelectedFeaturesByLayers(columns, layers) {
+    return (columns || []).filter((col) => {
+      const m = lookupFeatureMeta(col);
+      const layer = m && m.account_layer ? m.account_layer : "shared";
+      if (layer === "shared") return true;
+      return isLayerEnabled(layer, layers);
+    });
+  }
+
   function inferStrategyFocusFromLayers(layers) {
     const enabled = ACCOUNT_LAYER_ORDER.filter((id) => isLayerEnabled(id, layers));
     if (enabled.length !== 1) return null;
@@ -924,6 +934,7 @@
     parseStoredLayout,
     filterFeatureColumns,
     filterColumnsForFeaturePicker,
+    filterSelectedFeaturesByLayers,
     listStrategiesForLayers,
     inferStrategyFocusFromLayers,
     strategyFocusLabel,

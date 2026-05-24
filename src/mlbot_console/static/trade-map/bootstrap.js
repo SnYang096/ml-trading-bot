@@ -57,7 +57,19 @@ function bindControls() {
         return;
       }
       if (id.startsWith("layer")) {
-        const inferred = Core.inferStrategyFocusFromLayers(layersState());
+        const layers = layersState();
+        const accountLayerIds = ["layerTrend", "layerSpot", "layerMultiLeg"];
+        if (accountLayerIds.includes(id)) {
+          const filtered = Core.filterSelectedFeaturesByLayers(
+            S.selectedFeatureColumns,
+            layers
+          );
+          if (filtered.length !== S.selectedFeatureColumns.length) {
+            S.selectedFeatureColumns = filtered;
+            saveLayout();
+          }
+        }
+        const inferred = Core.inferStrategyFocusFromLayers(layers);
         if (inferred) setFeatureStrategyFocus(inferred, { refreshPicker: true });
         else syncFeatureStrategySelectOptions();
         renderFeaturePicker();
