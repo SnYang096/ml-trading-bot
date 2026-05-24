@@ -5,7 +5,11 @@ var Shell = globalThis.MLBotConsole;
 
 function chartBaseOptions() {
   return {
-    layout: { background: { color: "#0f1419" }, textColor: "#8b949e" },
+    layout: {
+      background: { color: "#0f1419" },
+      textColor: "#8b949e",
+      attributionLogo: false,
+    },
     grid: { vertLines: { color: "#21262d" }, horzLines: { color: "#21262d" } },
     timeScale: {
       timeVisible: true,
