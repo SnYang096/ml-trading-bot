@@ -142,20 +142,31 @@ def _coerce_tp_price(
     *,
     side_name: str,
     entry_px: Optional[float],
+    grid_price: float,
     spacing: float,
     tp_px: Optional[float],
 ) -> Optional[float]:
     if tp_px is None or tp_px != tp_px:
         return None
-    if entry_px is None or entry_px <= 0 or spacing <= 0:
+    if spacing <= 0:
         return tp_px
-    planned = (
-        entry_px + spacing if side_name == "long" else entry_px - spacing
-    )
-    if side_name == "long" and tp_px < entry_px:
-        return planned
-    if side_name == "short" and tp_px > entry_px:
-        return planned
+
+    ref = entry_px if entry_px is not None and entry_px > 0 else grid_price
+    planned = ref + spacing if side_name == "long" else ref - spacing
+
+    if entry_px is not None and entry_px > 0:
+        if side_name == "long" and tp_px < entry_px:
+            tp_px = planned
+        elif side_name == "short" and tp_px > entry_px:
+            tp_px = planned
+
+    if grid_price > 0:
+        # Short TP must sit below the grid line; long TP above (toward center).
+        if side_name == "short" and tp_px >= grid_price:
+            tp_px = grid_price - spacing
+        elif side_name == "long" and tp_px <= grid_price:
+            tp_px = grid_price + spacing
+
     return tp_px
 
 
@@ -215,6 +226,7 @@ def _tp_info(
     slot: str,
     side_name: str,
     entry_px: Optional[float],
+    grid_price: float,
     spacing: float,
 ) -> Tuple[Optional[float], str]:
     for row in rows:
@@ -226,9 +238,9 @@ def _tp_info(
         row_slot = _leg_slot(oid) or _leg_slot(lid)
         if row_slot and row_slot != slot:
             continue
-        price = row.get("average_price") or row.get("price")
+        order_px = row.get("average_price") or row.get("price")
         try:
-            px = float(price) if price is not None else None
+            px = float(order_px) if order_px is not None else None
         except (TypeError, ValueError):
             px = None
         status = str(row.get("status") or "").lower()
@@ -236,6 +248,7 @@ def _tp_info(
             px = _coerce_tp_price(
                 side_name=side_name,
                 entry_px=entry_px,
+                grid_price=grid_price,
                 spacing=spacing,
                 tp_px=px,
             )
@@ -299,6 +312,7 @@ def _level_rows(
                 slot=slot,
                 side_name=side_name,
                 entry_px=entry_px,
+                grid_price=price,
                 spacing=spacing,
             )
             levels.append(
