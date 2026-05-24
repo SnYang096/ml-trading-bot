@@ -24,6 +24,20 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+
+def _early_binance_ws_queue_patch() -> None:
+    """Patch before any binance import chain (prod QueueOverflow at default 100)."""
+    try:
+        size = max(100, int(os.getenv("MLBOT_BINANCE_WS_MAX_QUEUE", "2048")))
+        from binance.ws.reconnecting_websocket import ReconnectingWebsocket
+
+        ReconnectingWebsocket.MAX_QUEUE_SIZE = size
+    except Exception:
+        pass
+
+
+_early_binance_ws_queue_patch()
+
 from src.live_data_stream.feature_publisher_stack import (  # noqa: E402
     build_feature_bus_manager,
 )
@@ -35,6 +49,7 @@ from src.live_data_stream.auto_gap_fill import (  # noqa: E402
 from src.live_data_stream.websocket_client import (  # noqa: E402
     BinanceTick,
     BinanceWebSocketClient,
+    assert_binance_ws_queue_configured,
     configure_binance_ws_queue_size,
 )
 from src.time_series_model.live.metrics_exporter import (  # noqa: E402
@@ -508,6 +523,7 @@ async def async_main() -> None:
     )
     args = parse_args()
     ws_queue = configure_binance_ws_queue_size()
+    assert_binance_ws_queue_configured()
     logger.info(
         "Binance WS MAX_QUEUE_SIZE=%d (override with MLBOT_BINANCE_WS_MAX_QUEUE)",
         ws_queue,

@@ -42,16 +42,51 @@ FUTURES_WS_BASE = "wss://fstream.binance.com"
 
 def configure_binance_ws_queue_size() -> int:
     """Raise python-binance internal WS queue (default 100) to reduce QueueOverflow."""
+    size = max(100, int(os.getenv("MLBOT_BINANCE_WS_MAX_QUEUE", "2048")))
     try:
         from binance.ws.reconnecting_websocket import ReconnectingWebsocket
 
-        size = max(100, int(os.getenv("MLBOT_BINANCE_WS_MAX_QUEUE", "2048")))
         ReconnectingWebsocket.MAX_QUEUE_SIZE = size
+        if ReconnectingWebsocket.MAX_QUEUE_SIZE != size:
+            logger.error(
+                "Binance WS queue patch failed: MAX_QUEUE_SIZE=%s expected=%d",
+                ReconnectingWebsocket.MAX_QUEUE_SIZE,
+                size,
+            )
+            return int(ReconnectingWebsocket.MAX_QUEUE_SIZE)
         logger.info("Binance WS MAX_QUEUE_SIZE=%d", size)
         return size
     except Exception as exc:
-        logger.debug("Binance WS queue size patch skipped: %s", exc)
+        logger.error(
+            "Binance WS queue size patch failed (%s); internal queue stays at 100",
+            exc,
+        )
         return 100
+
+
+def assert_binance_ws_queue_configured() -> None:
+    """Fail-loud check before opening sockets (prod logs showed stale default 100)."""
+    try:
+        from binance.ws.reconnecting_websocket import ReconnectingWebsocket
+
+        effective = int(ReconnectingWebsocket.MAX_QUEUE_SIZE)
+    except Exception as exc:
+        logger.error("Binance WS queue check skipped: %s", exc)
+        return
+    if effective <= 100:
+        configure_binance_ws_queue_size()
+        try:
+            from binance.ws.reconnecting_websocket import ReconnectingWebsocket
+
+            effective = int(ReconnectingWebsocket.MAX_QUEUE_SIZE)
+        except Exception:
+            pass
+    if effective <= 100:
+        logger.error(
+            "Binance WS MAX_QUEUE_SIZE still %d; set MLBOT_BINANCE_WS_MAX_QUEUE "
+            "and redeploy quant-feature-bus",
+            effective,
+        )
 
 
 configure_binance_ws_queue_size()
@@ -152,6 +187,7 @@ class BinanceWebSocketClient:
             raise ValueError("symbols must not be empty")
 
         configure_binance_ws_queue_size()
+        assert_binance_ws_queue_configured()
 
         self.symbols = [s.upper() for s in symbols]
         if not use_futures:
@@ -306,18 +342,25 @@ class BinanceWebSocketClient:
         # 启动连接监控
         self.connection_monitor.start_monitoring()
 
-        def _dispatch_tick(tick: BinanceTick) -> None:
+        def _deliver_tick_sync(tick: BinanceTick) -> None:
+            for callback in self._callbacks:
+                try:
+                    callback(tick)
+                except Exception as e:
+                    logger.error("Callback error: %s", e)
+
+        async def _deliver_tick_async(tick: BinanceTick) -> None:
             nonlocal last_message_monotonic
             if stop_event.is_set():
                 return
             last_message_monotonic = time.monotonic()
             self.connection_monitor.record_message()
             self.connection_monitor.record_heartbeat()
-            for callback in self._callbacks:
-                try:
-                    callback(tick)
-                except Exception as e:
-                    logger.error("Callback error: %s", e)
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, _deliver_tick_sync, tick)
+
+        def _schedule_tick(tick: BinanceTick) -> None:
+            asyncio.create_task(_deliver_tick_async(tick))
 
         def _parse_message(message: Dict[str, Any]) -> Optional[BinanceTick]:
             payload = message.get("data", message) if isinstance(message, dict) else {}
@@ -367,7 +410,7 @@ class BinanceWebSocketClient:
                     tick = _parse_message(message)
                     if tick is None:
                         continue
-                    _dispatch_tick(tick)
+                    _schedule_tick(tick)
                     yield tick
 
         finally:
