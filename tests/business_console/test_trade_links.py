@@ -64,8 +64,8 @@ def test_open_l1_shows_planned_tp_link_and_exit_marker(multi_leg_db):
 
     markers = multi_leg_markers(multi_leg_db, "BNBUSDT", include_open_orders=True)
     tp_m = [m for m in markers if m.get("event") == "tp"]
-    # chop_grid TP is shown on overlay price lines, not bar markers.
-    assert tp_m == []
+    assert len(tp_m) == 1
+    assert tp_m[0]["status"] == "pending"
 
 
 def test_filled_tp_closes_link(multi_leg_db):

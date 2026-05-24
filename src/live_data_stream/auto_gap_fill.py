@@ -179,6 +179,59 @@ def detect_large_bar_gaps(
     return gaps
 
 
+def detect_sparse_bar_days(
+    storage: StorageManager,
+    symbols: Iterable[str],
+    *,
+    lookback_hours: float = 48.0,
+    min_rows_per_day: int = 1380,
+    ignore_recent_minutes: float = 5.0,
+    now: Optional[pd.Timestamp] = None,
+) -> List[BarGap]:
+    """Find calendar days with too few persisted 1m bars (scattered small gaps).
+
+    ``detect_large_bar_gaps`` only sees contiguous holes >= min_gap_minutes.
+    A day can miss dozens of 1m bars without any single 60+ minute hole.
+    """
+    now_ts = _utc_timestamp(now or pd.Timestamp.now(tz="UTC"))
+    end = now_ts - pd.Timedelta(minutes=float(ignore_recent_minutes))
+    start = end - pd.Timedelta(hours=float(lookback_hours))
+    today = end.normalize()
+    min_rows = int(min_rows_per_day)
+    gaps: List[BarGap] = []
+
+    for raw_symbol in symbols:
+        symbol = str(raw_symbol).upper()
+        day = start.normalize()
+        while day < today:
+            date_str = day.strftime("%Y-%m-%d")
+            try:
+                bars = storage.bar_1min.load_range(symbol, date_str, date_str)
+            except Exception:
+                logger.warning(
+                    "auto-gap-fill: sparse-day scan failed for %s %s",
+                    symbol,
+                    date_str,
+                    exc_info=True,
+                )
+                bars = pd.DataFrame()
+            row_count = len(bars) if bars is not None and not bars.empty else 0
+            if row_count < min_rows:
+                day_end = day + pd.Timedelta(hours=23, minutes=59)
+                gaps.append(
+                    BarGap(
+                        symbol=symbol,
+                        start=day,
+                        end=day_end,
+                        minutes=float(max(0, 1440 - row_count)),
+                        kind="bars_sparse_day",
+                    )
+                )
+            day = day + pd.Timedelta(days=1)
+
+    return gaps
+
+
 def detect_large_tick_gaps(
     storage: StorageManager,
     symbols: Iterable[str],
@@ -496,6 +549,14 @@ def _run_auto_gap_fill_once_impl(
         now=now,
     )
     gaps.extend(
+        detect_sparse_bar_days(
+            storage,
+            symbol_list,
+            lookback_hours=lookback_hours,
+            now=now,
+        )
+    )
+    gaps.extend(
         detect_large_tick_gaps(
             storage,
             symbol_list,
@@ -506,7 +567,10 @@ def _run_auto_gap_fill_once_impl(
     )
     gaps = _dedupe_gaps(gaps)
     if not gaps:
-        logger.info("auto-gap-fill: no gaps >= %.1f min", min_gap_minutes)
+        logger.info(
+            "auto-gap-fill: no gaps >= %.1f min and no sparse bar days",
+            min_gap_minutes,
+        )
         return 0
 
     written = fill_large_bar_gaps(

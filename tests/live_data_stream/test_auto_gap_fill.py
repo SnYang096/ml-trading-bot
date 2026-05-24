@@ -6,6 +6,7 @@ from src.live_data_stream.auto_gap_fill import (
     BarGap,
     detect_large_bar_gaps,
     detect_large_tick_gaps,
+    detect_sparse_bar_days,
     fill_large_bar_gaps,
     run_auto_gap_fill_once,
     sync_archive_bars_to_feature_bus,
@@ -156,6 +157,37 @@ def test_detect_large_bar_gaps_finds_internal_and_tail(tmp_path):
     assert gaps[0].end == pd.Timestamp("2026-05-21T02:09:00Z")
     assert gaps[1].start == pd.Timestamp("2026-05-21T02:12:00Z")
     assert gaps[1].end == pd.Timestamp("2026-05-21T04:00:00Z")
+
+
+def test_detect_sparse_bar_days_finds_scattered_missing_minutes(tmp_path):
+    storage = StorageManager(tmp_path)
+    # 4 bars spread across the day: no single >=60m hole, but far below 1380 rows/day.
+    storage.bar_1min.append(
+        "ETHUSDT",
+        "2026-05-14",
+        _bars(
+            [
+                "2026-05-14T00:00:00Z",
+                "2026-05-14T00:01:00Z",
+                "2026-05-14T12:00:00Z",
+                "2026-05-14T23:59:00Z",
+            ]
+        ),
+    )
+
+    gaps = detect_sparse_bar_days(
+        storage,
+        ["ETHUSDT"],
+        lookback_hours=24,
+        min_rows_per_day=1380,
+        ignore_recent_minutes=0,
+        now=pd.Timestamp("2026-05-15T04:00:00Z"),
+    )
+
+    assert len(gaps) == 1
+    assert gaps[0].kind == "bars_sparse_day"
+    assert gaps[0].start == pd.Timestamp("2026-05-14T00:00:00Z")
+    assert gaps[0].symbol == "ETHUSDT"
 
 
 def test_detect_large_tick_gaps_finds_missing_tick_minutes(tmp_path):

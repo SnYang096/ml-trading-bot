@@ -169,6 +169,13 @@
     return leg;
   }
 
+  function chopGridLegSide(legLabel) {
+    const leg = String(legLabel || "").toUpperCase();
+    const m = leg.match(/(?:^|_)([LS])(\d+)/);
+    if (!m) return null;
+    return m[1] === "L" ? "long" : "short";
+  }
+
   /** Long grid labels below price line; short above; long TP above; short TP below. */
   function chopGridLabelAnchor(side, kind) {
     if (kind === "center") return "below";
@@ -216,7 +223,14 @@
       const baseText = chopText
         ? chopText
         : `${strat}:${m.event}${legTag}${pending ? ":pending" : ""}`;
-      const aboveBar = role === "exit" || role === "tp";
+      let aboveBar = role === "exit" || role === "tp";
+      if (strat === "chop_grid" && role === "tp") {
+        const legSide = chopGridLegSide(
+          (m.detail && m.detail.leg_label) || (m.detail && m.detail.leg_id) || legToken
+        );
+        if (legSide === "short") aboveBar = false;
+        else if (legSide === "long") aboveBar = true;
+      }
       return {
         time: m.time,
         position: aboveBar ? "aboveBar" : "belowBar",

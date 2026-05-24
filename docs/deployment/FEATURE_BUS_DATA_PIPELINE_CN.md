@@ -143,7 +143,10 @@ writer = FeatureBusWriter(args.feature_bus_root, max_rows=int(args.max_rows))
 |----|--------|--------|------|
 | `--warmup-days` | 7 | 180 | warmup 已不再被特征计算依赖。`compute_features_batch` 改为每次直接从 archive 读 150 天；`memory_window` 容量 4h，所以 warmup_days 只要≥1 都够 `_restore_state` 填满 |
 | `--max-rows` | 10080 | 3000 | 7 天 1m bars。策略 lookback 通常 240 bars (≈4h)，UI 长历史靠 archive / macro 拼接 |
-| `MLBOT_AUTO_GAP_FILL_MIN_GAP_MINUTES` | 60 | 60 | <60min 小洞 archive 自身就有，影响 Trade Map 显示但不影响特征 |
+| `MLBOT_AUTO_GAP_FILL_MIN_GAP_MINUTES` | 60 | 60 | 连续空洞阈值：只补 **≥60 分钟** 的单段洞 |
+| sparse-day 扫描 | 1380 行/天 | — | 额外扫描 archive 日历日：行数 &lt; 1380（≈96%）则整日从 Vision 重拉，覆盖「分散小洞」（如 1352/1440） |
+
+此前 gap-fill→bus sync（`preserve_history`）解决的是 **bus 与 archive 脱节**（WS outage 后 bus 有洞、backfill 误 truncate）。**archive 内部分散小洞** 需 sparse-day 扫描（上表）触发整日 Vision 重拉；`stitch` 只能合并已有 archive 与 bus，不能凭空补 archive 里缺失的分钟。
 
 `max_rows` 从 259200 降到 10080 后，bus parquet 从 10 MB 量级降到约 400 KB，下游每分钟全量 `pd.read_parquet` 从 ~500ms 降到 ~20ms。180 天 warmup 启动时把 ~26 万行 1m bars 灌入 4h cap 的 memory_window，绝大多数被立即 evict，纯属浪费启动时间和内存峰值；7 天足够。
 
