@@ -303,6 +303,32 @@ def test_duplicate_protection_client_id_reuses_live_order() -> None:
     assert (result.raw or {}).get("local_order_id") == "leg_s1_tp_supp"
 
 
+def test_place_protection_skips_reduce_only_rejected() -> None:
+    api = _api()
+    api.place_order.side_effect = Exception(
+        'binance {"code":-2022,"msg":"ReduceOnly Order is rejected."}'
+    )
+    adapter = MultiLegExecutionAdapter(api)
+
+    result = adapter.execute_action(
+        {
+            "action": "place_protection",
+            "symbol": "BNBUSDT",
+            "side": "LONG",
+            "quantity": 0.31,
+            "price": 643.55,
+            "trigger_price": 643.55,
+            "order_type": "limit",
+            "protection_type": "take_profit",
+            "order_id": "BNBUSDT_grid_L1_tp",
+        }
+    )
+
+    assert result.status == "skipped_no_position"
+    assert result.symbol == "BNBUSDT"
+    assert (result.raw or {}).get("error", "").find("-2022") >= 0
+
+
 def test_duplicate_protection_algo_stop_reuses_live_order() -> None:
     api = _api()
     api.place_order.side_effect = Exception(

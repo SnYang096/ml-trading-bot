@@ -31,6 +31,212 @@ risk:
     return path
 
 
+def _exchange_pos(
+    *,
+    symbol: str = "BNBUSDT",
+    side: str = "long",
+    quantity: float = 0.31,
+    entry_price: float = 637.11,
+) -> dict:
+    return {
+        "symbol": symbol,
+        "side": side,
+        "size": quantity,
+        "entry_price": entry_price,
+    }
+
+
+def test_ensure_protection_prunes_stale_inventory_when_exchange_flat(
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / "state.json"
+    engine = ChopGridLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=state_path,
+        bar_simulation=False,
+    )
+    engine.state.active = True
+    engine.state.symbol = "BNBUSDT"
+    engine.state.spacing = 6.4355
+    engine.state.inventory.append(
+        GridPosition(
+            symbol="BNBUSDT",
+            side="LONG",
+            level=1,
+            entry_price=637.11,
+            quantity=0.31,
+            entry_time="2026-05-21T00:00:00+00:00",
+            leg_id="BNBUSDT_grid_L1",
+        )
+    )
+    engine.save_state()
+
+    actions = engine.actions_ensure_protection(
+        exchange_positions=[],
+        exchange_orders=[],
+    )
+
+    assert engine.state.inventory == []
+    assert actions == []
+    persisted = ChopGridLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=state_path,
+        bar_simulation=False,
+    )
+    assert persisted.state.inventory == []
+
+
+def test_ensure_protection_handles_hedge_both_sides_independently(
+    tmp_path: Path,
+) -> None:
+    engine = ChopGridLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        bar_simulation=False,
+    )
+    engine.state.active = True
+    engine.state.symbol = "BNBUSDT"
+    engine.state.spacing = 6.4355
+    engine.state.inventory.extend(
+        [
+            GridPosition(
+                symbol="BNBUSDT",
+                side="LONG",
+                level=1,
+                entry_price=637.11,
+                quantity=0.31,
+                entry_time="2026-05-21T00:00:00+00:00",
+                leg_id="BNBUSDT_grid_L1",
+            ),
+            GridPosition(
+                symbol="BNBUSDT",
+                side="SHORT",
+                level=1,
+                entry_price=649.99,
+                quantity=0.31,
+                entry_time="2026-05-21T00:00:00+00:00",
+                leg_id="BNBUSDT_grid_S1",
+            ),
+        ]
+    )
+    engine._sync_inventory_from_exchange(
+        [_exchange_pos(side="long", quantity=0.31, entry_price=637.11)],
+        symbol="BNBUSDT",
+    )
+    sides = sorted(p.side for p in engine.state.inventory)
+    assert sides == ["LONG"]
+
+
+def test_sync_inventory_does_not_duplicate_when_avg_entry_price_differs(
+    tmp_path: Path,
+) -> None:
+    engine = ChopGridLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        bar_simulation=False,
+    )
+    engine.state.active = True
+    engine.state.symbol = "BNBUSDT"
+    engine.state.spacing = 6.4355
+    engine.state.inventory.append(
+        GridPosition(
+            symbol="BNBUSDT",
+            side="LONG",
+            level=1,
+            entry_price=637.11,
+            quantity=0.31,
+            entry_time="2026-05-21T00:00:00+00:00",
+            leg_id="BNBUSDT_grid_L1",
+        )
+    )
+    engine._sync_inventory_from_exchange(
+        [_exchange_pos(side="long", quantity=0.31, entry_price=637.105)],
+        symbol="BNBUSDT",
+    )
+    assert len(engine.state.inventory) == 1
+    leg = engine.state.inventory[0]
+    assert leg.entry_price == 637.11
+    assert leg.quantity == pytest.approx(0.31, rel=1e-9)
+
+
+def test_sync_inventory_caps_local_qty_when_exchange_smaller(
+    tmp_path: Path,
+) -> None:
+    engine = ChopGridLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        bar_simulation=False,
+    )
+    engine.state.active = True
+    engine.state.symbol = "BNBUSDT"
+    engine.state.spacing = 6.4355
+    engine.state.inventory.extend(
+        [
+            GridPosition(
+                symbol="BNBUSDT",
+                side="LONG",
+                level=1,
+                entry_price=637.11,
+                quantity=0.31,
+                entry_time="2026-05-21T00:00:00+00:00",
+                leg_id="BNBUSDT_grid_L1",
+            ),
+            GridPosition(
+                symbol="BNBUSDT",
+                side="LONG",
+                level=2,
+                entry_price=635.50,
+                quantity=0.31,
+                entry_time="2026-05-21T00:01:00+00:00",
+                leg_id="BNBUSDT_grid_L2",
+            ),
+        ]
+    )
+    engine._sync_inventory_from_exchange(
+        [_exchange_pos(side="long", quantity=0.31, entry_price=636.30)],
+        symbol="BNBUSDT",
+    )
+    assert len(engine.state.inventory) == 1
+    assert engine.state.inventory[0].leg_id == "BNBUSDT_grid_L1"
+    assert engine.state.inventory[0].quantity == pytest.approx(0.31, rel=1e-9)
+
+
+def test_sync_inventory_preserves_other_symbol_legs(tmp_path: Path) -> None:
+    engine = ChopGridLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        bar_simulation=False,
+    )
+    engine.state.active = True
+    engine.state.symbol = "BNBUSDT"
+    engine.state.spacing = 6.4355
+    engine.state.inventory.extend(
+        [
+            GridPosition(
+                symbol="ETHUSDT",
+                side="LONG",
+                level=1,
+                entry_price=2500.0,
+                quantity=0.05,
+                entry_time="2026-05-21T00:00:00+00:00",
+                leg_id="ETHUSDT_grid_L1",
+            ),
+            GridPosition(
+                symbol="BNBUSDT",
+                side="LONG",
+                level=1,
+                entry_price=637.11,
+                quantity=0.31,
+                entry_time="2026-05-21T00:00:00+00:00",
+                leg_id="BNBUSDT_grid_L1",
+            ),
+        ]
+    )
+    engine._sync_inventory_from_exchange([], symbol="BNBUSDT")
+    sides = [(p.symbol, p.side) for p in engine.state.inventory]
+    assert sides == [("ETHUSDT", "LONG")]
+
+
 def test_ensure_protection_rebuilds_inventory_and_queues_tp(tmp_path: Path) -> None:
     state_path = tmp_path / "bnb.json"
     state_path.write_text(
@@ -165,7 +371,13 @@ def test_plain_grid_entry_is_not_counted_as_protection(tmp_path: Path) -> None:
         )
     )
     actions = engine.actions_ensure_protection(
-        exchange_positions=[],
+        exchange_positions=[
+            _exchange_pos(
+                side="long",
+                quantity=0.31,
+                entry_price=637.11,
+            )
+        ],
         exchange_orders=[
             {
                 "symbol": "BNBUSDT",
@@ -203,10 +415,15 @@ def test_stale_protection_id_does_not_block_replacement_tp(tmp_path: Path) -> No
     )
 
     actions = engine.actions_ensure_protection(
-        exchange_positions=[],
+        exchange_positions=[
+            _exchange_pos(
+                side="short",
+                quantity=0.31,
+                entry_price=649.99,
+            )
+        ],
         exchange_orders=[],
     )
-
     assert engine.state.inventory[0].protection_order_ids == []
     tp_actions = [a for a in actions if a.get("protection_type") == "take_profit"]
     assert len(tp_actions) == 1
@@ -250,7 +467,13 @@ def test_ensure_protection_skips_when_hashed_client_ids_on_exchange(
     tp_px = float(template[0]["price"])
 
     actions = engine.actions_ensure_protection(
-        exchange_positions=[],
+        exchange_positions=[
+            _exchange_pos(
+                side="long",
+                quantity=0.31,
+                entry_price=637.11,
+            )
+        ],
         exchange_orders=[
             {
                 "symbol": "BNBUSDT",
@@ -294,7 +517,13 @@ def test_partial_tp_qty_does_not_count_as_full_protection(tmp_path: Path) -> Non
     )
     tp_px = engine._tp_price_for_position(engine.state.inventory[0])
     actions = engine.actions_ensure_protection(
-        exchange_positions=[],
+        exchange_positions=[
+            _exchange_pos(
+                side="short",
+                quantity=0.62,
+                entry_price=653.205,
+            )
+        ],
         exchange_orders=[
             {
                 "symbol": "BNBUSDT",

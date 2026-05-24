@@ -78,14 +78,6 @@ def _tp_price(entry_price: float, spacing: float, position_side: str) -> float:
     return _round_price(entry_price - spacing)
 
 
-def _sl_price(
-    entry_price: float, spacing: float, position_side: str, max_levels_per_side: int = 2
-) -> float:
-    if position_side == "LONG":
-        return _round_price(entry_price - spacing * (max_levels_per_side + 1))
-    return _round_price(entry_price + spacing * (max_levels_per_side + 1))
-
-
 def _live_order_keys(open_orders: Iterable[Dict[str, Any]]) -> set[str]:
     keys: set[str] = set()
     for order in open_orders:
@@ -217,20 +209,6 @@ def _db_entry_tp_actions(
             (symbol, like),
         ).fetchall()
     ]
-    sl_rows = [
-        dict(row)
-        for row in con.execute(
-            """
-            SELECT local_order_id, leg_id, exchange_order_id, client_order_id, status
-            FROM multi_leg_orders
-            WHERE symbol = ?
-              AND local_order_id LIKE ?
-              AND lower(COALESCE(purpose, '')) = 'stop_loss'
-              AND lower(COALESCE(status, '')) NOT IN ('filled', 'canceled', 'cancelled', 'expired', 'rejected')
-            """,
-            (symbol, like),
-        ).fetchall()
-    ]
     con.close()
 
     position_qty = _open_position_qty_by_side(positions)
@@ -245,16 +223,6 @@ def _db_entry_tp_actions(
             leg_id = str(tp.get("leg_id") or "").strip()
             if leg_id:
                 live_tp_by_leg.add(leg_id)
-
-    live_sl_by_leg: set[str] = set()
-    for sl in sl_rows:
-        if (
-            str(sl.get("exchange_order_id") or "") in live_keys
-            or str(sl.get("client_order_id") or "") in live_keys
-        ):
-            leg_id = str(sl.get("leg_id") or "").strip()
-            if leg_id:
-                live_sl_by_leg.add(leg_id)
 
     actions: List[Dict[str, Any]] = []
     for entry in entries:
@@ -308,29 +276,6 @@ def _db_entry_tp_actions(
                         "repair_source": "db_filled_entry_missing_tp",
                     }
                 )
-
-        # Check SL
-        if entry_id not in live_sl_by_leg:
-            # We assume max_levels_per_side=2 for repair fallback if not passed explicitly
-            sl_target = _sl_price(
-                entry_price, spacing, position_side, max_levels_per_side=2
-            )
-            import uuid
-
-            actions.append(
-                {
-                    "action": "place_protection",
-                    "order_id": f"{entry_id}_sl_{uuid.uuid4().hex[:4]}",
-                    "leg_id": entry_id,
-                    "symbol": symbol,
-                    "side": position_side,
-                    "quantity": qty,
-                    "trigger_price": sl_target,
-                    "protection_type": "stop_loss",
-                    "timestamp": "",
-                    "repair_source": "db_filled_entry_missing_sl",
-                }
-            )
     return actions
 
 

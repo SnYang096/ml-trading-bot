@@ -52,6 +52,11 @@ def _is_duplicate_client_order_id_error(exc: Exception) -> bool:
     return "-4116" in text or "clientorderid is duplicated" in text
 
 
+def _is_reduce_only_rejected_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "-2022" in text or "reduceonly order is rejected" in text
+
+
 def derive_multileg_client_order_id(
     action: Dict[str, Any], *, client_id_prefix: str = "cg"
 ) -> str:
@@ -611,6 +616,30 @@ class MultiLegExecutionAdapter:
                 or None,
             )
         except Exception as exc:
+            if _is_reduce_only_rejected_error(exc):
+                logger.warning(
+                    "multi-leg protection skipped (no exchange position to reduce): "
+                    "symbol=%s leg_id=%s client_order_id=%s error=%s",
+                    symbol,
+                    action.get("leg_id") or action.get("order_id"),
+                    client_order_id,
+                    exc,
+                )
+                result = MultiLegExecutionResult(
+                    action="place_protection",
+                    status="skipped_no_position",
+                    symbol=symbol,
+                    client_order_id=client_order_id,
+                    raw={
+                        **dict(action),
+                        "purpose": purpose,
+                        "local_order_id": action.get("order_id"),
+                        "leg_id": action.get("leg_id") or action.get("order_id"),
+                        "error": str(exc),
+                    },
+                )
+                self._persist_order_result(action, result, purpose=purpose)
+                return result
             if not _is_duplicate_client_order_id_error(exc):
                 raise
             order = _find_protection_order_by_client_id(

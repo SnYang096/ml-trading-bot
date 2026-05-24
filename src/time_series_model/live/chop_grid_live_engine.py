@@ -519,7 +519,16 @@ class ChopGridLiveEngine:
         if not sym:
             return []
 
+        before_snapshot = [
+            (str(p.symbol or "").upper(), str(p.side).upper(), float(p.quantity or 0.0))
+            for p in self.state.inventory
+        ]
         self._sync_inventory_from_exchange(exchange_positions, symbol=sym)
+        after_snapshot = [
+            (str(p.symbol or "").upper(), str(p.side).upper(), float(p.quantity or 0.0))
+            for p in self.state.inventory
+        ]
+        inventory_changed = before_snapshot != after_snapshot
         open_orders = [dict(o) for o in exchange_orders]
         actions: List[Dict[str, Any]] = []
         ts = self.state.last_timestamp or ""
@@ -564,6 +573,8 @@ class ChopGridLiveEngine:
                 len(self.state.inventory),
                 len(actions),
             )
+            self.save_state()
+        elif inventory_changed:
             self.save_state()
         return actions
 
@@ -623,16 +634,23 @@ class ChopGridLiveEngine:
         *,
         symbol: str,
     ) -> None:
-        """Rebuild inventory from hedge positions when user-stream fill was missed."""
+        """Align local inventory with hedge exchange truth.
+
+        Hedge mode reports at most one position per (symbol, positionSide). We
+        aggregate per side, then:
+          * **Prune** local legs whose side has no exchange position.
+          * **Cap** total local qty per side to exchange qty when local is over.
+          * **Seed** a synthetic leg when exchange has qty but local has none on
+            that side (covers user-stream missed fills).
+
+        Individual leg entry prices are trusted as-is to avoid duplicate legs
+        from Binance's avg-price rounding.
+        """
         sym = str(symbol).upper()
-        existing = {
-            (str(p.side).upper(), round(float(p.entry_price), 4)): p
-            for p in self.state.inventory
-        }
+        exchange_by_side: Dict[str, Dict[str, float]] = {}
         for raw in exchange_positions:
             row = dict(raw)
-            row_sym = _normalize_symbol(row.get("symbol"))
-            if row_sym != sym:
+            if _normalize_symbol(row.get("symbol")) != sym:
                 continue
             qty = _exchange_position_quantity(row)
             if qty <= 0:
@@ -642,14 +660,74 @@ class ChopGridLiveEngine:
             entry = _as_float(row.get("entry_price") or row.get("entryPrice"))
             if entry <= 0:
                 continue
-            key = (pos_side, round(entry, 4))
-            if key in existing:
+            bucket = exchange_by_side.setdefault(pos_side, {"qty": 0.0, "entry": entry})
+            bucket["qty"] += qty
+
+        other_symbol_legs = [
+            p for p in self.state.inventory if str(p.symbol or "").upper() != sym
+        ]
+        symbol_legs = [
+            p for p in self.state.inventory if str(p.symbol or "").upper() == sym
+        ]
+
+        kept_after_prune: List[GridPosition] = []
+        for pos in symbol_legs:
+            pos_side = str(pos.side).upper()
+            if pos_side not in exchange_by_side:
+                logger.info(
+                    "chop_grid prune stale inventory: symbol=%s side=%s leg_id=%s "
+                    "(no exchange position)",
+                    sym,
+                    pos_side,
+                    pos.leg_id,
+                )
                 continue
-            leg_id = self._match_leg_id_for_fill(pos_side, entry)
-            self.state.inventory.append(
+            kept_after_prune.append(pos)
+
+        capped: List[GridPosition] = []
+        for side in ("LONG", "SHORT"):
+            side_legs = [p for p in kept_after_prune if str(p.side).upper() == side]
+            if not side_legs:
+                continue
+            ex_qty = exchange_by_side.get(side, {}).get("qty", 0.0)
+            local_total = sum(float(p.quantity or 0.0) for p in side_legs)
+            if local_total <= ex_qty * 1.01:
+                capped.extend(side_legs)
+                continue
+            running = 0.0
+            for pos in side_legs:
+                leg_qty = float(pos.quantity or 0.0)
+                if running + leg_qty <= ex_qty * 1.01:
+                    capped.append(pos)
+                    running += leg_qty
+                    continue
+                remaining = max(0.0, ex_qty - running)
+                if remaining > 0:
+                    pos.quantity = remaining
+                    capped.append(pos)
+                    running = ex_qty
+                else:
+                    logger.info(
+                        "chop_grid prune excess inventory: symbol=%s side=%s "
+                        "leg_id=%s local_qty=%.8f exchange_qty=%.8f",
+                        sym,
+                        side,
+                        pos.leg_id,
+                        leg_qty,
+                        ex_qty,
+                    )
+
+        sides_with_local = {str(p.side).upper() for p in capped}
+        for side, bucket in exchange_by_side.items():
+            if side in sides_with_local:
+                continue
+            entry = float(bucket["entry"])
+            qty = float(bucket["qty"])
+            leg_id = self._match_leg_id_for_fill(side, entry)
+            capped.append(
                 GridPosition(
                     symbol=sym,
-                    side=pos_side,
+                    side=side,
                     level=0,
                     entry_price=entry,
                     quantity=qty,
@@ -657,7 +735,8 @@ class ChopGridLiveEngine:
                     leg_id=leg_id,
                 )
             )
-            existing[key] = self.state.inventory[-1]
+
+        self.state.inventory = other_symbol_legs + capped
 
     def _match_leg_id_for_fill(self, pos_side: str, entry_price: float) -> str:
         best_id = f"{self.state.grid_id}_{'L1' if pos_side == 'LONG' else 'S1'}"
