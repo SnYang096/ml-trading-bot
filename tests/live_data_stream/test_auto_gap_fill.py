@@ -161,7 +161,7 @@ def test_detect_large_bar_gaps_finds_internal_and_tail(tmp_path):
 
 def test_detect_sparse_bar_days_finds_scattered_missing_minutes(tmp_path):
     storage = StorageManager(tmp_path)
-    # 4 bars spread across the day: no single >=60m hole, but far below 1380 rows/day.
+    # 4 bars spread across the day: no single >=60m hole, but far below 1435 rows/day.
     storage.bar_1min.append(
         "ETHUSDT",
         "2026-05-14",
@@ -179,7 +179,7 @@ def test_detect_sparse_bar_days_finds_scattered_missing_minutes(tmp_path):
         storage,
         ["ETHUSDT"],
         lookback_hours=24,
-        min_rows_per_day=1380,
+        min_rows_per_day=1435,
         ignore_recent_minutes=0,
         now=pd.Timestamp("2026-05-15T04:00:00Z"),
     )
@@ -211,7 +211,7 @@ def test_detect_sparse_bar_days_independent_lookback_widens_window(tmp_path):
         storage,
         ["ETHUSDT"],
         lookback_hours=1,
-        min_rows_per_day=1380,
+        min_rows_per_day=1435,
         ignore_recent_minutes=0,
         now=pd.Timestamp("2026-05-15T04:00:00Z"),
     )
@@ -221,7 +221,7 @@ def test_detect_sparse_bar_days_independent_lookback_widens_window(tmp_path):
         storage,
         ["ETHUSDT"],
         lookback_hours=24 * 14,
-        min_rows_per_day=1380,
+        min_rows_per_day=1435,
         ignore_recent_minutes=0,
         now=pd.Timestamp("2026-05-15T04:00:00Z"),
     )

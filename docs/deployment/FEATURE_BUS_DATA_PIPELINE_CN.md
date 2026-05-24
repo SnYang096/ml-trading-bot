@@ -146,7 +146,7 @@ writer = FeatureBusWriter(args.feature_bus_root, max_rows=int(args.max_rows))
 | `MLBOT_AUTO_GAP_FILL_LOOKBACK_HOURS` | 48 | 48 | 连续空洞扫描窗口（hourly loop） |
 | `MLBOT_AUTO_GAP_FILL_MIN_GAP_MINUTES` | 60 | 60 | 连续空洞阈值：只补 **≥60 分钟** 的单段洞 |
 | `MLBOT_AUTO_GAP_FILL_SPARSE_LOOKBACK_HOURS` | 720 (30d) | — | sparse-day 扫描独立窗口；30 天足够覆盖几周前的 outage 残留，sparse 扫描每日只读一次 parquet 列名，开销小 |
-| `MLBOT_AUTO_GAP_FILL_SPARSE_MIN_ROWS_PER_DAY` | 1380 | — | archive 日 1m 行数阈值；&lt;1380（≈96%）整日从 Vision 重拉 |
+| `MLBOT_AUTO_GAP_FILL_SPARSE_MIN_ROWS_PER_DAY` | 1435 | — | archive 日 1m 行数阈值；&lt;1435（≈99.7%）整日从 Vision 重拉 |
 
 此前 gap-fill→bus sync（`preserve_history`）解决的是 **bus 与 archive 脱节**（WS outage 后 bus 有洞、backfill 误 truncate）。**archive 内部分散小洞** 需 sparse-day 扫描（上表）触发整日 Vision 重拉；`stitch` 只能合并已有 archive 与 bus，不能凭空补 archive 里缺失的分钟。
 

@@ -184,7 +184,7 @@ def detect_sparse_bar_days(
     symbols: Iterable[str],
     *,
     lookback_hours: float = 48.0,
-    min_rows_per_day: int = 1380,
+    min_rows_per_day: int = 1435,
     ignore_recent_minutes: float = 5.0,
     now: Optional[pd.Timestamp] = None,
 ) -> List[BarGap]:
@@ -494,7 +494,7 @@ def run_auto_gap_fill_once(
     min_gap_minutes: float = 60.0,
     max_gaps_per_run: int = 24,
     sparse_lookback_hours: Optional[float] = None,
-    sparse_min_rows_per_day: int = 1380,
+    sparse_min_rows_per_day: int = 1435,
     now: Optional[pd.Timestamp] = None,
     feature_bus_writer: Optional["FeatureBusWriter"] = None,
 ) -> int:
@@ -607,7 +607,7 @@ async def auto_gap_fill_loop(
     min_gap_minutes: float = 60.0,
     max_gaps_per_run: int = 24,
     sparse_lookback_hours: Optional[float] = None,
-    sparse_min_rows_per_day: int = 1380,
+    sparse_min_rows_per_day: int = 1435,
     initial_delay_seconds: float = 300.0,
     feature_bus_writer: Optional["FeatureBusWriter"] = None,
 ) -> None:

@@ -250,10 +250,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--auto-gap-fill-sparse-min-rows-per-day",
         type=int,
-        default=int(os.getenv("MLBOT_AUTO_GAP_FILL_SPARSE_MIN_ROWS_PER_DAY", "1380")),
+        default=int(os.getenv("MLBOT_AUTO_GAP_FILL_SPARSE_MIN_ROWS_PER_DAY", "1435")),
         help=(
             "Minimum 1m bar rows per archive day before sparse-day repair "
-            "kicks in (1380 = ~96%% of 1440)."
+            "kicks in (1435 = ~99.7%% of 1440)."
         ),
     )
     p.add_argument(
