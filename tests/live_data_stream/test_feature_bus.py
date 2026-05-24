@@ -92,3 +92,65 @@ def test_merge_bars_1m_fills_bus_holes(tmp_path):
     bars = FeatureBusReader(tmp_path).latest_bars_1m(symbol="ETHUSDT")
     assert len(bars) == 3
     assert float(bars.iloc[1]["close"]) == 1.9
+
+
+def _bar_row(ts: str, close: float) -> dict:
+    return {
+        "timestamp": pd.Timestamp(ts),
+        "open": close - 0.1,
+        "high": close + 0.1,
+        "low": close - 0.2,
+        "close": close,
+    }
+
+
+def test_merge_bars_1m_default_tail_respects_writer_max_rows(tmp_path):
+    big_writer = FeatureBusWriter(tmp_path, max_rows=10)
+    for i in range(5):
+        big_writer.append_bar_1m(
+            "ETHUSDT",
+            _bar_row(f"2026-05-21T00:0{i}:00Z", 1.0 + i),
+        )
+
+    small_writer = FeatureBusWriter(tmp_path, max_rows=2)
+    repair = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(["2026-05-21T00:05:00Z"], utc=True),
+            "open": [9.9],
+            "high": [10.0],
+            "low": [9.8],
+            "close": [9.9],
+        }
+    )
+
+    small_writer.merge_bars_1m("ETHUSDT", repair)
+
+    bars = FeatureBusReader(tmp_path).latest_bars_1m(symbol="ETHUSDT")
+    assert len(bars) == 2
+
+
+def test_merge_bars_1m_preserve_history_does_not_shrink(tmp_path):
+    big_writer = FeatureBusWriter(tmp_path, max_rows=10)
+    for i in range(5):
+        big_writer.append_bar_1m(
+            "ETHUSDT",
+            _bar_row(f"2026-05-21T00:0{i}:00Z", 1.0 + i),
+        )
+
+    small_writer = FeatureBusWriter(tmp_path, max_rows=2)
+    repair = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(["2026-05-21T00:05:00Z"], utc=True),
+            "open": [9.9],
+            "high": [10.0],
+            "low": [9.8],
+            "close": [9.9],
+        }
+    )
+
+    small_writer.merge_bars_1m("ETHUSDT", repair, preserve_history=True)
+
+    bars = FeatureBusReader(tmp_path).latest_bars_1m(symbol="ETHUSDT")
+    assert len(bars) == 6
+    assert float(bars.iloc[-1]["close"]) == 9.9
+    assert float(bars.iloc[0]["close"]) == 1.0

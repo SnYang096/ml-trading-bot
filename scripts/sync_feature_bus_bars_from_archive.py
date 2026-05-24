@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
 """Merge recent live_storage 1m bars into feature-bus rolling snapshots.
 
-Use after deploy when archive is complete but bars_1min bus parquet still
-has WS outage holes. Archive rows win on duplicate timestamps.
+Use after a WS outage when ``bars_1min`` bus parquets have holes but the
+archive (``live/<flow>/data/bars/<SYMBOL>/<date>.parquet``) is complete.
+Archive rows win on duplicate timestamps.
 
-Example (production paths):
-  PYTHONPATH=src python3 scripts/sync_feature_bus_bars_from_archive.py \\
-    --live-storage-base /opt/quant-engine/live/highcap/data \\
-    --feature-bus-root /opt/quant-engine/live/shared_feature_bus \\
-    --symbols BNBUSDT,ETHUSDT,BTCUSDT \\
+Backfill is "non-shrinking": ``merge_bars_1m`` is called with
+``preserve_history=True`` so the existing bus rows are never tailed below
+their current count, even if this script's ``--max-rows`` is smaller than
+the online publisher's effective cap.
+
+Example (production paths, run from repo root inside the publisher image):
+
+  python3 scripts/sync_feature_bus_bars_from_archive.py \\
+    --live-storage-base /app/live/highcap/data \\
+    --feature-bus-root /app/live/shared_feature_bus \\
+    --symbols BNBUSDT,ETHUSDT,BTCUSDT,SOLUSDT,XRPUSDT,ADAUSDT \\
     --lookback-hours 168
 """
 

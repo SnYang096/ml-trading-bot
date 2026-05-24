@@ -95,8 +95,20 @@ class FeatureBusWriter:
         self.root = Path(root)
         self.max_rows = int(max_rows)
 
-    def merge_bars_1m(self, symbol: str, bars: pd.DataFrame) -> int:
-        """Merge repaired/archive 1m bars into the rolling bus snapshot."""
+    def merge_bars_1m(
+        self,
+        symbol: str,
+        bars: pd.DataFrame,
+        *,
+        preserve_history: bool = False,
+    ) -> int:
+        """Merge repaired/archive 1m bars into the rolling bus snapshot.
+
+        ``preserve_history=True`` is the contract for one-shot/repair callers:
+        the merged frame is never tailed below ``len(old)``, so a backfill
+        script with a small ``max_rows`` cannot accidentally shrink a bus that
+        was grown by the online publisher.
+        """
         if bars.empty or "timestamp" not in bars.columns:
             return 0
         incoming = bars.copy()
@@ -117,9 +129,10 @@ class FeatureBusWriter:
         df = (
             df.drop_duplicates(subset=["timestamp"], keep="last")
             .sort_values("timestamp")
-            .tail(self.max_rows)
             .reset_index(drop=True)
         )
+        if not preserve_history:
+            df = df.tail(self.max_rows).reset_index(drop=True)
         atomic_write_parquet(df, path)
         if not df.empty:
             last_ts = _utc_timestamp(df["timestamp"].iloc[-1])

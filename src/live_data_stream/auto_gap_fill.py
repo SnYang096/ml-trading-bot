@@ -287,7 +287,7 @@ def sync_filled_bars_to_feature_bus(
         if bars is None or bars.empty:
             continue
         try:
-            synced += writer.merge_bars_1m(symbol, bars)
+            synced += writer.merge_bars_1m(symbol, bars, preserve_history=True)
         except Exception:
             logger.exception(
                 "auto-gap-fill: feature-bus sync failed for %s", symbol
@@ -328,7 +328,7 @@ def sync_archive_bars_to_feature_bus(
             )
             continue
         try:
-            n = writer.merge_bars_1m(symbol, bars)
+            n = writer.merge_bars_1m(symbol, bars, preserve_history=True)
             synced += n
             logger.warning(
                 "feature-bus sync: merged %d archive rows for %s", n, symbol
