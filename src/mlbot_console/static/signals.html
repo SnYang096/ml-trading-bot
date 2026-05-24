@@ -67,7 +67,7 @@
         <span class="funnel-summary-title">策略漏斗（15min · stats_15min）</span>
         <span class="muted funnel-summary-hint">按具体策略 · B/A/C 分层 · 点击展开</span>
       </summary>
-      <p class="muted">Trend 策略漏斗来自 live_monitor.db；A/C 层成交/挂单见上表各策略行。Spot/Multi-leg 漏斗写入待 runner 接入 StatsCollector。</p>
+      <p class="muted">所有层的策略漏斗（B·Trend / A·Spot / C·Multi-leg）都来自 live_monitor.db.stats_15min；如某策略漏斗为空，确认对应 runner 已重启并完成至少一次 15min flush（默认 MLBOT_*_FUNNEL_FLUSH_SECONDS=900）。</p>
       <label>账户层
         <select id="funnelLayerSelect">
           <option value="">全部</option>

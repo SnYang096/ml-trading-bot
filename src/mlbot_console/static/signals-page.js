@@ -121,7 +121,7 @@ function renderFunnelRows(rows) {
   }
   if (!flat.length) {
     tbody.innerHTML =
-      '<tr><td colspan="10" class="muted">无 funnel 数据（B 层需 quant-trend 写 stats_15min；A/C 见上表各策略成交行）</td></tr>';
+      '<tr><td colspan="10" class="muted">无 funnel 数据：检查对应 runner（quant-trend / quant-spot / quant-multi-leg）是否在跑，且已写过至少一次 stats_15min 快照</td></tr>';
     return;
   }
   tbody.innerHTML = flat
