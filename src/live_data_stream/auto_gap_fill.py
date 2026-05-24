@@ -342,9 +342,7 @@ def sync_filled_bars_to_feature_bus(
         try:
             synced += writer.merge_bars_1m(symbol, bars, preserve_history=True)
         except Exception:
-            logger.exception(
-                "auto-gap-fill: feature-bus sync failed for %s", symbol
-            )
+            logger.exception("auto-gap-fill: feature-bus sync failed for %s", symbol)
     if synced:
         logger.warning(
             "auto-gap-fill: synced %d filled bar rows to feature bus", synced
@@ -369,9 +367,7 @@ def sync_archive_bars_to_feature_bus(
         try:
             bars = _load_recent_bars(storage, symbol, start=start, end=now_ts)
         except Exception:
-            logger.exception(
-                "feature-bus sync: archive load failed for %s", symbol
-            )
+            logger.exception("feature-bus sync: archive load failed for %s", symbol)
             continue
         if bars.empty:
             logger.warning(
@@ -383,13 +379,9 @@ def sync_archive_bars_to_feature_bus(
         try:
             n = writer.merge_bars_1m(symbol, bars, preserve_history=True)
             synced += n
-            logger.warning(
-                "feature-bus sync: merged %d archive rows for %s", n, symbol
-            )
+            logger.warning("feature-bus sync: merged %d archive rows for %s", n, symbol)
         except Exception:
-            logger.exception(
-                "feature-bus sync: merge failed for %s", symbol
-            )
+            logger.exception("feature-bus sync: merge failed for %s", symbol)
     return synced
 
 
@@ -501,11 +493,18 @@ def run_auto_gap_fill_once(
     lookback_hours: float = 48.0,
     min_gap_minutes: float = 60.0,
     max_gaps_per_run: int = 24,
+    sparse_lookback_hours: Optional[float] = None,
+    sparse_min_rows_per_day: int = 1380,
     now: Optional[pd.Timestamp] = None,
     feature_bus_writer: Optional["FeatureBusWriter"] = None,
 ) -> int:
     """Run one repair pass for pending Vision gaps plus scanned bar/tick gaps."""
     symbol_list = [str(s).upper() for s in symbols]
+    sparse_window = (
+        float(sparse_lookback_hours)
+        if sparse_lookback_hours is not None
+        else float(lookback_hours)
+    )
     try:
         return _run_auto_gap_fill_once_impl(
             storage,
@@ -514,6 +513,8 @@ def run_auto_gap_fill_once(
             lookback_hours=lookback_hours,
             min_gap_minutes=min_gap_minutes,
             max_gaps_per_run=max_gaps_per_run,
+            sparse_lookback_hours=sparse_window,
+            sparse_min_rows_per_day=int(sparse_min_rows_per_day),
             now=now,
             feature_bus_writer=feature_bus_writer,
         )
@@ -530,6 +531,8 @@ def _run_auto_gap_fill_once_impl(
     lookback_hours: float,
     min_gap_minutes: float,
     max_gaps_per_run: int,
+    sparse_lookback_hours: float,
+    sparse_min_rows_per_day: int,
     now: Optional[pd.Timestamp],
     feature_bus_writer: Optional["FeatureBusWriter"] = None,
 ) -> int:
@@ -552,7 +555,8 @@ def _run_auto_gap_fill_once_impl(
         detect_sparse_bar_days(
             storage,
             symbol_list,
-            lookback_hours=lookback_hours,
+            lookback_hours=sparse_lookback_hours,
+            min_rows_per_day=sparse_min_rows_per_day,
             now=now,
         )
     )
@@ -568,8 +572,11 @@ def _run_auto_gap_fill_once_impl(
     gaps = _dedupe_gaps(gaps)
     if not gaps:
         logger.info(
-            "auto-gap-fill: no gaps >= %.1f min and no sparse bar days",
+            "auto-gap-fill: no gaps >= %.1f min and no sparse bar days "
+            "(sparse_lookback=%.0fh min_rows=%d)",
             min_gap_minutes,
+            sparse_lookback_hours,
+            sparse_min_rows_per_day,
         )
         return 0
 
@@ -599,6 +606,8 @@ async def auto_gap_fill_loop(
     startup_lookback_hours: Optional[float] = None,
     min_gap_minutes: float = 60.0,
     max_gaps_per_run: int = 24,
+    sparse_lookback_hours: Optional[float] = None,
+    sparse_min_rows_per_day: int = 1380,
     initial_delay_seconds: float = 300.0,
     feature_bus_writer: Optional["FeatureBusWriter"] = None,
 ) -> None:
@@ -624,6 +633,8 @@ async def auto_gap_fill_loop(
                     lookback_hours=scan_lookback,
                     min_gap_minutes=min_gap_minutes,
                     max_gaps_per_run=max_gaps_per_run,
+                    sparse_lookback_hours=sparse_lookback_hours,
+                    sparse_min_rows_per_day=sparse_min_rows_per_day,
                     feature_bus_writer=feature_bus_writer,
                 )
 

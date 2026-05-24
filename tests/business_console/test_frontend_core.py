@@ -89,6 +89,7 @@ console.log(JSON.stringify({
   l2Pending: Core.markersToLwc(markers)[3].text,
   s1Filled: Core.markersToLwc(markers)[4].text,
   s2TpBelow: Core.markersToLwc(markers)[5].position,
+  l1TpAbove: Core.markersToLwc(markers)[2].position,
   segPts: Core.chopSegmentedLinePoints(
     [{ start: 100, end: 200 }, { start: 300, end: 400 }],
     640.5,
@@ -145,6 +146,7 @@ def test_trade_map_core_node():
     assert out["l2Pending"] == "L2 挂单"
     assert out["s1Filled"] == "S1 成交"
     assert out["s2TpBelow"] == "belowBar"
+    assert out["l1TpAbove"] == "aboveBar"
     assert out["gridLabelLong"] == "below"
     assert out["gridLabelShortTp"] == "below"
     assert len(out["segPts"]) >= 4

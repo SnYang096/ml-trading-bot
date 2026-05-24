@@ -238,6 +238,25 @@ def parse_args() -> argparse.Namespace:
         help="Minimum 1m bar gap size repaired by the background filler.",
     )
     p.add_argument(
+        "--auto-gap-fill-sparse-lookback-hours",
+        type=float,
+        default=float(os.getenv("MLBOT_AUTO_GAP_FILL_SPARSE_LOOKBACK_HOURS", "720")),
+        help=(
+            "Sparse-day scan window (hours). Days with fewer than "
+            "--auto-gap-fill-sparse-min-rows-per-day rows are refilled from "
+            "Vision; defaults to 30d so old WS-outage holes self-heal."
+        ),
+    )
+    p.add_argument(
+        "--auto-gap-fill-sparse-min-rows-per-day",
+        type=int,
+        default=int(os.getenv("MLBOT_AUTO_GAP_FILL_SPARSE_MIN_ROWS_PER_DAY", "1380")),
+        help=(
+            "Minimum 1m bar rows per archive day before sparse-day repair "
+            "kicks in (1380 = ~96%% of 1440)."
+        ),
+    )
+    p.add_argument(
         "--auto-gap-fill-max-gaps-per-run",
         type=int,
         default=int(os.getenv("MLBOT_AUTO_GAP_FILL_MAX_GAPS_PER_RUN", "24")),
@@ -452,6 +471,8 @@ async def _startup_gap_repair(
             lookback_hours=startup_lookback,
             min_gap_minutes=args.auto_gap_fill_min_gap_minutes,
             max_gaps_per_run=args.auto_gap_fill_max_gaps_per_run,
+            sparse_lookback_hours=args.auto_gap_fill_sparse_lookback_hours,
+            sparse_min_rows_per_day=args.auto_gap_fill_sparse_min_rows_per_day,
             feature_bus_writer=writer,
         )
 
@@ -553,6 +574,8 @@ async def async_main() -> None:
                 ),
                 min_gap_minutes=args.auto_gap_fill_min_gap_minutes,
                 max_gaps_per_run=args.auto_gap_fill_max_gaps_per_run,
+                sparse_lookback_hours=args.auto_gap_fill_sparse_lookback_hours,
+                sparse_min_rows_per_day=args.auto_gap_fill_sparse_min_rows_per_day,
                 initial_delay_seconds=args.auto_gap_fill_initial_delay_seconds,
                 feature_bus_writer=writer,
             )

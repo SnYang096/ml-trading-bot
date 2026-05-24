@@ -190,6 +190,45 @@ def test_detect_sparse_bar_days_finds_scattered_missing_minutes(tmp_path):
     assert gaps[0].symbol == "ETHUSDT"
 
 
+def test_detect_sparse_bar_days_independent_lookback_widens_window(tmp_path):
+    """sparse_lookback_hours should outrun the contiguous-gap lookback."""
+    storage = StorageManager(tmp_path)
+    # Old sparse day far outside the 24h large-gap window.
+    storage.bar_1min.append(
+        "ETHUSDT",
+        "2026-05-14",
+        _bars(
+            [
+                "2026-05-14T00:00:00Z",
+                "2026-05-14T00:01:00Z",
+                "2026-05-14T12:00:00Z",
+                "2026-05-14T23:59:00Z",
+            ]
+        ),
+    )
+
+    short_window = detect_sparse_bar_days(
+        storage,
+        ["ETHUSDT"],
+        lookback_hours=1,
+        min_rows_per_day=1380,
+        ignore_recent_minutes=0,
+        now=pd.Timestamp("2026-05-15T04:00:00Z"),
+    )
+    assert short_window == []
+
+    widened = detect_sparse_bar_days(
+        storage,
+        ["ETHUSDT"],
+        lookback_hours=24 * 14,
+        min_rows_per_day=1380,
+        ignore_recent_minutes=0,
+        now=pd.Timestamp("2026-05-15T04:00:00Z"),
+    )
+    starts = {gap.start for gap in widened}
+    assert pd.Timestamp("2026-05-14T00:00:00Z") in starts
+
+
 def test_detect_large_tick_gaps_finds_missing_tick_minutes(tmp_path):
     storage = StorageManager(tmp_path)
     storage.bar_1min.append(
