@@ -52,6 +52,12 @@
       <label><input type="checkbox" id="layerTrend" checked /> B·Trend</label>
       <label><input type="checkbox" id="layerSpot" checked /> A·Spot</label>
       <label><input type="checkbox" id="layerMultiLeg" checked /> C·Multi-leg</label>
+      <label class="strategy-focus-pill" title="筛选主图标记、网格线、Prefilter 色带与附图列（需与上方账户层配合）">
+        策略
+        <select id="mapStrategySelect">
+          <option value="">全部</option>
+        </select>
+      </label>
       <label title="在已成交标记之外，叠加显示 open/pending 网格限价单与 TP 保护单（不含 expired/canceled）"><input type="checkbox"
           id="layerPending" /> 含挂单</label>
       <label class="chk-pill" title="chop_grid 中心/档位/成交/TP 价格线 + 震荡(chop)区间底色（需勾选 C·Multi-leg）"><input type="checkbox"

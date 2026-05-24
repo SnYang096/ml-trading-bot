@@ -4,7 +4,8 @@ var Core = globalThis.MLBotTradeMapCore;
 var Shell = globalThis.MLBotConsole;
 
 function applyMarkers(rawMarkers, opts = {}) {
-  const aligned = alignMarkersToLoadedCandles(rawMarkers || []);
+  const scoped = Core.filterMarkersByStrategy(rawMarkers || [], S.featureStrategyFocus);
+  const aligned = alignMarkersToLoadedCandles(scoped);
   S.lastRawMarkers = opts.merge ? mergeMarkersById(S.lastRawMarkers, aligned) : aligned;
   S.markerById = new Map(S.lastRawMarkers.map((m) => [m.id, m]));
   S.candleSeries.setMarkers(Core.markersToLwc(S.lastRawMarkers, S.selectedMarkerId));

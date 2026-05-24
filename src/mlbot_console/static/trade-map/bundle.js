@@ -92,6 +92,7 @@ async function refreshBundle(opts = {}) {
     document.getElementById("layerPrefilter")?.checked,
     document.getElementById("layerGate")?.checked
   );
+  const stratFocus = String(S.featureStrategyFocus || "").trim();
   if (mode === "full") {
     setStatusLoading();
     if (opts.resetMarkerRange) {
@@ -110,6 +111,7 @@ async function refreshBundle(opts = {}) {
   if (mode === "poll") {
     q.set("include_ohlcv", "tail");
     if (stageRg) q.set("stage_regions", stageRg);
+    if (stratFocus) q.set("strategy", stratFocus);
     const pollFeatures = S.selectedFeatureColumns.length > 0;
     q.set("include_features", pollFeatures ? "true" : "false");
     if (pollFeatures && featParam) q.set("feature_columns", featParam);
@@ -137,6 +139,7 @@ async function refreshBundle(opts = {}) {
     if (featParam) q.set("feature_columns", featParam);
     if (mainOl) q.set("main_overlays", mainOl);
     if (stageRg) q.set("stage_regions", stageRg);
+    if (stratFocus) q.set("strategy", stratFocus);
   }
 
   const { data, meta } = await Shell.api(`/api/trade-map/bundle?${q}`);

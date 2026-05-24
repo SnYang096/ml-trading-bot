@@ -157,11 +157,21 @@ def _resample_candles_to_weekly_close(
     return weekly
 
 
+def _weekly_ema_min_weeks(chart_timeframe: str) -> int:
+    tf = str(chart_timeframe or "2h").strip().lower()
+    if tf == "1w":
+        return 8
+    if tf == "1d":
+        return 26
+    return 52
+
+
 def _weekly_ema_from_chart_candles(
     candles: List[Dict[str, Any]],
     *,
     span: int = 200,
     min_weeks: int = 52,
+    chart_timeframe: str = "2h",
 ) -> List[Dict[str, Any]]:
     """Last-resort EMA(200) directly from on-chart closes (resampled to weekly).
 
@@ -170,8 +180,11 @@ def _weekly_ema_from_chart_candles(
     refresher hasn't run for weeks). Returns ``[]`` if not enough weekly bars
     are available — typical for 2h/15m chart windows that only span months.
     """
+    min_w = int(min_weeks)
+    if min_w <= 0:
+        min_w = _weekly_ema_min_weeks(chart_timeframe)
     weekly = _resample_candles_to_weekly_close(candles)
-    if weekly.empty or len(weekly) < int(min_weeks):
+    if weekly.empty or len(weekly) < min_w:
         return []
     ema = weekly.ewm(span=max(2, int(span)), adjust=False).mean().dropna()
     if ema.empty:
@@ -248,6 +261,10 @@ def _fetch_2h_candles(
     win_end = c_end or end
     if win_start is not None:
         win_start = win_start - pd.Timedelta(hours=EMA1200_SPAN_BARS * 2)
+    if win_end is not None:
+        now = pd.Timestamp.now(tz="UTC")
+        if (now - _utc_ts(win_end)).total_seconds() < 14 * 86400:
+            win_end = now
     pack = fetch_ohlcv(
         feature_bus_root,
         symbol,
@@ -256,6 +273,7 @@ def _fetch_2h_candles(
         end=win_end,
         full_range=False,
         live_storage_bars_root=live_storage_bars_root,
+        stitch_live_storage=bool(live_storage_bars_root),
     )
     return list(pack.get("candles") or [])
 
@@ -473,7 +491,14 @@ def load_main_chart_overlays(
                 end=end,
             )
         elif spec.get("use_macro_seed"):
-            if macro_seed_root:
+            chart_tf = str(chart_timeframe or "2h").strip()
+            if macro_spot_kline_root and chart_tf in ("1d", "1w"):
+                points = _weekly_ema_from_spot_daily(
+                    macro_spot_kline_root, symbol, candles
+                )
+                if points:
+                    entry["source"] = "spot_daily_weekly"
+            if not points and macro_seed_root:
                 points = _align_weekly_ema_seed_to_candles(
                     macro_seed_root,
                     symbol,
@@ -482,14 +507,18 @@ def load_main_chart_overlays(
                 )
                 if points:
                     entry["source"] = "macro_seed"
-            if not points and macro_spot_kline_root:
+            if not points and macro_spot_kline_root and chart_tf not in ("1d", "1w"):
                 points = _weekly_ema_from_spot_daily(
                     macro_spot_kline_root, symbol, candles
                 )
                 if points:
                     entry["source"] = "spot_daily_weekly"
             if not points:
-                points = _weekly_ema_from_chart_candles(candles)
+                points = _weekly_ema_from_chart_candles(
+                    candles,
+                    min_weeks=_weekly_ema_min_weeks(chart_tf),
+                    chart_timeframe=chart_tf,
+                )
                 if points:
                     entry["source"] = "chart_resample_weekly"
         entry["points"] = points

@@ -245,6 +245,10 @@ def trade_map_bundle(
         None,
         description="Comma-separated stages to shade on main chart: prefilter, gate",
     ),
+    strategy: str = Query(
+        "",
+        description="Optional strategy id filter (markers, stage bands, chop overlay)",
+    ),
 ) -> dict:
     ohlcv_mode = (include_ohlcv or "full").strip().lower()
     if ohlcv_mode not in ("full", "tail", "none"):
@@ -310,6 +314,8 @@ def trade_map_bundle(
         from_=from_, to=to, since=since, include_pending=include_pending
     )
     scope_list = _scopes_list(scopes)
+    strat_filter = str(strategy or "").strip().lower()
+    strat_list = [strat_filter] if strat_filter else None
     # Keep client from/to for marker DB query; do not narrow to sparse OHLCV span.
     markers = collect_markers(
         trend_db=SETTINGS.trend_order_db,
@@ -318,6 +324,7 @@ def trade_map_bundle(
         symbol=symbol,
         scopes=scope_list,
         engine_data_root=SETTINGS.engine_data_root,
+        strategies=strat_list,
         **mk,
     )
     marker_counts = marker_scope_counts(markers)
@@ -431,10 +438,18 @@ def trade_map_bundle(
                 start=feat_start,
                 end=feat_end,
             )
+            if strat_filter and isinstance(strategy_stage_regions, dict):
+                strategy_stage_regions = {
+                    k: v
+                    for k, v in strategy_stage_regions.items()
+                    if str(k).lower() == strat_filter
+                }
         except Exception as exc:
             logger.exception("strategy_stage_regions failed symbol=%s", symbol)
             strategy_stage_regions = {"error": str(exc)}
-    if "multi_leg" in scope_list:
+    if "multi_leg" in scope_list and (
+        not strat_filter or strat_filter in ("chop_grid", "trend_scalp")
+    ):
         try:
             chop_grid_overlay = load_chop_grid_map_overlay(
                 multi_leg_db=SETTINGS.multi_leg_db,

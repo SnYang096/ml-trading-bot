@@ -160,14 +160,42 @@
     return out;
   }
 
+  function isTrendScalpOtherPaneColumn(column, meta) {
+    const stage = meta.stage || "other";
+    if (stage !== "other") return false;
+    const strat = meta.strategy || inferStrategyIdFromColumn(column).strategy;
+    if (strat !== "trend_scalp") return false;
+    const lc = String(column || "").toLowerCase();
+    if (
+      lc.includes("semantic_chop") ||
+      lc.startsWith("box_") ||
+      lc.includes("grid") ||
+      lc.includes("scalp")
+    ) {
+      return false;
+    }
+    return true;
+  }
+
   function filterSubchartColumns(columns, layers, strategyFocus) {
     const focus = strategyFocus ? String(strategyFocus).trim() : "";
     return (columns || []).filter((col) => {
       const meta = lookupFeatureMeta(col);
       if (!isLayerEnabled(meta.account_layer, layers)) return false;
       if (focus && meta.strategy !== focus) return false;
+      if (isTrendScalpOtherPaneColumn(col, meta) && focus !== "trend_scalp") {
+        return false;
+      }
       return true;
     });
+  }
+
+  function filterMarkersByStrategy(markers, strategyFocus) {
+    const focus = strategyFocus ? String(strategyFocus).trim().toLowerCase() : "";
+    if (!focus) return markers || [];
+    return (markers || []).filter(
+      (m) => String(m.strategy || "").toLowerCase() === focus
+    );
   }
 
   function isoFromUnixSec(sec) {
@@ -925,6 +953,7 @@
     clipOverlayPointsToCandles,
     alignSeriesToCandleTimes,
     filterSubchartColumns,
+    filterMarkersByStrategy,
     isoFromUnixSec,
     mainOverlaysQueryParam,
     stageRegionsQueryParam,

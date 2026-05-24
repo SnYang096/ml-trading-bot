@@ -642,6 +642,7 @@ def collect_markers(
     since_ts: Optional[int] = None,
     include_pending: bool = False,
     engine_data_root: Optional[Path] = None,
+    strategies: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     merged: List[Dict[str, Any]] = []
     scope_set = {s.strip().lower() for s in scopes if s.strip()}
@@ -681,7 +682,16 @@ def collect_markers(
             )
         )
     merged.sort(key=lambda m: m["time"])
-    return _filter_pending(merged, include_pending)
+    merged = _filter_pending(merged, include_pending)
+    if strategies:
+        allowed = {str(s).strip().lower() for s in strategies if str(s).strip()}
+        if allowed:
+            merged = [
+                m
+                for m in merged
+                if str(m.get("strategy") or "").lower() in allowed
+            ]
+    return merged
 
 
 def _f(raw: Any) -> Optional[float]:

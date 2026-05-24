@@ -24,19 +24,21 @@ function pickerSourceColumns() {
 }
 
 function syncFeatureStrategySelectOptions() {
-  const sel = document.getElementById("featureStrategySelect");
-  if (!sel) return;
   const layers = layersState();
   const strategies = Core.listStrategiesForLayers(layers);
   const prev = S.featureStrategyFocus || "";
   const options = [
-    `<option value="">全部（当前账户层）</option>`,
+    `<option value="">全部</option>`,
     ...strategies.map(
       (s) =>
         `<option value="${escHtml(s.id)}"${s.id === prev ? " selected" : ""}>${escHtml(s.title || s.id)}</option>`
     ),
   ];
-  sel.innerHTML = options.join("");
+  const html = options.join("");
+  for (const id of ["featureStrategySelect", "mapStrategySelect"]) {
+    const sel = document.getElementById(id);
+    if (sel) sel.innerHTML = html;
+  }
 }
 
 function setFeatureStrategyFocus(strategyId, { refreshPicker = true, refreshSubcharts = true } = {}) {

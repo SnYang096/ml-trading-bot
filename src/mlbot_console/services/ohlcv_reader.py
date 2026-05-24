@@ -262,20 +262,40 @@ def _merge_recent_daily_from_bus(
     *,
     end_ts: pd.Timestamp,
     merge_start: Optional[pd.Timestamp] = None,
+    live_storage_bars_root: Optional[Path] = None,
 ) -> pd.DataFrame:
-    """Append/overwrite tail daily bars from bars_1min when Vision cache lags."""
-    bus_start = merge_start if merge_start is not None else end_ts - pd.Timedelta(days=120)
-    bus = load_bars_1min(feature_bus_root, symbol, start=bus_start, end=end_ts)
-    if bus.empty:
+    """Append/overwrite tail daily bars from bus + live_storage when Vision lags."""
+    tail_start = merge_start if merge_start is not None else end_ts - pd.Timedelta(days=120)
+    frames: list[pd.DataFrame] = []
+    bus = load_bars_1min(feature_bus_root, symbol, start=tail_start, end=end_ts)
+    if not bus.empty:
+        bus_daily, _ = resample_ohlcv(bus, "1d")
+        if not bus_daily.empty:
+            frames.append(bus_daily)
+    if live_storage_bars_root is not None:
+        hist = load_live_storage_bars_1min(
+            Path(live_storage_bars_root),
+            symbol,
+            start=tail_start,
+            end=end_ts,
+        )
+        if not hist.empty:
+            hist_daily, _ = resample_ohlcv(hist, "1d")
+            if not hist_daily.empty:
+                frames.append(hist_daily)
+    if not frames:
         return macro_df
-    bus_daily, _ = resample_ohlcv(bus, "1d")
-    if bus_daily.empty:
-        return macro_df
-    bus_daily = bus_daily.set_index("timestamp").sort_index()
+    tail_daily = pd.concat(frames, ignore_index=True)
+    tail_daily["timestamp"] = pd.to_datetime(tail_daily["timestamp"], utc=True)
+    tail_daily = (
+        tail_daily.drop_duplicates(subset=["timestamp"], keep="last")
+        .sort_values("timestamp")
+        .set_index("timestamp")
+    )
     if macro_df.empty:
-        return _daily_index_to_ohlcv(bus_daily)
+        return _daily_index_to_ohlcv(tail_daily.reset_index())
     macro_idx = macro_df.set_index("timestamp").sort_index()
-    combined = pd.concat([macro_idx, bus_daily])
+    combined = pd.concat([macro_idx, tail_daily])
     combined = combined[~combined.index.duplicated(keep="last")].sort_index()
     return _daily_index_to_ohlcv(combined.reset_index())
 
@@ -323,6 +343,7 @@ def fetch_ohlcv_daily_macro(
     full_range: bool = True,
     live_data_root: Optional[Path] = None,
     live_root: Optional[Path] = None,
+    live_storage_bars_root: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """1d OHLCV from Vision spot_klines (years), tail merged from bars_1min."""
     path = _bars_path(feature_bus_root, symbol)
@@ -351,7 +372,12 @@ def fetch_ohlcv_daily_macro(
         macro_df = _daily_index_to_ohlcv(daily)
         macro_rows = len(macro_df)
     merged = _merge_recent_daily_from_bus(
-        macro_df, feature_bus_root, symbol, end_ts=end_ts, merge_start=start_ts
+        macro_df,
+        feature_bus_root,
+        symbol,
+        end_ts=end_ts,
+        merge_start=start_ts,
+        live_storage_bars_root=live_storage_bars_root,
     )
     if merged.empty:
         fallback = fetch_ohlcv(
@@ -428,6 +454,7 @@ def fetch_ohlcv_weekly_macro(
     full_range: bool = True,
     live_data_root: Optional[Path] = None,
     live_root: Optional[Path] = None,
+    live_storage_bars_root: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """1w OHLCV: Vision daily macro resampled to calendar weeks."""
     daily = fetch_ohlcv_daily_macro(
@@ -441,6 +468,7 @@ def fetch_ohlcv_weekly_macro(
         full_range=full_range,
         live_data_root=live_data_root,
         live_root=live_root,
+        live_storage_bars_root=live_storage_bars_root,
     )
     if not daily.get("candles"):
         out = dict(daily)
@@ -590,6 +618,7 @@ def fetch_ohlcv(
                 full_range=full_range,
                 live_data_root=live_data_root,
                 live_root=live_root,
+                live_storage_bars_root=live_storage_bars_root,
             )
         return fetch_ohlcv_daily_macro(
             feature_bus_root,
@@ -602,6 +631,7 @@ def fetch_ohlcv(
             full_range=full_range,
             live_data_root=live_data_root,
             live_root=live_root,
+            live_storage_bars_root=live_storage_bars_root,
         )
     path = _bars_path(feature_bus_root, symbol)
     bars_root = Path(live_storage_bars_root) if live_storage_bars_root else None

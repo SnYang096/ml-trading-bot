@@ -32,8 +32,17 @@ function bindControls() {
     "layerPending",
     "layerChopGrid",
     "paneVolume",
+    "mapStrategySelect",
   ].forEach((id) =>
     document.getElementById(id).addEventListener("change", () => {
+      if (id === "mapStrategySelect") {
+        setFeatureStrategyFocus(document.getElementById("mapStrategySelect").value, {
+          refreshSubcharts: false,
+        });
+        saveLayout();
+        rerun();
+        return;
+      }
       if (id === "paneVolume") {
         saveLayout();
         rerun();

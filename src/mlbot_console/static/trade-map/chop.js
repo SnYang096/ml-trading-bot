@@ -126,10 +126,11 @@ function chopRegimePriceEnvelope(candles, spans) {
 }
 
 function chopGridOverlayEnabled() {
-  return (
-    !!document.getElementById("layerChopGrid")?.checked &&
-    layersState().multiLeg
-  );
+  if (!document.getElementById("layerChopGrid")?.checked) return false;
+  if (!layersState().multiLeg) return false;
+  const focus = String(S.featureStrategyFocus || "").trim().toLowerCase();
+  if (focus && focus !== "chop_grid" && focus !== "trend_scalp") return false;
+  return true;
 }
 
 function fullWidthPriceLine(candles, price) {
