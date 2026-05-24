@@ -117,6 +117,10 @@ def test_trade_map_js_layer_toggle_does_not_reset_history(client):
     assert "pane.S.chart" not in subcharts
     assert "mergeChopMapPayload" in bundle
     assert "stage_regions" in bundle
+    chop = client.get("/static/trade-map/chop.js").text
+    assert "S.candleSeries.priceToCoordinate" in chop
+    assert 'priceScale("right").priceToCoordinate' not in chop
+    assert "ps.priceToCoordinate" not in chop
 
 
 def test_bundle_json_shape_for_frontend(client):

@@ -200,7 +200,13 @@ const ctx = {
   LightweightCharts: {
     createChart: () => ({
       addAreaSeries: () => ({ setData: noop, applyOptions: noop }),
-      addCandlestickSeries: () => ({ setData: noop, setMarkers: noop, update: noop, applyOptions: noop }),
+      addCandlestickSeries: () => ({
+        setData: noop,
+        setMarkers: noop,
+        update: noop,
+        applyOptions: noop,
+        priceToCoordinate: (v) => Number(v) + 10,
+      }),
       addLineSeries: () => ({ setData: noop, applyOptions: noop }),
       addHistogramSeries: () => ({ setData: noop }),
       removeSeries: noop,
@@ -209,8 +215,9 @@ const ctx = {
         setVisibleLogicalRange: noop,
         applyOptions: noop,
         subscribeVisibleLogicalRangeChange: noop,
+        timeToCoordinate: (t) => Number(t) * 10,
       }),
-      priceScale: () => ({ applyOptions: noop, setVisibleRange: noop, priceToCoordinate: (v) => v }),
+      priceScale: () => ({ applyOptions: noop, setVisibleRange: noop }),
       applyOptions: noop,
       subscribeClick: noop,
       subscribeCrosshairMove: noop,
@@ -265,6 +272,25 @@ const pollPayload = context.mergeChopMapPayload(
   },
   { chop_regime_regions: [{ start: 4, end: 8 }] }
 );
+context.MLBotTradeMapPage.chart = context.LightweightCharts.createChart();
+context.MLBotTradeMapPage.candleSeries = context.MLBotTradeMapPage.chart.addCandlestickSeries();
+context.MLBotTradeMapPage.chopGridLabelSpecs = [
+  { price: 100, text: 'L1 格', side: 'long', kind: 'grid', spans: [{ start: 1, end: 2 }] },
+];
+const labelLayer = { innerHTML: '', appendChild: noop, style: {} };
+const checkedLayerIds = new Set(['layerChopGrid', 'layerMultiLeg']);
+context.document.getElementById = (id) => {
+  if (id === 'chopGridLabelLayer') return labelLayer;
+  if (id === 'chart') return { clientWidth: 800, clientHeight: 400, appendChild: noop };
+  if (checkedLayerIds.has(id)) return { ...fakeEl(), checked: true };
+  return fakeEl();
+};
+let gridLabelsOk = true;
+try {
+  context.layoutChopGridLabels([{ time: 1, open: 90, high: 110, low: 85, close: 105 }]);
+} catch (e) {
+  gridLabelsOk = false;
+}
 console.log(JSON.stringify({
   loaded: typeof context.refreshBundle === 'function',
   initMainChart: typeof context.initMainChart === 'function',
@@ -275,6 +301,7 @@ console.log(JSON.stringify({
   mergedPrefilterEnd: mergedPayload.strategy_stage_regions.chop_grid.prefilter[0].end,
   pollKeepsOverlay: pollPayload.chop_grid_overlay?.center === 100,
   pollMergedChopEnd: pollPayload.chop_regime_regions[0].end,
+  gridLabelsOk,
 }));
 """
 
@@ -303,3 +330,4 @@ def test_trade_map_modules_load_in_one_browser_context():
     assert out["mergedPrefilterEnd"] == 30
     assert out["pollKeepsOverlay"] is True
     assert out["pollMergedChopEnd"] == 8
+    assert out["gridLabelsOk"] is True

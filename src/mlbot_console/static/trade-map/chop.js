@@ -239,17 +239,16 @@ function labelTimeForSpans(spans, candles) {
 
 function layoutChopGridLabels(candles) {
   const layer = ensureChopGridLabelLayer();
-  if (!layer || !S.chart) return;
+  if (!layer || !S.chart || !S.candleSeries?.priceToCoordinate) return;
   layer.innerHTML = "";
   if (!S.chopGridLabelSpecs.length || !chopGridOverlayEnabled()) return;
   const ts = S.chart.timeScale();
-  const ps = S.chart.priceScale("right");
   for (const spec of S.chopGridLabelSpecs) {
     const anchor = Core.chopGridLabelAnchor(spec.side, spec.kind);
     const labelTime = labelTimeForSpans(spec.spans, candles);
     if (labelTime == null || !Number.isFinite(labelTime)) continue;
     const x = ts.timeToCoordinate(labelTime);
-    const y = ps.priceToCoordinate(Number(spec.price));
+    const y = S.candleSeries.priceToCoordinate(Number(spec.price));
     if (x == null || y == null || !Number.isFinite(x) || !Number.isFinite(y)) continue;
     const el = document.createElement("span");
     el.className = `chop-grid-label chop-grid-label--${anchor}`;
