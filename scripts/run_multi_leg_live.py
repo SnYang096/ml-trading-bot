@@ -138,6 +138,11 @@ from src.time_series_model.live.chop_grid_live_engine import (
 from src.time_series_model.live.dual_add_trend_live_engine import (  # noqa: E402
     DualAddTrendLiveEngine,
 )
+from src.time_series_model.live.non_trend_funnel import (  # noqa: E402
+    FifteenMinFlusher,
+    default_live_monitor_db_path,
+)
+from src.time_series_model.live.stats_collector import StatsCollector  # noqa: E402
 from scripts.live_audit_file import configure_audit_from_env_defaults  # noqa: E402
 
 
@@ -522,6 +527,31 @@ def build_daemon(
                     orchestrator=orchestrator,
                 )
             )
+    stats_collector: StatsCollector | None = None
+    funnel_flusher: FifteenMinFlusher | None = None
+    if not _env_truthy("MLBOT_MULTI_LEG_FUNNEL_DISABLE"):
+        try:
+            stats_collector = StatsCollector(
+                db_path=str(default_live_monitor_db_path()),
+                auto_cleanup=False,
+            )
+            funnel_flusher = FifteenMinFlusher(
+                stats_collector,
+                interval_s=float(
+                    os.getenv("MLBOT_MULTI_LEG_FUNNEL_FLUSH_SECONDS", "900")
+                ),
+            )
+            logger.info(
+                "multi-leg funnel: writing 15min snapshots to %s",
+                default_live_monitor_db_path(),
+            )
+        except Exception:
+            logger.exception(
+                "multi-leg funnel: StatsCollector init failed; funnel disabled"
+            )
+            stats_collector = None
+            funnel_flusher = None
+
     return (
         MultiLegLiveDaemon(
             bar_provider=provider,
@@ -530,6 +560,8 @@ def build_daemon(
             reconcile_interval_seconds=getattr(
                 args, "reconcile_interval_seconds", 60.0
             ),
+            stats_collector=stats_collector,
+            funnel_flusher=funnel_flusher,
         ),
         api,
         storage,

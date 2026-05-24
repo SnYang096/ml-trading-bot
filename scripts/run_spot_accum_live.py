@@ -54,6 +54,12 @@ from src.time_series_model.live.decision_chain_debug import (
     spot_eligibility_log_enabled,
 )
 from src.time_series_model.live.generic_live_strategy import GenericLiveStrategy
+from src.time_series_model.live.non_trend_funnel import (
+    FifteenMinFlusher,
+    default_live_monitor_db_path,
+    funnel_for_spot_decision,
+)
+from src.time_series_model.live.stats_collector import StatsCollector
 from src.time_series_model.live.spot_accum_simple import (
     apply_partial_sell_to_position,
     deploy_decay_multiplier,
@@ -984,6 +990,27 @@ def main() -> int:
     metrics_port = _env_int("MLBOT_METRICS_PORT", 9193)
     start_metrics_server(port=metrics_port)
     METRICS.publish_dashboard_catalog(strategies=[strategy_name], symbols=symbols)
+
+    stats_collector: Optional[StatsCollector] = None
+    funnel_flusher: Optional[FifteenMinFlusher] = None
+    if not _env_bool("MLBOT_SPOT_FUNNEL_DISABLE", False):
+        try:
+            stats_collector = StatsCollector(
+                db_path=str(default_live_monitor_db_path()),
+                auto_cleanup=False,
+            )
+            funnel_flusher = FifteenMinFlusher(
+                stats_collector,
+                interval_s=_env_float("MLBOT_SPOT_FUNNEL_FLUSH_SECONDS", 900.0),
+            )
+            logger.info(
+                "spot funnel: writing 15min snapshots to %s",
+                default_live_monitor_db_path(),
+            )
+        except Exception:
+            logger.exception("spot funnel: StatsCollector init failed; funnel disabled")
+            stats_collector = None
+            funnel_flusher = None
     _startup_checks(
         constitution=constitution,
         strategy_name=strategy_name,
@@ -1178,6 +1205,13 @@ def main() -> int:
                                 reason,
                             )
                             METRICS.orders_total.labels(strategy=strategy_name).inc()
+                            if stats_collector is not None:
+                                try:
+                                    stats_collector.record_order_placed(
+                                        sym, strategy_name
+                                    )
+                                except Exception:
+                                    pass
                             METRICS.record_strategy_event(
                                 scope="spot",
                                 strategy=strategy_name,
@@ -1232,6 +1266,31 @@ def main() -> int:
                     free_usdt=free_usdt,
                 )
                 log_spot_new_buy_eligibility(elig)
+
+                if stats_collector is not None:
+                    try:
+                        stats_collector.record_bar_processed(1)
+                        has_long_intent = bool(intents) and (
+                            str(intents[0].action or "").upper() == "LONG"
+                        )
+                        can_submit = bool(elig.get("can_submit_new_buy"))
+                        blockers = elig.get("blockers") or []
+                        blocker_str = (
+                            ", ".join(str(b) for b in blockers if b)
+                            if isinstance(blockers, (list, tuple))
+                            else str(blockers or "")
+                        )
+                        stats_collector.record_strategy_eval(
+                            sym,
+                            strategy_name,
+                            funnel_for_spot_decision(
+                                has_intent=has_long_intent,
+                                can_submit=can_submit,
+                                blocker=blocker_str,
+                            ),
+                        )
+                    except Exception:
+                        logger.debug("spot funnel record skipped", exc_info=True)
 
                 if not intents:
                     if chain_debug:
@@ -1378,6 +1437,11 @@ def main() -> int:
                         ledger.deploy_today_usdt(day_key),
                     )
                 METRICS.orders_total.labels(strategy=strategy_name).inc()
+                if stats_collector is not None:
+                    try:
+                        stats_collector.record_order_placed(sym, strategy_name)
+                    except Exception:
+                        pass
                 METRICS.record_strategy_event(
                     scope="spot",
                     strategy=strategy_name,
@@ -1427,10 +1491,20 @@ def main() -> int:
                     except Exception:
                         METRICS.account_update_success.labels(scope="spot").set(0)
                 last_account_sync = now
+            if funnel_flusher is not None:
+                try:
+                    funnel_flusher.maybe_flush(symbol="ALL")
+                except Exception:
+                    logger.debug("spot funnel flush skipped", exc_info=True)
             time.sleep(max(0.5, poll_seconds))
         except KeyboardInterrupt:
             logger.info("spot runner stopped by user")
             ledger.save_positions(positions)
+            if funnel_flusher is not None:
+                try:
+                    funnel_flusher.force_flush(symbol="ALL")
+                except Exception:
+                    logger.debug("spot funnel final flush skipped", exc_info=True)
             return 0
         except Exception as exc:
             if _is_insufficient_funds(exc):

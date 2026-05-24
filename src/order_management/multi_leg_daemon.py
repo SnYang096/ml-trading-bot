@@ -16,6 +16,7 @@ from src.time_series_model.live.decision_chain_debug import (
     log_multileg_bar_no_actions,
 )
 from src.time_series_model.live.metrics_exporter import METRICS
+from src.time_series_model.live.non_trend_funnel import funnel_for_multileg_bar
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,8 @@ class MultiLegLiveDaemon:
         runtimes: Iterable[StrategyRuntime],
         poll_seconds: float = 30.0,
         reconcile_interval_seconds: float = 60.0,
+        stats_collector: Optional[Any] = None,
+        funnel_flusher: Optional[Any] = None,
     ) -> None:
         self.bar_provider = bar_provider
         self.runtimes = list(runtimes)
@@ -101,6 +104,10 @@ class MultiLegLiveDaemon:
         self._last_processed: set[tuple[str, str, str]] = set()
         self._last_reconciled_at: Dict[str, float] = {}
         self._running = False
+        # Optional 15min funnel hooks (writes A/C-layer rows to live_monitor.db
+        # so the console "策略漏斗" panel matches B-layer trend stats).
+        self.stats_collector = stats_collector
+        self.funnel_flusher = funnel_flusher
 
     def run_once(self) -> MultiLegDaemonReport:
         symbols = sorted({rt.symbol for rt in self.runtimes})
@@ -221,6 +228,8 @@ class MultiLegLiveDaemon:
                     exchange_positions=exchange_positions,
                     reconcile=should_reconcile,
                 )
+                if self.stats_collector is not None:
+                    self._record_multileg_funnel(rt=rt, actions=actions, report=report)
                 rejected_count += len(report.risk.rejected)
                 if any(
                     str((a or {}).get("action", "") or "").lower() == "place"
@@ -364,6 +373,36 @@ class MultiLegLiveDaemon:
             reconciliation_issue_count=reconciliation_issue_count,
         )
 
+    def _record_multileg_funnel(
+        self,
+        *,
+        rt: StrategyRuntime,
+        actions: List[Dict[str, Any]],
+        report: Any,
+    ) -> None:
+        """Push one bar of multi-leg funnel + order counts into stats_collector."""
+        sc = self.stats_collector
+        if sc is None:
+            return
+        try:
+            sc.record_bar_processed(1)
+            funnel = funnel_for_multileg_bar(
+                actions=actions,
+                approved_actions=report.risk.approved_actions or [],
+                rejected=report.risk.rejected or [],
+            )
+            sc.record_strategy_eval(rt.symbol, rt.name, funnel)
+            placed = sum(
+                1
+                for a in (report.risk.approved_actions or [])
+                if isinstance(a, dict)
+                and str(a.get("action", "") or "").lower() == "place"
+            )
+            for _ in range(placed):
+                sc.record_order_placed(rt.symbol, rt.name)
+        except Exception:
+            logger.debug("multi-leg funnel record skipped", exc_info=True)
+
     def _reconcile_due(self, symbol: str) -> bool:
         if self.reconcile_interval_seconds <= 0:
             return False
@@ -396,6 +435,11 @@ class MultiLegLiveDaemon:
                 METRICS.multi_leg_daemon_polls_total.inc(1)
             except Exception:
                 logger.debug("multi-leg poll metric skipped", exc_info=True)
+            if self.funnel_flusher is not None:
+                try:
+                    self.funnel_flusher.maybe_flush(symbol="ALL")
+                except Exception:
+                    logger.debug("multi-leg funnel flush skipped", exc_info=True)
             fmt = (
                 "multi-leg daemon tick: bars=%s actions=%s rejected=%s "
                 "executed=%s reconcile_issues=%s"

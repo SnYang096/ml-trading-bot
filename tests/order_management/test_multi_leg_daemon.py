@@ -386,6 +386,62 @@ def test_daemon_blocks_opening_actions_when_other_strategy_already_owns_symbol()
     adapter_b.execute_actions.assert_not_called()
 
 
+def test_daemon_records_funnel_events_when_stats_collector_attached() -> None:
+    bar = MultiLegBarEvent(
+        symbol="BTCUSDT",
+        timestamp="2026-01-01 00:00:00+00:00",
+        high=101.0,
+        low=99.0,
+        close=100.0,
+        atr=2.0,
+        features={},
+    )
+    engine = FakeEngine()
+    adapter = _adapter()
+    sc = MagicMock()
+    daemon = MultiLegLiveDaemon(
+        bar_provider=FakeProvider([bar]),
+        runtimes=[_runtime("chop_grid", "BTCUSDT", engine, adapter)],
+        stats_collector=sc,
+    )
+
+    daemon.run_once()
+
+    sc.record_bar_processed.assert_called_once_with(1)
+    sc.record_strategy_eval.assert_called_once()
+    args = sc.record_strategy_eval.call_args.args
+    assert args[0] == "BTCUSDT"
+    assert args[1] == "chop_grid"
+    assert args[2]["direction"] is True
+    assert args[2]["gate"] is True
+    sc.record_order_placed.assert_called_once_with("BTCUSDT", "chop_grid")
+
+
+def test_run_forever_calls_funnel_flusher_each_tick() -> None:
+    bar = MultiLegBarEvent(
+        symbol="BTCUSDT",
+        timestamp="2026-01-01 00:00:00+00:00",
+        high=101.0,
+        low=99.0,
+        close=100.0,
+        atr=2.0,
+        features={},
+    )
+    engine = FakeEngine()
+    adapter = _adapter()
+    flusher = MagicMock()
+    daemon = MultiLegLiveDaemon(
+        bar_provider=FakeProvider([bar]),
+        runtimes=[_runtime("chop_grid", "BTCUSDT", engine, adapter)],
+        poll_seconds=0.01,
+        funnel_flusher=flusher,
+    )
+
+    asyncio.run(daemon.run_forever(max_iterations=2))
+
+    assert flusher.maybe_flush.call_count == 2
+
+
 def test_run_forever_increments_poll_metric_once_per_iteration() -> None:
     bar = MultiLegBarEvent(
         symbol="BTCUSDT",
