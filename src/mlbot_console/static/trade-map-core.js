@@ -169,6 +169,15 @@
     return leg;
   }
 
+  /** Long grid labels below price line; short above; long TP above; short TP below. */
+  function chopGridLabelAnchor(side, kind) {
+    if (kind === "center") return "below";
+    const isLong = String(side || "").toLowerCase() === "long";
+    const isTp = kind === "tp";
+    if (isTp) return isLong ? "above" : "below";
+    return isLong ? "below" : "above";
+  }
+
   function chopSegmentedLinePoints(regions, price, barSec) {
     const px = Number(price);
     if (!Number.isFinite(px) || !regions?.length) return [];
@@ -812,6 +821,7 @@
     priceRangeForChartAutoscale,
     barSpacingForCount,
     chopSegmentedLinePoints,
+    chopGridLabelAnchor,
     chopGridMarkerDisplayText,
     DEFAULT_VISIBLE_BARS,
     FEATURE_PRESETS,

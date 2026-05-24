@@ -15,6 +15,7 @@ CORE_JS = (
     / "static"
     / "trade-map-core.js"
 )
+STATIC_ROOT = CORE_JS.parent
 NODE_SCRIPT = """
 const fs = require('fs');
 const vm = require('vm');
@@ -91,6 +92,8 @@ console.log(JSON.stringify({
     640.5,
     7200
   ),
+  gridLabelLong: Core.chopGridLabelAnchor("long", "grid"),
+  gridLabelShortTp: Core.chopGridLabelAnchor("short", "tp"),
   prAuto2: Core.priceRangeForChartAutoscale(
     [{ time: 100, low: 600, high: 620, close: 610 }, { time: 200, low: 610, high: 630, close: 625 }],
     { from: 0, to: 1 }
@@ -139,7 +142,164 @@ def test_trade_map_core_node():
     assert out["tpText"] == "L1_TP"
     assert out["l2Pending"] == "L2 挂单"
     assert out["s1Filled"] == "S1 成交"
+    assert out["gridLabelLong"] == "below"
+    assert out["gridLabelShortTp"] == "below"
     assert len(out["segPts"]) >= 4
     assert out["segPts"][2]["value"] is None  # NaN segment gap
     assert out["prAuto2"]["minValue"] < 600
     assert out["prAuto2"]["maxValue"] > 625
+
+
+MODULE_LOAD_SCRIPT = """
+const fs = require('fs');
+const vm = require('vm');
+const root = process.argv[1];
+const modules = [
+  'trade-map-core.js',
+  'trade-map/state.js',
+  'trade-map/layout.js',
+  'trade-map/chart.js',
+  'trade-map/chop.js',
+  'trade-map/history.js',
+  'trade-map/subcharts.js',
+  'trade-map/markers.js',
+  'trade-map/features.js',
+  'trade-map/bundle.js',
+];
+const noop = () => {};
+const fakeEl = () => ({
+  checked: false,
+  value: '2h',
+  style: {},
+  classList: { add: noop, remove: noop, toggle: noop },
+  addEventListener: noop,
+  setAttribute: noop,
+  appendChild: noop,
+  querySelector: () => null,
+  querySelectorAll: () => [],
+  innerHTML: '',
+  textContent: '',
+});
+const ctx = {
+  console,
+  globalThis: null,
+  window: null,
+  setTimeout: () => 1,
+  clearTimeout: noop,
+  setInterval: () => 1,
+  clearInterval: noop,
+  requestAnimationFrame: (fn) => fn(),
+  localStorage: { getItem: () => null, setItem: noop },
+  document: {
+    getElementById: fakeEl,
+    createElement: fakeEl,
+    querySelectorAll: () => [],
+    addEventListener: noop,
+    body: { classList: { toggle: noop } },
+  },
+  LightweightCharts: {
+    createChart: () => ({
+      addAreaSeries: () => ({ setData: noop, applyOptions: noop }),
+      addCandlestickSeries: () => ({ setData: noop, setMarkers: noop, update: noop, applyOptions: noop }),
+      addLineSeries: () => ({ setData: noop, applyOptions: noop }),
+      addHistogramSeries: () => ({ setData: noop }),
+      removeSeries: noop,
+      timeScale: () => ({
+        getVisibleLogicalRange: () => null,
+        setVisibleLogicalRange: noop,
+        applyOptions: noop,
+        subscribeVisibleLogicalRangeChange: noop,
+      }),
+      priceScale: () => ({ applyOptions: noop, setVisibleRange: noop, priceToCoordinate: (v) => v }),
+      applyOptions: noop,
+      subscribeClick: noop,
+      subscribeCrosshairMove: noop,
+    }),
+  },
+  MLBotConsole: {
+    api: async () => ({ data: {}, meta: {} }),
+    setSymbol: noop,
+    formatOrderTime: String,
+    getScopesDefault: () => null,
+    setScopesState: noop,
+    saveOrdersFilter: noop,
+    ordersFilterFromControls: () => ({}),
+    ordersExcludeStatusParamFromFilter: () => '',
+    applyOrdersFilterToControls: noop,
+    loadOrdersFilter: () => ({}),
+    isAllSymbols: () => false,
+    ordersTableColspan: () => 8,
+    buildOrdersTableRows: () => '',
+    bindOrdersTableResize: noop,
+    loadExtLinks: async () => {},
+    loadSymbols: async () => {},
+    bindOrdersFilterSync: noop,
+    bindSymbolPersist: noop,
+    escHtml: String,
+  },
+};
+ctx.globalThis = ctx;
+ctx.window = ctx;
+const context = vm.createContext(ctx);
+for (const mod of modules) {
+  vm.runInContext(fs.readFileSync(`${root}/${mod}`, 'utf8'), context, { filename: mod });
+}
+const pts = context.spanHighlightCandles(
+  [{ time: 1, low: 10, high: 20 }, { time: 2, low: 12, high: 22 }],
+  [{ start: 1, end: 1 }]
+);
+const mergedPayload = context.mergeChopMapPayload(
+  {
+    chop_regime_regions: [{ start: 10, end: 20 }],
+    strategy_stage_regions: { chop_grid: { prefilter: [{ start: 10, end: 20 }] } },
+  },
+  {
+    chop_regime_regions: [{ start: 19, end: 30 }],
+    strategy_stage_regions: { chop_grid: { prefilter: [{ start: 21, end: 30 }] } },
+  }
+);
+const pollPayload = context.mergeChopMapPayload(
+  {
+    chop_grid_overlay: { center: 100, lines: [{ price: 99 }] },
+    chop_regime_regions: [{ start: 1, end: 5 }],
+  },
+  { chop_regime_regions: [{ start: 4, end: 8 }] }
+);
+console.log(JSON.stringify({
+  loaded: typeof context.refreshBundle === 'function',
+  initMainChart: typeof context.initMainChart === 'function',
+  syncSubcharts: typeof context.syncSubcharts === 'function',
+  highlight: pts,
+  stateArrays: Array.isArray(context.MLBotTradeMapPage.lastCandles),
+  mergedChopEnd: mergedPayload.chop_regime_regions[0].end,
+  mergedPrefilterEnd: mergedPayload.strategy_stage_regions.chop_grid.prefilter[0].end,
+  pollKeepsOverlay: pollPayload.chop_grid_overlay?.center === 100,
+  pollMergedChopEnd: pollPayload.chop_regime_regions[0].end,
+}));
+"""
+
+
+@pytest.mark.skipif(
+    subprocess.run(["which", "node"], capture_output=True).returncode != 0,
+    reason="node not installed",
+)
+def test_trade_map_modules_load_in_one_browser_context():
+    """Regression: split classic scripts must not collide or hide functions in IIFEs."""
+    proc = subprocess.run(
+        ["node", "-e", MODULE_LOAD_SCRIPT, str(STATIC_ROOT)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    out = json.loads(proc.stdout.strip())
+    assert out["loaded"] is True
+    assert out["initMainChart"] is True
+    assert out["syncSubcharts"] is True
+    assert out["stateArrays"] is True
+    assert out["highlight"] == [
+        {"time": 1, "open": 10, "high": 20, "low": 10, "close": 20}
+    ]
+    assert out["mergedChopEnd"] == 30
+    assert out["mergedPrefilterEnd"] == 30
+    assert out["pollKeepsOverlay"] is True
+    assert out["pollMergedChopEnd"] == 8

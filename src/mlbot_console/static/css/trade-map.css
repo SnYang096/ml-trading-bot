@@ -1,0 +1,213 @@
+.page-trade-map {
+  height: 100%;
+  overflow-x: hidden;
+}
+
+.page-trade-map .toolbar-global {
+  flex-direction: column;
+  align-items: stretch;
+  flex-wrap: nowrap;
+  gap: 6px;
+  padding: 8px 12px 6px;
+  max-width: 100vw;
+  border-bottom: none;
+}
+
+.page-trade-map .toolbar-row-global {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  min-width: 0;
+  width: 100%;
+}
+
+.page-trade-map .toolbar-chart {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 6px 12px 8px;
+  border-bottom: 1px solid #30363d;
+  background: #161b22;
+  max-width: 100vw;
+}
+
+.page-trade-map .toolbar-row-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+  min-height: 1.25rem;
+}
+
+.page-trade-map .status-grid {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-size: 0.75rem;
+  color: #8b949e;
+  line-height: 1.3;
+}
+
+.page-trade-map .status-grid .status-part {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-trade-map .status-grid .status-part.status-features {
+  max-width: min(420px, 55vw);
+}
+
+.page-trade-map .status-clock {
+  flex: 0 0 5.5rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: #8b949e;
+  font-size: 0.75rem;
+}
+
+.page-trade-map .orders-dock-toggle.active {
+  background: #1f3d5c;
+  border-color: #58a6ff;
+}
+
+main {
+  display: flex;
+  height: calc(100vh - 72px);
+}
+
+.page-trade-map .trade-map-main,
+.page-trade-map main.trade-map-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.page-trade-map .chart-stack {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.chart-stack {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.page-trade-map .orders-dock {
+  flex: 0 0 min(32vh, 280px);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid #30363d;
+  background: #161b22;
+  overflow: hidden;
+}
+
+.page-trade-map .orders-dock-head {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  border-bottom: 1px solid #30363d;
+}
+
+.page-trade-map .orders-filter-chk {
+  font-size: 0.72rem;
+}
+
+.page-trade-map .orders-dock .orders-table-wrap {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+}
+
+.marker-detail-drawer {
+  flex: 0 0 auto;
+  max-height: 28vh;
+  overflow: auto;
+  border-top: 1px solid #30363d;
+  background: #161b22;
+  padding: 8px 12px;
+}
+
+.marker-detail-drawer h3 {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.drawer-close {
+  background: #21262d;
+  color: #e6edf3;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+
+.marker-detail-drawer pre {
+  font-size: 0.7rem;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+
+.chart-pane.main-pane {
+  position: relative;
+}
+
+.chop-grid-label-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 3;
+}
+
+.chop-grid-label {
+  position: absolute;
+  font-size: 10px;
+  line-height: 1.2;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(15, 20, 25, 0.82);
+  border: 1px solid rgba(139, 148, 158, 0.45);
+  white-space: nowrap;
+  transform: translate(-100%, -50%);
+}
+
+.chop-grid-label--above {
+  transform: translate(-100%, calc(-100% - 4px));
+}
+
+.chop-grid-label--below {
+  transform: translate(-100%, 4px);
+}

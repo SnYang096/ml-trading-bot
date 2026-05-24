@@ -103,6 +103,7 @@
     <div class="chart-stack">
       <div id="chart" class="chart-pane main-pane" title="主图：K 线 + 所选账户层成交标记">
         <div id="chartLegend" class="chart-legend"></div>
+        <div id="chopGridLabelLayer" class="chop-grid-label-layer" aria-hidden="true"></div>
       </div>
       <div id="subchartStack" class="subchart-stack"></div>
       <section id="detailPanel" class="marker-detail-drawer hidden">
@@ -147,7 +148,16 @@
   </main>
   <script src="/static/console-shell.js"></script>
   <script src="/static/trade-map-core.js"></script>
-  <script src="/static/trade-map.js"></script>
+  <script src="/static/trade-map/state.js"></script>
+  <script src="/static/trade-map/layout.js"></script>
+  <script src="/static/trade-map/chart.js"></script>
+  <script src="/static/trade-map/chop.js"></script>
+  <script src="/static/trade-map/history.js"></script>
+  <script src="/static/trade-map/subcharts.js"></script>
+  <script src="/static/trade-map/markers.js"></script>
+  <script src="/static/trade-map/features.js"></script>
+  <script src="/static/trade-map/bundle.js"></script>
+  <script src="/static/trade-map/bootstrap.js"></script>
 </body>
 
 </html>
