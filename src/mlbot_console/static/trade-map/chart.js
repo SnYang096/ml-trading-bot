@@ -51,8 +51,37 @@ function applyChartViewport(barCount) {
   }
 }
 
+function mainVisibleTimeRange() {
+  if (!S.chart || !S.lastCandles?.length) return null;
+  const logical = S.chart.timeScale().getVisibleLogicalRange();
+  if (!logical) return null;
+  const fromIdx = Math.max(
+    0,
+    Math.min(S.lastCandles.length - 1, Math.floor(Number(logical.from)))
+  );
+  const toIdx = Math.max(
+    0,
+    Math.min(S.lastCandles.length - 1, Math.ceil(Number(logical.to)))
+  );
+  const fromTime = S.lastCandles[fromIdx]?.time;
+  const toTime = S.lastCandles[toIdx]?.time;
+  if (fromTime == null || toTime == null) return null;
+  return { from: fromTime, to: toTime };
+}
+
 function syncSubchartsToMainRange() {
   if (!S.chart) return;
+  const timeRange = mainVisibleTimeRange();
+  if (timeRange) {
+    for (const pane of S.subcharts.values()) {
+      try {
+        pane.chart.timeScale().setVisibleRange(timeRange);
+      } catch (_) {
+        /* fallback below */
+      }
+    }
+    return;
+  }
   const range = S.chart.timeScale().getVisibleLogicalRange();
   if (!range) return;
   for (const pane of S.subcharts.values()) {

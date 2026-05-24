@@ -149,7 +149,16 @@ function bindTimeScaleSync() {
   S.timeSyncBound = true;
   S.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
     if (!range) return;
+    const timeRange = mainVisibleTimeRange();
     for (const pane of S.subcharts.values()) {
+      if (timeRange) {
+        try {
+          pane.chart.timeScale().setVisibleRange(timeRange);
+          continue;
+        } catch (_) {
+          /* fallback */
+        }
+      }
       pane.chart.timeScale().setVisibleLogicalRange(range);
     }
     refreshMainPriceAutoscale();

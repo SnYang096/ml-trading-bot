@@ -94,7 +94,7 @@ def _align_points_to_candles(
         on="timestamp",
         direction="backward",
     ).sort_values("ord")
-    merged["value"] = pd.to_numeric(merged["value"], errors="coerce").ffill()
+    merged["value"] = pd.to_numeric(merged["value"], errors="coerce").ffill().bfill()
     out: List[Dict[str, Any]] = []
     for _, row in merged.iterrows():
         val = row.get("value")

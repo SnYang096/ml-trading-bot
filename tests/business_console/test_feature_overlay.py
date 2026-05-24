@@ -155,6 +155,39 @@ def test_align_ffill_after_last_feature_row(tmp_path):
     assert pts[-2]["value"] == pytest.approx(pts[2]["value"])
 
 
+def test_align_bfill_leading_candles_before_first_feature(tmp_path):
+    """Feature bus starts mid-window; aligned series must cover every candle."""
+    feat_dir = tmp_path / "features" / "120T"
+    feat_dir.mkdir(parents=True)
+    start = pd.Timestamp("2024-01-01", tz="UTC")
+    feat_start = start + pd.Timedelta(hours=20)
+    pd.DataFrame(
+        [
+            {
+                "timestamp": feat_start + pd.Timedelta(hours=i * 2),
+                "regime_score": 0.15 + i * 0.05,
+            }
+            for i in range(5)
+        ]
+    ).to_parquet(feat_dir / "ETHUSDT.parquet", index=False)
+
+    candles = [
+        {"time": int((start + pd.Timedelta(hours=i * 2)).timestamp()), "close": 100 + i}
+        for i in range(12)
+    ]
+    overlays = load_feature_overlays(
+        tmp_path,
+        "ETHUSDT",
+        "2h",
+        ["regime_score"],
+        candles=candles,
+    )
+    pts = overlays["regime_score"]["points"]
+    assert len(pts) == len(candles)
+    assert pts[0]["value"] == pytest.approx(0.15)
+    assert pts[0]["time"] == candles[0]["time"]
+
+
 def test_load_multiple_overlays(bus_root):
     overlays = load_feature_overlays(
         bus_root,
