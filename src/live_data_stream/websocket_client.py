@@ -342,25 +342,23 @@ class BinanceWebSocketClient:
         # 启动连接监控
         self.connection_monitor.start_monitoring()
 
-        def _deliver_tick_sync(tick: BinanceTick) -> None:
-            for callback in self._callbacks:
-                try:
-                    callback(tick)
-                except Exception as e:
-                    logger.error("Callback error: %s", e)
-
-        async def _deliver_tick_async(tick: BinanceTick) -> None:
+        def _dispatch_tick(tick: BinanceTick) -> None:
+            # Sync, in-order dispatch. Callbacks (e.g. publisher's _enqueue_tick)
+            # are non-blocking put_nowait; do not async-fan them out or we lose
+            # tick order, which corrupts VPIN/CVD/order-flow features. Real
+            # backpressure for socket.recv comes from raising python-binance
+            # internal MAX_QUEUE_SIZE (configure_binance_ws_queue_size).
             nonlocal last_message_monotonic
             if stop_event.is_set():
                 return
             last_message_monotonic = time.monotonic()
             self.connection_monitor.record_message()
             self.connection_monitor.record_heartbeat()
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, _deliver_tick_sync, tick)
-
-        def _schedule_tick(tick: BinanceTick) -> None:
-            asyncio.create_task(_deliver_tick_async(tick))
+            for callback in self._callbacks:
+                try:
+                    callback(tick)
+                except Exception as e:
+                    logger.error("Callback error: %s", e)
 
         def _parse_message(message: Dict[str, Any]) -> Optional[BinanceTick]:
             payload = message.get("data", message) if isinstance(message, dict) else {}
@@ -410,7 +408,7 @@ class BinanceWebSocketClient:
                     tick = _parse_message(message)
                     if tick is None:
                         continue
-                    _schedule_tick(tick)
+                    _dispatch_tick(tick)
                     yield tick
 
         finally:

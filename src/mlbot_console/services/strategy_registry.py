@@ -92,8 +92,8 @@ def get_console_strategies() -> List[Dict[str, str]]:
 
 
 def layer_for_funnel_filter(
-  account_layer: str,
-  strategy: str,
+    account_layer: str,
+    strategy: str,
 ) -> Optional[str]:
     """Resolve effective account layer when API passes layer and/or strategy filters."""
     strat = str(strategy or "").strip().lower()

@@ -32,8 +32,11 @@ def _early_binance_ws_queue_patch() -> None:
         from binance.ws.reconnecting_websocket import ReconnectingWebsocket
 
         ReconnectingWebsocket.MAX_QUEUE_SIZE = size
-    except Exception:
-        pass
+    except Exception as exc:
+        # Stderr print: logging not yet configured at this point.
+        sys.stderr.write(
+            f"[run_market_feature_publisher] early WS queue patch failed: {exc}\n"
+        )
 
 
 _early_binance_ws_queue_patch()
