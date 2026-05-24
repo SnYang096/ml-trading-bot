@@ -71,6 +71,7 @@ function refreshMainPriceAutoscale() {
 }
 /** @type {import('lightweight-charts').ISeriesApi<'Line'>[]} */
 let chopSegmentSeries = [];
+let lastPrefilterSpans = [];
 /** Cached feature overlays for poll/history sub-chart sync. */
 let lastOverlays = {};
 /** Cached chop map payload for history pan redraw. */
@@ -568,9 +569,13 @@ function applyStagePriceBand(stage, spans, candles) {
 
 function applyStrategyStageRegions(data, candles) {
   const by = data?.strategy_stage_regions;
-  if (!by || by.error) return;
+  if (!by || by.error) {
+    lastPrefilterSpans = [];
+    return;
+  }
+  lastPrefilterSpans = flattenStageRegions(by, "prefilter");
   if (document.getElementById("layerPrefilter")?.checked) {
-    applyStagePriceBand("prefilter", flattenStageRegions(by, "prefilter"), candles);
+    applyStagePriceBand("prefilter", lastPrefilterSpans, candles);
   }
   if (document.getElementById("layerGate")?.checked) {
     applyStagePriceBand("gate", flattenStageRegions(by, "gate"), candles);
@@ -630,9 +635,46 @@ function fullWidthPriceLine(candles, price) {
   ];
 }
 
+/** Grid/chop lines inside prefilter (or chop regime) time spans only. */
+function priceLineInSpans(candles, spans, price) {
+  const px = Number(price);
+  if (!candles?.length || !spans?.length || !Number.isFinite(px)) return [];
+  const pts = [];
+  const sorted = [...spans].sort(
+    (a, b) => Number(a.start) - Number(b.start)
+  );
+  for (const span of sorted) {
+    const start = Number(span.start);
+    const end = Number(span.end);
+    let firstT = null;
+    let lastT = null;
+    for (const c of candles) {
+      const t = Number(c.time);
+      if (t >= start && t <= end) {
+        if (firstT == null) firstT = t;
+        lastT = t;
+      }
+    }
+    if (firstT != null && lastT != null) {
+      pts.push({ time: firstT, value: px }, { time: lastT, value: px });
+    }
+  }
+  return pts;
+}
+
+function chopGridLineSpans(candles, data) {
+  if (document.getElementById("layerPrefilter")?.checked && lastPrefilterSpans.length) {
+    return lastPrefilterSpans;
+  }
+  return data?.chop_regime_regions || [];
+}
+
 function addChopFullWidthLine(candles, price, opts = {}) {
   if (!chart || price == null || !Number.isFinite(Number(price))) return;
-  const pts = fullWidthPriceLine(candles, price);
+  const spans = opts.spans || null;
+  const pts = spans?.length
+    ? priceLineInSpans(candles, spans, price)
+    : fullWidthPriceLine(candles, price);
   if (!pts.length) return;
   const series = chart.addLineSeries(
     mainChartOverlaySeriesOptions({
@@ -672,8 +714,9 @@ function applyChopPriceBand(regions, candles, _overlay) {
   chopBandAreaSeries.setData(data);
 }
 
-function applyChopGridOverlay(overlay, candles) {
+function applyChopGridOverlay(overlay, candles, lineSpans) {
   if (!chopGridOverlayEnabled() || !candles?.length) return;
+  const spans = lineSpans?.length ? lineSpans : null;
   for (const batch of overlay?.batches || []) {
     const center = Number(batch.center);
     if (center > 0) {
@@ -682,6 +725,7 @@ function applyChopGridOverlay(overlay, candles) {
         lineWidth: 2,
         lineStyle: 2,
         title: "中心",
+        spans,
       });
     }
     for (const lv of batch.levels || []) {
@@ -696,6 +740,7 @@ function applyChopGridOverlay(overlay, candles) {
           color: gridColor,
           lineStyle: 2,
           title: `${leg} 格`,
+          spans,
         });
       }
       const tpPx = lv.tp_price != null ? Number(lv.tp_price) : null;
@@ -708,6 +753,7 @@ function applyChopGridOverlay(overlay, candles) {
           color: tpOpen ? "#a855f7" : "#6b7280",
           lineStyle: 1,
           title: `${leg}_TP`,
+          spans,
         });
       }
     }
@@ -718,11 +764,12 @@ function applyChopMapLayers(data, candles) {
   clearChopGridOverlay();
   if (!data) return;
   const regions = data.chop_regime_regions || [];
+  applyStrategyStageRegions(data, candles);
+  const gridSpans = chopGridLineSpans(candles, data);
   if (chopGridOverlayEnabled()) {
     applyChopPriceBand(regions, candles, data.chop_grid_overlay || {});
-    applyChopGridOverlay(data.chop_grid_overlay || {}, candles);
+    applyChopGridOverlay(data.chop_grid_overlay || {}, candles, gridSpans);
   }
-  applyStrategyStageRegions(data, candles);
   refreshMainPriceAutoscale();
 }
 

@@ -71,6 +71,27 @@ function renderGlobalKpis(totals, ledger) {
     .join("");
 }
 
+function renderRecentRealized(recent) {
+  const r = recent || {};
+  if (r.last_day == null && !r.last_7d_pnl) return "";
+  const dayCls = pnlClassNum(r.last_day_pnl);
+  const wkCls = pnlClassNum(r.last_7d_pnl);
+  return `<section class="account-recent-realized panel">
+    <h3>已实现盈亏（按日）</h3>
+    <p class="muted">最近平仓计入 <code>daily_realized</code>；与交易所浮盈分开显示。</p>
+    <div class="account-kpi-row">
+      <div class="account-kpi-card">
+        <div class="account-kpi-label">最近交易日</div>
+        <div class="account-kpi-value ${dayCls}">${Shell.escHtml(r.last_day || "—")} · ${Shell.escHtml(fmtPnlNum(r.last_day_pnl))} USDT</div>
+      </div>
+      <div class="account-kpi-card">
+        <div class="account-kpi-label">近 7 日已实现</div>
+        <div class="account-kpi-value ${wkCls}">${Shell.escHtml(fmtPnlNum(r.last_7d_pnl))} USDT</div>
+      </div>
+    </div>
+  </section>`;
+}
+
 function renderScopedKpis(totals) {
   const t = totals || {};
   const cards = [
@@ -372,6 +393,10 @@ async function refreshScopedAccount() {
       spotHoldingsContainer.innerHTML = renderSpotHoldings(scopedData.scopes);
     }
     
+    const recentEl = document.getElementById("recentRealizedPanel");
+    if (recentEl) {
+      recentEl.innerHTML = renderRecentRealized(scopedData.recent_realized);
+    }
     document.getElementById("dailyChart").innerHTML = renderDailyChart(scopedData.daily_realized);
     const notes = (scopedData.notes || []).map((n) => `· ${n}`).join("\n");
     document.getElementById("accountNotes").textContent = notes;
@@ -406,7 +431,15 @@ function bindControls() {
     Shell.initAppNav("account");
     bindControls();
     await Shell.loadExtLinks();
-    await Shell.loadSymbols("symbolSelect", null, { includeAll: true });
+    await Shell.loadSymbols("symbolSelect", null, { includeAll: true, defaultAll: true });
+    const pageUrl = new URL(window.location.href);
+    const symParam = pageUrl.searchParams.get("symbol");
+    if (symParam) {
+      const sel = document.getElementById("symbolSelect");
+      if (sel && [...sel.options].some((o) => o.value === symParam || o.value === symParam.toUpperCase())) {
+        sel.value = symParam;
+      }
+    }
     await refreshAccount();
   } catch (e) {
     setStatus(`启动失败: ${e}`);

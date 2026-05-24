@@ -410,6 +410,7 @@ def build_account_summary(
     feature_bus_root: Path,
     symbol: str = "*",
     lookback_days: int = 30,
+    scopes: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     lookback_days = int(lookback_days)
     since_ts = (
@@ -431,14 +432,19 @@ def build_account_summary(
     )
     multileg = _multileg_stats(multi_leg_db, symbol=sym_arg, mark_prices=marks, since_ts=since_ts)
 
-    scopes = [trend, spot, multileg]
-    total_realized = sum(float(s["realized_pnl"]) for s in scopes)
-    total_unrealized = sum(float(s["unrealized_pnl"]) for s in scopes)
-    total_open = sum(int(s["open_positions"]) for s in scopes)
-    total_closed = sum(int(s["closed_trades"]) for s in scopes)
+    all_scopes = [trend, spot, multileg]
+    allowed = {str(s).strip().lower() for s in (scopes or [])}
+    if allowed:
+        scope_blocks = [s for s in all_scopes if str(s.get("scope") or "") in allowed]
+    else:
+        scope_blocks = all_scopes
+    total_realized = sum(float(s["realized_pnl"]) for s in scope_blocks)
+    total_unrealized = sum(float(s["unrealized_pnl"]) for s in scope_blocks)
+    total_open = sum(int(s["open_positions"]) for s in scope_blocks)
+    total_closed = sum(int(s["closed_trades"]) for s in scope_blocks)
 
     strategy_rows: Dict[str, Dict[str, Any]] = {}
-    for scope_block in scopes:
+    for scope_block in scope_blocks:
         scope_name = scope_block["scope"]
         for strat, agg in (scope_block.get("by_strategy") or {}).items():
             key = f"{scope_name}:{strat}"
@@ -453,7 +459,7 @@ def build_account_summary(
                 ),
             }
 
-    daily = _merge_daily([s["daily_realized"] for s in scopes])
+    daily = _merge_daily([s["daily_realized"] for s in scope_blocks])
 
     ledger = build_exchange_ledger(mark_prices=marks)
     exchange_by_scope = {str(a["scope"]): a for a in ledger.get("accounts") or []}
@@ -461,7 +467,7 @@ def build_account_summary(
     from mlbot_console.services.spot_ledger_book import fetch_spot_ledger_holdings
     spot_ledger_data = fetch_spot_ledger_holdings(spot_ledger_db, marks)
     
-    for scope_block in scopes:
+    for scope_block in scope_blocks:
         ex = exchange_by_scope.get(str(scope_block.get("scope") or ""))
         if ex:
             if scope_block["scope"] == "spot":
@@ -483,13 +489,25 @@ def build_account_summary(
         ),
     }
 
+    last_day_pnl = 0.0
+    last_7d_pnl = 0.0
+    if daily:
+        last_day_pnl = float(daily[-1].get("pnl") or 0.0)
+        tail = daily[-7:]
+        last_7d_pnl = sum(float(d.get("pnl") or 0.0) for d in tail)
+
     return {
         "symbol": "ALL" if _is_all_symbols(symbol) else str(symbol).upper(),
         "lookback_days": lookback_days,
         "since_ts": since_ts,
         "totals": totals,
+        "recent_realized": {
+            "last_day_pnl": last_day_pnl,
+            "last_7d_pnl": last_7d_pnl,
+            "last_day": daily[-1]["date"] if daily else None,
+        },
         "exchange_ledger": ledger,
-        "scopes": scopes,
+        "scopes": scope_blocks,
         "strategies": sorted(
             strategy_rows.values(),
             key=lambda r: (r["scope"], r["strategy"]),

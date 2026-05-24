@@ -141,7 +141,7 @@
       opt.textContent = sym;
       sel.appendChild(opt);
     }
-    const saved = preferred || getSymbol();
+    const saved = preferred != null ? preferred : opts.defaultAll ? SYMBOL_ALL : getSymbol();
     if (saved && [...sel.options].some((o) => o.value === saved)) {
       sel.value = saved;
     } else if (opts.includeAll) {

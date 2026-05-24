@@ -53,14 +53,20 @@ async function refreshSummaryStrip(symbol) {
   const el = document.getElementById("ordersSummaryStrip");
   if (!el) return;
   try {
-    const q = new URLSearchParams({ symbol, lookback_days: "0" });
+    const q = new URLSearchParams({ symbol, lookback_days: "0", scopes: scopesParam() });
     const { data } = await Shell.api(`/api/account/summary?${q}`);
     const t = data?.totals || {};
+    const recent = data?.recent_realized || {};
+    const symLabel = Shell.isAllSymbols(symbol) ? "全部" : symbol;
+    const scopeNote = scopesParam().replace(/,/g, " · ");
     el.innerHTML =
-      `全部汇总 · 已实现 <strong class="${t.realized_pnl > 0 ? "pnl-pos" : t.realized_pnl < 0 ? "pnl-neg" : ""}">${fmtSummaryPnl(t.realized_pnl)}</strong> USDT` +
+      `${symLabel}汇总（${scopeNote}）· 已实现 <strong class="${t.realized_pnl > 0 ? "pnl-pos" : t.realized_pnl < 0 ? "pnl-neg" : ""}">${fmtSummaryPnl(t.realized_pnl)}</strong> USDT` +
       ` · 浮盈 <strong>${fmtSummaryPnl(t.unrealized_pnl)}</strong> USDT` +
       ` · 已平仓 ${t.closed_trades ?? 0} 笔` +
-      ` · <a href="/account">账户总览</a>`;
+      (recent.last_day
+        ? ` · 最近日 ${recent.last_day} <strong class="${recent.last_day_pnl > 0 ? "pnl-pos" : recent.last_day_pnl < 0 ? "pnl-neg" : ""}">${fmtSummaryPnl(recent.last_day_pnl)}</strong>`
+        : "") +
+      ` · <a href="/account?symbol=${encodeURIComponent(symbol)}">账户总览</a>`;
   } catch {
     el.textContent = "";
   }

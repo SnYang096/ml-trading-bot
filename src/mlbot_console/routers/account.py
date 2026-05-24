@@ -19,6 +19,10 @@ router = APIRouter(tags=["account"])
 @router.get("/api/account/summary")
 def account_summary(
     symbol: str = Query("*"),
+    scopes: str = Query(
+        "",
+        description="Comma-separated: trend,spot,multi_leg (empty = all)",
+    ),
     lookback_days: int = Query(
         0,
         ge=0,
@@ -26,6 +30,7 @@ def account_summary(
         description="0 = all history; otherwise days of realized PnL lookback",
     ),
 ) -> dict:
+    scope_list = [s.strip() for s in scopes.split(",") if s.strip()] or None
     data = build_account_summary(
         trend_db=SETTINGS.trend_order_db,
         spot_db=SETTINGS.spot_order_db,
@@ -34,6 +39,7 @@ def account_summary(
         feature_bus_root=SETTINGS.feature_bus_root,
         symbol=symbol,
         lookback_days=lookback_days,
+        scopes=scope_list,
     )
     return ok(data, meta={"symbol": data.get("symbol"), "lookback_days": lookback_days})
 

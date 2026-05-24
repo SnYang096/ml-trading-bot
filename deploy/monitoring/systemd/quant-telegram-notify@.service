@@ -1,0 +1,9 @@
+[Unit]
+Description=Telegram notify for failed quant unit %i
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=QUANT_MONITORING_ENV=/opt/quant-engine/monitoring/.env
+ExecStart=/opt/quant-engine/monitoring/scripts/quant_telegram_notify.sh %i failed
+TimeoutStartSec=30

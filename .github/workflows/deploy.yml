@@ -295,6 +295,16 @@ jobs:
             docker tag "$IMAGE_FULL" quant-engine:latest
 
             echo ""
+            echo "=== 📲 Telegram notify helpers (if monitoring bundle already on host) ==="
+            sudo mkdir -p /opt/quant-engine/monitoring/scripts
+            if [ -f /opt/quant-engine/monitoring/scripts/quant_telegram_notify.sh ]; then
+              sudo chmod +x /opt/quant-engine/monitoring/scripts/quant_telegram_notify.sh
+            fi
+            if [ -f /opt/quant-engine/monitoring/systemd/quant-telegram-notify@.service ]; then
+              sudo cp /opt/quant-engine/monitoring/systemd/quant-telegram-notify@.service /etc/systemd/system/
+            fi
+
+            echo ""
             echo "=== 🧩 写入 systemd units（warmup oneshot → feature-bus → consumers）==="
             # Vision ZIP→parquet 只在 quant-warmup-prepare 跑，可与 engine/multi-leg 错峰占内存；
             # 小内存机器上避免三容器与转换同时进行。
@@ -373,10 +383,14 @@ jobs:
             After=docker.service network-online.target quant-warmup-prepare.service
             Requires=docker.service quant-warmup-prepare.service
             Wants=quant-macro-seed-prepare.service
+            OnFailure=quant-telegram-notify@%n.service
+            StartLimitIntervalSec=300
+            StartLimitBurst=15
 
             [Service]
             Restart=always
             RestartSec=10
+            ExecStopPost=-/opt/quant-engine/monitoring/scripts/quant_telegram_notify.sh %n exited
             Environment=MLBOT_LIVE_SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
             ExecStartPre=-/usr/bin/docker rm -f quant-feature-bus
             ExecStart=/usr/bin/docker run --rm --name quant-feature-bus \
@@ -422,10 +436,14 @@ jobs:
             After=docker.service network-online.target quant-feature-bus.service
             Requires=docker.service
             Wants=quant-feature-bus.service
+            OnFailure=quant-telegram-notify@%n.service
+            StartLimitIntervalSec=300
+            StartLimitBurst=15
 
             [Service]
             Restart=always
             RestartSec=10
+            ExecStopPost=-/opt/quant-engine/monitoring/scripts/quant_telegram_notify.sh %n exited
             Environment=MLBOT_FEATURE_SOURCE=bus
             Environment=MLBOT_FEATURE_BUS_ROOT=live/shared_feature_bus
             Environment=MLBOT_FEATURE_BUS_POLL_SECONDS=5
@@ -462,10 +480,14 @@ jobs:
             After=docker.service network-online.target quant-feature-bus.service
             Requires=docker.service
             Wants=quant-feature-bus.service
+            OnFailure=quant-telegram-notify@%n.service
+            StartLimitIntervalSec=300
+            StartLimitBurst=15
 
             [Service]
             Restart=always
             RestartSec=5
+            ExecStopPost=-/opt/quant-engine/monitoring/scripts/quant_telegram_notify.sh %n exited
             Environment=MLBOT_ACCOUNT_SCOPE=multi_leg
             ExecStartPre=-/usr/bin/docker rm -f quant-hedge-multileg
             ExecStart=/usr/bin/docker run --rm --name quant-hedge-multileg \
@@ -500,10 +522,14 @@ jobs:
             Requires=docker.service
             Wants=quant-feature-bus.service
             ConditionPathExists=/opt/quant-engine/live/binance_spot_mainnet.env
+            OnFailure=quant-telegram-notify@%n.service
+            StartLimitIntervalSec=300
+            StartLimitBurst=15
 
             [Service]
             Restart=always
             RestartSec=10
+            ExecStopPost=-/opt/quant-engine/monitoring/scripts/quant_telegram_notify.sh %n exited
             Environment=MLBOT_FEATURE_BUS_ROOT=live/shared_feature_bus
             Environment=MLBOT_SPOT_SHADOW_MODE=false
             Environment=MLBOT_METRICS_PORT=9090
@@ -623,6 +649,11 @@ jobs:
             rm -f /tmp/mlbot-monitoring.tgz
             sudo chown -R "$(whoami):$(whoami)" /opt/quant-engine/monitoring
             cd /opt/quant-engine/monitoring
+            sudo chmod +x scripts/quant_telegram_notify.sh 2>/dev/null || true
+            if [ -f systemd/quant-telegram-notify@.service ]; then
+              sudo cp systemd/quant-telegram-notify@.service /etc/systemd/system/
+              sudo systemctl daemon-reload
+            fi
             ALERT_DIR=grafana-provisioning/alerting
             rm -f "$ALERT_DIR/contact-points.telegram.yml" "$ALERT_DIR/notification-policies.yml"
             if [ -f .env ] && grep -qE '^GRAFANA_ALERT_TELEGRAM_BOT_TOKEN=.+' .env 2>/dev/null; then

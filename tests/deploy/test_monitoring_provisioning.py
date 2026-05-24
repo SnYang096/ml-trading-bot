@@ -79,7 +79,7 @@ def test_quant_ops_alert_rules_yaml_valid_promql():
     groups = doc["groups"]
     assert len(groups) == 1
     rules = groups[0]["rules"]
-    assert len(rules) == 6
+    assert len(rules) == 7
     for rule in rules:
         assert rule["condition"] == "C"
         expr = rule["data"][0]["model"]["expr"]
