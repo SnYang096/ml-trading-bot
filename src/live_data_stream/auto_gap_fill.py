@@ -10,12 +10,15 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Iterable, List, Optional
+from typing import TYPE_CHECKING, Dict, Iterable, List, Optional
 
 import pandas as pd
 
 from src.live_data_stream.feature_storage import StorageManager
 from src.live_data_stream.gap_filler import GapFiller
+
+if TYPE_CHECKING:
+    from src.live_data_stream.feature_bus import FeatureBusWriter
 
 logger = logging.getLogger(__name__)
 
@@ -274,6 +277,69 @@ def _save_ticks_by_day(
     return saved
 
 
+def sync_filled_bars_to_feature_bus(
+    writer: FeatureBusWriter,
+    filled_by_symbol: Dict[str, pd.DataFrame],
+) -> int:
+    """Push gap-fill output into rolling feature-bus bar snapshots."""
+    synced = 0
+    for symbol, bars in filled_by_symbol.items():
+        if bars is None or bars.empty:
+            continue
+        try:
+            synced += writer.merge_bars_1m(symbol, bars)
+        except Exception:
+            logger.exception(
+                "auto-gap-fill: feature-bus sync failed for %s", symbol
+            )
+    if synced:
+        logger.warning(
+            "auto-gap-fill: synced %d filled bar rows to feature bus", synced
+        )
+    return synced
+
+
+def sync_archive_bars_to_feature_bus(
+    storage: StorageManager,
+    writer: FeatureBusWriter,
+    symbols: Iterable[str],
+    *,
+    lookback_hours: float = 168.0,
+    now: Optional[pd.Timestamp] = None,
+) -> int:
+    """Merge recent archive 1m bars into feature bus (archive wins on overlap)."""
+    now_ts = _utc_timestamp(now or pd.Timestamp.now(tz="UTC"))
+    start = now_ts - pd.Timedelta(hours=float(lookback_hours))
+    synced = 0
+    for raw_symbol in symbols:
+        symbol = str(raw_symbol).upper()
+        try:
+            bars = _load_recent_bars(storage, symbol, start=start, end=now_ts)
+        except Exception:
+            logger.exception(
+                "feature-bus sync: archive load failed for %s", symbol
+            )
+            continue
+        if bars.empty:
+            logger.warning(
+                "feature-bus sync: no archive bars for %s in last %.1fh",
+                symbol,
+                lookback_hours,
+            )
+            continue
+        try:
+            n = writer.merge_bars_1m(symbol, bars)
+            synced += n
+            logger.warning(
+                "feature-bus sync: merged %d archive rows for %s", n, symbol
+            )
+        except Exception:
+            logger.exception(
+                "feature-bus sync: merge failed for %s", symbol
+            )
+    return synced
+
+
 def fill_large_bar_gaps(
     storage: StorageManager,
     gap_filler: GapFiller,
@@ -281,11 +347,18 @@ def fill_large_bar_gaps(
     *,
     max_gaps_per_run: int = 24,
     now: Optional[pd.Timestamp] = None,
+    feature_bus_writer: Optional[FeatureBusWriter] = None,
 ) -> int:
     """Fill detected gaps and return written 1m bar count."""
     now_ts = _utc_timestamp(now or pd.Timestamp.now(tz="UTC"))
     today = now_ts.normalize()
     written = 0
+    filled_by_symbol: Dict[str, List[pd.DataFrame]] = {}
+
+    def _record_filled(sym: str, bars: pd.DataFrame) -> None:
+        if bars is None or bars.empty:
+            return
+        filled_by_symbol.setdefault(str(sym).upper(), []).append(bars)
 
     for gap in list(gaps)[: int(max_gaps_per_run)]:
         logger.warning(
@@ -308,6 +381,7 @@ def fill_large_bar_gaps(
                 if not bars.empty:
                     gap_filler._save_filled_data(gap.symbol, bars, raw_ticks)
                     written += len(bars)
+                    _record_filled(gap.symbol, bars)
                     logger.warning(
                         "auto-gap-fill: filled %s via Vision (%d bars, %d raw ticks)",
                         gap.symbol,
@@ -328,6 +402,7 @@ def fill_large_bar_gaps(
                 saved_bars = _save_bars_by_day(storage, gap.symbol, bars)
                 saved_ticks = _save_ticks_by_day(storage, gap.symbol, raw_ticks)
                 written += saved_bars
+                _record_filled(gap.symbol, bars)
                 logger.warning(
                     "auto-gap-fill: filled %s via aggTrades (%d bars, %d raw ticks)",
                     gap.symbol,
@@ -345,6 +420,7 @@ def fill_large_bar_gaps(
             saved = _save_bars_by_day(storage, gap.symbol, bars)
             written += saved
             if saved:
+                _record_filled(gap.symbol, bars)
                 logger.warning(
                     "auto-gap-fill: filled %s via kline API fallback (%d bars; no raw ticks)",
                     gap.symbol,
@@ -354,6 +430,12 @@ def fill_large_bar_gaps(
                 logger.warning("auto-gap-fill: kline API returned no rows for %s", gap)
         except Exception:
             logger.exception("auto-gap-fill: failed filling gap %s", gap)
+
+    if feature_bus_writer is not None and filled_by_symbol:
+        merged: Dict[str, pd.DataFrame] = {}
+        for sym, frames in filled_by_symbol.items():
+            merged[sym] = pd.concat(frames, ignore_index=True)
+        sync_filled_bars_to_feature_bus(feature_bus_writer, merged)
 
     return written
 
@@ -367,6 +449,7 @@ def run_auto_gap_fill_once(
     min_gap_minutes: float = 60.0,
     max_gaps_per_run: int = 24,
     now: Optional[pd.Timestamp] = None,
+    feature_bus_writer: Optional["FeatureBusWriter"] = None,
 ) -> int:
     """Run one repair pass for pending Vision gaps plus scanned bar/tick gaps."""
     symbol_list = [str(s).upper() for s in symbols]
@@ -379,6 +462,7 @@ def run_auto_gap_fill_once(
             min_gap_minutes=min_gap_minutes,
             max_gaps_per_run=max_gaps_per_run,
             now=now,
+            feature_bus_writer=feature_bus_writer,
         )
     except Exception:
         logger.exception("auto-gap-fill: run failed")
@@ -394,6 +478,7 @@ def _run_auto_gap_fill_once_impl(
     min_gap_minutes: float,
     max_gaps_per_run: int,
     now: Optional[pd.Timestamp],
+    feature_bus_writer: Optional["FeatureBusWriter"] = None,
 ) -> int:
     pending_count = len(getattr(gap_filler, "_pending_vision_gaps", []))
     if pending_count:
@@ -430,6 +515,7 @@ def _run_auto_gap_fill_once_impl(
         gaps,
         max_gaps_per_run=max_gaps_per_run,
         now=now,
+        feature_bus_writer=feature_bus_writer,
     )
     logger.warning(
         "auto-gap-fill: run complete gaps=%d written_bars=%d",
@@ -450,6 +536,7 @@ async def auto_gap_fill_loop(
     min_gap_minutes: float = 60.0,
     max_gaps_per_run: int = 24,
     initial_delay_seconds: float = 300.0,
+    feature_bus_writer: Optional["FeatureBusWriter"] = None,
 ) -> None:
     if initial_delay_seconds > 0:
         await asyncio.sleep(float(initial_delay_seconds))
@@ -473,6 +560,7 @@ async def auto_gap_fill_loop(
                     lookback_hours=scan_lookback,
                     min_gap_minutes=min_gap_minutes,
                     max_gaps_per_run=max_gaps_per_run,
+                    feature_bus_writer=feature_bus_writer,
                 )
 
             await loop.run_in_executor(None, _run_once)

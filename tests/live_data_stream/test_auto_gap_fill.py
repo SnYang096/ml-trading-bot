@@ -8,7 +8,9 @@ from src.live_data_stream.auto_gap_fill import (
     detect_large_tick_gaps,
     fill_large_bar_gaps,
     run_auto_gap_fill_once,
+    sync_archive_bars_to_feature_bus,
 )
+from src.live_data_stream.feature_bus import FeatureBusReader, FeatureBusWriter
 from src.live_data_stream.feature_storage import StorageManager
 from src.live_data_stream.gap_filler import GapFiller
 
@@ -256,6 +258,79 @@ def test_fill_large_bar_gaps_prefers_aggtrades_and_saves_ticks(tmp_path):
     assert len(bars) == 3
     assert len(ticks) == 3
     assert {"buy_volume", "sell_volume", "delta"}.issubset(bars.columns)
+
+
+def test_fill_large_bar_gaps_syncs_to_feature_bus(tmp_path):
+    storage = StorageManager(tmp_path)
+    writer = FeatureBusWriter(tmp_path / "bus", max_rows=100)
+    writer.append_bar_1m(
+        "ETHUSDT",
+        {
+            "timestamp": pd.Timestamp("2026-05-21T00:00:00Z"),
+            "open": 1.0,
+            "high": 2.0,
+            "low": 0.5,
+            "close": 1.5,
+        },
+    )
+    gap = BarGap(
+        symbol="ETHUSDT",
+        start=pd.Timestamp("2026-05-21T01:00:00Z"),
+        end=pd.Timestamp("2026-05-21T01:02:00Z"),
+        minutes=3.0,
+    )
+
+    written = fill_large_bar_gaps(
+        storage,
+        FakeGapFiller(),  # type: ignore[arg-type]
+        [gap],
+        now=pd.Timestamp("2026-05-21T04:00:00Z"),
+        feature_bus_writer=writer,
+    )
+
+    assert written == 3
+    bus = FeatureBusReader(tmp_path / "bus").latest_bars_1m(symbol="ETHUSDT")
+    assert len(bus) == 4
+    assert pd.Timestamp("2026-05-21T01:01:00Z") in set(bus["timestamp"])
+
+
+def test_sync_archive_bars_to_feature_bus_merges_recent_archive(tmp_path):
+    storage = StorageManager(tmp_path)
+    writer = FeatureBusWriter(tmp_path / "bus", max_rows=100)
+    storage.bar_1min.append(
+        "ETHUSDT",
+        "2026-05-21",
+        _bars(
+            [
+                "2026-05-21T00:00:00Z",
+                "2026-05-21T00:01:00Z",
+                "2026-05-21T00:02:00Z",
+            ]
+        ),
+    )
+    writer.append_bar_1m(
+        "ETHUSDT",
+        {
+            "timestamp": pd.Timestamp("2026-05-21T00:00:00Z"),
+            "open": 9.0,
+            "high": 9.0,
+            "low": 9.0,
+            "close": 9.0,
+        },
+    )
+
+    synced = sync_archive_bars_to_feature_bus(
+        storage,
+        writer,
+        ["ETHUSDT"],
+        lookback_hours=6,
+        now=pd.Timestamp("2026-05-21T01:00:00Z"),
+    )
+
+    assert synced == 3
+    bus = FeatureBusReader(tmp_path / "bus").latest_bars_1m(symbol="ETHUSDT")
+    assert len(bus) == 3
+    assert float(bus.iloc[0]["close"]) == 100.5
 
 
 def test_gap_filler_uses_minute_frequency_for_ccxt_1m(tmp_path):

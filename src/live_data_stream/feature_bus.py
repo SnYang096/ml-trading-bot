@@ -95,6 +95,43 @@ class FeatureBusWriter:
         self.root = Path(root)
         self.max_rows = int(max_rows)
 
+    def merge_bars_1m(self, symbol: str, bars: pd.DataFrame) -> int:
+        """Merge repaired/archive 1m bars into the rolling bus snapshot."""
+        if bars.empty or "timestamp" not in bars.columns:
+            return 0
+        incoming = bars.copy()
+        incoming["timestamp"] = pd.to_datetime(incoming["timestamp"], utc=True)
+        incoming = (
+            incoming.sort_values("timestamp")
+            .drop_duplicates(subset=["timestamp"], keep="last")
+            .reset_index(drop=True)
+        )
+        path = self.root / "bars_1min" / f"{symbol.upper()}.parquet"
+        if path.exists():
+            old = pd.read_parquet(path)
+            old["timestamp"] = pd.to_datetime(old["timestamp"], utc=True)
+            df = pd.concat([old, incoming], ignore_index=True)
+        else:
+            df = incoming
+        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+        df = (
+            df.drop_duplicates(subset=["timestamp"], keep="last")
+            .sort_values("timestamp")
+            .tail(self.max_rows)
+            .reset_index(drop=True)
+        )
+        atomic_write_parquet(df, path)
+        if not df.empty:
+            last_ts = _utc_timestamp(df["timestamp"].iloc[-1])
+            self._write_latest(
+                kind="bars_1min",
+                symbol=symbol,
+                timestamp=last_ts,
+                path=path,
+                rows=len(df),
+            )
+        return len(incoming)
+
     def append_bar_1m(self, symbol: str, bar: Dict[str, Any]) -> Path:
         row = dict(bar)
         if "timestamp" not in row:

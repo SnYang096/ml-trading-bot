@@ -427,7 +427,7 @@ async def _startup_feature_audit(manager: Any) -> None:
 
 
 async def _startup_gap_repair(
-    args: argparse.Namespace, manager: Any, symbols: List[str]
+    args: argparse.Namespace, manager: Any, symbols: List[str], writer: Any
 ) -> None:
     """Repair persisted gaps before computing feature-bus snapshots."""
     if args.auto_gap_fill_interval_minutes <= 0 or manager.gap_filler is None:
@@ -455,6 +455,7 @@ async def _startup_gap_repair(
             lookback_hours=startup_lookback,
             min_gap_minutes=args.auto_gap_fill_min_gap_minutes,
             max_gaps_per_run=args.auto_gap_fill_max_gaps_per_run,
+            feature_bus_writer=writer,
         )
 
     try:
@@ -528,7 +529,7 @@ async def async_main() -> None:
     )
     if args.warmup_days > 0:
         await manager.warmup_all(days=args.warmup_days, use_gap_filler=True)
-        await _startup_gap_repair(args, manager, symbols)
+        await _startup_gap_repair(args, manager, symbols, writer)
         await _startup_feature_audit(manager)
     else:
         now = pd.Timestamp.now(tz="UTC")
@@ -558,6 +559,7 @@ async def async_main() -> None:
                 min_gap_minutes=args.auto_gap_fill_min_gap_minutes,
                 max_gaps_per_run=args.auto_gap_fill_max_gaps_per_run,
                 initial_delay_seconds=args.auto_gap_fill_initial_delay_seconds,
+                feature_bus_writer=writer,
             )
         )
     else:
