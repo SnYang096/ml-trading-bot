@@ -21,7 +21,15 @@ function mainChartOverlaySeriesOptions(extra = {}) {
 function refreshMainPriceAutoscale() {
   if (!S.chart || !S.lastCandles?.length) return;
   const logical = S.chart.timeScale().getVisibleLogicalRange();
-  const pr = Core.priceRangeForChartAutoscale(S.lastCandles, logical);
+  let pr = Core.priceRangeForChartAutoscale(S.lastCandles, logical);
+  if (pr && S.mainOverlayData?.size) {
+    pr = Core.expandPriceRangeForOverlays(
+      pr,
+      S.lastCandles,
+      logical,
+      S.mainOverlayData
+    );
+  }
   if (!pr) return;
   const ps = S.chart.priceScale("right");
   ps.applyOptions({ autoScale: false });

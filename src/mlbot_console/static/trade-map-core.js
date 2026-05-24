@@ -224,12 +224,18 @@
         ? chopText
         : `${strat}:${m.event}${legTag}${pending ? ":pending" : ""}`;
       let aboveBar = role === "exit" || role === "tp";
-      if (strat === "chop_grid" && role === "tp") {
+      if (strat === "chop_grid") {
         const legSide = chopGridLegSide(
           (m.detail && m.detail.leg_label) || (m.detail && m.detail.leg_id) || legToken
         );
-        if (legSide === "short") aboveBar = false;
-        else if (legSide === "long") aboveBar = true;
+        if (role === "tp") {
+          if (legSide === "short") aboveBar = false;
+          else if (legSide === "long") aboveBar = true;
+        } else if (role === "entry" && !pending) {
+          // Filled grid entries: short (S1/S2) above bar, long below.
+          if (legSide === "short") aboveBar = true;
+          else if (legSide === "long") aboveBar = false;
+        }
       }
       return {
         time: m.time,
@@ -773,6 +779,38 @@
     });
   }
 
+  /** Expand OHLC autoscale to include main-chart overlay values in the visible window. */
+  function expandPriceRangeForOverlays(baseRange, candles, logicalRange, overlayDataByKey) {
+    if (!baseRange || !overlayDataByKey || typeof overlayDataByKey.forEach !== "function") {
+      return baseRange;
+    }
+    let minV = Number(baseRange.minValue);
+    let maxV = Number(baseRange.maxValue);
+    if (!Number.isFinite(minV) || !Number.isFinite(maxV)) return baseRange;
+    const fromIdx =
+      logicalRange && Number.isFinite(Number(logicalRange.from))
+        ? Math.max(0, Math.floor(Number(logicalRange.from)))
+        : 0;
+    const toIdx =
+      logicalRange && Number.isFinite(Number(logicalRange.to))
+        ? Math.min(candles.length - 1, Math.ceil(Number(logicalRange.to)))
+        : candles.length - 1;
+    const tMin = Number(candles[fromIdx]?.time);
+    const tMax = Number(candles[toIdx]?.time);
+    overlayDataByKey.forEach((pts) => {
+      for (const p of pts || []) {
+        const t = Number(p.time);
+        const v = Number(p.value);
+        if (!Number.isFinite(v)) continue;
+        if (Number.isFinite(tMin) && Number.isFinite(tMax) && (t < tMin || t > tMax)) continue;
+        minV = Math.min(minV, v);
+        maxV = Math.max(maxV, v);
+      }
+    });
+    const pad = Math.max((maxV - minV) * 0.02, 1e-6);
+    return { minValue: minV - pad, maxValue: maxV + pad };
+  }
+
   /** Bar spacing in px for the *visible* window (not full history length). */
   function barSpacingForCount(barCount) {
     const n = Math.max(0, Number(barCount) || 0);
@@ -833,6 +871,7 @@
     clampCandleOhlc,
     priceRangeForVisibleCandles,
     priceRangeForChartAutoscale,
+    expandPriceRangeForOverlays,
     barSpacingForCount,
     chopSegmentedLinePoints,
     chopGridLabelAnchor,

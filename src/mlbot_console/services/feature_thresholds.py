@@ -83,16 +83,19 @@ def build_reference_lines_by_column(
     }
     if strategies_root is None or not strategies_root.is_dir():
         return out
-    for slug in ("tpc", "bpc", "me", "srb"):
-        for stage in ("regime", "prefilter"):
-            path = strategies_root / slug / "archetypes" / f"{stage}.yaml"
+    for strat_dir in sorted(strategies_root.iterdir()):
+        if not strat_dir.is_dir():
+            continue
+        for stage in ("regime", "prefilter", "gate", "execution"):
+            path = strat_dir / "archetypes" / f"{stage}.yaml"
             for item in _load_yaml_rules(path):
                 feat = str(item.get("feature") or "")
                 if not feat:
                     continue
                 line = {
                     "y": item["y"],
-                    "label": item.get("label") or f"{feat} {item.get('operator', '')}{item['y']:g}",
+                    "label": item.get("label")
+                    or f"{feat} {item.get('operator', '')}{item['y']:g}",
                     "operator": item.get("operator") or "",
                 }
                 existing = out.setdefault(feat, [])
@@ -118,4 +121,12 @@ def semantic_hint_for_column(column: str, value: Optional[float]) -> str:
     if col == "bpc_volume_compression_pct":
         ok = v >= 0.9295
         return f"{'通过' if ok else '未过'}({v:.3f}), 阈≥0.9295"
+    if col == "weekly_ema_200_position":
+        if v < 0.0:
+            return f"深熊({v:.3f}), 阈<0"
+        return f"EMA上方({v:.3f}), 阈<0"
+    if col == "ema_1200_position":
+        if v < 0.0:
+            return f"EMA下方({v:.3f}), 阈<0"
+        return f"EMA上方({v:.3f}), 阈<0"
     return ""

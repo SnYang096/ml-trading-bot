@@ -64,9 +64,9 @@ def _align_points_to_candles(
 ) -> List[Dict[str, Any]]:
     """merge_asof feature values onto OHLCV bar times (no future leak).
 
-    Uses backward as-of per bar, then forward-fills so candles after the last
-    feature row still show the latest known value (OHLC often extends past a
-  lagging feature bus).
+      Uses backward as-of per bar, then forward-fills so candles after the last
+      feature row still show the latest known value (OHLC often extends past a
+    lagging feature bus).
     """
     if not points or not candles:
         return list(points or [])
@@ -113,9 +113,12 @@ def _align_points_to_candles(
 
 
 def _reference_lines_for_column(column: str) -> List[Dict[str, Any]]:
-    from mlbot_console.services.feature_thresholds import build_reference_lines_by_column
+    from mlbot_console.config import SETTINGS
+    from mlbot_console.services.feature_thresholds import (
+        build_reference_lines_by_column,
+    )
 
-    ref_map = build_reference_lines_by_column()
+    ref_map = build_reference_lines_by_column(SETTINGS.strategies_root)
     lines = ref_map.get(column) or []
     if not lines and column in REFERENCE_Y_BY_COLUMN:
         y = REFERENCE_Y_BY_COLUMN[column]
@@ -129,7 +132,9 @@ def _semantic_hint(column: str, latest: Optional[float]) -> str:
     return semantic_hint_for_column(column, latest)
 
 
-def _resolve_feature_path(feature_bus_root: Path, symbol: str, timeframe: str) -> Optional[Path]:
+def _resolve_feature_path(
+    feature_bus_root: Path, symbol: str, timeframe: str
+) -> Optional[Path]:
     sym = symbol.upper()
     for sub in FEATURE_DIRS.get(str(timeframe).strip(), []):
         path = feature_bus_root / "features" / sub / f"{sym}.parquet"
@@ -208,7 +213,9 @@ def list_feature_columns(
             "timeframe_dir": None,
         }
         if include_taxonomy:
-            from mlbot_console.services.feature_taxonomy import enrich_columns_with_taxonomy
+            from mlbot_console.services.feature_taxonomy import (
+                enrich_columns_with_taxonomy,
+            )
 
             out.update(enrich_columns_with_taxonomy([]))
         return out
@@ -222,7 +229,9 @@ def list_feature_columns(
             "timeframe_dir": path.parent.name,
         }
         if include_taxonomy:
-            from mlbot_console.services.feature_taxonomy import enrich_columns_with_taxonomy
+            from mlbot_console.services.feature_taxonomy import (
+                enrich_columns_with_taxonomy,
+            )
 
             out.update(enrich_columns_with_taxonomy([]))
         return out

@@ -11,6 +11,7 @@ from mlbot_console.services.main_chart_overlays import (
     _ema1200_from_candle_closes,
     _ema1200_points_local,
     _overlay_points_for_chart,
+    _seed_ema_plausible,
     load_main_chart_overlays,
 )
 from src.live_data_stream.spot_weekly_ema_seed import seed_parquet_path
@@ -255,3 +256,24 @@ def test_weekly_ema_unavailable_without_macro(bus_root) -> None:
         macro_spot_kline_root=None,
     )
     assert not out["weekly_ema_200"]["available"]
+
+
+def test_seed_ema_plausible_rejects_flat_line_far_from_spot(tmp_path) -> None:
+    seed_root = tmp_path / "seed"
+    seed_root.mkdir(parents=True)
+    week = pd.Timestamp("2026-05-19", tz="UTC")
+    pd.DataFrame(
+        {
+            "week_ts": [week],
+            "weekly_ema_200": [374.0],
+        }
+    ).to_parquet(seed_parquet_path(seed_root, "BNBUSDT"), index=False)
+    candles = [
+        {
+            "time": int((pd.Timestamp("2026-05-23 02:00", tz="UTC")).timestamp()),
+            "close": 650.0,
+        }
+    ]
+    seed = pd.read_parquet(seed_parquet_path(seed_root, "BNBUSDT"))
+    assert not _seed_ema_plausible(seed, candles)
+    assert _align_weekly_ema_seed_to_candles(seed_root, "BNBUSDT", candles) == []

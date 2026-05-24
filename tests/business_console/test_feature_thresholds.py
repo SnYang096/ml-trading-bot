@@ -26,3 +26,23 @@ def test_build_reference_lines_builtin():
     refs = build_reference_lines_by_column()
     assert "tpc_semantic_chop" in refs
     assert any(abs(r["y"] - 0.40) < 1e-6 for r in refs["tpc_semantic_chop"])
+
+
+def test_build_reference_lines_includes_spot_weekly_ema(tmp_path):
+    strat = tmp_path / "spot_accum_simple" / "archetypes"
+    strat.mkdir(parents=True)
+    (strat / "prefilter.yaml").write_text(
+        "rules:\n"
+        "  - feature: weekly_ema_200_position\n"
+        "    operator: <\n"
+        "    value: 0.0\n",
+        encoding="utf-8",
+    )
+    refs = build_reference_lines_by_column(tmp_path)
+    assert "weekly_ema_200_position" in refs
+    assert any(abs(r["y"]) < 1e-9 for r in refs["weekly_ema_200_position"])
+
+
+def test_semantic_hint_weekly_ema_position():
+    assert "深熊" in semantic_hint_for_column("weekly_ema_200_position", -0.05)
+    assert "EMA上方" in semantic_hint_for_column("weekly_ema_200_position", 0.02)

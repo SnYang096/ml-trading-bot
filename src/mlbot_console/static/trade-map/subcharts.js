@@ -127,6 +127,13 @@ function featurePaneCaption(column, overlay) {
       : column;
   const latest = overlay?.latest;
   const hint = overlay?.semantic_hint || "";
+  const refLines = overlay?.reference_lines || [];
+  const refHint =
+    refLines.length > 0
+      ? refLines.map((r) => r.label || `阈${r.y}`).join(" · ")
+      : overlay?.reference_y != null && overlay.reference_y === overlay.reference_y
+        ? `阈=${Number(overlay.reference_y)}`
+        : "";
   if (latest != null && latest === latest && Number.isFinite(Number(latest))) {
     const v = Number(latest);
     const decimals =
@@ -134,12 +141,24 @@ function featurePaneCaption(column, overlay) {
         ? 3
         : 2;
     const valStr = v.toFixed(decimals);
-    return hint ? `${base} ${valStr} (${hint})` : `${base} ${valStr}`;
+    const parts = [base, valStr];
+    if (hint) parts.push(`(${hint})`);
+    else if (refHint) parts.push(`(${refHint})`);
+    return parts.join(" ");
   }
+  if (refHint) return `${base} · ${refHint}`;
+  if (overlay?.available === false) return `${base} · 无数据`;
   return base;
 }
 
-function syncFeatureRefLines(pane, overlay, pts) {
+function refLineTimeline(pts, candles) {
+  if (pts?.length) return pts.map((p) => ({ time: p.time, value: p.value }));
+  return (candles || [])
+    .filter((c) => c && c.time != null)
+    .map((c) => ({ time: c.time, value: 0 }));
+}
+
+function syncFeatureRefLines(pane, overlay, pts, candles) {
   if (pane.refSeriesList) {
     for (const s of pane.refSeriesList) {
       try {
@@ -156,7 +175,8 @@ function syncFeatureRefLines(pane, overlay, pts) {
       : overlay.reference_y != null && overlay.reference_y === overlay.reference_y
         ? [{ y: overlay.reference_y, label: "" }]
         : [];
-  const linePts = pts.map((p) => ({ time: p.time, value: p.value }));
+  const timeline = refLineTimeline(pts, candles);
+  if (!timeline.length || !refLines.length) return;
   for (const rl of refLines) {
     const y = Number(rl.y);
     if (!Number.isFinite(y)) continue;
@@ -166,15 +186,16 @@ function syncFeatureRefLines(pane, overlay, pts) {
       lineStyle: 2,
       priceLineVisible: false,
       lastValueVisible: false,
+      title: rl.label || "",
     });
-    rs.setData(linePts.map((p) => ({ time: p.time, value: y })));
+    rs.setData(timeline.map((p) => ({ time: p.time, value: y })));
     pane.refSeriesList.push(rs);
   }
 }
 
-function ensureFeaturePane(column, overlay, colorIndex) {
+function ensureFeaturePane(column, overlay, colorIndex, candles) {
   const id = `feat:${column}`;
-  if (!overlay?.available) {
+  if (!overlay) {
     destroySubchart(id);
     return;
   }
@@ -210,7 +231,7 @@ function ensureFeaturePane(column, overlay, colorIndex) {
   }
   const pts = overlay.points || [];
   pane.series.setData(pts.map((p) => ({ time: p.time, value: p.value })));
-  syncFeatureRefLines(pane, overlay, pts);
+  syncFeatureRefLines(pane, overlay, pts, candles);
   requestAnimationFrame(() => {
     resizeAllSubcharts();
     syncSubchartsToMainRange();
@@ -241,7 +262,17 @@ function syncSubcharts(candles, overlays) {
       domOrder.push(subchartDomId(headerDomKey(item)));
     } else if (item.type === "feature") {
       const fid = `feat:${item.column}`;
-      ensureFeaturePane(item.column, overlays?.[item.column], colorIdx);
+      const overlaySpec =
+        overlays?.[item.column] ||
+        S.lastOverlays?.[item.column] ||
+        {
+          available: false,
+          column: item.column,
+          points: [],
+          reference_lines: [],
+          reference_y: null,
+        };
+      ensureFeaturePane(item.column, overlaySpec, colorIdx, candles);
       colorIdx += 1;
       domOrder.push(subchartDomId(fid));
     }

@@ -162,7 +162,9 @@ def _resample_candles_to_2h(candles: List[Dict[str, Any]]) -> List[Dict[str, Any
         if t is None or close is None:
             continue
         try:
-            rows.append((_utc_ts(pd.Timestamp(int(t), unit="s", tz="UTC")), float(close)))
+            rows.append(
+                (_utc_ts(pd.Timestamp(int(t), unit="s", tz="UTC")), float(close))
+            )
         except (TypeError, ValueError):
             continue
     if not rows:
@@ -268,7 +270,9 @@ def _align_ma_to_candles(
         tgt = pd.DataFrame(
             {
                 "timestamp": _utc_datetime64ns(
-                    pd.to_datetime([int(c["time"]) for c in candles], unit="s", utc=True)
+                    pd.to_datetime(
+                        [int(c["time"]) for c in candles], unit="s", utc=True
+                    )
                 ),
                 "close": [float(c.get("close") or 0) for c in candles],
                 "ord": range(len(candles)),
@@ -308,6 +312,33 @@ def _align_ma_to_candles(
     return _overlay_points_for_chart(native, candles)
 
 
+def _seed_ema_plausible(
+    seed: pd.DataFrame,
+    candles: List[Dict[str, Any]],
+    *,
+    ema_column: str = "weekly_ema_200",
+    max_rel_gap: float = 0.35,
+) -> bool:
+    """Reject macro seed when EMA is far from spot (stale flat-line bug)."""
+    if seed is None or seed.empty or ema_column not in seed.columns or not candles:
+        return False
+    ema = pd.to_numeric(seed[ema_column], errors="coerce").dropna()
+    if ema.empty:
+        return False
+    closes = [
+        float(c.get("close") or 0)
+        for c in candles
+        if c.get("close") is not None and float(c.get("close") or 0) > 0
+    ]
+    if not closes:
+        return True
+    ref_close = closes[-1]
+    ref_ema = float(ema.iloc[-1])
+    if ref_close <= 0 or ref_ema <= 0:
+        return False
+    return abs(ref_ema - ref_close) / ref_close <= float(max_rel_gap)
+
+
 def _align_weekly_ema_seed_to_candles(
     macro_seed_root: Any,
     symbol: str,
@@ -323,6 +354,8 @@ def _align_weekly_ema_seed_to_candles(
     if seed is None or seed.empty or ema_column not in seed.columns:
         return []
     if _seed_is_stale_for_chart(seed, candles):
+        return []
+    if not _seed_ema_plausible(seed, candles, ema_column=ema_column):
         return []
     ema = pd.to_numeric(seed[ema_column], errors="coerce").dropna()
     if ema.empty:
