@@ -390,7 +390,6 @@ jobs:
             [Service]
             Restart=always
             RestartSec=10
-            ExecStopPost=-/opt/quant-engine/monitoring/scripts/quant_telegram_notify.sh %n exited
             Environment=MLBOT_LIVE_SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
             ExecStartPre=-/usr/bin/docker rm -f quant-feature-bus
             ExecStart=/usr/bin/docker run --rm --name quant-feature-bus \
@@ -443,7 +442,6 @@ jobs:
             [Service]
             Restart=always
             RestartSec=10
-            ExecStopPost=-/opt/quant-engine/monitoring/scripts/quant_telegram_notify.sh %n exited
             Environment=MLBOT_FEATURE_SOURCE=bus
             Environment=MLBOT_FEATURE_BUS_ROOT=live/shared_feature_bus
             Environment=MLBOT_FEATURE_BUS_POLL_SECONDS=5
@@ -487,7 +485,6 @@ jobs:
             [Service]
             Restart=always
             RestartSec=5
-            ExecStopPost=-/opt/quant-engine/monitoring/scripts/quant_telegram_notify.sh %n exited
             Environment=MLBOT_ACCOUNT_SCOPE=multi_leg
             ExecStartPre=-/usr/bin/docker rm -f quant-hedge-multileg
             ExecStart=/usr/bin/docker run --rm --name quant-hedge-multileg \
@@ -529,7 +526,6 @@ jobs:
             [Service]
             Restart=always
             RestartSec=10
-            ExecStopPost=-/opt/quant-engine/monitoring/scripts/quant_telegram_notify.sh %n exited
             Environment=MLBOT_FEATURE_BUS_ROOT=live/shared_feature_bus
             Environment=MLBOT_SPOT_SHADOW_MODE=false
             Environment=MLBOT_METRICS_PORT=9090

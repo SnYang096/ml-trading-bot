@@ -635,28 +635,56 @@ function fullWidthPriceLine(candles, price) {
   ];
 }
 
-/** Grid/chop lines inside prefilter (or chop regime) time spans only. */
+/** Grid/chop lines inside prefilter (or chop regime) time spans only.
+ * Merges overlapping spans, clips to candle range, and inserts NaN breakpoints
+ * (matching `Core.chopSegmentedLinePoints`) so the series doesn't visually
+ * connect across gaps. */
 function priceLineInSpans(candles, spans, price) {
   const px = Number(price);
   if (!candles?.length || !spans?.length || !Number.isFinite(px)) return [];
-  const pts = [];
-  const sorted = [...spans].sort(
-    (a, b) => Number(a.start) - Number(b.start)
-  );
-  for (const span of sorted) {
-    const start = Number(span.start);
-    const end = Number(span.end);
-    let firstT = null;
-    let lastT = null;
-    for (const c of candles) {
-      const t = Number(c.time);
-      if (t >= start && t <= end) {
-        if (firstT == null) firstT = t;
-        lastT = t;
-      }
+  const firstCandle = Number(candles[0].time);
+  const lastCandle = Number(candles[candles.length - 1].time);
+  const sortedRaw = [...spans]
+    .map((s) => ({ start: Number(s.start), end: Number(s.end) }))
+    .filter(
+      (s) =>
+        Number.isFinite(s.start) &&
+        Number.isFinite(s.end) &&
+        s.end >= s.start &&
+        s.end >= firstCandle &&
+        s.start <= lastCandle
+    )
+    .map((s) => ({
+      start: Math.max(s.start, firstCandle),
+      end: Math.min(s.end, lastCandle),
+    }))
+    .sort((a, b) => a.start - b.start);
+  if (!sortedRaw.length) return [];
+  const merged = [sortedRaw[0]];
+  for (let i = 1; i < sortedRaw.length; i++) {
+    const cur = sortedRaw[i];
+    const last = merged[merged.length - 1];
+    if (cur.start <= last.end) {
+      last.end = Math.max(last.end, cur.end);
+    } else {
+      merged.push({ ...cur });
     }
-    if (firstT != null && lastT != null) {
-      pts.push({ time: firstT, value: px }, { time: lastT, value: px });
+  }
+  const pts = [];
+  for (let i = 0; i < merged.length; i++) {
+    const span = merged[i];
+    if (span.start === span.end) {
+      pts.push({ time: span.start, value: px });
+    } else {
+      pts.push({ time: span.start, value: px });
+      pts.push({ time: span.end, value: px });
+    }
+    if (i < merged.length - 1) {
+      const next = merged[i + 1];
+      const gapT = span.end + 1;
+      if (gapT < next.start) {
+        pts.push({ time: gapT, value: NaN });
+      }
     }
   }
   return pts;

@@ -145,6 +145,39 @@ def test_account_summary_api(client) -> None:
     assert "totals" in body["data"]
     assert len(body["data"]["scopes"]) == 3
     assert body["meta"]["lookback_days"] == 0
+    assert "recent_realized" in body["data"]
+
+
+def test_account_summary_filters_by_scopes(
+    trend_db, spot_db, spot_ledger_db, multi_leg_db, bus_root
+) -> None:
+    """scopes filter limits totals/strategies/daily aggregation to selected scopes."""
+    full = build_account_summary(
+        trend_db=trend_db,
+        spot_db=spot_db,
+        spot_ledger_db=spot_ledger_db,
+        multi_leg_db=multi_leg_db,
+        feature_bus_root=bus_root,
+        symbol="ETHUSDT",
+        lookback_days=0,
+    )
+    trend_only = build_account_summary(
+        trend_db=trend_db,
+        spot_db=spot_db,
+        spot_ledger_db=spot_ledger_db,
+        multi_leg_db=multi_leg_db,
+        feature_bus_root=bus_root,
+        symbol="ETHUSDT",
+        lookback_days=0,
+        scopes=["trend"],
+    )
+    assert {s["scope"] for s in trend_only["scopes"]} == {"trend"}
+    assert all(s["scope"] == "trend" for s in trend_only["strategies"])
+    assert trend_only["totals"]["realized_pnl"] == pytest.approx(
+        next(s for s in full["scopes"] if s["scope"] == "trend")["realized_pnl"]
+    )
+    # Global ledger fields stay unfiltered (account-wide).
+    assert trend_only["totals"].get("equity_usdt") == full["totals"].get("equity_usdt")
 
 
 def test_orders_list_api_includes_pnl_on_trend_exit(client) -> None:
