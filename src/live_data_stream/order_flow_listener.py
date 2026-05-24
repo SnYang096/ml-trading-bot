@@ -1395,7 +1395,9 @@ class OrderFlowListener:
         恢复状态（简化版：只恢复时间戳 + memory_window）
 
         特征计算已改为磁盘批量模式 (compute_features_batch)，
-        不再需要通过回放 bars/ticks 重建流式状态。
+        不再需要通过回放 bars/ticks 重建流式状态。warmup 数据可能跨越多天，
+        但 memory_window 只持 ``memory_window_hours``，因此这里只取尾部，避免
+        无谓地把数十万行送进 add() 后立刻被淘汰。
 
         Args:
             data: warmup数据字典，可包含：
@@ -1421,8 +1423,14 @@ class OrderFlowListener:
         # 恢复 memory_window（BPC 决策引擎需要近期 bars）
         bars_1min = data.get("bars_1min", pd.DataFrame())
         if len(bars_1min) > 0:
-            logger.info("  → Restoring memory_window: %d bars", len(bars_1min))
-            for row in bars_1min.itertuples(index=False):
+            window_minutes = max(1, int(self.memory_window_hours * 60))
+            tail_bars = bars_1min.tail(window_minutes)
+            logger.info(
+                "  → Restoring memory_window: keep last %d/%d bars",
+                len(tail_bars),
+                len(bars_1min),
+            )
+            for row in tail_bars.itertuples(index=False):
                 bar_data = {
                     "timestamp": row.timestamp,
                     "open": float(getattr(row, "open", 0)),

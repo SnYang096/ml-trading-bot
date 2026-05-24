@@ -99,25 +99,15 @@ flowchart LR
 
 ## Bus 容量的真实含义
 
-`scripts/run_market_feature_publisher.py` 启动时：
+`scripts/run_market_feature_publisher.py` 直接用 `--max-rows` 创建 writer，不再受 `--warmup-days` 影响：
 
 ```python
-max_rows = effective_max_rows_for_warmup(args.max_rows, args.warmup_days)
-```
-
-```python
-def effective_max_rows_for_warmup(max_rows: int, warmup_days: int) -> int:
-    """Parquet rolling cap must cover warmup window or console only sees ~2d of 1m bars."""
-    cap = int(max_rows)
-    days = int(warmup_days)
-    if days <= 0:
-        return cap
-    return max(cap, days * 24 * 60)
+writer = FeatureBusWriter(args.feature_bus_root, max_rows=int(args.max_rows))
 ```
 
 线上 systemd 当前是 `--max-rows 10080 --warmup-days 7` → 上限 **10080 行（≈ 7 天 1m bars）**。
 
-历史值是 `--max-rows 3000 --warmup-days 180`，对应 259200 行（180 天）。改下来的原因见下文「Bus 容量的真实含义」。
+历史上曾经有 `effective_max_rows_for_warmup(max_rows, warmup_days)` 自动放大逻辑（`max(max_rows, warmup_days*24*60)`），用于"console 直接读 bus 看长历史"的旧形态。Trade Map 引入 stitching 之后这条耦合不再有意义，反而让 backfill 脚本误把 prod bus 砍短，已删除。
 
 但 **bus 实际行数 = 容器持续运行的分钟数**：
 
@@ -156,6 +146,63 @@ def effective_max_rows_for_warmup(max_rows: int, warmup_days: int) -> int:
 | `MLBOT_AUTO_GAP_FILL_MIN_GAP_MINUTES` | 60 | 60 | <60min 小洞 archive 自身就有，影响 Trade Map 显示但不影响特征 |
 
 `max_rows` 从 259200 降到 10080 后，bus parquet 从 10 MB 量级降到约 400 KB，下游每分钟全量 `pd.read_parquet` 从 ~500ms 降到 ~20ms。180 天 warmup 启动时把 ~26 万行 1m bars 灌入 4h cap 的 memory_window，绝大多数被立即 evict，纯属浪费启动时间和内存峰值；7 天足够。
+
+## 流式 incremental vs 磁盘批量 (compute_features_batch)
+
+> "磁盘不能计算吧，还是要读到内存？" — 对，两条路径都要读到内存。区别是 **state 是否跨 tick 持久化** 以及由此决定的 **重启代价**。
+
+```mermaid
+flowchart LR
+    subgraph stream [流式 incremental（已废弃）]
+        T1[tick] --> S1[on_tick state.add]
+        T2[tick] --> S2[on_tick state.add]
+        T3[tick] --> S3[on_tick state.add]
+        S1 -.persist.-> S2 -.persist.-> S3
+        S3 --> Out1[输出最新一行]
+        Out1 --> R1[重启需回放<br/>180 天 ticks/bars<br/>重建 EMA/quantile state]
+    end
+
+    subgraph batch [磁盘批量（当前）]
+        Tick[每 15 分钟] --> Read[load_range 150 天 bars<br/>→ DataFrame]
+        Read --> Compute[一次性 rolling/quantile/atr<br/>整段算完]
+        Compute --> Out2[输出最新一行]
+        Out2 --> Drop[DataFrame 释放]
+        Drop --> R2[重启无需回放]
+    end
+```
+
+| 维度 | 流式 incremental | 磁盘批量 (`compute_features_batch`) |
+|------|------------------|----------------------------------------|
+| 单次开销 | O(1)，每根 bar 维护几个累加器 | O(N)，N ≈ 150 天 × 1440 ≈ 22 万行 |
+| 触发频率 | 每根 bar 都调 | 每 15 分钟 1 次 |
+| 内存占用 | 长期保持（EMA / quantile buffer） | 计算窗口短，结束即释放 |
+| 跨 tick 状态 | **持久化在 publisher 内存** | **无**，每次重新算 |
+| 重启代价 | 必须回放历史 bars 重建 state | 直接读盘算一次 |
+| 出错可观察性 | 状态飘移难定位 | 每次窗口独立可重放、diff 容易 |
+
+代码上的体现：
+
+```python
+# src/live_data_stream/order_flow_listener.py
+bar_lookback_days = 150
+bar_start = (now - timedelta(days=bar_lookback_days)).strftime("%Y-%m-%d")
+bars_disk = self.storage_manager.bar_1min.load_range(self.symbol, bar_start, bar_end)
+bars_merged = self._merge_bars(bars_disk, bars_buffer)  # archive 150d ⊕ memory 4h
+features = self.feature_computer.compute_features_batch(bars_1min=bars_merged, ...)
+```
+
+迁移到批量后，**state 不再活在 publisher 内存里，只活在 archive parquet 上**。这就是 `--warmup-days 180` 失去意义的根因——回放出来的 state 无人消费。
+
+## warmup_days 的现状
+
+`--warmup-days` 已经不直接驱动特征计算，但还服务两件事：
+
+1. **`_restore_state` 给 `memory_window` 喂启动 bars**：4h cap，所以 warmup_days≥1 就够（实现里取 tail，避免无谓地把数十万行送进 add() 后立刻被淘汰）。
+2. **`_startup_gap_repair` 的回扫窗口**：`max(--auto-gap-fill-startup-lookback-hours, warmup_days*24)`，决定启动时 archive 完整性扫描多久。
+
+> 已删除的耦合：`max_rows = effective_max_rows_for_warmup(max_rows, warmup_days)`。bus 容量现在只由 `--max-rows` 决定。
+
+未来如果完全改用 archive-only 启动校验，`--warmup-days` 也可以下沉成 `--startup-scan-hours` 之类的语义化参数。
 
 ## 排查路径
 
