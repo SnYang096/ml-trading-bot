@@ -1,100 +1,105 @@
-"""Console strategy registry aligned with constitution.yaml (trend / spot / multi-leg)."""
+"""Console strategy id → account layer (B / A / C)."""
 
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Any, Dict, List
+from typing import Dict, List, Optional
 
-import yaml
+from time_series_model.live.feature_stage_taxonomy import CONSOLE_STRATEGIES
 
-from live_data_stream.constitution_config import (
-    enabled_archetypes_from_constitution,
-    load_constitution_dict,
-    multi_leg_strategies_from_constitution,
-    spot_strategies_from_constitution,
-)
-from mlbot_console.config import SETTINGS
-
-# Display titles for known strategy slugs (constitution id -> UI label).
-STRATEGY_TITLES: Dict[str, str] = {
-    "tpc": "TPC",
-    "bpc": "BPC",
-    "me": "ME",
-    "srb": "SRB",
-    "spot_accum_simple": "Spot",
-    "chop_grid": "Chop Grid",
-    "trend_scalp": "Trend Scalp",
+_STRATEGY_LAYER: Dict[str, str] = {
+    str(meta["id"]).lower(): str(meta["account_layer"])
+    for meta in CONSOLE_STRATEGIES
 }
 
-_FALLBACK_STRATEGIES: List[Dict[str, str]] = [
-    {"id": "tpc", "account_layer": "trend", "title": "TPC"},
-    {"id": "bpc", "account_layer": "trend", "title": "BPC"},
-    {"id": "me", "account_layer": "trend", "title": "ME"},
-    {"id": "srb", "account_layer": "trend", "title": "SRB"},
-    {"id": "spot_accum_simple", "account_layer": "spot", "title": "Spot"},
-    {"id": "chop_grid", "account_layer": "multi_leg", "title": "Chop Grid"},
-    {"id": "trend_scalp", "account_layer": "multi_leg", "title": "Trend Scalp"},
-]
+_LAYER_LABELS: Dict[str, str] = {
+    "trend": "B·Trend",
+    "spot": "A·Spot",
+    "multi_leg": "C·Multi-leg",
+}
 
 
-def _title(strategy_id: str) -> str:
+def strategy_account_layer(strategy_id: str) -> str:
+    """Return trend | spot | multi_leg; unknown trend strategies default to trend."""
     sid = str(strategy_id or "").strip().lower()
-    return STRATEGY_TITLES.get(sid, sid.replace("_", " ").title() or sid)
+    if not sid:
+        return "trend"
+    if sid in _STRATEGY_LAYER:
+        return _STRATEGY_LAYER[sid]
+    if sid in ("spot", "multi_leg", "trend"):
+        return sid
+    if "spot" in sid:
+        return "spot"
+    if sid in ("chop", "grid", "multileg", "multi_leg"):
+        return "multi_leg"
+    return "trend"
 
 
-def strategies_from_constitution_cfg(cfg: Dict[str, Any]) -> List[Dict[str, str]]:
-    out: List[Dict[str, str]] = []
-    seen: set[str] = set()
-    for sid in enabled_archetypes_from_constitution(cfg):
-        slug = str(sid).strip().lower()
-        if not slug or slug in seen:
-            continue
-        seen.add(slug)
-        out.append({"id": slug, "account_layer": "trend", "title": _title(slug)})
-    for sid in spot_strategies_from_constitution(cfg):
-        slug = str(sid).strip().lower()
-        if not slug or slug in seen:
-            continue
-        seen.add(slug)
-        out.append({"id": slug, "account_layer": "spot", "title": _title(slug)})
-    for sid in multi_leg_strategies_from_constitution(cfg):
-        slug = str(sid).strip().lower()
-        if not slug or slug in seen:
-            continue
-        seen.add(slug)
-        out.append({"id": slug, "account_layer": "multi_leg", "title": _title(slug)})
-    return out
+def account_layer_label(layer: str) -> str:
+    return _LAYER_LABELS.get(str(layer or ""), str(layer or ""))
+
+
+def known_strategy_ids() -> tuple[str, ...]:
+    return tuple(sorted(_STRATEGY_LAYER.keys()))
+
+
+def strategies_for_layer(layer: str) -> tuple[str, ...]:
+    lay = str(layer or "").strip().lower()
+    return tuple(sid for sid, acct in _STRATEGY_LAYER.items() if acct == lay)
+
+
+def default_spot_strategy_id() -> str:
+    ids = strategies_for_layer("spot")
+    return ids[0] if ids else "spot_accum_simple"
+
+
+def spot_strategy_ids() -> tuple[str, ...]:
+    return strategies_for_layer("spot")
 
 
 @lru_cache(maxsize=1)
 def get_console_strategies() -> List[Dict[str, str]]:
-    path = SETTINGS.constitution_yaml
-    if path.is_file():
-        try:
-            cfg = load_constitution_dict(str(path))
-            rows = strategies_from_constitution_cfg(cfg)
-            if rows:
-                return rows
-        except (OSError, ValueError, TypeError, yaml.YAMLError):
-            pass
-    return list(_FALLBACK_STRATEGIES)
+    """Strategy registry for taxonomy / constitution summary (id, account_layer, title)."""
+    by_id: Dict[str, Dict[str, str]] = {
+        str(meta["id"]): {
+            "id": str(meta["id"]),
+            "account_layer": str(meta["account_layer"]),
+            "title": str(meta.get("title") or meta["id"]),
+        }
+        for meta in CONSOLE_STRATEGIES
+    }
+    try:
+        from mlbot_console.config import SETTINGS
+        from src.live_data_stream.constitution_config import (
+            load_constitution_dict,
+            resolve_constitution_yaml_path,
+            strategies_for_slot_metrics_from_constitution,
+        )
+
+        path = resolve_constitution_yaml_path(override=str(SETTINGS.constitution_yaml))
+        cfg = load_constitution_dict(path)
+        for sid in strategies_for_slot_metrics_from_constitution(cfg):
+            if sid in by_id:
+                continue
+            by_id[sid] = {
+                "id": sid,
+                "account_layer": strategy_account_layer(sid),
+                "title": sid,
+            }
+    except Exception:
+        pass
+    return sorted(by_id.values(), key=lambda x: x["id"])
 
 
-def strategy_title(strategy_id: str) -> str:
-    return _title(strategy_id)
-
-
-def strategies_for_account_layer(account_layer: str) -> List[Dict[str, str]]:
+def layer_for_funnel_filter(
+  account_layer: str,
+  strategy: str,
+) -> Optional[str]:
+    """Resolve effective account layer when API passes layer and/or strategy filters."""
+    strat = str(strategy or "").strip().lower()
     layer = str(account_layer or "").strip().lower()
-    return [s for s in get_console_strategies() if s.get("account_layer") == layer]
-
-
-def spot_strategy_ids() -> List[str]:
-    """Spot strategy slugs from constitution (spot.strategies), in declaration order."""
-    ids = [str(s["id"]).strip().lower() for s in strategies_for_account_layer("spot")]
-    return ids or ["spot_accum_simple"]
-
-
-def default_spot_strategy_id() -> str:
-    ids = spot_strategy_ids()
-    return ids[0] if ids else "spot_accum_simple"
+    if strat:
+        return strategy_account_layer(strat)
+    if layer in _LAYER_LABELS:
+        return layer
+    return None

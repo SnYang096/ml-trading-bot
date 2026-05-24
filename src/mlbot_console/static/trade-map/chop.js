@@ -200,11 +200,14 @@ function priceLineInSpans(candles, spans, price) {
   return pts;
 }
 
-function chopGridLineSpans(candles, data) {
-  if (document.getElementById("layerPrefilter")?.checked && S.lastPrefilterSpans.length) {
-    return S.lastPrefilterSpans;
-  }
+function chopOverlaySpans(data) {
+  // Grid + chop band share prefilter windows when available (actual trading spans).
+  if (S.lastPrefilterSpans?.length) return S.lastPrefilterSpans;
   return data?.chop_regime_regions || [];
+}
+
+function chopGridLineSpans(candles, data) {
+  return chopOverlaySpans(data);
 }
 
 function ensureChopGridLabelLayer() {
@@ -363,11 +366,10 @@ function applyChopGridOverlay(overlay, candles, lineSpans) {
 function applyChopMapLayers(data, candles) {
   clearChopGridOverlay();
   if (!data) return;
-  const regions = data.chop_regime_regions || [];
   applyStrategyStageRegions(data, candles);
   const gridSpans = chopGridLineSpans(candles, data);
   if (chopGridOverlayEnabled()) {
-    applyChopPriceBand(regions, candles, data.chop_grid_overlay || {});
+    applyChopPriceBand(gridSpans, candles, data.chop_grid_overlay || {});
     applyChopGridOverlay(data.chop_grid_overlay || {}, candles, gridSpans);
     bindChopGridLabelSync();
     layoutChopGridLabels(candles);

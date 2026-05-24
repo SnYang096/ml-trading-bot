@@ -5,6 +5,12 @@
 const Shell = globalThis.MLBotConsole;
 const POLL_MS = 20000;
 
+const LAYER_LABELS = {
+  trend: "B·Trend",
+  spot: "A·Spot",
+  multi_leg: "C·Multi-leg",
+};
+
 let pollTimer;
 
 function setStatus(msg) {
@@ -25,6 +31,41 @@ function esc(s) {
     .replace(/"/g, "&quot;");
 }
 
+function strategyLayerLabel(layer) {
+  return LAYER_LABELS[layer] || layer || "—";
+}
+
+function renderStrategyLines(scopeBlock) {
+  const by = scopeBlock?.by_strategy || {};
+  const keys = Object.keys(by).sort();
+  if (!keys.length) {
+    return `<span class="muted">${esc(scopeBlock?.summary || "—")}</span>`;
+  }
+  return keys
+    .map((sid) => {
+      const row = by[sid] || {};
+      const funnel = row.funnel_summary ? ` <span class="muted">· ${esc(row.funnel_summary)}</span>` : "";
+      const title = esc(row.last_summary || row.summary || "");
+      return `<div class="strategy-line"><strong>${esc(sid)}</strong> ${esc(row.summary || "—")}${funnel}</div>`;
+    })
+    .join("");
+}
+
+function renderLastStrategyLines(scopeBlock) {
+  const by = scopeBlock?.by_strategy || {};
+  const keys = Object.keys(by).sort();
+  if (!keys.length) return esc(scopeBlock?.last_summary || "—");
+  return keys
+    .map((sid) => {
+      const row = by[sid] || {};
+      const last = row.last_summary || "—";
+      if (last === "—") return "";
+      return `<div><strong>${esc(sid)}</strong> ${esc(last)}</div>`;
+    })
+    .filter(Boolean)
+    .join("") || esc(scopeBlock?.last_summary || "—");
+}
+
 function renderRows(rows) {
   const tbody = document.getElementById("signalsBody");
   if (!rows.length) {
@@ -37,16 +78,20 @@ function renderRows(rows) {
       const s = r.strategies?.spot || {};
       const m = r.strategies?.multi_leg || {};
       const mapHref = r.map_href || `/trade-map?symbol=${r.symbol}`;
+      const spotTitle = Object.values(s.by_strategy || {})
+        .map((x) => (x.blockers || []).join(", "))
+        .filter(Boolean)
+        .join("; ");
       return `<tr>
         <td><strong>${esc(r.symbol)}</strong></td>
         <td>${esc(fmtBarTime(r.latest_bar))}</td>
         <td>${r.bars_1min_rows ?? "—"}</td>
         <td><a href="${esc(mapHref)}">地图</a></td>
-        <td title="${esc(t.last_summary)}">${esc(t.summary)}</td>
-        <td class="muted">${esc(t.last_summary)}</td>
-        <td title="${esc((s.blockers || []).join(", "))}">${esc(s.summary)}</td>
-        <td title="${esc(m.last_summary)}">${esc(m.summary)}</td>
-        <td class="muted">${esc(m.last_summary)}</td>
+        <td class="strategy-cell">${renderStrategyLines(t)}</td>
+        <td class="muted strategy-cell">${renderLastStrategyLines(t)}</td>
+        <td class="strategy-cell" title="${esc(spotTitle)}">${renderStrategyLines(s)}</td>
+        <td class="strategy-cell">${renderStrategyLines(m)}</td>
+        <td class="muted strategy-cell">${renderLastStrategyLines(m)}</td>
       </tr>`;
     })
     .join("");
@@ -64,6 +109,7 @@ function renderFunnelRows(rows) {
         timestamp: snap.timestamp,
         symbol: snap.symbol || "",
         strategy: strat,
+        account_layer: inferStrategyLayer(strat),
         regime_passed: st.regime_passed ?? 0,
         regime_denied: st.regime_denied ?? 0,
         prefilter_passed: st.prefilter_passed ?? 0,
@@ -74,15 +120,17 @@ function renderFunnelRows(rows) {
     }
   }
   if (!flat.length) {
-    tbody.innerHTML = '<tr><td colspan="9" class="muted">无 funnel 数据（需实盘 stats_15min）</td></tr>';
+    tbody.innerHTML =
+      '<tr><td colspan="10" class="muted">无 funnel 数据（B 层需 quant-trend 写 stats_15min；A/C 见上表各策略成交行）</td></tr>';
     return;
   }
   tbody.innerHTML = flat
-    .slice(0, 80)
+    .slice(0, 120)
     .map(
       (r) => `<tr>
         <td>${esc(String(r.timestamp || "").slice(0, 16))}</td>
         <td>${esc(r.symbol)}</td>
+        <td>${esc(strategyLayerLabel(r.account_layer))}</td>
         <td>${esc(r.strategy)}</td>
         <td>${r.regime_passed}</td>
         <td>${r.regime_denied}</td>
@@ -95,23 +143,53 @@ function renderFunnelRows(rows) {
     .join("");
 }
 
+function inferStrategyLayer(strategyId) {
+  const sid = String(strategyId || "").toLowerCase();
+  if (sid.includes("spot")) return "spot";
+  if (sid === "chop_grid" || sid === "trend_scalp") return "multi_leg";
+  return "trend";
+}
+
+function fillSelectOptions(sel, values, keepFirst = true) {
+  if (!sel) return;
+  const current = sel.value;
+  const existing = new Set(
+    [...sel.options].slice(keepFirst ? 1 : 0).map((o) => o.value)
+  );
+  for (const v of values) {
+    if (existing.has(v)) continue;
+    const o = document.createElement("option");
+    o.value = v;
+    o.textContent = v;
+    sel.appendChild(o);
+    existing.add(v);
+  }
+  if ([...sel.options].some((o) => o.value === current)) {
+    sel.value = current;
+  }
+}
+
 async function refreshFunnel() {
   const symSel = document.getElementById("funnelSymbolSelect");
+  const layerSel = document.getElementById("funnelLayerSelect");
+  const stratSel = document.getElementById("funnelStrategySelect");
   const sym = symSel?.value || "";
+  const layer = layerSel?.value || "";
+  const strat = stratSel?.value || "";
   const q = new URLSearchParams({ limit: "48" });
   if (sym) q.set("symbol", sym);
+  if (layer) q.set("account_layer", layer);
+  if (strat) q.set("strategy", strat);
   try {
     const { data } = await Shell.api(`/api/trend/funnel?${q}`);
     renderFunnelRows(data || []);
     const symbols = new Set((data || []).map((r) => r.symbol).filter(Boolean));
-    if (symSel && symSel.options.length <= 1) {
-      for (const s of [...symbols].sort()) {
-        const o = document.createElement("option");
-        o.value = s;
-        o.textContent = s;
-        symSel.appendChild(o);
-      }
+    const strategies = new Set();
+    for (const snap of data || []) {
+      for (const sid of Object.keys(snap.by_strategy || {})) strategies.add(sid);
     }
+    fillSelectOptions(symSel, [...symbols].sort());
+    fillSelectOptions(stratSel, [...strategies].sort());
   } catch (_) {
     renderFunnelRows([]);
   }
@@ -126,12 +204,12 @@ async function refreshSignals() {
   const q = new URLSearchParams({ timeframe, lookback_days: lookback });
   const { data, meta } = await Shell.api(`/api/trade-map/signals?${q}`);
   renderRows(data || []);
-  
+
   const funnelPanel = document.querySelector(".funnel-panel");
   if (funnelPanel && funnelPanel.open) {
     await refreshFunnel();
   }
-  
+
   setStatus(
     `${meta.count ?? (data || []).length} symbols · ${timeframe} · ${lookback}d · ${new Date().toLocaleTimeString()}`
   );
@@ -144,15 +222,21 @@ function bindControls() {
   );
   document.getElementById("refreshBtn").addEventListener("click", rerun);
   const funnelSym = document.getElementById("funnelSymbolSelect");
+  const funnelLayer = document.getElementById("funnelLayerSelect");
+  const funnelStrat = document.getElementById("funnelStrategySelect");
   if (funnelSym) funnelSym.addEventListener("change", () => refreshFunnel().catch(() => {}));
-  
+  if (funnelLayer) funnelLayer.addEventListener("change", () => refreshFunnel().catch(() => {}));
+  if (funnelStrat) funnelStrat.addEventListener("change", () => refreshFunnel().catch(() => {}));
+
   const funnelPanel = document.querySelector(".funnel-panel");
   if (funnelPanel) {
     funnelPanel.addEventListener("toggle", () => {
       if (funnelPanel.open && !funnelLoaded) {
-        refreshFunnel().then(() => {
-          funnelLoaded = true;
-        }).catch(() => {});
+        refreshFunnel()
+          .then(() => {
+            funnelLoaded = true;
+          })
+          .catch(() => {});
       }
     });
   }

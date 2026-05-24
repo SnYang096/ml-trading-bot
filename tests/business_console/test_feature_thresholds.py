@@ -43,6 +43,41 @@ def test_build_reference_lines_includes_spot_weekly_ema(tmp_path):
     assert any(abs(r["y"]) < 1e-9 for r in refs["weekly_ema_200_position"])
 
 
+def test_build_reference_lines_chop_grid_regime_hysteresis(tmp_path):
+    strat = tmp_path / "chop_grid" / "archetypes"
+    strat.mkdir(parents=True)
+    (strat / "prefilter.yaml").write_text(
+        "regime:\n"
+        "  entry_feature: bpc_semantic_chop\n"
+        "  entry_chop_min: 0.50\n"
+        "  exit_chop_below: 0.32\n"
+        "  box_prefilter:\n"
+        "    stability_min: 0.85\n"
+        "    width_min: 0.04\n"
+        "    width_max: 0.30\n"
+        "    touches_min: 5\n"
+        "rules:\n"
+        "  - all_of:\n"
+        "      - feature: box_pos_60\n"
+        '        operator: ">="\n'
+        "        value: 0.35\n"
+        "      - feature: box_pos_60\n"
+        '        operator: "<="\n'
+        "        value: 0.65\n",
+        encoding="utf-8",
+    )
+    refs = build_reference_lines_by_column(tmp_path)
+    chop = refs["bpc_semantic_chop"]
+    assert any(abs(r["y"] - 0.50) < 1e-6 for r in chop)
+    assert any(abs(r["y"] - 0.32) < 1e-6 for r in chop)
+    box = refs["box_pos_60"]
+    assert any(abs(r["y"] - 0.35) < 1e-6 for r in box)
+    assert any(abs(r["y"] - 0.65) < 1e-6 for r in box)
+    assert any(abs(r["y"] - 0.85) < 1e-6 for r in refs["box_stability_60"])
+    assert any(abs(r["y"] - 0.04) < 1e-6 for r in refs["box_width_pct_60"])
+    assert any(abs(r["y"] - 0.30) < 1e-6 for r in refs["box_width_pct_60"])
+
+
 def test_semantic_hint_weekly_ema_position():
     assert "深熊" in semantic_hint_for_column("weekly_ema_200_position", -0.05)
     assert "EMA上方" in semantic_hint_for_column("weekly_ema_200_position", 0.02)

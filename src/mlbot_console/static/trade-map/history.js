@@ -166,15 +166,24 @@ async function loadMoreHistory() {
 function bindTimeScaleSync() {
   if (S.timeSyncBound) return;
   S.timeSyncBound = true;
-  S.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-    if (!range) return;
+  const onMainViewportChange = () => {
     syncSubchartsToMainRange();
     refreshMainPriceAutoscale();
     if (typeof layoutChopGridLabels === "function") {
       layoutChopGridLabels(S.lastCandles);
     }
+  };
+  S.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+    if (!range) return;
+    onMainViewportChange();
     scheduleHistoryPrefetch(range);
   });
+  if (typeof S.chart.timeScale().subscribeVisibleTimeRangeChange === "function") {
+    S.chart.timeScale().subscribeVisibleTimeRangeChange((range) => {
+      if (!range) return;
+      onMainViewportChange();
+    });
+  }
 }
 
 

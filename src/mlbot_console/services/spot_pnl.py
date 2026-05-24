@@ -182,8 +182,126 @@ def compute_spot_order_pnl(
                 "unrealized_pnl": unreal,
                 "pnl_usdt": unreal,
                 "pnl_hint": "持仓浮盈",
+                "symbol": sym,
                 "entry_price": lot.unit_cost,
+                "lot_qty": lot.qty,
+                "lot_cost_usdt": lot.cost_usdt,
                 "mark_price": float(mark),
                 "strategy": lot.strategy,
             }
     return out
+
+
+def spot_holdings_from_orders(
+    spot_db: Path,
+    *,
+    mark_prices: Optional[Mapping[str, float]] = None,
+) -> List[Dict[str, Any]]:
+    """Open FIFO buy lots aggregated per symbol (avg entry for account page)."""
+    per_order = compute_spot_order_pnl(spot_db, mark_prices=mark_prices)
+    by_sym: Dict[str, Dict[str, float]] = {}
+    for rec in per_order.values():
+        if rec.get("unrealized_pnl") is None:
+            continue
+        sym = str(rec.get("symbol") or "").upper()
+        lot_qty = float(rec.get("lot_qty") or 0.0)
+        lot_cost = float(rec.get("lot_cost_usdt") or 0.0)
+        if not sym or lot_qty <= 0:
+            continue
+        bucket = by_sym.setdefault(sym, {"qty": 0.0, "cost_usdt": 0.0, "unrealized": 0.0})
+        bucket["qty"] += lot_qty
+        bucket["cost_usdt"] += lot_cost
+        bucket["unrealized"] += float(rec.get("unrealized_pnl") or 0.0)
+
+    marks = {str(k).upper(): float(v) for k, v in (mark_prices or {}).items()}
+    out: List[Dict[str, Any]] = []
+    for sym, bucket in by_sym.items():
+        qty = float(bucket["qty"] or 0.0)
+        if qty <= 0:
+            continue
+        cost = float(bucket["cost_usdt"] or 0.0)
+        avg_entry = cost / qty
+        asset = sym[:-4] if sym.endswith("USDT") else sym
+        mark = marks.get(sym) or marks.get(asset) or 0.0
+        value = qty * mark if mark > 0 else cost
+        out.append(
+            {
+                "asset": asset,
+                "symbol": sym,
+                "qty": qty,
+                "avg_entry_usdt": avg_entry,
+                "cost_notional_usdt": cost,
+                "price_usdt": mark,
+                "value_usdt": value,
+                "unrealized_pnl_usdt": float(bucket["unrealized"] or 0.0),
+                "price_source": "fifo_orders",
+            }
+        )
+    return sorted(out, key=lambda x: x["value_usdt"], reverse=True)
+
+
+def spot_holdings_from_orders(
+    spot_db: Path,
+    *,
+    mark_prices: Optional[Mapping[str, float]] = None,
+) -> List[Dict[str, Any]]:
+    """Aggregate open FIFO buy lots into per-symbol holdings with avg entry."""
+    if not spot_db.is_file():
+        return []
+    per_order = compute_spot_order_pnl(spot_db, mark_prices=mark_prices)
+    by_sym: Dict[str, Dict[str, Any]] = {}
+    for rec in per_order.values():
+        if rec.get("unrealized_pnl") is None:
+            continue
+        sym = str(rec.get("symbol") or "").upper()
+        if not sym:
+            continue
+        qty = float(rec.get("matched_qty") or rec.get("qty") or 0.0)
+        entry_px = float(rec.get("entry_price") or 0.0)
+        if qty <= 0 and entry_px <= 0:
+            continue
+        bucket = by_sym.setdefault(
+            sym,
+            {"symbol": sym, "qty": 0.0, "cost_usdt": 0.0, "unrealized_pnl_usdt": 0.0},
+        )
+        lot_qty = float(rec.get("lot_qty") or 0.0)
+        lot_cost = float(rec.get("lot_cost_usdt") or 0.0)
+        if lot_qty <= 0:
+            # derive from unrealized when possible
+            mark = float(rec.get("mark_price") or mark_prices.get(sym) or 0.0)  # type: ignore[union-attr]
+            unreal = float(rec.get("unrealized_pnl") or 0.0)
+            if mark > 0 and entry_px > 0:
+                lot_qty = unreal / (mark - entry_px) if mark != entry_px else 0.0
+                lot_cost = lot_qty * entry_px
+        if lot_qty <= 0:
+            continue
+        bucket["qty"] += lot_qty
+        bucket["cost_usdt"] += lot_cost
+        bucket["unrealized_pnl_usdt"] += float(rec.get("unrealized_pnl") or 0.0)
+
+    out: List[Dict[str, Any]] = []
+    marks = {str(k).upper(): float(v) for k, v in (mark_prices or {}).items()}
+    for sym, bucket in by_sym.items():
+        qty = float(bucket["qty"] or 0.0)
+        if qty <= 0:
+            continue
+        cost = float(bucket["cost_usdt"] or 0.0)
+        avg_entry = cost / qty if qty > 0 else 0.0
+        asset = sym[:-4] if sym.endswith("USDT") else sym
+        mark = marks.get(sym) or marks.get(asset) or 0.0
+        value = qty * mark if mark > 0 else cost
+        out.append(
+            {
+                "asset": asset,
+                "symbol": sym,
+                "qty": qty,
+                "avg_entry_usdt": avg_entry,
+                "cost_notional_usdt": cost,
+                "price_usdt": mark,
+                "value_usdt": value,
+                "unrealized_pnl_usdt": float(bucket["unrealized_pnl_usdt"] or 0.0),
+                "price_source": "fifo_orders",
+            }
+        )
+    return sorted(out, key=lambda x: x["value_usdt"], reverse=True)
+

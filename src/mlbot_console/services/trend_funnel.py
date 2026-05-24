@@ -1,10 +1,16 @@
-"""Read trend signal funnel snapshots from live_monitor.db stats_15min."""
+"""Read signal funnel snapshots from live_monitor.db stats_15min."""
 
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from mlbot_console.services.strategy_registry import (
+    layer_for_funnel_filter,
+    strategy_account_layer,
+)
 
 
 def fetch_funnel_snapshots(
@@ -59,3 +65,52 @@ def fetch_funnel_snapshots(
             }
         )
     return out
+
+
+def aggregate_funnel_by_strategy(
+    snapshots: List[Dict[str, Any]],
+    *,
+    symbol: str = "",
+    account_layer: str = "",
+    strategy: str = "",
+) -> Dict[str, Dict[str, int]]:
+    """Sum regime/prefilter/direction/gate counters per strategy across snapshots."""
+    sym = str(symbol or "").strip().upper()
+    layer_filter = layer_for_funnel_filter(account_layer, strategy)
+    strat_filter = str(strategy or "").strip().lower()
+    totals: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    int_keys = (
+        "evals",
+        "regime_passed",
+        "regime_denied",
+        "prefilter_passed",
+        "prefilter_denied",
+        "direction",
+        "gate_passed",
+        "gate_rejected",
+        "entry_filter_passed",
+        "signals",
+        "pcm_selected",
+        "orders",
+    )
+    for snap in snapshots:
+        snap_sym = str(snap.get("symbol") or "").upper()
+        if sym and sym not in ("*", "ALL") and snap_sym != sym:
+            continue
+        bys = snap.get("by_strategy") or {}
+        if not isinstance(bys, dict):
+            continue
+        for strat, raw in bys.items():
+            sid = str(strat).lower()
+            if strat_filter and sid != strat_filter:
+                continue
+            if layer_filter and strategy_account_layer(sid) != layer_filter:
+                continue
+            if not isinstance(raw, dict):
+                continue
+            bucket = totals[sid]
+            for k in int_keys:
+                v = raw.get(k)
+                if isinstance(v, (int, float)):
+                    bucket[k] += int(v)
+    return {k: dict(v) for k, v in totals.items()}

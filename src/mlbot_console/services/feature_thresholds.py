@@ -21,6 +21,32 @@ _BUILTIN_REFERENCE_LINES: Dict[str, List[Dict[str, Any]]] = {
 }
 
 
+def _append_rule_threshold(
+    out: List[Dict[str, Any]],
+    *,
+    feature: str,
+    operator: str,
+    value: Any,
+    label: Optional[str] = None,
+) -> None:
+    feat = str(feature or "").strip()
+    if not feat:
+        return
+    try:
+        val = float(value)
+    except (TypeError, ValueError):
+        return
+    op = str(operator or "").strip()
+    out.append(
+        {
+            "feature": feat,
+            "y": val,
+            "operator": op,
+            "label": label or f"{feat} {op}{val:g}",
+        }
+    )
+
+
 def _extract_rule_thresholds(rules: Any) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     if not isinstance(rules, list):
@@ -29,49 +55,107 @@ def _extract_rule_thresholds(rules: Any) -> List[Dict[str, Any]]:
         if not isinstance(rule, dict):
             continue
         if "feature" in rule and "value" in rule:
-            feat = str(rule.get("feature") or "").strip()
-            op = str(rule.get("operator") or "").strip()
-            try:
-                val = float(rule["value"])
-            except (TypeError, ValueError):
-                continue
-            if feat:
-                out.append(
-                    {
-                        "feature": feat,
-                        "y": val,
-                        "operator": op,
-                        "label": f"{feat} {op}{val:g}",
-                    }
-                )
-        for sub in rule.get("any_of") or []:
-            if isinstance(sub, dict) and "feature" in sub and "value" in sub:
-                feat = str(sub.get("feature") or "").strip()
-                op = str(sub.get("operator") or "").strip()
-                try:
-                    val = float(sub["value"])
-                except (TypeError, ValueError):
-                    continue
-                if feat:
-                    out.append(
-                        {
-                            "feature": feat,
-                            "y": val,
-                            "operator": op,
-                            "label": f"{feat} {op}{val:g}",
-                        }
+            _append_rule_threshold(
+                out,
+                feature=str(rule.get("feature") or ""),
+                operator=str(rule.get("operator") or ""),
+                value=rule["value"],
+            )
+        for key in ("any_of", "all_of"):
+            for sub in rule.get(key) or []:
+                if isinstance(sub, dict) and "feature" in sub and "value" in sub:
+                    _append_rule_threshold(
+                        out,
+                        feature=str(sub.get("feature") or ""),
+                        operator=str(sub.get("operator") or ""),
+                        value=sub["value"],
                     )
     return out
 
 
-def _load_yaml_rules(path: Path) -> List[Dict[str, Any]]:
+def _load_yaml_doc(path: Path) -> Dict[str, Any]:
     if not path.is_file():
-        return []
+        return {}
     try:
         doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except Exception:
+        return {}
+    return doc if isinstance(doc, dict) else {}
+
+
+def _load_yaml_rules(path: Path) -> List[Dict[str, Any]]:
+    return _extract_rule_thresholds(_load_yaml_doc(path).get("rules"))
+
+
+def _load_multileg_regime_thresholds(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Chop-grid regime hysteresis from prefilter.yaml ``regime:`` block."""
+    regime = doc.get("regime")
+    if not isinstance(regime, dict):
         return []
-    return _extract_rule_thresholds(doc.get("rules"))
+    out: List[Dict[str, Any]] = []
+    entry_feat = str(regime.get("entry_feature") or "bpc_semantic_chop").strip()
+    if regime.get("entry_chop_min") is not None:
+        _append_rule_threshold(
+            out,
+            feature=entry_feat,
+            operator=">=",
+            value=regime["entry_chop_min"],
+            label=f"regime enter ≥{float(regime['entry_chop_min']):g}",
+        )
+    if regime.get("exit_chop_below") is not None:
+        _append_rule_threshold(
+            out,
+            feature=entry_feat,
+            operator="<",
+            value=regime["exit_chop_below"],
+            label=f"regime exit <{float(regime['exit_chop_below']):g}",
+        )
+    return out
+
+
+def _load_multileg_box_prefilter_thresholds(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Box-quality gates from prefilter.yaml ``regime.box_prefilter`` (60-bar series)."""
+    regime = doc.get("regime")
+    if not isinstance(regime, dict):
+        return []
+    box = regime.get("box_prefilter")
+    if not isinstance(box, dict):
+        return []
+    out: List[Dict[str, Any]] = []
+    if box.get("stability_min") is not None:
+        _append_rule_threshold(
+            out,
+            feature="box_stability_60",
+            operator=">=",
+            value=box["stability_min"],
+            label=f"box stability ≥{float(box['stability_min']):g}",
+        )
+    if box.get("width_min") is not None:
+        _append_rule_threshold(
+            out,
+            feature="box_width_pct_60",
+            operator=">=",
+            value=box["width_min"],
+            label=f"box width ≥{float(box['width_min']):g}",
+        )
+    if box.get("width_max") is not None:
+        _append_rule_threshold(
+            out,
+            feature="box_width_pct_60",
+            operator="<=",
+            value=box["width_max"],
+            label=f"box width ≤{float(box['width_max']):g}",
+        )
+    if box.get("touches_min") is not None:
+        for feat in ("box_touches_hi_60", "box_touches_lo_60"):
+            _append_rule_threshold(
+                out,
+                feature=feat,
+                operator=">=",
+                value=box["touches_min"],
+                label=f"{feat} ≥{float(box['touches_min']):g}",
+            )
+    return out
 
 
 def build_reference_lines_by_column(
@@ -101,6 +185,34 @@ def build_reference_lines_by_column(
                 existing = out.setdefault(feat, [])
                 if not any(abs(x.get("y", 0) - line["y"]) < 1e-9 for x in existing):
                     existing.append(line)
+        # Multi-leg chop_grid: regime hysteresis + box gates live in prefilter.yaml.
+        pre_doc = _load_yaml_doc(strat_dir / "archetypes" / "prefilter.yaml")
+        for item in _load_multileg_regime_thresholds(pre_doc):
+            feat = str(item.get("feature") or "")
+            if not feat:
+                continue
+            line = {
+                "y": item["y"],
+                "label": item.get("label")
+                or f"{feat} {item.get('operator', '')}{item['y']:g}",
+                "operator": item.get("operator") or "",
+            }
+            existing = out.setdefault(feat, [])
+            if not any(abs(x.get("y", 0) - line["y"]) < 1e-9 for x in existing):
+                existing.append(line)
+        for item in _load_multileg_box_prefilter_thresholds(pre_doc):
+            feat = str(item.get("feature") or "")
+            if not feat:
+                continue
+            line = {
+                "y": item["y"],
+                "label": item.get("label")
+                or f"{feat} {item.get('operator', '')}{item['y']:g}",
+                "operator": item.get("operator") or "",
+            }
+            existing = out.setdefault(feat, [])
+            if not any(abs(x.get("y", 0) - line["y"]) < 1e-9 for x in existing):
+                existing.append(line)
     return out
 
 
@@ -116,8 +228,20 @@ def semantic_hint_for_column(column: str, value: Optional[float]) -> str:
         return f"chop低({v:.2f}), regime可入场, 阈≤0.40"
     if col == "bpc_semantic_chop":
         if v >= 0.50:
-            return f"chop区({v:.2f}), 阈≥0.50"
-        return f"非chop({v:.2f}), 阈≥0.50"
+            return f"chop区({v:.2f}), enter≥0.50 exit<0.32"
+        if v >= 0.32:
+            return f"滞回区({v:.2f}), enter≥0.50 exit<0.32"
+        return f"非chop({v:.2f}), exit<0.32"
+    if col == "box_pos_60":
+        if 0.35 <= v <= 0.65:
+            return f"箱中({v:.3f}), 阈0.35–0.65"
+        return f"箱外({v:.3f}), 阈0.35–0.65"
+    if col == "box_stability_60":
+        ok = v >= 0.85
+        return f"{'稳定' if ok else '不稳'}({v:.3f}), 阈≥0.85"
+    if col == "box_width_pct_60":
+        ok = 0.04 <= v <= 0.30
+        return f"{'宽度OK' if ok else '宽度异常'}({v:.3f}), 阈0.04–0.30"
     if col == "bpc_volume_compression_pct":
         ok = v >= 0.9295
         return f"{'通过' if ok else '未过'}({v:.3f}), 阈≥0.9295"

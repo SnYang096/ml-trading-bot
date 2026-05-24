@@ -13,6 +13,7 @@ from mlbot_console.services.orders_list import (
     spot_orders_list,
     trend_orders,
 )
+from mlbot_console.services.strategy_registry import strategy_account_layer
 from mlbot_console.services.trend_funnel import fetch_funnel_snapshots
 
 router = APIRouter(tags=["orders"])
@@ -89,6 +90,8 @@ def trend_orders_api(
 @router.get("/api/trend/funnel")
 def trend_funnel_api(
     symbol: str = Query("", description="Empty or * = all symbols in snapshot"),
+    account_layer: str = Query("", description="trend | spot | multi_leg"),
+    strategy: str = Query("", description="Specific strategy id, e.g. bpc or chop_grid"),
     limit: int = Query(96, ge=1, le=500, description="Recent 15min windows"),
 ) -> dict:
     rows = fetch_funnel_snapshots(
@@ -96,12 +99,36 @@ def trend_funnel_api(
         symbol=symbol,
         limit=limit,
     )
+    if account_layer or strategy:
+        filtered: list = []
+        layer_filter = account_layer.strip().lower()
+        strat_filter = strategy.strip().lower()
+        for snap in rows:
+            bys = snap.get("by_strategy") or {}
+            if not isinstance(bys, dict):
+                continue
+            subset = {}
+            for sid, st in bys.items():
+                sid_l = str(sid).lower()
+                if strat_filter and sid_l != strat_filter:
+                    continue
+                if layer_filter and strategy_account_layer(sid_l) != layer_filter:
+                    continue
+                subset[sid] = st
+            if not subset:
+                continue
+            snap_copy = dict(snap)
+            snap_copy["by_strategy"] = subset
+            filtered.append(snap_copy)
+        rows = filtered
     return ok(
         rows,
         meta={
             "count": len(rows),
             "db": str(SETTINGS.live_monitor_db),
             "symbol": symbol or "*",
+            "account_layer": account_layer or "*",
+            "strategy": strategy or "*",
         },
     )
 

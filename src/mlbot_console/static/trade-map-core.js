@@ -133,6 +133,43 @@
     });
   }
 
+  /** One timeline entry per OHLCV bar (whitespace where feature is missing). */
+  function alignSeriesToCandleTimes(points, candles) {
+    if (!candles?.length) return points || [];
+    const byTime = new Map();
+    for (const p of points || []) {
+      const t = Number(p?.time);
+      if (!Number.isFinite(t)) continue;
+      byTime.set(t, p?.value);
+    }
+    const out = [];
+    for (const c of candles) {
+      const t = Number(c?.time);
+      if (!Number.isFinite(t)) continue;
+      if (!byTime.has(t)) {
+        out.push({ time: t });
+        continue;
+      }
+      const v = byTime.get(t);
+      if (v == null || (typeof v === "number" && v !== v)) {
+        out.push({ time: t });
+      } else {
+        out.push({ time: t, value: Number(v) });
+      }
+    }
+    return out;
+  }
+
+  function filterSubchartColumns(columns, layers, strategyFocus) {
+    const focus = strategyFocus ? String(strategyFocus).trim() : "";
+    return (columns || []).filter((col) => {
+      const meta = lookupFeatureMeta(col);
+      if (!isLayerEnabled(meta.account_layer, layers)) return false;
+      if (focus && meta.strategy !== focus) return false;
+      return true;
+    });
+  }
+
   function isoFromUnixSec(sec) {
     return new Date(Number(sec) * 1000).toISOString();
   }
@@ -436,14 +473,18 @@
       lc.startsWith("chop_") ||
       (lc.includes("semantic_chop") && !lc.startsWith("tpc_")) ||
       lc.includes("grid") ||
-      lc.includes("vol_clustering")
+      lc.includes("vol_clustering") ||
+      lc.startsWith("box_pos_60") ||
+      lc.startsWith("box_stability_60") ||
+      lc.startsWith("box_width_pct_60") ||
+      lc.startsWith("box_touches_")
     ) {
       return { strategy: "chop_grid", account_layer: "multi_leg" };
     }
     if (
       lc.startsWith("vpin") ||
       lc === "trend_confidence" ||
-      lc.startsWith("box_pos_60")
+      lc.startsWith("trend_confidence")
     ) {
       return { strategy: "trend_scalp", account_layer: "multi_leg" };
     }
@@ -587,7 +628,8 @@
     });
   }
 
-  function orderFeaturePaneItems(columns, layers) {
+  function orderFeaturePaneItems(columns, layers, strategyFocus) {
+    const focus = strategyFocus ? String(strategyFocus).trim() : "";
     const tree = _bucketColumnsByTaxonomy(columns);
     const items = [];
     let firstLayer = true;
@@ -611,6 +653,7 @@
       ];
       let firstStrat = true;
       for (const stratId of stratIds) {
+        if (focus && stratId !== focus) continue;
         const stageNode = layerNode[stratId];
         if (!stageNode) continue;
         if (!firstStrat) items.push({ type: "gap", id: `gap-strat-${layerId}-${stratId}` });
@@ -662,6 +705,17 @@
     const sid = String(strategyId || "").toLowerCase();
     const avail = new Set(available || []);
     const picks = [];
+    if (sid === "chop_grid") {
+      for (const c of [
+        "bpc_semantic_chop",
+        "box_pos_60",
+        "box_stability_60",
+        "box_width_pct_60",
+      ]) {
+        if (avail.has(c) && !picks.includes(c)) picks.push(c);
+        if (picks.length >= maxCols) return picks;
+      }
+    }
     if (featureTaxonomy && featureTaxonomy.strategies) {
       const strat = featureTaxonomy.strategies.find((s) => s.id === sid);
       if (strat) {
@@ -679,6 +733,9 @@
   function presetColumnsForAccountLayer(layerId, available, maxCols) {
     const avail = new Set(available || []);
     const picks = [];
+    if (layerId === "multi_leg") {
+      return presetColumnsForStrategy("chop_grid", available, maxCols);
+    }
     if (featureTaxonomy && featureTaxonomy.strategies) {
       for (const s of featureTaxonomy.strategies) {
         if (s.account_layer !== layerId) continue;
@@ -837,7 +894,7 @@
     default: ["weekly_ema_200_position", "ema_1200_position"],
     trend: ["ema_1200_position", "tpc_pullback_depth", "tpc_semantic_chop", "bpc_pullback_depth"],
     spot: ["weekly_ema_200_position"],
-    multi_leg: ["bpc_semantic_chop", "box_pos_60", "trend_confidence"],
+    multi_leg: ["bpc_semantic_chop", "box_pos_60", "box_stability_60"],
   };
 
   root.MLBotTradeMapCore = {
@@ -851,6 +908,8 @@
     barDurationSec,
     mergeCandlesByTime,
     clipOverlayPointsToCandles,
+    alignSeriesToCandleTimes,
+    filterSubchartColumns,
     isoFromUnixSec,
     mainOverlaysQueryParam,
     stageRegionsQueryParam,

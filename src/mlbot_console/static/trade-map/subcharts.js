@@ -229,8 +229,11 @@ function ensureFeaturePane(column, overlay, colorIndex, candles) {
     const capEl = pane.host?.parentElement?.querySelector(".subchart-label");
     if (capEl) capEl.textContent = caption;
   }
-  const pts = Core.clipOverlayPointsToCandles(overlay.points || [], candles);
-  pane.series.setData(pts.map((p) => ({ time: p.time, value: p.value })));
+  const pts = Core.alignSeriesToCandleTimes(
+    Core.clipOverlayPointsToCandles(overlay.points || [], candles),
+    candles
+  );
+  pane.series.setData(pts);
   syncFeatureRefLines(pane, overlay, pts, candles);
   requestAnimationFrame(() => {
     resizeAllSubcharts();
@@ -247,8 +250,13 @@ function syncSubcharts(candles, overlays) {
   }
   clearStrategyChrome();
 
-  const colsForPanes = S.selectedFeatureColumns.slice(0, S.MAX_FEATURE_SUBCHARTS);
-  const panePlan = Core.orderFeaturePaneItems(colsForPanes, layersState());
+  const layers = layersState();
+  const colsForPanes = Core.filterSubchartColumns(
+    S.selectedFeatureColumns.slice(0, S.MAX_FEATURE_SUBCHARTS),
+    layers,
+    S.featureStrategyFocus
+  );
+  const panePlan = Core.orderFeaturePaneItems(colsForPanes, layers, S.featureStrategyFocus);
   const domOrder = [];
   if (showVol) domOrder.push(subchartDomId("volume"));
 

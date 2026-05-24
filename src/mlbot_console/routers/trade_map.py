@@ -514,6 +514,7 @@ def trade_map_signals(
         trend_db=SETTINGS.trend_order_db,
         spot_db=SETTINGS.spot_order_db,
         multi_leg_db=SETTINGS.multi_leg_db,
+        live_monitor_db=SETTINGS.live_monitor_db,
         timeframe=tf,
         lookback_days=lookback_days,
     )

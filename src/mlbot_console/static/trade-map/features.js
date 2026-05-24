@@ -39,7 +39,7 @@ function syncFeatureStrategySelectOptions() {
   sel.innerHTML = options.join("");
 }
 
-function setFeatureStrategyFocus(strategyId, { refreshPicker = true } = {}) {
+function setFeatureStrategyFocus(strategyId, { refreshPicker = true, refreshSubcharts = true } = {}) {
   S.featureStrategyFocus =
     strategyId != null && String(strategyId).trim()
       ? String(strategyId).trim()
@@ -47,6 +47,9 @@ function setFeatureStrategyFocus(strategyId, { refreshPicker = true } = {}) {
   syncFeatureStrategySelectOptions();
   if (refreshPicker) renderFeaturePicker();
   saveLayout();
+  if (refreshSubcharts && S.lastCandles?.length) {
+    syncSubcharts(S.lastCandles, S.lastOverlays || {});
+  }
 }
 
 function setSelectedFeatures(cols, { refresh = true } = {}) {

@@ -19,6 +19,7 @@
   if (S.ordersDockOpen === undefined) S.ordersDockOpen = false;
   if (S.chartFitPending === undefined) S.chartFitPending = true;
   if (S.timeSyncBound === undefined) S.timeSyncBound = false;
+  if (S.syncingTimeScale === undefined) S.syncingTimeScale = false;
   if (S.clockTimer === undefined) S.clockTimer = null;
   if (S.tradeLinkSeries == null) S.tradeLinkSeries = [];
   if (S.chopGridPriceLines == null) S.chopGridPriceLines = [];

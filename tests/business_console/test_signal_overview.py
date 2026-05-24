@@ -19,6 +19,10 @@ def test_trade_map_signals(client):
     assert "multi_leg" in row["strategies"]
     assert row["map_href"].startswith("/trade-map")
     assert "summary" in row["strategies"]["spot"]
+    spot_by = row["strategies"]["spot"].get("by_strategy") or {}
+    assert "spot_accum_simple" in spot_by or row["strategies"]["spot"]["summary"] != "—"
+    trend_by = row["strategies"]["trend"].get("by_strategy")
+    assert trend_by is not None
 
 
 def test_signals_page_served(client):

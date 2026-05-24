@@ -254,11 +254,22 @@ function renderSpotHoldings(scopes) {
   const rows = holdings.map(h => {
     const pct = totalValue > 0 ? (h.value_usdt / totalValue) * 100 : 0;
     const src = h.price_source === "ticker" ? " (API)" : (h.price_source === "stablecoin" ? "" : " (Parquet)");
+    const entrySrc = h.entry_source === "ledger" ? " · 母仓" : (h.entry_source === "fifo_orders" ? " · FIFO" : "");
+    const avgEntry = Number(h.avg_entry_usdt);
+    const avgCell = Number.isFinite(avgEntry) && avgEntry > 0
+      ? `${fmtUsdt(avgEntry)}<span class="muted" style="font-size: 0.85em">${entrySrc}</span>`
+      : `<span class="muted">—</span>`;
+    const upnl = Number(h.unrealized_pnl_usdt);
+    const upnlCell = Number.isFinite(upnl)
+      ? `<span class="${pnlClassNum(upnl)}">${fmtPnlNum(upnl)}</span>`
+      : `<span class="muted">—</span>`;
     return `<tr>
       <td>${Shell.escHtml(h.asset)}</td>
       <td>${Shell.escHtml(String(h.qty))}</td>
+      <td>${avgCell}</td>
       <td>${Shell.escHtml(fmtUsdt(h.price_usdt))}<span class="muted" style="font-size: 0.85em">${src}</span></td>
       <td>${Shell.escHtml(fmtUsdt(h.value_usdt))}</td>
+      <td>${upnlCell}</td>
       <td>${pct.toFixed(1)}%</td>
     </tr>`;
   }).join("");
@@ -286,7 +297,7 @@ function renderSpotHoldings(scopes) {
     ${chartHtml}
     <div class="account-table-wrap">
       <table class="account-table">
-        <thead><tr><th>资产</th><th>数量</th><th>现价 (USDT)</th><th>市值 (USDT)</th><th>占比</th></tr></thead>
+        <thead><tr><th>资产</th><th>数量</th><th>买入均价 (USDT)</th><th>现价 (USDT)</th><th>市值 (USDT)</th><th>浮盈 (USDT)</th><th>占比</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>

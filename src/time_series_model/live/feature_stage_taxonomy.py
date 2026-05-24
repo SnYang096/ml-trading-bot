@@ -103,6 +103,14 @@ def _extract_features_from_multileg_regime(cfg: Dict[str, Any]) -> Set[str]:
         out.update(_MULTILEG_RUNTIME_ALIASES.get("bpc_semantic_chop", []))
     if not regime.get("exclude_box_prefilter", True):
         out.add("box_prefilter")
+    box = regime.get("box_prefilter")
+    if isinstance(box, dict):
+        if box.get("stability_min") is not None:
+            out.add("box_stability_60")
+        if box.get("width_min") is not None or box.get("width_max") is not None:
+            out.add("box_width_pct_60")
+        if box.get("touches_min") is not None:
+            out.update({"box_touches_hi_60", "box_touches_lo_60"})
     return out
 
 

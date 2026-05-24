@@ -62,6 +62,20 @@ const plan = Core.orderFeaturePaneItems(
   ["tpc_pullback_depth", "weekly_ema_200_position"],
   { trend: true, spot: true, multiLeg: true }
 );
+const chopPlan = Core.orderFeaturePaneItems(
+  ["bpc_semantic_chop", "box_pos_60", "tpc_pullback_depth"],
+  { trend: true, multiLeg: true, spot: false },
+  "chop_grid"
+);
+const aligned = Core.alignSeriesToCandleTimes(
+  [{ time: 200, value: 0.5 }],
+  [{ time: 100, open: 1, high: 2, low: 0.5, close: 1 }, { time: 200, open: 2, high: 3, low: 1, close: 2 }]
+);
+const filtered = Core.filterSubchartColumns(
+  ["bpc_semantic_chop", "tpc_pullback_depth"],
+  { trend: true, multiLeg: true, spot: false },
+  "chop_grid"
+);
 const meta = Core.lookupFeatureMeta("tpc_pullback_depth");
 const hit = Core.findMarkerByTime(markers, 1, 7200);
 const sel = Core.markersToLwc(markers, "trend:orders:1");
@@ -102,6 +116,11 @@ console.log(JSON.stringify({
     [{ time: 100, low: 600, high: 620, close: 610 }, { time: 200, low: 610, high: 630, close: 625 }],
     { from: 0, to: 1 }
   ),
+  alignedLen: aligned.length,
+  alignedGap: aligned[0].value == null,
+  alignedHit: aligned[1].value,
+  filteredCols: filtered,
+  chopFeatureCols: chopPlan.filter((p) => p.type === "feature").map((p) => p.column),
 }));
 """
 
@@ -151,6 +170,11 @@ def test_trade_map_core_node():
     assert out["l1TpAbove"] == "aboveBar"
     assert out["gridLabelLong"] == "below"
     assert out["gridLabelShortTp"] == "below"
+    assert out["alignedLen"] == 2
+    assert out["alignedGap"] is True
+    assert out["alignedHit"] == 0.5
+    assert out["filteredCols"] == ["bpc_semantic_chop"]
+    assert set(out["chopFeatureCols"]) == {"bpc_semantic_chop", "box_pos_60"}
     assert len(out["segPts"]) >= 4
     assert out["segPts"][2]["value"] is None  # NaN segment gap
     assert out["prAuto2"]["minValue"] < 600

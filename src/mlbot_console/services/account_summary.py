@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 import pandas as pd
 
 from mlbot_console.services.db import query_rows
-from mlbot_console.services.spot_pnl import compute_spot_order_pnl
+from mlbot_console.services.spot_pnl import compute_spot_order_pnl, spot_holdings_from_orders
 from mlbot_console.services.strategy_registry import (
     default_spot_strategy_id,
     spot_strategy_ids,
@@ -90,45 +90,163 @@ def _link_pnl_usdt(entry_row: Dict[str, Any], exit_row: Dict[str, Any]) -> Optio
     return (entry_px - exit_px) * qty
 
 
+def _trend_entry_qty_by_position(trend_db: Path, sym: Optional[str]) -> Dict[str, float]:
+    """Best-effort entry size for PnL when positions.current_size is zero after close."""
+    if not trend_db.is_file():
+        return {}
+    sym_clause = " AND o.symbol = ?" if sym else ""
+    params: tuple[Any, ...] = (sym,) if sym else ()
+    out: Dict[str, float] = {}
+    for row in query_rows(
+        trend_db,
+        f"""
+        SELECT o.position_id, o.side, o.filled_quantity, o.quantity, p.side AS pos_side
+        FROM orders o
+        INNER JOIN positions p ON p.position_id = o.position_id
+        WHERE lower(o.status) = 'filled'{sym_clause}
+        ORDER BY COALESCE(o.filled_at, o.created_at) ASC
+        """,
+        params,
+    ):
+        pid = str(row.get("position_id") or "")
+        if not pid or pid in out:
+            continue
+        pos_side = str(row.get("pos_side") or "long").lower()
+        o_side = str(row.get("side") or "").lower()
+        is_entry = (
+            o_side in {"buy", "long"} if pos_side == "long" else o_side in {"sell", "short"}
+        )
+        if not is_entry:
+            continue
+        qty = float(row.get("filled_quantity") or row.get("quantity") or 0.0)
+        if qty > 0:
+            out[pid] = qty
+    return out
+
+
+def _trend_position_qty(
+    row: Dict[str, Any], entry_qty_by_pid: Dict[str, float]
+) -> float:
+    qty = float(row.get("current_size") or 0.0)
+    if qty > 0:
+        return qty
+    pid = str(row.get("position_id") or "")
+    return float(entry_qty_by_pid.get(pid) or 0.0)
+
+
+def _trend_realized_pnl_usdt(
+    row: Dict[str, Any], *, entry_qty_by_pid: Dict[str, float]
+) -> Optional[float]:
+    if not row.get("exit_time"):
+        return None
+    rpnl = row.get("realized_pnl")
+    if rpnl is not None:
+        try:
+            return float(rpnl)
+        except (TypeError, ValueError):
+            pass
+    entry_px = float(row.get("entry_price") or 0.0)
+    exit_px = float(row.get("exit_price") or 0.0)
+    qty = _trend_position_qty(row, entry_qty_by_pid)
+    if qty <= 0 or entry_px <= 0 or exit_px <= 0:
+        return None
+    side = str(row.get("pos_side") or row.get("side") or "long").lower()
+    if side in {"buy", "long"}:
+        return (exit_px - entry_px) * qty
+    return (entry_px - exit_px) * qty
+
+
+def _trend_unrealized_pnl_usdt(
+    row: Dict[str, Any],
+    mark_px: float,
+    *,
+    entry_qty_by_pid: Dict[str, float],
+) -> Optional[float]:
+    if row.get("exit_time"):
+        return None
+    qty = _trend_position_qty(row, entry_qty_by_pid)
+    entry_px = float(row.get("entry_price") or 0.0)
+    if qty <= 0 or entry_px <= 0 or mark_px <= 0:
+        return None
+    side = str(row.get("pos_side") or row.get("side") or "long").lower()
+    if side in {"buy", "long"}:
+        return (mark_px - entry_px) * qty
+    return (entry_px - mark_px) * qty
+
+
+def _trend_realized_rec(pnl: float) -> Dict[str, Any]:
+    return {
+        "pnl_usdt": float(pnl),
+        "realized_pnl": float(pnl),
+        "unrealized_pnl": None,
+        "pnl_hint": "已实现",
+    }
+
+
+def _trend_unrealized_rec(pnl: float) -> Dict[str, Any]:
+    return {
+        "pnl_usdt": float(pnl),
+        "realized_pnl": None,
+        "unrealized_pnl": float(pnl),
+        "pnl_hint": "浮盈",
+    }
+
+
 def _multileg_realized_rows(db_path: Path, symbol: str) -> List[Dict[str, Any]]:
+    """Realized round-trips from entry-leg PnL map (more reliable than link re-parse)."""
     if not db_path.is_file():
         return []
+    from mlbot_console.services.multileg_leg_pnl import multileg_pnl_by_order_id
+    from mlbot_console.services.multileg_order_links import _is_filled_row, is_entry_row
+
     sym = symbol.upper()
+    pnl_map = multileg_pnl_by_order_id(db_path, sym)
+    if not pnl_map:
+        return []
+
     rows = query_rows(
         db_path,
         """
-        SELECT local_order_id, strategy, symbol, side, purpose, status, order_type,
-               filled_quantity, average_price, filled_at, created_at, price, quantity,
-               stop_price, leg_id
+        SELECT local_order_id, strategy, symbol, side, purpose, status,
+               filled_at, created_at
         FROM multi_leg_orders
         WHERE symbol = ?
-        ORDER BY COALESCE(filled_at, created_at) ASC
         """,
         (sym,),
     )
-    by_id = {str(r.get("local_order_id") or ""): r for r in rows}
+    links, _ = multi_leg_trade_links(db_path, sym)
+    exit_ts_by_entry: Dict[str, int] = {}
+    for lk in links:
+        if str(lk.get("status") or "").lower() != "closed":
+            continue
+        em = str(lk.get("entry_marker_id") or "")
+        entry_key = em.rsplit(":", 1)[-1] if em else ""
+        if entry_key:
+            exit_ts_by_entry[entry_key] = int(lk.get("exit_time") or 0)
+
     out: List[Dict[str, Any]] = []
-    for link in multi_leg_trade_links(db_path, sym)[0]:
-        if str(link.get("status") or "").lower() != "closed":
+    for row in rows:
+        oid = str(row.get("local_order_id") or "")
+        rec = pnl_map.get(oid) or {}
+        if rec.get("realized_pnl") is None:
             continue
-        exit_mid = str(link.get("exit_marker_id") or "")
-        entry_mid = str(link.get("entry_marker_id") or "")
-        exit_key = exit_mid.rsplit(":", 1)[-1] if exit_mid else ""
-        entry_key = entry_mid.rsplit(":", 1)[-1] if entry_mid else ""
-        exit_row = by_id.get(exit_key)
-        entry_row = by_id.get(entry_key)
-        if not exit_row or not entry_row:
+        purpose = str(row.get("purpose") or "").lower()
+        if not (
+            (is_entry_row(row) and _is_filled_row(row))
+            or (purpose == "inventory" and _is_filled_row(row))
+        ):
             continue
-        pnl = _link_pnl_usdt(entry_row, exit_row)
-        if pnl is None:
-            continue
+        pnl = float(rec["realized_pnl"])
+        exit_ts = int(exit_ts_by_entry.get(oid) or 0)
+        if exit_ts <= 0:
+            exit_ts = int(_parse_ts(row.get("filled_at")) or _parse_ts(row.get("created_at")) or 0)
         out.append(
             {
-                "strategy": str(link.get("strategy") or exit_row.get("strategy") or "multi_leg"),
+                "strategy": str(row.get("strategy") or "multi_leg").lower(),
                 "symbol": sym,
                 "scope": "multi_leg",
                 "pnl_usdt": pnl,
-                "exit_time": int(link.get("exit_time") or 0),
+                "exit_time": exit_ts,
             }
         )
     return out
@@ -158,6 +276,9 @@ def _trend_stats(
         """,
         params,
     )
+    entry_qty_by_pid = _trend_entry_qty_by_position(
+        trend_db, symbol if symbol and not _is_all_symbols(symbol) else None
+    )
     realized = 0.0
     unrealized = 0.0
     open_count = 0
@@ -173,7 +294,6 @@ def _trend_stats(
             continue
         strat = str(row.get("strategy_id") or "trend").lower()
         st = str(row.get("status") or "").lower()
-        rpnl = row.get("realized_pnl")
         if st == "open" or not row.get("exit_time"):
             open_count += 1
             by_strategy[strat]["open_positions"] += 1
@@ -194,10 +314,10 @@ def _trend_stats(
                 by_strategy[strat]["unrealized_pnl"] += upnl
                 
             continue
-        if rpnl is None:
+        pnl = _trend_realized_pnl_usdt(row, entry_qty_by_pid=entry_qty_by_pid)
+        if pnl is None:
             closed_count += 1
             continue
-        pnl = float(rpnl)
         realized += pnl
         closed_count += 1
         by_strategy[strat]["realized_pnl"] += pnl
@@ -307,41 +427,23 @@ def _multileg_stats(
     from mlbot_console.services.db import query_rows
 
     for sym in symbols:
-        # Use multileg_pnl_by_order_id to get both realized and unrealized PnL
         pnl_map = multileg_pnl_by_order_id(multi_leg_db, sym, mark_prices=dict(mark_prices))
-        
-        # We need to know the strategy for each order to aggregate correctly
-        # Let's fetch the orders to get their strategy and exit_time
+
         rows = query_rows(
             multi_leg_db,
             "SELECT local_order_id, strategy, filled_at FROM multi_leg_orders WHERE symbol = ?",
-            (sym,)
+            (sym,),
         )
         order_meta = {str(r["local_order_id"]): r for r in rows if r.get("local_order_id")}
-        
-        # Track which orders we've processed to avoid double counting (since exit and entry both get the realized pnl)
-        processed_realized = set()
-        
+
         for oid, rec in pnl_map.items():
             meta = order_meta.get(oid) or {}
             strat = str(meta.get("strategy") or "multi_leg").lower()
-            
-            r = rec.get("realized_pnl")
             u = rec.get("unrealized_pnl")
-            
-            if r is not None:
-                # We only want to count each realized PnL once per pair.
-                # multileg_pnl_by_order_id assigns the same PnL to both entry and exit.
-                # We can just sum them and divide by 2, or track processed.
-                # Actually, the easiest way is to just use _multileg_realized_rows for realized PnL like before,
-                # and use pnl_map ONLY for unrealized PnL.
-                pass
-                
             if u is not None:
                 unrealized += float(u)
                 by_strategy[strat]["unrealized_pnl"] += float(u)
 
-        # Now get realized PnL using the old reliable method
         for item in _multileg_realized_rows(multi_leg_db, sym):
             exit_ts = int(item.get("exit_time") or 0)
             if since_ts is not None and exit_ts < since_ts:
@@ -466,13 +568,34 @@ def build_account_summary(
     
     from mlbot_console.services.spot_ledger_book import fetch_spot_ledger_holdings
     spot_ledger_data = fetch_spot_ledger_holdings(spot_ledger_db, marks)
-    
+    fifo_holdings = spot_holdings_from_orders(spot_db, mark_prices=marks)
+    ledger_by_asset = {h["asset"]: h for h in spot_ledger_data.get("holdings") or []}
+    fifo_by_asset = {h["asset"]: h for h in fifo_holdings}
+
     for scope_block in scope_blocks:
         ex = exchange_by_scope.get(str(scope_block.get("scope") or ""))
         if ex:
             if scope_block["scope"] == "spot":
                 ex["ledger_holdings"] = spot_ledger_data["holdings"]
                 ex["ledger_holdings_value_usdt"] = spot_ledger_data["holdings_value_usdt"]
+                for h in ex.get("holdings") or []:
+                    asset = str(h.get("asset") or "")
+                    led = ledger_by_asset.get(asset) or fifo_by_asset.get(asset)
+                    if not led:
+                        continue
+                    avg = float(led.get("cost_basis") or led.get("avg_entry_usdt") or 0.0)
+                    if avg > 0:
+                        h["avg_entry_usdt"] = avg
+                        h["cost_notional_usdt"] = float(
+                            led.get("deploy_usdt")
+                            or led.get("cost_notional_usdt")
+                            or avg * float(h.get("qty") or 0.0)
+                        )
+                    if led.get("unrealized_pnl_usdt") is not None:
+                        h["unrealized_pnl_usdt"] = float(led["unrealized_pnl_usdt"])
+                    h["entry_source"] = (
+                        "ledger" if asset in ledger_by_asset else "fifo_orders"
+                    )
             scope_block["exchange"] = ex
 
     ledger_totals = dict(ledger.get("totals") or {})
@@ -556,55 +679,79 @@ def build_order_pnl_maps(
         if sym:
             where = " WHERE symbol = ?"
             params = (sym,)
-        for row in query_rows(
+        entry_qty_by_pid = _trend_entry_qty_by_position(trend_db, sym)
+        positions = query_rows(
             trend_db,
             f"""
-            SELECT position_id, symbol, realized_pnl, status, exit_time, entry_time
+            SELECT position_id, symbol, side, current_size, entry_time, exit_time,
+                   entry_price, exit_price, realized_pnl, status, strategy_id
             FROM positions
             {where}
             """,
             params,
-        ):
+        )
+        for row in positions:
             pid = str(row.get("position_id") or "")
-            rpnl = row.get("realized_pnl")
-            if rpnl is not None and row.get("exit_time"):
-                rec = {
-                    "pnl_usdt": float(rpnl),
-                    "realized_pnl": float(rpnl),
-                    "pnl_hint": "已实现",
-                }
+            if not pid:
+                continue
+            sym_u = str(row.get("symbol") or "").upper()
+            mark_px = float(marks.get(sym_u) or 0.0)
+            if row.get("exit_time"):
+                pnl = _trend_realized_pnl_usdt(row, entry_qty_by_pid=entry_qty_by_pid)
+                if pnl is None:
+                    continue
+                rec = _trend_realized_rec(pnl)
                 trend_map[f"{pid}:exit"] = rec
+                continue
+            upnl = _trend_unrealized_pnl_usdt(
+                row, mark_px, entry_qty_by_pid=entry_qty_by_pid
+            )
+            if upnl is None:
+                continue
+            rec = _trend_unrealized_rec(upnl)
+            trend_map[f"{pid}:entry"] = rec
+
         sym_filter = " AND o.symbol = ?" if sym else ""
         for row in query_rows(
             trend_db,
             f"""
-            SELECT o.order_id, o.side, p.realized_pnl, p.side AS pos_side, p.exit_time
+            SELECT o.order_id, o.side, o.position_id,
+                   p.realized_pnl, p.side AS pos_side, p.exit_time,
+                   p.entry_price, p.exit_price, p.current_size, p.symbol
             FROM orders o
             INNER JOIN positions p ON p.position_id = o.position_id
-            WHERE p.exit_time IS NOT NULL AND p.realized_pnl IS NOT NULL{sym_filter}
+            WHERE o.position_id IS NOT NULL{sym_filter}
             """,
             params,
         ):
             oid = str(row.get("order_id") or "")
+            pid = str(row.get("position_id") or "")
             if not oid or oid in trend_map:
                 continue
-            o_side = str(row.get("side") or "")
-            p_side = str(row.get("pos_side") or "long")
-            is_long = p_side.lower() == "long"
-            exit_side = o_side.lower() in {"sell", "short"} if is_long else o_side.lower() in {
-                "buy",
-                "long",
-            }
-            if not exit_side:
+            pos_side = str(row.get("pos_side") or "long").lower()
+            o_side = str(row.get("side") or "").lower()
+            is_long = pos_side == "long"
+            is_entry = o_side in {"buy", "long"} if is_long else o_side in {"sell", "short"}
+            is_exit = o_side in {"sell", "short"} if is_long else o_side in {"buy", "long"}
+            if row.get("exit_time"):
+                if not is_exit:
+                    continue
+                pnl = _trend_realized_pnl_usdt(row, entry_qty_by_pid=entry_qty_by_pid)
+                if pnl is None:
+                    continue
+                trend_map[oid] = _trend_realized_rec(pnl)
                 continue
-            rpnl = row.get("realized_pnl")
-            if rpnl is None:
+            if not is_entry:
                 continue
-            trend_map[oid] = {
-                "pnl_usdt": float(rpnl),
-                "realized_pnl": float(rpnl),
-                "pnl_hint": "已实现",
-            }
+            sym_u = str(row.get("symbol") or "").upper()
+            mark_px = float(marks.get(sym_u) or 0.0)
+            upnl = _trend_unrealized_pnl_usdt(
+                row, mark_px, entry_qty_by_pid=entry_qty_by_pid
+            )
+            if upnl is None:
+                continue
+            existing = trend_map.get(f"{pid}:entry")
+            trend_map[oid] = existing if existing else _trend_unrealized_rec(upnl)
 
     spot_map: Dict[str, Dict[str, Any]] = {}
     if spot_db.is_file():

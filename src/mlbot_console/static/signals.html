@@ -64,12 +64,25 @@
 
     <details class="panel funnel-panel funnel-collapsed">
       <summary class="funnel-summary">
-        <span class="funnel-summary-title">Trend 漏斗（15min · stats_15min）</span>
-        <span class="muted funnel-summary-hint">regime / prefilter / direction / gate · 点击展开</span>
+        <span class="funnel-summary-title">策略漏斗（15min · stats_15min）</span>
+        <span class="muted funnel-summary-hint">按具体策略 · B/A/C 分层 · 点击展开</span>
       </summary>
-      <p class="muted">按策略分层；数据来自 live_monitor.db。</p>
+      <p class="muted">Trend 策略漏斗来自 live_monitor.db；A/C 层成交/挂单见上表各策略行。Spot/Multi-leg 漏斗写入待 runner 接入 StatsCollector。</p>
+      <label>账户层
+        <select id="funnelLayerSelect">
+          <option value="">全部</option>
+          <option value="trend">B·Trend</option>
+          <option value="spot">A·Spot</option>
+          <option value="multi_leg">C·Multi-leg</option>
+        </select>
+      </label>
       <label>Symbol
         <select id="funnelSymbolSelect">
+          <option value="">全部</option>
+        </select>
+      </label>
+      <label>策略
+        <select id="funnelStrategySelect">
           <option value="">全部</option>
         </select>
       </label>
@@ -79,6 +92,7 @@
             <tr>
               <th>时间</th>
               <th>Symbol</th>
+              <th>层</th>
               <th>策略</th>
               <th>regime ✓</th>
               <th>regime ✗</th>
@@ -89,7 +103,7 @@
             </tr>
           </thead>
           <tbody id="funnelBody">
-            <tr><td colspan="9" class="muted">加载中…</td></tr>
+            <tr><td colspan="10" class="muted">加载中…</td></tr>
           </tbody>
         </table>
       </div>

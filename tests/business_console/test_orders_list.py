@@ -1,3 +1,5 @@
+import pytest
+
 from mlbot_console.services.orders_list import collect_orders, trend_orders
 
 
@@ -312,3 +314,102 @@ def test_collect_orders_attaches_trend_exit_pnl(
     assert exit_row["realized_pnl"] == 12.5
     assert exit_row["pnl_usdt"] == 12.5
     assert exit_row["pnl_hint"] == "已实现"
+
+
+def test_collect_orders_open_trend_position_shows_unrealized_pnl(
+    trend_db, spot_db, multi_leg_db, bus_root
+):
+    import sqlite3
+
+    conn = sqlite3.connect(trend_db)
+    conn.execute(
+        """
+        INSERT INTO positions VALUES (
+            'p_open', 'ETHUSDT', 'long',
+            '2026-05-19T08:00:00+00:00', NULL,
+            2100.0, NULL, NULL, 'open', 'tpc', 2095.0, NULL, 0.5
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO orders VALUES (
+            'ord_open_entry', 'ETHUSDT', 'BUY', 'filled', 'limit',
+            0.5, 2100.0, NULL,
+            '2026-05-19T08:00:00+00:00', '2026-05-19T08:00:00+00:00',
+            '2026-05-19T08:00:00+00:00', 2100.0, 0.5, 'p_open'
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    rows = collect_orders(
+        trend_db=trend_db,
+        spot_db=spot_db,
+        multi_leg_db=multi_leg_db,
+        symbol="ETHUSDT",
+        scopes=["trend"],
+        limit=50,
+        feature_bus_root=bus_root,
+    )
+    entry_row = next(r for r in rows if r["order_id"] == "ord_open_entry")
+    assert entry_row["pnl_usdt"] is not None
+    assert entry_row["unrealized_pnl"] is not None
+    assert entry_row["pnl_hint"] == "浮盈"
+    pos_entry = next(r for r in rows if r["order_id"] == "p_open:entry")
+    assert pos_entry["pnl_usdt"] is not None
+
+
+def test_collect_orders_trend_stop_loss_pnl_when_realized_null(
+    trend_db, spot_db, multi_leg_db, bus_root
+):
+    import sqlite3
+
+    conn = sqlite3.connect(trend_db)
+    conn.execute(
+        """
+        INSERT INTO positions VALUES (
+            'p_sl', 'XRPUSDT', 'long',
+            '2026-05-15T10:00:00+00:00', '2026-05-15T12:00:00+00:00',
+            2.50, 2.30, NULL, 'closed', 'tpc', 2.30, NULL, 0.0
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO orders VALUES (
+            'ord_sl_exit', 'XRPUSDT', 'SELL', 'filled', 'stop_market',
+            1000.0, NULL, 2.30,
+            '2026-05-15T12:00:00+00:00', '2026-05-15T11:00:00+00:00',
+            '2026-05-15T12:00:00+00:00', 2.30, 1000.0, 'p_sl'
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO orders VALUES (
+            'ord_sl_entry', 'XRPUSDT', 'BUY', 'filled', 'limit',
+            1000.0, 2.50, NULL,
+            '2026-05-15T10:00:00+00:00', '2026-05-15T10:00:00+00:00',
+            '2026-05-15T10:00:00+00:00', 2.50, 1000.0, 'p_sl'
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    rows = collect_orders(
+        trend_db=trend_db,
+        spot_db=spot_db,
+        multi_leg_db=multi_leg_db,
+        symbol="XRPUSDT",
+        scopes=["trend"],
+        limit=50,
+        feature_bus_root=bus_root,
+    )
+    exit_row = next(r for r in rows if r["order_id"] == "ord_sl_exit")
+    assert exit_row["pnl_usdt"] == pytest.approx(-200.0)
+    assert exit_row["pnl_hint"] == "已实现"
+    pos_exit = next(r for r in rows if r["order_id"] == "p_sl:exit")
+    assert pos_exit["pnl_usdt"] == pytest.approx(-200.0)

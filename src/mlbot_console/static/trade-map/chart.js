@@ -21,6 +21,7 @@ function chartBaseOptions() {
     rightPriceScale: {
       borderColor: "#30363d",
       scaleMargins: { top: 0.08, bottom: 0.12 },
+      minimumWidth: 72,
     },
     handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true },
     handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true },
@@ -88,24 +89,45 @@ function syncSubchartScales() {
 }
 
 function syncSubchartsToMainRange() {
-  if (!S.chart) return;
-  syncSubchartScales();
-  const timeRange = mainVisibleTimeRange();
-  if (timeRange) {
+  if (!S.chart || S.syncingTimeScale) return;
+  S.syncingTimeScale = true;
+  try {
+    syncSubchartScales();
+    const timeRange =
+      S.chart.timeScale().getVisibleRange?.() || mainVisibleTimeRange();
+    if (timeRange && timeRange.from != null && timeRange.to != null) {
+      for (const pane of S.subcharts.values()) {
+        try {
+          pane.chart.timeScale().setVisibleRange(timeRange);
+        } catch (_) {
+          /* subchart may not have data at range edges yet */
+        }
+      }
+      return;
+    }
+    const logical = S.chart.timeScale().getVisibleLogicalRange();
+    if (!logical || !S.lastCandles?.length) return;
+    const fromIdx = Math.max(
+      0,
+      Math.min(S.lastCandles.length - 1, Math.floor(Number(logical.from)))
+    );
+    const toIdx = Math.max(
+      0,
+      Math.min(S.lastCandles.length - 1, Math.ceil(Number(logical.to)))
+    );
+    const fromTime = S.lastCandles[fromIdx]?.time;
+    const toTime = S.lastCandles[toIdx]?.time;
+    if (fromTime == null || toTime == null) return;
+    const derived = { from: fromTime, to: toTime };
     for (const pane of S.subcharts.values()) {
       try {
-        pane.chart.timeScale().setVisibleRange(timeRange);
+        pane.chart.timeScale().setVisibleRange(derived);
       } catch (_) {
-        const range = S.chart.timeScale().getVisibleLogicalRange();
-        if (range) pane.chart.timeScale().setVisibleLogicalRange(range);
+        /* ignore */
       }
     }
-    return;
-  }
-  const range = S.chart.timeScale().getVisibleLogicalRange();
-  if (!range) return;
-  for (const pane of S.subcharts.values()) {
-    pane.chart.timeScale().setVisibleLogicalRange(range);
+  } finally {
+    S.syncingTimeScale = false;
   }
 }
 
@@ -147,6 +169,7 @@ function initMainChart() {
         height: pane.host.clientHeight,
       });
     }
+    syncSubchartsToMainRange();
     if (typeof layoutChopGridLabels === "function") {
       layoutChopGridLabels(S.lastCandles);
     }

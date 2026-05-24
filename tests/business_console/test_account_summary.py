@@ -148,6 +148,70 @@ def test_account_summary_api(client) -> None:
     assert "recent_realized" in body["data"]
 
 
+def test_account_summary_multileg_realized(
+    trend_db, spot_db, spot_ledger_db, multi_leg_db, bus_root
+) -> None:
+    from src.order_management.multi_leg_storage import MultiLegStorage
+
+    storage = MultiLegStorage(str(multi_leg_db))
+    run_id = storage.create_run(
+        mode="testnet",
+        strategies=["chop_grid"],
+        symbols=["BNBUSDT"],
+        run_id="acct_ml_pnl",
+    )
+    group = "BNBUSDT_2026-05-20 12:00:00+00:00"
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": f"{group}_S1",
+            "symbol": "BNBUSDT",
+            "side": "SELL",
+            "purpose": "entry",
+            "quantity": 0.5,
+            "status": "filled",
+            "filled_quantity": 0.5,
+            "average_price": 700.0,
+            "filled_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": f"{group}_S1_tp",
+            "leg_id": f"{group}_S1",
+            "symbol": "BNBUSDT",
+            "side": "SHORT",
+            "purpose": "take_profit",
+            "quantity": 0.5,
+            "status": "filled",
+            "filled_quantity": 0.5,
+            "average_price": 680.0,
+            "filled_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+    data = build_account_summary(
+        trend_db=trend_db,
+        spot_db=spot_db,
+        spot_ledger_db=spot_ledger_db,
+        multi_leg_db=multi_leg_db,
+        feature_bus_root=bus_root,
+        symbol="BNBUSDT",
+        lookback_days=0,
+    )
+    ml_scope = next(s for s in data["scopes"] if s["scope"] == "multi_leg")
+    assert ml_scope["realized_pnl"] == pytest.approx(10.0, rel=1e-4)
+    assert ml_scope["closed_trades"] >= 1
+    chop = next(
+        s
+        for s in data["strategies"]
+        if s["scope"] == "multi_leg" and s["strategy"] == "chop_grid"
+    )
+    assert chop["realized_pnl"] == pytest.approx(10.0, rel=1e-4)
+
+
 def test_account_summary_filters_by_scopes(
     trend_db, spot_db, spot_ledger_db, multi_leg_db, bus_root
 ) -> None:

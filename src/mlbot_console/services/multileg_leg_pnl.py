@@ -150,11 +150,6 @@ def multileg_pnl_by_order_id(
                 continue
             if mark <= 0:
                 continue
-            planned = _pick_planned_tp(
-                _protection_tp_rows(group_rows, entry_link_id(entry))
-            )
-            if planned is None:
-                continue
             upnl = _unrealized_pnl_usdt(entry, mark)
             if upnl is None:
                 continue
