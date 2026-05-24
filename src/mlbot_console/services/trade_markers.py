@@ -489,9 +489,13 @@ def multi_leg_markers(
                 local_order_id=local_oid,
                 is_filled=is_filled,
             )
+        strat = str(row.get("strategy") or "multi_leg").lower()
+        # chop_grid TP levels are drawn on price lines (with coerce); bar markers
+        # only pin to fill time (aboveBar) and misread as TP limit price.
+        if strat == "chop_grid" and event == "tp":
+            continue
         side_raw = str(row.get("side") or "").upper()
         side = "long" if side_raw in {"BUY", "LONG"} else "short"
-        strat = str(row.get("strategy") or "multi_leg").lower()
         tp_price = _multi_leg_take_profit_price(row)
         leg_label = _leg_label_from_order_id(local_oid) or _leg_label_from_order_id(
             str(row.get("leg_id") or "")

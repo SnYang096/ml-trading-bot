@@ -327,9 +327,7 @@ def test_filled_take_profit_marker_is_exit(multi_leg_db):
     )
     markers = multi_leg_markers(multi_leg_db, "BNBUSDT")
     tp = [m for m in markers if m.get("detail", {}).get("purpose") == "take_profit"]
-    assert tp
-    assert tp[0]["event"] == "tp"
-    assert tp[0]["side"] == "short"
+    assert tp == []
 
 
 def test_exclude_expired_canceled_from_list(multi_leg_db):

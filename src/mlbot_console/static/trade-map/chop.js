@@ -345,6 +345,8 @@ function applyChopGridOverlay(overlay, candles, lineSpans) {
         const tpOpen = ["open", "pending", "new", "submitted", "shadow"].includes(
           tpSt
         );
+        // Filled TP is historical; overlay grid already explains the ladder.
+        if (!tpOpen) continue;
         addChopFullWidthLine(candles, tpPx, {
           color: tpOpen ? "#a855f7" : "#6b7280",
           lineStyle: 1,
