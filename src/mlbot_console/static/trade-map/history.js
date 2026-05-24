@@ -112,9 +112,11 @@ async function loadMoreHistory() {
       from: newFromIso,
       to: Core.isoFromUnixSec(oldest),
       include_ohlcv: "full",
-      include_features: "false",
+      include_features: S.selectedFeatureColumns.length > 0 ? "true" : "false",
       full_range: "false",
     });
+    const featParam = Core.featureColumnsParam(S.selectedFeatureColumns);
+    if (featParam) q.set("feature_columns", featParam);
     const { data, meta } = await Shell.api(`/api/trade-map/bundle?${q}`);
     const more = Core.sanitizeCandlesForLwc(data.ohlcv?.candles || []);
     if (!more.length) {
@@ -130,7 +132,24 @@ async function loadMoreHistory() {
     S.candleSeries.setData(merged);
     applyLoadedOhlcvRange(meta, merged);
     if (S.lastChopMapData) applyChopMapLayers(S.lastChopMapData, merged);
-    syncSubcharts(merged, S.lastOverlays);
+    if (data.overlays && Object.keys(data.overlays).length) {
+      const mergedOl = { ...(S.lastOverlays || {}) };
+      for (const [col, spec] of Object.entries(data.overlays)) {
+        if (!spec) continue;
+        const prevPts = mergedOl[col]?.points || [];
+        const nextPts = spec.points || [];
+        mergedOl[col] = {
+          ...spec,
+          points: Core.clipOverlayPointsToCandles(
+            mergeOverlayPoints(prevPts, nextPts),
+            merged
+          ),
+        };
+      }
+      S.lastOverlays = mergedOl;
+    }
+    syncSubcharts(merged, S.lastOverlays || {});
+    syncSubchartsToMainRange();
     if (
       S.markerQueryFromIso == null ||
       new Date(newFromIso).getTime() < new Date(S.markerQueryFromIso).getTime()
@@ -149,18 +168,7 @@ function bindTimeScaleSync() {
   S.timeSyncBound = true;
   S.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
     if (!range) return;
-    const timeRange = mainVisibleTimeRange();
-    for (const pane of S.subcharts.values()) {
-      if (timeRange) {
-        try {
-          pane.chart.timeScale().setVisibleRange(timeRange);
-          continue;
-        } catch (_) {
-          /* fallback */
-        }
-      }
-      pane.chart.timeScale().setVisibleLogicalRange(range);
-    }
+    syncSubchartsToMainRange();
     refreshMainPriceAutoscale();
     if (typeof layoutChopGridLabels === "function") {
       layoutChopGridLabels(S.lastCandles);

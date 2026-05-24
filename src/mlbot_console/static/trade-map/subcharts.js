@@ -229,7 +229,7 @@ function ensureFeaturePane(column, overlay, colorIndex, candles) {
     const capEl = pane.host?.parentElement?.querySelector(".subchart-label");
     if (capEl) capEl.textContent = caption;
   }
-  const pts = overlay.points || [];
+  const pts = Core.clipOverlayPointsToCandles(overlay.points || [], candles);
   pane.series.setData(pts.map((p) => ({ time: p.time, value: p.value })));
   syncFeatureRefLines(pane, overlay, pts, candles);
   requestAnimationFrame(() => {

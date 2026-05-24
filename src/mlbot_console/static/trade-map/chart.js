@@ -73,15 +73,31 @@ function mainVisibleTimeRange() {
   return { from: fromTime, to: toTime };
 }
 
+function syncSubchartScales() {
+  if (!S.chart) return;
+  const mainTs = S.chart.options()?.timeScale || {};
+  const barSpacing = mainTs.barSpacing ?? 3;
+  const rightOffset = mainTs.rightOffset ?? 8;
+  for (const pane of S.subcharts.values()) {
+    pane.chart.timeScale().applyOptions({
+      barSpacing,
+      rightOffset,
+      minBarSpacing: 0.5,
+    });
+  }
+}
+
 function syncSubchartsToMainRange() {
   if (!S.chart) return;
+  syncSubchartScales();
   const timeRange = mainVisibleTimeRange();
   if (timeRange) {
     for (const pane of S.subcharts.values()) {
       try {
         pane.chart.timeScale().setVisibleRange(timeRange);
       } catch (_) {
-        /* fallback below */
+        const range = S.chart.timeScale().getVisibleLogicalRange();
+        if (range) pane.chart.timeScale().setVisibleLogicalRange(range);
       }
     }
     return;

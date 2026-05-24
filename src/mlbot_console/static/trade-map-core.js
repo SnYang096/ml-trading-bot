@@ -121,6 +121,18 @@
     return [...byTime.values()].sort((a, b) => a.time - b.time);
   }
 
+  /** Drop feature points outside the loaded OHLCV window (poll/history merge safety). */
+  function clipOverlayPointsToCandles(points, candles) {
+    if (!points?.length || !candles?.length) return points || [];
+    const tMin = Number(candles[0].time);
+    const tMax = Number(candles[candles.length - 1].time);
+    if (!Number.isFinite(tMin) || !Number.isFinite(tMax)) return points;
+    return points.filter((p) => {
+      const t = Number(p?.time);
+      return Number.isFinite(t) && t >= tMin && t <= tMax;
+    });
+  }
+
   function isoFromUnixSec(sec) {
     return new Date(Number(sec) * 1000).toISOString();
   }
@@ -838,6 +850,7 @@
     tradeMapHistoryChunkDays,
     barDurationSec,
     mergeCandlesByTime,
+    clipOverlayPointsToCandles,
     isoFromUnixSec,
     mainOverlaysQueryParam,
     stageRegionsQueryParam,

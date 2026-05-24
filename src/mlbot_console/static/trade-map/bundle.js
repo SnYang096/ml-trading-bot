@@ -172,7 +172,10 @@ async function refreshBundle(opts = {}) {
         if (!spec?.points?.length) continue;
         mergedOl[col] = {
           ...spec,
-          points: mergeOverlayPoints(mergedOl[col]?.points, spec.points),
+          points: Core.clipOverlayPointsToCandles(
+            mergeOverlayPoints(mergedOl[col]?.points, spec.points),
+            S.lastCandles
+          ),
         };
       }
       S.lastOverlays = mergedOl;

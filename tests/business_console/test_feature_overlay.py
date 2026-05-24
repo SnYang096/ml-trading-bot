@@ -155,8 +155,8 @@ def test_align_ffill_after_last_feature_row(tmp_path):
     assert pts[-2]["value"] == pytest.approx(pts[2]["value"])
 
 
-def test_align_bfill_leading_candles_before_first_feature(tmp_path):
-    """Feature bus starts mid-window; aligned series must cover every candle."""
+def test_align_leading_candles_blank_before_first_feature(tmp_path):
+    """Before the first feature row, sub-chart should stay empty (no bfill)."""
     feat_dir = tmp_path / "features" / "120T"
     feat_dir.mkdir(parents=True)
     start = pd.Timestamp("2024-01-01", tz="UTC")
@@ -183,9 +183,9 @@ def test_align_bfill_leading_candles_before_first_feature(tmp_path):
         candles=candles,
     )
     pts = overlays["regime_score"]["points"]
-    assert len(pts) == len(candles)
+    assert len(pts) < len(candles)
+    assert pts[0]["time"] == int(feat_start.timestamp())
     assert pts[0]["value"] == pytest.approx(0.15)
-    assert pts[0]["time"] == candles[0]["time"]
 
 
 def test_load_multiple_overlays(bus_root):
