@@ -58,6 +58,40 @@ def spot_strategy_ids() -> tuple[str, ...]:
 
 
 @lru_cache(maxsize=1)
+def get_live_console_strategies() -> List[Dict[str, str]]:
+    """Strategies enabled in constitution.yaml (matches prod runners, not repo archetypes)."""
+    meta_by_id = {s["id"]: s for s in get_console_strategies()}
+    try:
+        from mlbot_console.config import SETTINGS
+        from src.live_data_stream.constitution_config import (
+            load_constitution_dict,
+            resolve_constitution_yaml_path,
+            strategies_for_slot_metrics_from_constitution,
+        )
+
+        path = resolve_constitution_yaml_path(override=str(SETTINGS.constitution_yaml))
+        cfg = load_constitution_dict(path)
+        out: List[Dict[str, str]] = []
+        for sid in strategies_for_slot_metrics_from_constitution(cfg):
+            key = str(sid).strip().lower()
+            if not key:
+                continue
+            if key in meta_by_id:
+                out.append(dict(meta_by_id[key]))
+            else:
+                out.append(
+                    {
+                        "id": key,
+                        "account_layer": strategy_account_layer(key),
+                        "title": key,
+                    }
+                )
+        return sorted(out, key=lambda x: x["id"])
+    except Exception:
+        return sorted(meta_by_id.values(), key=lambda x: x["id"])
+
+
+@lru_cache(maxsize=1)
 def get_console_strategies() -> List[Dict[str, str]]:
     """Strategy registry for taxonomy / constitution summary (id, account_layer, title)."""
     by_id: Dict[str, Dict[str, str]] = {

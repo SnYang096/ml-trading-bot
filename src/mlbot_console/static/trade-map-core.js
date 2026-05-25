@@ -400,14 +400,19 @@
     return (columns || []).filter((c) => String(c).toLowerCase().includes(q));
   }
 
-  /** Strategies selectable in the feature drawer for the enabled account layers. */
+  /** Strategies selectable on Trade Map (constitution-enabled, not every repo archetype). */
   function listStrategiesForLayers(layers) {
-    if (featureTaxonomy && featureTaxonomy.strategies) {
-      return featureTaxonomy.strategies.filter((s) =>
-        isLayerEnabled(s.account_layer, layers)
-      );
-    }
-    return [];
+    if (!featureTaxonomy || !featureTaxonomy.strategies) return [];
+    const liveIds = featureTaxonomy.live_strategy_ids;
+    const allowedLive =
+      Array.isArray(liveIds) && liveIds.length
+        ? new Set(liveIds.map((id) => String(id).toLowerCase()))
+        : null;
+    return featureTaxonomy.strategies.filter((s) => {
+      if (!isLayerEnabled(s.account_layer, layers)) return false;
+      if (allowedLive && !allowedLive.has(String(s.id).toLowerCase())) return false;
+      return true;
+    });
   }
 
   /**
