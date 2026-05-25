@@ -523,6 +523,38 @@ function cancelMetricsTableScrollSchedule() {
   metricsTableScrollPendingTime = null;
 }
 
+function onMetricsTableColumnClick(timeSec) {
+  const t = Number(timeSec);
+  if (!Number.isFinite(t)) return;
+  cancelMetricsTableScrollSchedule();
+  S.highlightBarTime = t;
+  const scroll = document.getElementById("featureMetricsScroll");
+  if (scroll) {
+    applyMetricsColumnHighlight(scroll, t);
+    scrollMetricsTableToActiveColumn(scroll, t);
+  }
+  if (typeof scrollChartToBarTime === "function") {
+    scrollChartToBarTime(t);
+  }
+  if (typeof refreshFeatureMetricsPanel === "function") {
+    refreshFeatureMetricsPanel(t, {
+      rebuild: false,
+      preserveScrollLeft: true,
+    });
+  }
+}
+
+function bindMetricsTableClick(scroll) {
+  if (!scroll || scroll.dataset.metricsClickBound === "1") return;
+  scroll.dataset.metricsClickBound = "1";
+  scroll.addEventListener("click", (ev) => {
+    const cell = ev.target.closest("[data-time]");
+    if (!cell || !scroll.contains(cell)) return;
+    const t = Number(cell.getAttribute("data-time"));
+    onMetricsTableColumnClick(t);
+  });
+}
+
 /** Highlight only unless allowScroll (crosshair idle); poll/resize never scroll. */
 function highlightMetricsTableColumn(timeSec, { allowScroll = false } = {}) {
   const scroll = document.getElementById("featureMetricsScroll");
@@ -557,7 +589,7 @@ function ensureFeatureMetricsTablePane(item, candles, overlays, highlightTimeSec
     const cap = document.createElement("div");
     cap.className = "metrics-table-caption";
     cap.textContent =
-      "Chop Grid 指标表 · 顶行✓/×=可新开网格 · 滚轮自管横向位置 · 仅十字线停住约3s才自动滚到列";
+      "Chop Grid 指标表 · 顶行✓/×=可新开网格 · 点击列可定位主图 K 线 · 十字线停住约3s才自动横滚";
     const scroll = document.createElement("div");
     scroll.id = "featureMetricsScroll";
     scroll.className = "metrics-table-scroll layout-pivot-host";
@@ -569,6 +601,7 @@ function ensureFeatureMetricsTablePane(item, candles, overlays, highlightTimeSec
   }
   const scroll = document.getElementById("featureMetricsScroll");
   if (!scroll) return domId;
+  bindMetricsTableClick(scroll);
   if (scroll.querySelector(".feature-metrics-table")) {
     refreshFeatureMetricsPanel(highlightTimeSec, {
       rebuild: true,
@@ -617,6 +650,7 @@ function refreshFeatureMetricsPanel(
   if (!host) return;
   const scroll = document.getElementById("featureMetricsScroll");
   if (!scroll) return;
+  bindMetricsTableClick(scroll);
   const timeSec =
     highlightTimeSec != null
       ? highlightTimeSec

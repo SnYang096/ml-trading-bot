@@ -18,7 +18,7 @@
         role === "exit" &&
         marker.detail &&
         String(marker.detail.exit_kind || "").toLowerCase() === "regime_or_risk_exit";
-      if (regimeExit) return "arrowDown";
+      if (regimeExit) return "circle";
       if (role === "tp") return pending ? "circle" : Core.TP_MARKER_SHAPE;
       if (role === "exit") return Core.EXIT_SHAPE;
       if (role === "grid") return "square";
@@ -86,11 +86,115 @@
       }
       return best;
     }
+    function chopRegimeThresholdsFromOverlay(overlay) {
+      let entryMin = 0.5;
+      let exitBelow = 0.32;
+      const refs = overlay?.reference_lines || [];
+      for (const r of refs) {
+        const y = Number(r.y != null ? r.y : r.value);
+        if (!Number.isFinite(y)) continue;
+        const op = String(r.operator || "");
+        if (op.includes(">=")) entryMin = y;
+        else if (op === "<" || (op.includes("<") && !op.includes("="))) exitBelow = y;
+      }
+      return { entryMin, exitBelow };
+    }
+
+    function chopGridHysteresisActive(values, entryMin, exitBelow) {
+      let active = false;
+      const out = [];
+      for (const val of values) {
+        if (val == null || !Number.isFinite(val)) {
+          out.push(active);
+          continue;
+        }
+        if (!active) active = val >= entryMin;
+        else if (val < exitBelow) active = false;
+        out.push(active);
+      }
+      return out;
+    }
+
+    /** Synthetic regime exits from bpc_semantic_chop overlay (matches live hysteresis flatten). */
+    function synthesizeChopRegimeExitMarkers(candles, overlays) {
+      const ol = overlays?.bpc_semantic_chop;
+      if (!ol || !Array.isArray(candles) || !candles.length) return [];
+      const filled = Core.forwardFillOverlayToCandles(ol.points || [], candles);
+      if (!filled.length) return [];
+      const { entryMin, exitBelow } = chopRegimeThresholdsFromOverlay(ol);
+      const vals = filled.map((p) =>
+        p.value == null || !Number.isFinite(Number(p.value)) ? null : Number(p.value)
+      );
+      const chopOn = chopGridHysteresisActive(vals, entryMin, exitBelow);
+      const sym = String(
+        (candles[0] && candles[0].symbol) || "BNBUSDT"
+      ).toUpperCase();
+      const markers = [];
+      for (let i = 1; i < chopOn.length; i++) {
+        if (!(chopOn[i - 1] && !chopOn[i])) continue;
+        const val = vals[i];
+        if (val == null || val >= exitBelow) continue;
+        const t = Number(candles[i].time);
+        if (!Number.isFinite(t)) continue;
+        markers.push({
+          id: `multi_leg:regime_exit:${sym}:${t}`,
+          time: t,
+          symbol: sym,
+          scope: "multi_leg",
+          strategy: "chop_grid",
+          event: "exit",
+          side: "long",
+          status: "filled",
+          color: "#ff7043",
+          detail: {
+            exit_kind: "regime_or_risk_exit",
+            exit_reason: "regime_or_risk_exit",
+            chop: val,
+            entry_chop_min: entryMin,
+            exit_chop_below: exitBelow,
+            source: "overlay_hysteresis",
+          },
+        });
+      }
+      return markers;
+    }
+
+    function mergeRegimeExitMarkers(markers, regimeExits) {
+      const base = markers || [];
+      const adds = regimeExits || [];
+      if (!adds.length) return base;
+      const chopExitTimes = new Set();
+      for (const m of base) {
+        if (String(m.strategy || "").toLowerCase() !== "chop_grid") continue;
+        if (String(m.event || "").toLowerCase() !== "exit") continue;
+        const t = Number(m.time);
+        if (Number.isFinite(t)) chopExitTimes.add(t);
+      }
+      const seen = new Set(base.map((m) => String(m.id || "")));
+      const out = base.slice();
+      for (const m of adds) {
+        const id = String(m.id || "");
+        if (seen.has(id)) continue;
+        const t = Number(m.time);
+        if (!Number.isFinite(t)) continue;
+        let dup = false;
+        for (const et of chopExitTimes) {
+          if (Math.abs(t - et) <= 1) {
+            dup = true;
+            break;
+          }
+        }
+        if (dup) continue;
+        seen.add(id);
+        chopExitTimes.add(t);
+        out.push(m);
+      }
+      return out.sort((a, b) => Number(a.time) - Number(b.time));
+    }
+
     function chopGridMarkerDisplayText(m, pending) {
       const strat = (m.strategy || "").toLowerCase();
       if (strat !== "chop_grid") return "";
-      const leg = String((m.detail && m.detail.leg_label) || "").trim().toUpperCase();
-      if (!leg) return "";
       const ev = String(m.event || "").toLowerCase();
       if (
         ev === "exit" &&
@@ -99,6 +203,8 @@
       ) {
         return "regime退出";
       }
+      const leg = String((m.detail && m.detail.leg_label) || "").trim().toUpperCase();
+      if (!leg) return "";
       if (ev === "tp") return leg.endsWith("_TP") ? leg : `${leg}_TP`;
       if (ev === "entry" && !pending) return `${leg} 成交`;
       if (pending || ev === "grid") return `${leg} 挂单`;
@@ -166,7 +272,7 @@
             m.detail &&
             String(m.detail.exit_kind || "").toLowerCase() === "regime_or_risk_exit";
           if (regimeExit) {
-            position = "aboveBar";
+            position = "inBar";
           } else {
           const legSide = chopGridLegSide(
             (m.detail && m.detail.leg_label) || (m.detail && m.detail.leg_id) || legToken
@@ -215,6 +321,10 @@
     markersForChartDisplay,
     findMarkerByTime,
     chopGridMarkerDisplayText,
+    chopRegimeThresholdsFromOverlay,
+    chopGridHysteresisActive,
+    synthesizeChopRegimeExitMarkers,
+    mergeRegimeExitMarkers,
     chopGridLegSide,
     chopGridLabelAnchor,
     chopSegmentedLinePoints,

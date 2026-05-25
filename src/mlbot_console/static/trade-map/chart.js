@@ -56,6 +56,29 @@ function applyChartViewport(barCount) {
   }
 }
 
+/** Center main chart on a bar time (metrics table click, marker select, etc.). */
+function scrollChartToBarTime(barTime) {
+  if (!S.chart || !S.lastCandles.length) return;
+  const t = Number(barTime);
+  if (!Number.isFinite(t)) return;
+  const first = Number(S.lastCandles[0].time);
+  const last = Number(S.lastCandles[S.lastCandles.length - 1].time);
+  if (t < first || t > last) {
+    setStatus(
+      "该时间在当前已加载 K 线外；请点「刷新」或向左拖图加载更早历史"
+    );
+    return;
+  }
+  const idx = Core.scrollIndexForTime(S.lastCandles, t);
+  if (idx < 0) return;
+  const pad = 15;
+  const from = Math.max(0, idx - pad);
+  const to = Math.min(S.lastCandles.length - 1, idx + pad);
+  S.chart.timeScale().setVisibleLogicalRange({ from, to });
+  syncSubchartsToMainRange();
+  refreshMainPriceAutoscale();
+}
+
 function isViewingHistoricalBars() {
   if (!S.chart || !S.lastCandles?.length) return false;
   const logical = S.chart.timeScale().getVisibleLogicalRange();

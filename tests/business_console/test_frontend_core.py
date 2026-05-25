@@ -229,6 +229,50 @@ console.log(JSON.stringify({
     "trend_scalp",
     "m1"
   ).map((m) => m.id),
+  regimeExitText: (() => {
+    const m = {
+      id: "multi_leg:regime_exit:BNB:9000",
+      time: 9000,
+      strategy: "chop_grid",
+      event: "exit",
+      scope: "multi_leg",
+      detail: { exit_kind: "regime_or_risk_exit" },
+    };
+    return Core.chopGridMarkerDisplayText(m, false);
+  })(),
+  regimeExitLwc: (() => {
+    const m = {
+      id: "multi_leg:regime_exit:BNB:9000",
+      time: 9000,
+      strategy: "chop_grid",
+      event: "exit",
+      scope: "multi_leg",
+      color: "#ff7043",
+      detail: { exit_kind: "regime_or_risk_exit" },
+    };
+    const lwc = Core.markersToLwc([m])[0];
+    return { text: lwc.text, shape: lwc.shape, position: lwc.position };
+  })(),
+  synthRegimeExit: (() => {
+    const candles = [
+      { time: 1000 },
+      { time: 2000 },
+      { time: 3000 },
+      { time: 4000 },
+    ];
+    const overlays = {
+      bpc_semantic_chop: {
+        points: [
+          { time: 1000, value: 0.55 },
+          { time: 2000, value: 0.55 },
+          { time: 3000, value: 0.25 },
+          { time: 4000, value: 0.25 },
+        ],
+        reference_lines: [{ y: 0.5, operator: ">=" }, { y: 0.32, operator: "<" }],
+      },
+    };
+    return Core.synthesizeChopRegimeExitMarkers(candles, overlays);
+  })(),
   multilegStrategyIds: (() => {
     Core.setFeatureTaxonomy({
       strategies: [{ id: "tpc", account_layer: "trend", title: "TPC", stages: {} }],
@@ -315,6 +359,12 @@ def test_trade_map_core_node():
     assert out["chopMetricsNeedsFocus"] is True
     assert out["chopBarCanEnter"] is True
     assert out["chopBarBlocked"] is False
+    assert out["regimeExitText"] == "regime退出"
+    assert out["regimeExitLwc"]["text"] == "regime退出"
+    assert out["regimeExitLwc"]["shape"] == "circle"
+    assert out["regimeExitLwc"]["position"] == "inBar"
+    assert len(out["synthRegimeExit"]) == 1
+    assert out["synthRegimeExit"][0]["time"] == 3000
     assert out["chopMetricsSpecs"] >= 2
     assert out["chopPreset"] == ["bpc_semantic_chop", "box_pos_60"]
     assert out["trendPreset"] == ["trend_confidence", "bpc_semantic_chop"]

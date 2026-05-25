@@ -4,7 +4,22 @@ var Core = globalThis.MLBotTradeMapCore;
 var Shell = globalThis.MLBotConsole;
 
 function applyMarkers(rawMarkers, opts = {}) {
-  const aligned = alignMarkersToLoadedCandles(rawMarkers || []);
+  let incoming = rawMarkers || [];
+  const focus = String(S.featureStrategyFocus || "").trim().toLowerCase();
+  const chopFocus = !focus || focus === "chop_grid";
+  if (
+    chopFocus &&
+    S.lastCandles?.length &&
+    S.lastOverlays &&
+    typeof Core.synthesizeChopRegimeExitMarkers === "function"
+  ) {
+    const synth = Core.synthesizeChopRegimeExitMarkers(
+      S.lastCandles,
+      S.lastOverlays
+    );
+    incoming = Core.mergeRegimeExitMarkers(incoming, synth);
+  }
+  const aligned = alignMarkersToLoadedCandles(incoming);
   const merged = opts.merge
     ? mergeMarkersById(S.allRawMarkers || [], aligned)
     : aligned;
@@ -123,22 +138,11 @@ function applyTradeLinks(links) {
 }
 
 function scrollChartToMarker(markerTime) {
-  if (!S.chart || !S.lastCandles.length) return;
   const t = Number(markerTime);
   if (!Number.isFinite(t)) return;
-  const first = Number(S.lastCandles[0].time);
-  const last = Number(S.lastCandles[S.lastCandles.length - 1].time);
-  if (t < first || t > last) {
-    setStatus(
-      "订单时间不在当前已加载 K 线内；请点「刷新」或向左拖图加载更早历史后再选该行"
-    );
+  if (typeof scrollChartToBarTime === "function") {
+    scrollChartToBarTime(t);
   }
-  const idx = Core.scrollIndexForTime(S.lastCandles, t);
-  if (idx < 0) return;
-  const pad = 15;
-  const from = Math.max(0, idx - pad);
-  const to = Math.min(S.lastCandles.length - 1, idx + pad);
-  S.chart.timeScale().setVisibleLogicalRange({ from, to });
 }
 
 function highlightOrdersTableRow(markerId) {

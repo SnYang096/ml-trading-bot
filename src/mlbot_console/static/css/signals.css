@@ -383,6 +383,14 @@
   white-space: nowrap;
 }
 
+.feature-metrics-table.layout-pivot [data-time] {
+  cursor: pointer;
+}
+
+.feature-metrics-table.layout-pivot [data-time]:hover {
+  background: #21262d;
+}
+
 .feature-metrics-table .bar-col-active {
   background: #1f3a5f !important;
   box-shadow: inset 0 0 0 1px #58a6ff;
