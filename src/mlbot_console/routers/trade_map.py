@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
@@ -103,6 +103,62 @@ def _bundle_ohlcv_query(
     if ohlcv_mode == "tail" and ohlcv_from:
         return ohlcv_from, ohlcv_to, False
     return from_, to, use_full
+
+
+def _candles_for_main_overlays(
+    ohlcv: dict,
+    *,
+    ohlcv_mode: str,
+    symbol: str,
+    timeframe: str,
+    chart_from: Optional[str],
+    chart_to: Optional[str],
+) -> List[Dict[str, Any]]:
+    """Tail poll returns few OHLCV bars; MA overlays need the full chart window."""
+    tail = list(ohlcv.get("candles") or [])
+    if ohlcv_mode != "tail" or not tail:
+        return tail
+    if not chart_from and not chart_to:
+        return tail
+    try:
+        tf = assert_trade_map_timeframe(timeframe)
+        o_start = pd.Timestamp(chart_from, tz="UTC") if chart_from else None
+        o_end = pd.Timestamp(chart_to, tz="UTC") if chart_to else None
+        if o_start is None:
+            o_start = pd.Timestamp(int(tail[0]["time"]), unit="s", tz="UTC")
+        if o_end is None:
+            o_end = pd.Timestamp.now(tz="UTC")
+        max_days = (
+            SETTINGS.max_daily_ohlcv_days
+            if tf in ("1d", "1w")
+            else SETTINGS.max_ohlcv_days
+        )
+        o_start, o_end = cap_window_to_max_days(o_start, o_end, max_days)
+        pack = ohlcv_reader.fetch_ohlcv(
+            SETTINGS.feature_bus_root,
+            symbol,
+            tf,
+            start=o_start,
+            end=o_end,
+            max_days=SETTINGS.max_ohlcv_days,
+            full_range=False,
+            live_storage_bars_root=SETTINGS.live_storage_bars_root,
+            stitch_live_storage=SETTINGS.stitch_live_storage,
+            macro_kline_root=SETTINGS.macro_spot_kline_root,
+            daily_ohlcv_start=SETTINGS.daily_ohlcv_start,
+            max_daily_ohlcv_days=SETTINGS.max_daily_ohlcv_days,
+            live_data_root=SETTINGS.live_data_root,
+            live_root=SETTINGS.live_root,
+        )
+        full = list(pack.get("candles") or [])
+        return full if full else tail
+    except Exception:
+        logger.exception(
+            "main overlay full-window fetch failed symbol=%s tf=%s",
+            symbol,
+            timeframe,
+        )
+        return tail
 
 
 @router.get("/api/trade-map/symbols")
@@ -386,9 +442,17 @@ def trade_map_bundle(
         if feat_end is None and ohlcv.get("range_end"):
             feat_end = pd.Timestamp(str(ohlcv["range_end"]))
         try:
+            overlay_candles = _candles_for_main_overlays(
+                ohlcv,
+                ohlcv_mode=ohlcv_mode,
+                symbol=symbol,
+                timeframe=tf,
+                chart_from=from_,
+                chart_to=to,
+            )
             main_ol = load_main_chart_overlays(
                 symbol,
-                ohlcv["candles"],
+                overlay_candles,
                 main_keys,
                 chart_timeframe=tf,
                 macro_seed_root=SETTINGS.macro_weekly_ema_seed_root,

@@ -276,6 +276,21 @@ def test_trade_map_bundle_tail_preserves_marker_times(client):
     assert int(tail_markers[entry_mid]["time"]) == entry_time_full
     assert tail_markers[entry_mid].get("detail", {}).get("order_time") is None
 
+    tail_ema = client.get(
+        "/api/trade-map/bundle",
+        params={
+            **common,
+            "include_ohlcv": "tail",
+            "ohlcv_from": tail_from,
+            "ohlcv_to": tail_to,
+            "main_overlays": "ema_1200",
+            "include_features": "false",
+        },
+    )
+    assert tail_ema.status_code == 200
+    ema_pts = tail_ema.json()["data"]["main_overlays"]["ema_1200"]["points"]
+    assert len(ema_pts) > len(tail_candles) * 2
+
     expected = int(pd.Timestamp("2024-01-01T10:00:00+00:00").timestamp())
     assert entry_time_full == expected
 

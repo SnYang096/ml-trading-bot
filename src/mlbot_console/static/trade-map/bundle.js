@@ -117,6 +117,8 @@ async function refreshBundle(opts = {}) {
     q.set("include_features", pollFeatures ? "true" : "false");
     if (pollFeatures && featParam) q.set("feature_columns", featParam);
     if (S.lastMarkerPollSince) q.set("since", S.lastMarkerPollSince);
+    if (S.ohlcvLoadedFrom) q.set("from", S.ohlcvLoadedFrom);
+    q.set("to", S.ohlcvLoadedTo || new Date().toISOString());
     const lastT = S.lastCandles.length ? S.lastCandles[S.lastCandles.length - 1].time : null;
     if (lastT != null) {
       const barSec = Core.barDurationSec(timeframe);
@@ -187,7 +189,7 @@ async function refreshBundle(opts = {}) {
       S.lastOverlays = mergedOl;
     }
     if (data.main_overlays && Object.keys(data.main_overlays).length) {
-      applyMainOverlays(data.main_overlays, { merge: true });
+      applyMainOverlays(data.main_overlays, { merge: false });
     }
     syncSubcharts(S.lastCandles, S.lastOverlays || {});
   } else if (mode !== "poll") {
