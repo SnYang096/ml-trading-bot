@@ -117,6 +117,11 @@ async function loadMoreHistory() {
     });
     const featParam = Core.featureColumnsParam(S.selectedFeatureColumns);
     if (featParam) q.set("feature_columns", featParam);
+    const mainOl = Core.mainOverlaysQueryParam(
+      document.getElementById("mainEma1200")?.checked,
+      document.getElementById("mainWeeklyEma200")?.checked
+    );
+    if (mainOl) q.set("main_overlays", mainOl);
     const { data, meta } = await Shell.api(`/api/trade-map/bundle?${q}`);
     const more = Core.sanitizeCandlesForLwc(data.ohlcv?.candles || []);
     if (!more.length) {
@@ -132,6 +137,9 @@ async function loadMoreHistory() {
     S.candleSeries.setData(merged);
     applyLoadedOhlcvRange(meta, merged);
     if (S.lastChopMapData) applyChopMapLayers(S.lastChopMapData, merged);
+    if (data.main_overlays && Object.keys(data.main_overlays).length) {
+      applyMainOverlays(data.main_overlays, { merge: true });
+    }
     if (data.overlays && Object.keys(data.overlays).length) {
       const mergedOl = { ...(S.lastOverlays || {}) };
       for (const [col, spec] of Object.entries(data.overlays)) {

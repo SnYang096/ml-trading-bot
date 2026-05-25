@@ -277,6 +277,60 @@ def test_weekly_ema_falls_back_to_chart_candles_when_macro_stale(bus_root) -> No
     assert out["weekly_ema_200"]["point_count"] >= 50
 
 
+def test_weekly_ema_1w_aligns_one_point_per_candle(bus_root) -> None:
+    """Weekly chart overlays must cover every bar (LWC needs aligned times)."""
+    base = pd.Timestamp("2023-01-02", tz="UTC")
+    candles = []
+    for i in range(120):
+        ts = base + pd.Timedelta(weeks=i)
+        candles.append({"time": int(ts.timestamp()), "close": 500.0 + i * 1.5})
+    out = load_main_chart_overlays(
+        "BNBUSDT",
+        candles,
+        ["weekly_ema_200"],
+        chart_timeframe="1w",
+        macro_seed_root=None,
+        macro_spot_kline_root=None,
+    )
+    pts = out["weekly_ema_200"]["points"]
+    assert len(pts) == len(candles)
+    assert pts[0]["time"] == candles[0]["time"]
+    assert pts[-1]["time"] == candles[-1]["time"]
+
+
+def test_ema1200_fetch_caps_window_on_long_weekly_chart(monkeypatch, bus_root) -> None:
+    """1w full history must not OhlcvWindowError and block other overlays."""
+    base = pd.Timestamp("2020-01-05", tz="UTC")
+    candles = [
+        {
+            "time": int((base + pd.Timedelta(weeks=i)).timestamp()),
+            "close": 500.0 + i,
+        }
+        for i in range(120)
+    ]
+
+    def _boom(*_args, **_kwargs):
+        from mlbot_console.services.ohlcv_reader import OhlcvWindowError
+
+        raise OhlcvWindowError("range 520.0d exceeds max_ohlcv_days=180")
+
+    monkeypatch.setattr(
+        "mlbot_console.services.ohlcv_reader.fetch_ohlcv",
+        _boom,
+    )
+    out = load_main_chart_overlays(
+        "ETHUSDT",
+        candles,
+        ["ema_1200", "weekly_ema_200"],
+        chart_timeframe="1w",
+        feature_bus_root=bus_root,
+    )
+    assert out["weekly_ema_200"]["available"]
+    assert len(out["weekly_ema_200"]["points"]) == len(candles)
+    assert out["ema_1200"]["available"]
+    assert out["ema_1200"]["source"] == "chart_resample_2h"
+
+
 def test_weekly_ema_chart_fallback_skips_short_window(bus_root) -> None:
     """Short chart windows (<52 weekly bars) should NOT show a degenerate EMA."""
     base = pd.Timestamp("2026-01-05", tz="UTC")

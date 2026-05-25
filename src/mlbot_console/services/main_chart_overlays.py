@@ -12,6 +12,8 @@ from mlbot_console.services.macro_spot_daily import MacroSpotDailyLoader
 
 EMA1200_SPAN_BARS = 1200
 SOURCE_FEATURE_TF = "2h"
+# Warmup fetch cap (matches default max_ohlcv_days; enough for EMA1200 on 2h).
+EMA1200_FETCH_MAX_DAYS = 180
 # Seed parquet older than chart end by this much is treated stale (flat 374 bug).
 STALE_WEEKLY_SEED_LAG = pd.Timedelta(days=21)
 
@@ -166,6 +168,34 @@ def _weekly_ema_min_weeks(chart_timeframe: str) -> int:
     return 52
 
 
+def _weekly_close_series_from_candles(
+    candles: List[Dict[str, Any]],
+    *,
+    chart_timeframe: str = "2h",
+) -> pd.Series:
+    """Weekly closes for EMA fallback; on 1w chart use bar closes as-is."""
+    tf = str(chart_timeframe or "2h").strip().lower()
+    if tf == "1w":
+        rows: List[tuple[pd.Timestamp, float]] = []
+        for c in candles or []:
+            t = c.get("time")
+            close = c.get("close")
+            if t is None or close is None:
+                continue
+            try:
+                ts = _utc_ts(pd.Timestamp(int(t), unit="s", tz="UTC"))
+                px = float(close)
+            except (TypeError, ValueError):
+                continue
+            if px > 0:
+                rows.append((ts, px))
+        if not rows:
+            return pd.Series(dtype=float)
+        idx = pd.DatetimeIndex([r[0] for r in rows])
+        return pd.Series([r[1] for r in rows], index=idx, dtype=float).sort_index()
+    return _resample_candles_to_weekly_close(candles)
+
+
 def _weekly_ema_from_chart_candles(
     candles: List[Dict[str, Any]],
     *,
@@ -183,7 +213,9 @@ def _weekly_ema_from_chart_candles(
     min_w = int(min_weeks)
     if min_w <= 0:
         min_w = _weekly_ema_min_weeks(chart_timeframe)
-    weekly = _resample_candles_to_weekly_close(candles)
+    weekly = _weekly_close_series_from_candles(
+        candles, chart_timeframe=chart_timeframe
+    )
     if weekly.empty or len(weekly) < min_w:
         return []
     ema = weekly.ewm(span=max(2, int(span)), adjust=False).mean().dropna()
@@ -254,7 +286,7 @@ def _fetch_2h_candles(
     start: Optional[pd.Timestamp] = None,
     end: Optional[pd.Timestamp] = None,
 ) -> List[Dict[str, Any]]:
-    from mlbot_console.services.ohlcv_reader import fetch_ohlcv
+    from mlbot_console.services.ohlcv_reader import OhlcvWindowError, fetch_ohlcv
 
     c_start, c_end = _candle_time_bounds(candles)
     win_start = c_start or start
@@ -265,16 +297,24 @@ def _fetch_2h_candles(
         now = pd.Timestamp.now(tz="UTC")
         if (now - _utc_ts(win_end)).total_seconds() < 14 * 86400:
             win_end = now
-    pack = fetch_ohlcv(
-        feature_bus_root,
-        symbol,
-        SOURCE_FEATURE_TF,
-        start=win_start,
-        end=win_end,
-        full_range=False,
-        live_storage_bars_root=live_storage_bars_root,
-        stitch_live_storage=bool(live_storage_bars_root),
-    )
+    if win_start is not None and win_end is not None:
+        cap = pd.Timedelta(days=EMA1200_FETCH_MAX_DAYS)
+        if win_end - win_start > cap:
+            win_start = win_end - cap
+    try:
+        pack = fetch_ohlcv(
+            feature_bus_root,
+            symbol,
+            SOURCE_FEATURE_TF,
+            start=win_start,
+            end=win_end,
+            full_range=False,
+            max_days=EMA1200_FETCH_MAX_DAYS,
+            live_storage_bars_root=live_storage_bars_root,
+            stitch_live_storage=bool(live_storage_bars_root),
+        )
+    except OhlcvWindowError:
+        return []
     return list(pack.get("candles") or [])
 
 
@@ -480,47 +520,50 @@ def load_main_chart_overlays(
         spec = _OVERLAY_SPECS[key]
         entry = out[key]
         points: List[Dict[str, Any]] = []
-        if key == "ema_1200":
-            points, entry["source"] = _ema1200_points_local(
-                symbol,
-                candles,
-                chart_timeframe=chart_timeframe,
-                feature_bus_root=feature_bus_root,
-                live_storage_bars_root=live_storage_bars_root,
-                start=start,
-                end=end,
-            )
-        elif spec.get("use_macro_seed"):
-            chart_tf = str(chart_timeframe or "2h").strip()
-            if macro_spot_kline_root and chart_tf in ("1d", "1w"):
-                points = _weekly_ema_from_spot_daily(
-                    macro_spot_kline_root, symbol, candles
-                )
-                if points:
-                    entry["source"] = "spot_daily_weekly"
-            if not points and macro_seed_root:
-                points = _align_weekly_ema_seed_to_candles(
-                    macro_seed_root,
+        try:
+            if key == "ema_1200":
+                points, entry["source"] = _ema1200_points_local(
                     symbol,
                     candles,
-                    ema_column=str(spec.get("seed_ema_column") or "weekly_ema_200"),
+                    chart_timeframe=chart_timeframe,
+                    feature_bus_root=feature_bus_root,
+                    live_storage_bars_root=live_storage_bars_root,
+                    start=start,
+                    end=end,
                 )
-                if points:
-                    entry["source"] = "macro_seed"
-            if not points and macro_spot_kline_root and chart_tf not in ("1d", "1w"):
-                points = _weekly_ema_from_spot_daily(
-                    macro_spot_kline_root, symbol, candles
-                )
-                if points:
-                    entry["source"] = "spot_daily_weekly"
-            if not points:
-                points = _weekly_ema_from_chart_candles(
-                    candles,
-                    min_weeks=_weekly_ema_min_weeks(chart_tf),
-                    chart_timeframe=chart_tf,
-                )
-                if points:
-                    entry["source"] = "chart_resample_weekly"
+            elif spec.get("use_macro_seed"):
+                chart_tf = str(chart_timeframe or "2h").strip()
+                if macro_spot_kline_root and chart_tf in ("1d", "1w"):
+                    points = _weekly_ema_from_spot_daily(
+                        macro_spot_kline_root, symbol, candles
+                    )
+                    if points:
+                        entry["source"] = "spot_daily_weekly"
+                if not points and macro_seed_root:
+                    points = _align_weekly_ema_seed_to_candles(
+                        macro_seed_root,
+                        symbol,
+                        candles,
+                        ema_column=str(spec.get("seed_ema_column") or "weekly_ema_200"),
+                    )
+                    if points:
+                        entry["source"] = "macro_seed"
+                if not points and macro_spot_kline_root and chart_tf not in ("1d", "1w"):
+                    points = _weekly_ema_from_spot_daily(
+                        macro_spot_kline_root, symbol, candles
+                    )
+                    if points:
+                        entry["source"] = "spot_daily_weekly"
+                if not points:
+                    points = _weekly_ema_from_chart_candles(
+                        candles,
+                        min_weeks=_weekly_ema_min_weeks(chart_tf),
+                        chart_timeframe=chart_tf,
+                    )
+                    if points:
+                        entry["source"] = "chart_resample_weekly"
+        except Exception:
+            points = []
         entry["points"] = points
         entry["available"] = bool(points)
         if points:

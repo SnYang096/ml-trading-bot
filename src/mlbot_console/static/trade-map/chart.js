@@ -284,11 +284,14 @@ function applyMainOverlays(mainOverlays, opts = {}) {
     } else {
       line.applyOptions(mainChartOverlaySeriesOptions());
     }
-    const next = spec.points.map((p) => ({
-      time: p.time,
-      value: p.value,
-    }));
-    const points = merge ? mergeOverlayPoints(S.mainOverlayData.get(key) || [], next) : next;
+    const clipped = Core.clipOverlayPointsToCandles(spec.points || [], S.lastCandles);
+    const next = Core.forwardFillOverlayToCandles(clipped, S.lastCandles);
+    const points = merge
+      ? Core.forwardFillOverlayToCandles(
+          mergeOverlayPoints(S.mainOverlayData.get(key) || [], clipped),
+          S.lastCandles
+        )
+      : next;
     S.mainOverlayData.set(key, points);
     line.setData(points);
   }

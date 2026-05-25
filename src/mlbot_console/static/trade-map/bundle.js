@@ -112,6 +112,7 @@ async function refreshBundle(opts = {}) {
     q.set("include_ohlcv", "tail");
     if (stageRg) q.set("stage_regions", stageRg);
     if (stratFocus) q.set("strategy", stratFocus);
+    if (mainOl) q.set("main_overlays", mainOl);
     const pollFeatures = S.selectedFeatureColumns.length > 0;
     q.set("include_features", pollFeatures ? "true" : "false");
     if (pollFeatures && featParam) q.set("feature_columns", featParam);
@@ -182,6 +183,9 @@ async function refreshBundle(opts = {}) {
         };
       }
       S.lastOverlays = mergedOl;
+    }
+    if (data.main_overlays && Object.keys(data.main_overlays).length) {
+      applyMainOverlays(data.main_overlays, { merge: true });
     }
     syncSubcharts(S.lastCandles, S.lastOverlays || {});
   } else if (mode !== "poll") {

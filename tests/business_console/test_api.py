@@ -168,6 +168,61 @@ def test_trade_map_bundle_1d_full_range_uses_macro(
     assert len(main["ema_1200"]["points"]) >= 1
 
 
+def test_trade_map_bundle_1w_main_overlays(client, macro_kline_root, monkeypatch):
+    import io
+    import zipfile
+
+    from dataclasses import replace
+
+    import pandas as pd
+
+    from mlbot_console.routers import trade_map
+
+    # Extend macro fixture to ~60 weekly bars so EMA200 fallback can warm up.
+    sym = "ETHUSDT"
+    kdir = macro_kline_root / sym / "monthly" / "1d"
+    kdir.mkdir(parents=True, exist_ok=True)
+    rows = []
+    t0 = int(pd.Timestamp("2023-01-01", tz="UTC").timestamp() * 1000)
+    for i in range(420):
+        t = t0 + i * 86_400_000
+        price = 500.0 + i * 0.5
+        rows.append([t, price, price + 1, price - 1, price, 1000.0] + [0] * 6)
+    body = "\n".join(",".join(str(v) for v in r) for r in rows)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("k.csv", body)
+    (kdir / f"{sym}-1d-2023-01.zip").write_bytes(buf.getvalue())
+
+    patched = replace(
+        trade_map.SETTINGS,
+        macro_spot_kline_root=macro_kline_root,
+        live_data_root=macro_kline_root,
+        live_root=macro_kline_root,
+        daily_ohlcv_start=__import__("datetime").date(2023, 1, 1),
+    )
+    monkeypatch.setattr("mlbot_console.routers.trade_map.SETTINGS", patched)
+    r = client.get(
+        "/api/trade-map/bundle",
+        params={
+            "symbol": "ETHUSDT",
+            "timeframe": "1w",
+            "scopes": "trend",
+            "full_range": "true",
+            "main_overlays": "ema_1200,weekly_ema_200",
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    candles = body["data"]["ohlcv"]["candles"]
+    main = body["data"]["main_overlays"]
+    assert len(candles) >= 8
+    assert main["weekly_ema_200"]["available"] is True
+    assert len(main["weekly_ema_200"]["points"]) == len(candles)
+    assert main["ema_1200"]["available"] is True
+    assert len(main["ema_1200"]["points"]) == len(candles)
+
+
 def test_trade_map_bundle_windowed_default(client):
     r = client.get(
         "/api/trade-map/bundle",

@@ -133,6 +133,37 @@
     });
   }
 
+  /** Main-chart MA overlays: one point per candle, backward as-of + forward-fill. */
+  function forwardFillOverlayToCandles(points, candles) {
+    if (!candles?.length) return [];
+    const sorted = [...(points || [])]
+      .filter(
+        (p) =>
+          p &&
+          Number.isFinite(Number(p.time)) &&
+          Number.isFinite(Number(p.value))
+      )
+      .sort((a, b) => Number(a.time) - Number(b.time));
+    if (!sorted.length) return [];
+    let j = 0;
+    let last = null;
+    const out = [];
+    for (const c of candles) {
+      const t = Number(c?.time);
+      if (!Number.isFinite(t)) continue;
+      while (j + 1 < sorted.length && Number(sorted[j + 1].time) <= t) {
+        j += 1;
+      }
+      if (Number(sorted[j].time) <= t) {
+        last = Number(sorted[j].value);
+      }
+      if (last != null && Number.isFinite(last)) {
+        out.push({ time: t, value: last });
+      }
+    }
+    return out;
+  }
+
   /** One timeline entry per OHLCV bar (whitespace where feature is missing). */
   function alignSeriesToCandleTimes(points, candles) {
     if (!candles?.length) return points || [];
@@ -754,12 +785,9 @@
     const avail = new Set(available || []);
     const picks = [];
     if (sid === "chop_grid") {
-      for (const c of [
-        "bpc_semantic_chop",
-        "box_pos_60",
-        "box_stability_60",
-        "box_width_pct_60",
-      ]) {
+      // Match prefilter.yaml: regime.entry_feature + rules (box_pos band).
+      // regime.box_prefilter (stability/width/touches) is optional reference only.
+      for (const c of ["bpc_semantic_chop", "box_pos_60"]) {
         if (avail.has(c) && !picks.includes(c)) picks.push(c);
         if (picks.length >= maxCols) return picks;
       }
@@ -956,6 +984,7 @@
     barDurationSec,
     mergeCandlesByTime,
     clipOverlayPointsToCandles,
+    forwardFillOverlayToCandles,
     alignSeriesToCandleTimes,
     filterSubchartColumns,
     filterMarkersByStrategy,

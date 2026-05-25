@@ -71,6 +71,10 @@ const aligned = Core.alignSeriesToCandleTimes(
   [{ time: 200, value: 0.5 }],
   [{ time: 100, open: 1, high: 2, low: 0.5, close: 1 }, { time: 200, open: 2, high: 3, low: 1, close: 2 }]
 );
+const ffMain = Core.forwardFillOverlayToCandles(
+  [{ time: 100, value: 10 }, { time: 200, value: 20 }],
+  [{ time: 100, open: 1, high: 2, low: 0.5, close: 1 }, { time: 150, open: 1.5, high: 2.5, low: 1, close: 2 }, { time: 200, open: 2, high: 3, low: 1, close: 2 }]
+);
 const filtered = Core.filterSubchartColumns(
   ["bpc_semantic_chop", "tpc_pullback_depth"],
   { trend: true, multiLeg: true, spot: false },
@@ -119,6 +123,8 @@ console.log(JSON.stringify({
   alignedLen: aligned.length,
   alignedGap: aligned[0].value == null,
   alignedHit: aligned[1].value,
+  ffMainLen: ffMain.length,
+  ffMainMid: ffMain[1].value,
   filteredCols: filtered,
   chopFeatureCols: chopPlan.filter((p) => p.type === "feature").map((p) => p.column),
 }));
@@ -173,6 +179,8 @@ def test_trade_map_core_node():
     assert out["alignedLen"] == 2
     assert out["alignedGap"] is True
     assert out["alignedHit"] == 0.5
+    assert out["ffMainLen"] == 3
+    assert out["ffMainMid"] == 10
     assert out["filteredCols"] == ["bpc_semantic_chop"]
     assert set(out["chopFeatureCols"]) == {"bpc_semantic_chop", "box_pos_60"}
     assert len(out["segPts"]) >= 4
