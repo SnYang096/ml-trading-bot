@@ -65,6 +65,12 @@
     function knownStrategyRecord(strategyId) {
       const sid = String(strategyId || "").trim().toLowerCase();
       if (!sid) return null;
+      if (featureTaxonomy && featureTaxonomy.live_strategies) {
+        const liveHit = featureTaxonomy.live_strategies.find(
+          (s) => String(s.id).toLowerCase() === sid
+        );
+        if (liveHit) return liveHit;
+      }
       if (featureTaxonomy && featureTaxonomy.strategies) {
         const hit = featureTaxonomy.strategies.find(
           (s) => String(s.id).toLowerCase() === sid
@@ -76,26 +82,43 @@
       );
     }
 
-    function listStrategiesForLayers(layers) {
-      const liveIds = featureTaxonomy && featureTaxonomy.live_strategy_ids;
-      if (!Array.isArray(liveIds) || !liveIds.length) {
-        return [];
+    function liveStrategyRecords() {
+      const tax = featureTaxonomy;
+      if (tax && Array.isArray(tax.live_strategies) && tax.live_strategies.length) {
+        return tax.live_strategies;
       }
+      const ids = tax && tax.live_strategy_ids;
+      if (!Array.isArray(ids) || !ids.length) return [];
       const out = [];
       const seen = new Set();
-      for (const rawId of liveIds) {
+      for (const rawId of ids) {
         const sid = String(rawId || "").trim().toLowerCase();
         if (!sid || seen.has(sid)) continue;
         const meta = knownStrategyRecord(sid);
-        if (!meta || !isLayerEnabled(meta.account_layer, layers)) continue;
+        if (meta) {
+          seen.add(sid);
+          out.push(meta);
+        }
+      }
+      return out;
+    }
+
+    function listStrategiesForLayers(layers) {
+      const out = [];
+      const seen = new Set();
+      for (const meta of liveStrategyRecords()) {
+        const sid = String(meta.id || "").trim().toLowerCase();
+        if (!sid || seen.has(sid)) continue;
+        if (!isLayerEnabled(meta.account_layer, layers)) continue;
         seen.add(sid);
+        const layer = meta.account_layer;
         out.push({
           id: meta.id || sid,
-          account_layer: meta.account_layer,
+          account_layer: layer,
           account_layer_title:
             meta.account_layer_title ||
-            (Core.ACCOUNT_LAYER_META[meta.account_layer] || {}).title ||
-            meta.account_layer,
+            (Core.ACCOUNT_LAYER_META[layer] || {}).title ||
+            layer,
           title: meta.title || sid,
           stages: meta.stages || {},
         });

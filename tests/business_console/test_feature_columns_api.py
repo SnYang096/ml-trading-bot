@@ -29,6 +29,9 @@ def test_bus_feature_taxonomy_endpoint(client):
     assert any(s["id"] == "trend_scalp" for s in tax["strategies"])
     assert "chop_grid" in tax.get("live_strategy_ids", [])
     assert "tpc" in tax.get("live_strategy_ids", [])
+    live_meta = {s["id"]: s for s in tax.get("live_strategies", [])}
+    assert live_meta["chop_grid"]["account_layer"] == "multi_leg"
+    assert live_meta["trend_scalp"]["account_layer"] == "multi_leg"
     assert "bpc" not in [s["id"] for s in tax["strategies"]]
     assert tax.get("constitution_source", "").endswith("constitution.yaml")
     assert "tpc_pullback_depth" in tax["index"]

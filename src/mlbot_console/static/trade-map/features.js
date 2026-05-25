@@ -23,6 +23,17 @@ function pickerSourceColumns() {
   );
 }
 
+function strategyPickerEmptyHint(layers, strategies) {
+  const hasLayer = layers.trend || layers.spot || layers.multiLeg;
+  if (!hasLayer) return "请先勾选账户层";
+  if (strategies.length) return "";
+  const liveIds = (Core.getFeatureTaxonomy() || {}).live_strategy_ids;
+  if (Array.isArray(liveIds) && liveIds.length) {
+    return "当前账户层下无实盘策略";
+  }
+  return "实盘策略未加载（检查宪法 YAML）";
+}
+
 function syncFeatureStrategySelectOptions() {
   const layers = layersState();
   const strategies = Core.listStrategiesForLayers(layers);
@@ -35,7 +46,7 @@ function syncFeatureStrategySelectOptions() {
             `<option value="${escHtml(s.id)}"${s.id === prev ? " selected" : ""}>${escHtml(s.title || s.id)}</option>`
         ),
       ]
-    : [`<option value="">请先勾选账户层</option>`];
+    : [`<option value="">${escHtml(strategyPickerEmptyHint(layers, strategies))}</option>`];
   const html = options.join("");
   for (const id of ["featureStrategySelect", "mapStrategySelect"]) {
     const sel = document.getElementById(id);
@@ -77,16 +88,7 @@ function renderMapStrategyChips() {
   const strategies = Core.listStrategiesForLayers(layersState());
   const focus = S.featureStrategyFocus || "";
   if (!strategies.length) {
-    const layers = layersState();
-    const hasLayer = layers.trend || layers.spot || layers.multiLeg;
-    const liveIds = (Core.getFeatureTaxonomy() || {}).live_strategy_ids;
-    let hint = "先勾选上方 B/A/C 账户层";
-    if (hasLayer) {
-      hint =
-        Array.isArray(liveIds) && liveIds.length
-          ? "当前账户层下无实盘策略"
-          : "实盘策略未加载（检查宪法 YAML / 控制台日志）";
-    }
+    const hint = strategyPickerEmptyHint(layersState(), strategies);
     host.innerHTML = `<span class="muted map-strategy-hint">${escHtml(hint)}</span>`;
     return;
   }

@@ -174,6 +174,11 @@ console.log(JSON.stringify({
     Core.setFeatureTaxonomy({
       strategies: [{ id: "tpc", account_layer: "trend", title: "TPC", stages: {} }],
       live_strategy_ids: ["chop_grid", "trend_scalp", "tpc"],
+      live_strategies: [
+        { id: "chop_grid", account_layer: "multi_leg", title: "Chop Grid" },
+        { id: "trend_scalp", account_layer: "multi_leg", title: "Trend Scalp" },
+        { id: "tpc", account_layer: "trend", title: "TPC" },
+      ],
       index: {},
       stage_order: [],
       stage_labels: {},
