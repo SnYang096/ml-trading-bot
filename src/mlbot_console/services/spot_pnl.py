@@ -45,18 +45,37 @@ def _strategy_from_row(row: Dict[str, Any]) -> str:
 
 
 def _spot_select_sql(*, symbol_filter: str, columns: set[str]) -> tuple[str, tuple[Any, ...]]:
-    extra = ", strategy" if "strategy" in columns else ""
-    if "strategy_id" in columns and "strategy" not in columns:
+    cols = {c.lower() for c in columns}
+    filled_qty = (
+        "filled_quantity"
+        if "filled_quantity" in cols
+        else "0 AS filled_quantity"
+    )
+    filled_quote = (
+        "filled_quote_usdt"
+        if "filled_quote_usdt" in cols
+        else "NULL AS filled_quote_usdt"
+    )
+    updated_at = (
+        "updated_at" if "updated_at" in cols else "created_at AS updated_at"
+    )
+    order_ts = (
+        "COALESCE(updated_at, created_at)"
+        if "updated_at" in cols
+        else "created_at"
+    )
+    extra = ", strategy" if "strategy" in cols else ""
+    if "strategy_id" in cols and "strategy" not in cols:
         extra = ", strategy_id AS strategy"
     base = f"""
-            SELECT order_id, created_at, updated_at, symbol, side, order_type,
-                   quantity, price, status, filled_quantity, filled_quote_usdt{extra}
+            SELECT order_id, created_at, {updated_at}, symbol, side, order_type,
+                   quantity, price, status, {filled_qty}, {filled_quote}{extra}
             FROM spot_orders
     """
     if symbol_filter in {"", "*", "ALL", "__ALL__"}:
-        return base + " ORDER BY COALESCE(updated_at, created_at) ASC", ()
+        return base + f" ORDER BY {order_ts} ASC", ()
     return (
-        base + " WHERE symbol = ? ORDER BY COALESCE(updated_at, created_at) ASC",
+        base + f" WHERE symbol = ? ORDER BY {order_ts} ASC",
         (symbol_filter,),
     )
 

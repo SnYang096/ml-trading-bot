@@ -137,14 +137,27 @@ def trend_funnel_api(
 def spot_orders_api(
     symbol: str = Query(...),
     status: Optional[str] = Query(None),
+    exclude_status: str = Query(""),
     limit: int = Query(100, ge=1, le=500),
 ) -> dict:
+    exclude_statuses = [
+        s.strip().lower() for s in exclude_status.split(",") if s.strip()
+    ]
+    from mlbot_console.services.orders_list import _effective_fetch_limit
+
+    fetch_limit = (
+        _effective_fetch_limit(limit, exclude_statuses)
+        if exclude_statuses
+        else limit
+    )
     rows = spot_orders_list(
         SETTINGS.spot_order_db,
         symbol,
         status=status,
-        limit=limit,
+        exclude_statuses=exclude_statuses or None,
+        limit=fetch_limit,
     )
+    rows = rows[:limit]
     enrich_orders_pnl(
         rows,
         trend_db=SETTINGS.trend_order_db,

@@ -49,6 +49,23 @@ def db_status(path: Path) -> Dict[str, Any]:
         }
 
 
+def table_columns(path: Path, table: str) -> set[str]:
+    """Column names for ``table``, or empty if the DB/table is unavailable."""
+    if not path.is_file():
+        return set()
+    try:
+        conn = _connect_ro(path)
+    except sqlite3.OperationalError:
+        return set()
+    try:
+        cur = conn.execute(f"PRAGMA table_info({table})")
+        return {str(row[1]) for row in cur.fetchall()}
+    except sqlite3.OperationalError:
+        return set()
+    finally:
+        conn.close()
+
+
 def query_rows(
     path: Path,
     sql: str,

@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
-from mlbot_console.services.db import query_rows
+from mlbot_console.services.db import query_rows, table_columns
 from mlbot_console.services.multileg_order_links import (
     enrich_multileg_rows_for_symbol,
     entry_link_id,
@@ -607,38 +607,83 @@ def trend_orders(
     return out
 
 
+def _spot_orders_select_clause(db_path: Path) -> tuple[str, str]:
+    """Build SELECT list and ORDER BY time expr for legacy or migrated spot_orders."""
+    cols = table_columns(db_path, "spot_orders")
+    if not cols:
+        return "", ""
+    filled_qty = (
+        "filled_quantity"
+        if "filled_quantity" in cols
+        else "0 AS filled_quantity"
+    )
+    filled_quote = (
+        "filled_quote_usdt"
+        if "filled_quote_usdt" in cols
+        else "NULL AS filled_quote_usdt"
+    )
+    updated_at = (
+        "updated_at" if "updated_at" in cols else "created_at AS updated_at"
+    )
+    select = (
+        "order_id, symbol, side, status, order_type, quantity, price, "
+        f"{filled_qty}, {filled_quote}, created_at, {updated_at}"
+    )
+    order_ts = (
+        "COALESCE(updated_at, created_at)"
+        if "updated_at" in cols
+        else "created_at"
+    )
+    return select, order_ts
+
+
 def spot_orders_list(
     db_path: Path,
     symbol: str,
     *,
     status: Optional[str] = None,
+    exclude_statuses: Optional[List[str]] = None,
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
+    select, order_ts = _spot_orders_select_clause(db_path)
+    if not select:
+        return []
+    status_filter = str(status or "").strip().lower()
+    excluded = list(exclude_statuses or [])
+    if status_filter:
+        excluded = [s for s in excluded if s.lower() != status_filter]
+    status_clause, status_params = _sql_excluded_status_clause(
+        excluded, alias="spot_orders"
+    )
+    status_match = ""
+    match_params: tuple[Any, ...] = ()
+    if status_filter:
+        status_match = " AND lower(spot_orders.status) = ?"
+        match_params = (status_filter,)
     if _is_all_symbols(symbol):
-        sql = """
-            SELECT order_id, symbol, side, status, order_type, quantity, price,
-                   filled_quantity, filled_quote_usdt, created_at, updated_at
+        sql = f"""
+            SELECT {select}
             FROM spot_orders
-            ORDER BY COALESCE(updated_at, created_at) DESC
+            WHERE 1=1{status_clause}{status_match}
+            ORDER BY {order_ts} DESC
             LIMIT ?
         """
-        rows = query_rows(db_path, sql, (int(limit),))
+        rows = query_rows(
+            db_path, sql, (*status_params, *match_params, int(limit))
+        )
     else:
         sym = symbol.upper()
-        sql = """
-            SELECT order_id, symbol, side, status, order_type, quantity, price,
-                   filled_quantity, filled_quote_usdt, created_at, updated_at
+        sql = f"""
+            SELECT {select}
             FROM spot_orders
-            WHERE symbol = ?
-            ORDER BY COALESCE(updated_at, created_at) DESC
+            WHERE symbol = ?{status_clause}{status_match}
+            ORDER BY {order_ts} DESC
             LIMIT ?
         """
-        rows = query_rows(db_path, sql, (sym, int(limit)))
-    out = [_normalize("spot", r) for r in rows]
-    if status:
-        st = status.lower()
-        out = [r for r in out if r["status"] == st]
-    return out
+        rows = query_rows(
+            db_path, sql, (sym, *status_params, *match_params, int(limit))
+        )
+    return [_normalize("spot", r) for r in rows]
 
 
 def fetch_multileg_raw_rows(
@@ -827,7 +872,15 @@ def collect_orders(
             )
         )
     if "spot" in scope_set and spot_db.is_file():
-        merged.extend(spot_orders_list(spot_db, symbol, status=status, limit=per_scope))
+        merged.extend(
+            spot_orders_list(
+                spot_db,
+                symbol,
+                status=status,
+                exclude_statuses=exclude_statuses,
+                limit=per_scope,
+            )
+        )
     if "multi_leg" in scope_set and multi_leg_db.is_file():
         merged.extend(
             multi_leg_orders_list(

@@ -413,3 +413,98 @@ def test_collect_orders_trend_stop_loss_pnl_when_realized_null(
     assert exit_row["pnl_hint"] == "已实现"
     pos_exit = next(r for r in rows if r["order_id"] == "p_sl:exit")
     assert pos_exit["pnl_usdt"] == pytest.approx(-200.0)
+
+
+def test_spot_orders_legacy_schema_without_filled_columns(tmp_path):
+    import sqlite3
+
+    from mlbot_console.services.orders_list import spot_orders_list
+
+    path = tmp_path / "legacy_spot.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE spot_orders (
+            order_id TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            side TEXT NOT NULL,
+            order_type TEXT NOT NULL,
+            quantity REAL NOT NULL,
+            price REAL,
+            status TEXT NOT NULL,
+            exchange_order_id TEXT,
+            client_order_id TEXT,
+            raw_json TEXT
+        );
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO spot_orders VALUES (
+            'legacy_bnb', '2024-01-02T08:00:00+00:00', 'BNBUSDT', 'buy', 'market',
+            0.1, 600.0, 'filled', NULL, NULL, NULL
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    rows = spot_orders_list(path, "BNBUSDT", limit=10)
+    assert len(rows) == 1
+    assert rows[0]["order_id"] == "legacy_bnb"
+    assert rows[0]["scope"] == "spot"
+
+
+def test_spot_orders_exclude_status_in_sql_not_post_filter(tmp_path):
+    import sqlite3
+
+    from mlbot_console.services.orders_list import spot_orders_list
+
+    path = tmp_path / "spot_exclude.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE spot_orders (
+            order_id TEXT PRIMARY KEY,
+            created_at TEXT,
+            updated_at TEXT,
+            symbol TEXT,
+            side TEXT,
+            order_type TEXT,
+            quantity REAL,
+            price REAL,
+            status TEXT,
+            filled_quantity REAL,
+            filled_quote_usdt REAL
+        );
+        """
+    )
+    for i in range(30):
+        conn.execute(
+            """
+            INSERT INTO spot_orders VALUES (
+                ?, '2024-01-02T10:00:00+00:00', '2024-01-02T10:00:00+00:00',
+                'BNBUSDT', 'buy', 'limit', 0.1, 600.0, 'expired', 0.0, 0.0
+            )
+            """,
+            (f"exp_{i}",),
+        )
+    conn.execute(
+        """
+        INSERT INTO spot_orders VALUES (
+            'bnb_fill', '2024-01-01T08:00:00+00:00', '2024-01-01T08:05:00+00:00',
+            'BNBUSDT', 'buy', 'market', 0.1, 590.0, 'filled', 0.1, 59.0
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    rows = spot_orders_list(
+        path,
+        "BNBUSDT",
+        exclude_statuses=["expired", "canceled"],
+        limit=10,
+    )
+    assert [r["order_id"] for r in rows] == ["bnb_fill"]
