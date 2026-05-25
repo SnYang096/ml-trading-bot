@@ -308,6 +308,15 @@ function bindFeaturePanel() {
   });
 }
 
+async function loadFeatureTaxonomy() {
+  try {
+    const { data } = await Shell.api("/api/bus/features/taxonomy");
+    Core.setFeatureTaxonomy(data || null);
+  } catch (_) {
+  }
+  syncFeatureStrategySelectOptions();
+}
+
 async function loadFeatureColumns() {
   const symbol = document.getElementById("symbolSelect").value;
   const timeframe = document.getElementById("timeframeSelect").value;

@@ -110,6 +110,7 @@ function bindControls() {
     Shell.bindOrdersFilterSync(() => {
       if (S.ordersDockOpen) refreshOrdersList().catch(() => { });
     });
+    await loadFeatureTaxonomy();
     const pageUrl = new URL(window.location.href);
     const symParam = pageUrl.searchParams.get("symbol");
     if (symParam) {

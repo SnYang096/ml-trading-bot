@@ -16,10 +16,36 @@
   </header>
 
   <main class="regime-main">
-    <p class="muted">
-      只读展示 <code>live/highcap/config/strategies/*/archetypes/regime.yaml</code>
-      与最近一次 drift 报告（若存在 <code>results/regime_drift_monitor/</code>）。
+    <p class="muted regime-intro">
+      只读展示各策略 Regime 配置（<code>regime.yaml</code> 或 <code>prefilter.yaml</code> 内嵌
+      <code>regime:</code>）及最近一次漂移监测结果。
     </p>
+    <details class="regime-drift-help">
+      <summary>如何生成 drift 报告</summary>
+      <ol class="muted regime-drift-steps">
+        <li>
+          <strong>前置：</strong>目标策略的 <code>regime.yaml</code> 需已有
+          <code>last_calibration.plateaus</code>（Tier-0 校准写入）。仅 B·Trend 独立
+          <code>regime.yaml</code> 走此路径；无 plateaus 时本页漂移列显示「未监测」。
+          <pre class="regime-cmd">python scripts/regime_threshold_calibrate.py --strategies tpc --dry-run
+# 确认后加 --apply 写回 regime.yaml</pre>
+        </li>
+        <li>
+          <strong>监测：</strong>用近期特征窗口 parquet（与 feature bus / 研究快照列一致）跑漂移脚本：
+          <pre class="regime-cmd">python scripts/regime_drift_monitor.py \
+  --strategies tpc,bpc,me,srb \
+  --window-parquet results/&lt;run&gt;/recent_features.parquet \
+  --strategies-root live/highcap/config/strategies</pre>
+        </li>
+        <li>
+          <strong>输出：</strong>写入 <code>results/regime_drift_monitor/&lt;时间戳&gt;/drift_report.json</code>；
+          有分位漂出 plateau 时进程退出码为 2。本页读取<strong>最新一份</strong>报告后点「刷新」。
+        </li>
+      </ol>
+      <p class="muted regime-drift-note">
+        详见 <code>docs/strategy/regime_layer.md</code> · Tier-0 运维。
+      </p>
+    </details>
     <div class="signals-table-wrap">
       <table class="signals-table" id="regimeTable">
         <thead>

@@ -36,6 +36,18 @@ def test_chop_grid_regime_and_rules():
     assert "box_pos_60" in stages["prefilter"]
 
 
+def test_taxonomy_includes_registry_stub_without_archetypes(tmp_path: Path):
+    tax = build_console_feature_taxonomy(
+        tmp_path,
+        strategies=[
+            {"id": "chop_grid", "account_layer": "multi_leg", "title": "Chop Grid"},
+            {"id": "trend_scalp", "account_layer": "multi_leg", "title": "Trend Scalp"},
+        ],
+    )
+    ids = {s["id"] for s in tax["strategies"]}
+    assert ids == {"chop_grid", "trend_scalp"}
+
+
 def test_taxonomy_index_shared_chop_column_lives_in_regime_for_trend():
     """tpc_semantic_chop is now a B-system regime variable (was gate)."""
     tax = build_console_feature_taxonomy(STRATEGIES)

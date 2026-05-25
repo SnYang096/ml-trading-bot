@@ -62,18 +62,57 @@
       return preset.length ? preset : filtered;
     }
 
+    function knownStrategyRecord(strategyId) {
+      const sid = String(strategyId || "").trim().toLowerCase();
+      if (!sid) return null;
+      if (featureTaxonomy && featureTaxonomy.strategies) {
+        const hit = featureTaxonomy.strategies.find(
+          (s) => String(s.id).toLowerCase() === sid
+        );
+        if (hit) return hit;
+      }
+      return (
+        Core.KNOWN_STRATEGIES.find((s) => String(s.id).toLowerCase() === sid) || null
+      );
+    }
+
     function listStrategiesForLayers(layers) {
-      if (!featureTaxonomy || !featureTaxonomy.strategies) return [];
-      const liveIds = featureTaxonomy.live_strategy_ids;
+      const liveIds = featureTaxonomy && featureTaxonomy.live_strategy_ids;
       const allowedLive =
         Array.isArray(liveIds) && liveIds.length
           ? new Set(liveIds.map((id) => String(id).toLowerCase()))
           : null;
-      return featureTaxonomy.strategies.filter((s) => {
-        if (!isLayerEnabled(s.account_layer, layers)) return false;
-        if (allowedLive && !allowedLive.has(String(s.id).toLowerCase())) return false;
-        return true;
-      });
+      const fromTax =
+        featureTaxonomy && featureTaxonomy.strategies
+          ? featureTaxonomy.strategies.filter((s) => {
+              if (!isLayerEnabled(s.account_layer, layers)) return false;
+              if (allowedLive && !allowedLive.has(String(s.id).toLowerCase())) return false;
+              return true;
+            })
+          : [];
+      const out = [...fromTax];
+      const have = new Set(out.map((s) => String(s.id).toLowerCase()));
+      const seedIds = allowedLive
+        ? [...allowedLive]
+        : Core.KNOWN_STRATEGIES.map((s) => s.id);
+      for (const rawId of seedIds) {
+        const sid = String(rawId || "").trim().toLowerCase();
+        if (!sid || have.has(sid)) continue;
+        const meta = knownStrategyRecord(sid);
+        if (!meta || !isLayerEnabled(meta.account_layer, layers)) continue;
+        out.push({
+          id: meta.id || sid,
+          account_layer: meta.account_layer,
+          account_layer_title:
+            meta.account_layer_title ||
+            (Core.ACCOUNT_LAYER_META[meta.account_layer] || {}).title ||
+            meta.account_layer,
+          title: meta.title || sid,
+          stages: meta.stages || {},
+        });
+        have.add(sid);
+      }
+      return out.sort((a, b) => String(a.id).localeCompare(String(b.id)));
     }
 
     /**
@@ -144,6 +183,12 @@
     /** Map feature column name -> { strategy, account_layer } when not in YAML index. */
     function inferStrategyIdFromColumn(column) {
       const lc = String(column || "").toLowerCase();
+      if (lc === "chop_grid" || lc === "trend_scalp") {
+        return {
+          strategy: lc,
+          account_layer: "multi_leg",
+        };
+      }
       if (
         lc.includes("weekly_ema") ||
         lc.startsWith("spot_") ||
@@ -211,16 +256,14 @@
     }
 
     function strategyMeta(strategyId) {
-      if (featureTaxonomy && featureTaxonomy.strategies) {
-        const hit = featureTaxonomy.strategies.find((s) => s.id === strategyId);
-        if (hit) {
-          return {
-            id: hit.id,
-            title: hit.title,
-            layerKey: layerKeyForAccount(hit.account_layer),
-            account_layer: hit.account_layer,
-          };
-        }
+      const hit = knownStrategyRecord(strategyId);
+      if (hit) {
+        return {
+          id: hit.id,
+          title: hit.title,
+          layerKey: layerKeyForAccount(hit.account_layer),
+          account_layer: hit.account_layer,
+        };
       }
       const layer = strategyId === "shared" ? "shared" : classifyFeatureColumn(strategyId);
       const lm = Core.ACCOUNT_LAYER_META[layer] || Core.ACCOUNT_LAYER_META.shared;

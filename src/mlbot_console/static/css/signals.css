@@ -341,3 +341,63 @@
   vertical-align: top;
 }
 
+.page-regime .regime-main {
+  flex: 1;
+  padding: 12px 16px;
+  overflow: auto;
+  min-height: 0;
+}
+
+.page-regime .regime-intro {
+  margin: 0 0 10px;
+  font-size: 0.8rem;
+}
+
+.page-regime .regime-drift-help {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  background: #161b22;
+  font-size: 0.78rem;
+}
+
+.page-regime .regime-drift-help > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #c9d1d9;
+  list-style: none;
+}
+
+.page-regime .regime-drift-help > summary::-webkit-details-marker {
+  display: none;
+}
+
+.page-regime .regime-drift-steps {
+  margin: 10px 0 0;
+  padding-left: 1.2rem;
+  line-height: 1.45;
+}
+
+.page-regime .regime-drift-steps li {
+  margin-bottom: 10px;
+}
+
+.page-regime .regime-cmd {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  font-size: 0.68rem;
+  line-height: 1.35;
+  background: #0f1419;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.page-regime .regime-drift-note {
+  margin: 8px 0 0;
+  font-size: 0.72rem;
+}
+

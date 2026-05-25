@@ -218,6 +218,23 @@ def build_console_feature_taxonomy(
                 }
                 index.setdefault(col, []).append(rec)
 
+    seen = {s["id"] for s in strategies_out}
+    for meta in registry:
+        sid = str(meta["id"])
+        if sid in seen:
+            continue
+        strategies_out.append(
+            {
+                "id": sid,
+                "account_layer": meta["account_layer"],
+                "account_layer_title": ACCOUNT_LAYER_LABELS.get(
+                    meta["account_layer"], meta["account_layer"]
+                ),
+                "title": meta.get("title") or sid,
+                "stages": {},
+            }
+        )
+
     return {
         "strategies": strategies_out,
         "index": index,

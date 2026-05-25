@@ -25,6 +25,9 @@ def test_bus_feature_taxonomy_endpoint(client):
     assert r.status_code == 200
     tax = r.json()["data"]
     assert any(s["id"] == "tpc" for s in tax["strategies"])
+    assert any(s["id"] == "chop_grid" for s in tax["strategies"])
+    assert any(s["id"] == "trend_scalp" for s in tax["strategies"])
+    assert "chop_grid" in tax.get("live_strategy_ids", [])
     assert "tpc_pullback_depth" in tax["index"]
 
 

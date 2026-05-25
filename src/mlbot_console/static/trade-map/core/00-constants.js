@@ -40,6 +40,16 @@
       spot: ["weekly_ema_200_position"],
       multi_leg: ["bpc_semantic_chop", "box_pos_60", "box_stability_60"],
     };
+    /** Fallback when taxonomy YAML is missing on disk (matches CONSOLE_STRATEGIES). */
+    const KNOWN_STRATEGIES = [
+      { id: "tpc", account_layer: "trend", title: "TPC" },
+      { id: "bpc", account_layer: "trend", title: "BPC" },
+      { id: "me", account_layer: "trend", title: "ME" },
+      { id: "srb", account_layer: "trend", title: "SRB" },
+      { id: "spot_accum_simple", account_layer: "spot", title: "Spot" },
+      { id: "chop_grid", account_layer: "multi_leg", title: "Chop Grid" },
+      { id: "trend_scalp", account_layer: "multi_leg", title: "Trend Scalp" },
+    ];
 
 
   Object.assign(Core, {
@@ -51,6 +61,7 @@
     STAGE_ORDER,
     ACCOUNT_LAYER_META,
     FEATURE_PRESETS,
+    KNOWN_STRATEGIES,
     DEFAULT_VISIBLE_BARS,
     SUBCHART_COLORS,
   });

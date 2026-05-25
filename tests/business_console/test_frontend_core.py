@@ -170,6 +170,16 @@ console.log(JSON.stringify({
     "trend_scalp",
     "m1"
   ).map((m) => m.id),
+  multilegStrategyIds: (() => {
+    Core.setFeatureTaxonomy({
+      strategies: [{ id: "tpc", account_layer: "trend", title: "TPC", stages: {} }],
+      live_strategy_ids: ["chop_grid", "trend_scalp", "tpc"],
+      index: {},
+      stage_order: [],
+      stage_labels: {},
+    });
+    return Core.listStrategiesForLayers({ trend: false, spot: false, multiLeg: true, pending: false }).map((s) => s.id);
+  })(),
 }));
 """
 
@@ -236,6 +246,7 @@ def test_trade_map_core_node():
     assert out["chopPreset"] == ["bpc_semantic_chop", "box_pos_60"]
     assert out["trendPreset"] == ["trend_confidence", "bpc_semantic_chop"]
     assert out["markerDisplayIds"] == ["m1", "m2"]
+    assert out["multilegStrategyIds"] == ["chop_grid", "trend_scalp"]
     assert len(out["segPts"]) >= 4
     assert out["segPts"][2]["value"] is None  # NaN segment gap
     assert out["prAuto2"]["minValue"] < 600
