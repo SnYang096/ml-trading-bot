@@ -19,28 +19,38 @@ function fmtLc(lc) {
   return [ts, notes].filter(Boolean).join(" · ") || "—";
 }
 
-function fmtDrift(d) {
-  if (!d) return "—";
-  const st = d.status || d.drift_status || d.overall || "";
-  return esc(st || JSON.stringify(d).slice(0, 120));
+function fmtDriftCell(row) {
+  const st = row.drift_status || "—";
+  const detail = row.drift_detail || "";
+  const cls =
+    st === "漂移" || st === "告警"
+      ? "pnl-neg"
+      : st === "正常"
+        ? "pnl-pos"
+        : "";
+  const title = detail ? ` title="${esc(detail)}"` : "";
+  return `<span class="${cls}"${title}>${esc(st)}</span>`;
 }
 
 function renderRows(rows) {
   const tbody = document.getElementById("regimeBody");
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="muted">无数据</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="muted">无数据</td></tr>';
     return;
   }
   tbody.innerHTML = rows
     .map((r) => {
-      const present = r.present ? "✓" : "缺失";
-      return `<tr>
+      const present = r.present ? "✓" : "—";
+      const layer = r.account_layer_title || r.account_layer || "—";
+      const src = r.regime_source || "—";
+      return `<tr data-account-layer="${esc(r.account_layer || "")}">
+        <td>${esc(layer)}</td>
         <td><strong>${esc(r.strategy)}</strong></td>
-        <td class="muted">${present} ${esc(r.regime_path)}</td>
+        <td class="muted">${present} ${esc(src)}<br/><span class="account-sub">${esc(r.regime_path)}</span></td>
         <td>${r.n_rules ?? 0}</td>
         <td>${esc((r.allowed_sides || []).join(", "))}</td>
         <td>${esc(fmtLc(r.last_calibration))}</td>
-        <td>${fmtDrift(r.drift)}</td>
+        <td>${fmtDriftCell(r)}</td>
       </tr>`;
     })
     .join("");
@@ -50,8 +60,11 @@ async function refresh() {
   document.getElementById("statusLine").textContent = "加载中…";
   const { data, meta } = await Shell.api("/api/trend/regime-ops");
   renderRows(data || []);
+  const driftHint = meta.drift_report_path
+    ? ` · drift ${meta.drift_generated_at ? String(meta.drift_generated_at).slice(0, 19) : meta.drift_report_path}`
+    : " · 无 drift 报告";
   document.getElementById("statusLine").textContent =
-    `${meta.count ?? 0} strategies · ${meta.strategies_root || ""} · ${new Date().toLocaleTimeString()}`;
+    `${meta.count ?? 0} strategies · ${meta.strategies_root || ""}${driftHint} · ${new Date().toLocaleTimeString()}`;
 }
 
 document.getElementById("refreshBtn").addEventListener("click", () => refresh().catch((e) => {
