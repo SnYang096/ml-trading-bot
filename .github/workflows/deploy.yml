@@ -727,9 +727,12 @@ jobs:
             src/time_series_model \
             src/config \
             live/highcap/universe.yaml \
-            live/highcap/config/constitution/constitution.yaml \
-            config/strategies; do
+            live/highcap/config; do
             test -e "${ROOT}/${p}" || { echo "::error::missing ${ROOT}/${p}"; exit 1; }
+          done
+          for sid in tpc chop_grid trend_scalp spot_accum_simple; do
+            test -d "${ROOT}/live/highcap/config/strategies/${sid}" \
+              || { echo "::error::missing live strategy ${sid}"; exit 1; }
           done
           # Keep deploy/business-console path so compose build context (../..) = /opt/quant-engine
           tar czf mlbot-business-console.tgz \
@@ -741,8 +744,7 @@ jobs:
               src/time_series_model \
               src/config \
               live/highcap/universe.yaml \
-              live/highcap/config/constitution/constitution.yaml \
-              config/strategies
+              live/highcap/config
 
       - name: 📤 Upload business console bundle
         uses: appleboy/scp-action@v0.1.7
@@ -811,5 +813,5 @@ jobs:
             echo "=== 📊 Business console ==="
             docker ps --filter name=mlbot-business-console --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
             echo "Trade Map: http://127.0.0.1:8800/trade-map （仅本机或 SSH -L 8800:127.0.0.1:8800）"
-            echo "universe.yaml → /opt/quant-engine/live/highcap/universe.yaml（宿主 runtime 树默认只有 data/，由 CI 同步）"
+            echo "live/highcap → universe.yaml + config/constitution + config/strategies（由 business-console CI 同步）"
             echo "可选 Basic Auth: 在 compose 环境变量中设置 MLBOT_CONSOLE_BASIC_AUTH_USER/PASSWORD 后 docker compose up -d"

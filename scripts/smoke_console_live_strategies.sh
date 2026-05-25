@@ -105,11 +105,15 @@ fetch_taxonomy_json() {
 }
 
 if [[ -n "$REMOTE" ]]; then
-  echo "== Remote constitution file (host mount) =="
-  ssh "${SSH_OPTS[@]}" "$REMOTE" \
-    'test -f /opt/quant-engine/live/highcap/config/constitution/constitution.yaml' \
-    && ok "constitution.yaml present on host" \
-    || fail "missing /opt/quant-engine/live/highcap/config/constitution/constitution.yaml (CI bundle must ship it)"
+  echo "== Remote live/highcap/config (host mount) =="
+  ssh "${SSH_OPTS[@]}" "$REMOTE" bash -s <<'REMOTE_CHECK' || fail "live/highcap/config incomplete on host (CI must pack live/highcap/config)"
+set -euo pipefail
+test -f /opt/quant-engine/live/highcap/config/constitution/constitution.yaml
+for sid in chop_grid trend_scalp tpc spot_accum_simple; do
+  test -d "/opt/quant-engine/live/highcap/config/strategies/${sid}"
+done
+REMOTE_CHECK
+  ok "constitution + live strategy dirs present on host"
 fi
 
 if [[ -n "$REMOTE" || -n "$URL" ]]; then
