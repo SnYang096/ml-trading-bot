@@ -9,7 +9,8 @@ def test_trade_map_html_served(client):
     body = r.text
     assert "交易地图" in body or "trade-map" in body
     assert "console-shell.js" in body
-    assert "trade-map-core.js" in body
+    assert "trade-map/core/00-constants.js" in body
+    assert "trade-map/core/20-markers.js" in body
     assert "trade-map/state.js" in body
     assert "trade-map/bootstrap.js" in body
     assert "chopGridLabelLayer" in body
@@ -88,10 +89,12 @@ def test_root_redirects_to_trade_map(client):
 
 
 def test_static_core_js(client):
-    r = client.get("/static/trade-map-core.js")
+    r = client.get("/static/trade-map/core/20-markers.js")
     assert r.status_code == 200
-    assert "MLBotTradeMapCore" in r.text
     assert "markersToLwc" in r.text
+    r2 = client.get("/static/trade-map/core/40-features.js")
+    assert r2.status_code == 200
+    assert "resolveSubchartColumns" in r2.text
 
 
 def test_trade_map_js_layer_toggle_does_not_reset_history(client):

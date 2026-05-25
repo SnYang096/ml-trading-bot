@@ -8,20 +8,25 @@ from pathlib import Path
 
 import pytest
 
-CORE_JS = (
-    Path(__file__).resolve().parents[2]
-    / "src"
-    / "mlbot_console"
-    / "static"
-    / "trade-map-core.js"
-)
-STATIC_ROOT = CORE_JS.parent
+STATIC_ROOT = Path(__file__).resolve().parents[2] / "src" / "mlbot_console" / "static"
+CORE_MODULES = [
+    "trade-map/core/00-constants.js",
+    "trade-map/core/10-ohlcv.js",
+    "trade-map/core/20-markers.js",
+    "trade-map/core/30-candles.js",
+    "trade-map/core/40-features.js",
+    "trade-map/core/50-misc.js",
+]
+
 NODE_SCRIPT = """
 const fs = require('fs');
 const vm = require('vm');
-const code = fs.readFileSync(process.argv[1], 'utf8');
+const root = process.argv[1];
 const ctx = { globalThis: {} };
-vm.runInContext(code, vm.createContext(ctx));
+const vctx = vm.createContext(ctx);
+for (const rel of process.argv[2].split(',')) {
+  vm.runInContext(fs.readFileSync(`${root}/${rel}`, 'utf8'), vctx);
+}
 const Core = ctx.globalThis.MLBotTradeMapCore;
 const markers = [
   { id: 'trend:orders:1', time: 1, scope: 'trend', event: 'entry', side: 'long', status: 'filled' },
@@ -170,7 +175,7 @@ console.log(JSON.stringify({
 )
 def test_trade_map_core_node():
     proc = subprocess.run(
-        ["node", "-e", NODE_SCRIPT, str(CORE_JS)],
+        ["node", "-e", NODE_SCRIPT, str(STATIC_ROOT), ",".join(CORE_MODULES)],
         capture_output=True,
         text=True,
         check=True,
@@ -235,8 +240,16 @@ MODULE_LOAD_SCRIPT = """
 const fs = require('fs');
 const vm = require('vm');
 const root = process.argv[1];
+const coreModules = [
+  'trade-map/core/00-constants.js',
+  'trade-map/core/10-ohlcv.js',
+  'trade-map/core/20-markers.js',
+  'trade-map/core/30-candles.js',
+  'trade-map/core/40-features.js',
+  'trade-map/core/50-misc.js',
+];
 const modules = [
-  'trade-map-core.js',
+  ...coreModules,
   'trade-map/state.js',
   'trade-map/layout.js',
   'trade-map/chart.js',
