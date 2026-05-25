@@ -37,6 +37,7 @@
   if (S.featureStrategyFocus === undefined) S.featureStrategyFocus = null;
   if (S.ohlcvLoadedFrom === undefined) S.ohlcvLoadedFrom = null;
   if (S.ohlcvLoadedTo === undefined) S.ohlcvLoadedTo = null;
+  if (S.lastCandleTime === undefined) S.lastCandleTime = null;
   if (S.markerQueryFromIso === undefined) S.markerQueryFromIso = null;
   if (S.lastMarkerPollSince === undefined) S.lastMarkerPollSince = null;
   if (S.lastMarkerCounts === undefined) S.lastMarkerCounts = null;

@@ -202,6 +202,23 @@ function setStatusFromBundle(symbol, timeframe, candles, markers, meta, overlays
   if (meta.range_start && meta.range_end) {
     parts.push(`${meta.range_start.slice(0, 10)}→${meta.range_end.slice(0, 10)}`);
   }
+  if (candles.length && meta.last_candle_time != null) {
+    const lastBar = Core.isoFromUnixSec(meta.last_candle_time);
+    if (lastBar && (!meta.range_end || lastBar.slice(0, 10) !== meta.range_end.slice(0, 10))) {
+      parts.push(`K线至${lastBar.slice(0, 10)}`);
+    }
+  }
+  const featEnds = Object.values(overlays || {})
+    .map((o) => o?.feature_range_end)
+    .filter(Boolean);
+  if (featEnds.length && candles.length) {
+    const latestFeat = featEnds.sort().slice(-1)[0];
+    const lastT = candles[candles.length - 1].time;
+    const featTs = Math.floor(new Date(latestFeat).getTime() / 1000);
+    if (Number.isFinite(featTs) && lastT - featTs > 7200 * 3) {
+      parts.push(`特征滞后至${String(latestFeat).slice(0, 10)}`);
+    }
+  }
   if (meta.range_clipped) parts.push(`clipped ${meta.max_ohlcv_days || ""}d`);
   if (deg) parts.push("OHLC degraded");
   const feat = formatOverlayStatus(overlays);

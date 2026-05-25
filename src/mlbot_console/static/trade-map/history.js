@@ -77,11 +77,27 @@ function markerRangeParams() {
 function applyLoadedOhlcvRange(meta, candles) {
   if (candles?.length) {
     S.ohlcvLoadedFrom = Core.isoFromUnixSec(candles[0].time);
-    S.ohlcvLoadedTo = Core.isoFromUnixSec(candles[candles.length - 1].time);
+    const lastT = candles[candles.length - 1].time;
+    S.ohlcvLoadedTo =
+      meta?.last_candle_time != null
+        ? Core.isoFromUnixSec(meta.last_candle_time)
+        : Core.isoFromUnixSec(lastT);
+    S.lastCandleTime = lastT;
   } else {
     if (meta?.range_start) S.ohlcvLoadedFrom = String(meta.range_start);
     if (meta?.range_end) S.ohlcvLoadedTo = String(meta.range_end);
+    if (meta?.last_candle_time != null) {
+      S.lastCandleTime = Number(meta.last_candle_time);
+    }
   }
+}
+
+function scrollChartToLatestCandles() {
+  if (!S.chart || !S.lastCandles?.length) return;
+  applyChartViewport(S.lastCandles.length);
+  const tail = S.lastCandles[S.lastCandles.length - 1].time;
+  S.highlightBarTime = tail;
+  S.lastCandleTime = tail;
 }
 
 function scheduleHistoryPrefetch(range) {

@@ -665,6 +665,13 @@ def fetch_ohlcv(
     expected_bars = int(span_days * bars_per_day.get(tf, 12.0))
     data_sparse = len(resampled) < max(8, int(expected_bars * 0.25))
     mtime = path.stat().st_mtime if path.is_file() else None
+    actual_start = start_ts
+    actual_end = end_ts
+    last_candle_time: Optional[int] = None
+    if not resampled.empty and "timestamp" in resampled.columns:
+        actual_start = _utc_ts(resampled["timestamp"].min())
+        actual_end = _utc_ts(resampled["timestamp"].max())
+        last_candle_time = int(actual_end.timestamp())
     return {
         "symbol": symbol.upper(),
         "timeframe": timeframe,
@@ -675,8 +682,9 @@ def fetch_ohlcv(
         "row_count": len(resampled),
         "bars_1min_rows": bars_1min_rows,
         "live_storage_1m_rows": live_storage_rows,
-        "range_start": start_ts.isoformat(),
-        "range_end": end_ts.isoformat(),
+        "range_start": actual_start.isoformat(),
+        "range_end": actual_end.isoformat(),
+        "last_candle_time": last_candle_time,
         "range_clipped": clipped,
         "max_ohlcv_days": max_days,
         "expected_bars": expected_bars,

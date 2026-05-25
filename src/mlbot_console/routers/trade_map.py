@@ -105,7 +105,7 @@ def _bundle_ohlcv_query(
     return from_, to, use_full
 
 
-def _candles_for_main_overlays(
+def _candles_for_chart_window(
     ohlcv: dict,
     *,
     ohlcv_mode: str,
@@ -114,7 +114,7 @@ def _candles_for_main_overlays(
     chart_from: Optional[str],
     chart_to: Optional[str],
 ) -> List[Dict[str, Any]]:
-    """Tail poll returns few OHLCV bars; MA overlays need the full chart window."""
+    """Tail poll returns few OHLCV bars; overlays/features need the full loaded chart window."""
     tail = list(ohlcv.get("candles") or [])
     if ohlcv_mode != "tail" or not tail:
         return tail
@@ -429,6 +429,14 @@ def trade_map_bundle(
             overlay_start = pd.Timestamp(str(ohlcv["range_start"]))
         if overlay_end is None and ohlcv.get("range_end"):
             overlay_end = pd.Timestamp(str(ohlcv["range_end"]))
+        feature_candles = _candles_for_chart_window(
+            ohlcv,
+            ohlcv_mode=ohlcv_mode,
+            symbol=symbol,
+            timeframe=tf,
+            chart_from=from_,
+            chart_to=to,
+        )
         overlays = load_feature_overlays(
             SETTINGS.feature_bus_root,
             symbol,
@@ -436,7 +444,7 @@ def trade_map_bundle(
             cols,
             start=overlay_start,
             end=overlay_end,
-            candles=ohlcv.get("candles"),
+            candles=feature_candles,
         )
     main_keys = parse_main_overlay_keys(main_overlays)
     main_ol: dict = {}
@@ -448,7 +456,7 @@ def trade_map_bundle(
         if feat_end is None and ohlcv.get("range_end"):
             feat_end = pd.Timestamp(str(ohlcv["range_end"]))
         try:
-            overlay_candles = _candles_for_main_overlays(
+            overlay_candles = _candles_for_chart_window(
                 ohlcv,
                 ohlcv_mode=ohlcv_mode,
                 symbol=symbol,
@@ -567,6 +575,7 @@ def trade_map_bundle(
             "ohlcv_source": ohlcv.get("source"),
             "range_start": ohlcv.get("range_start"),
             "range_end": ohlcv.get("range_end"),
+            "last_candle_time": ohlcv.get("last_candle_time"),
             "range_clipped": ohlcv.get("range_clipped", False),
             "feature_columns": cols,
             "main_overlays": main_keys,

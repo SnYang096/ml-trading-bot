@@ -167,7 +167,16 @@ async function refreshBundle(opts = {}) {
         const row = mergedByTime.get(t) || c;
         S.candleSeries.update(row);
       }
-      S.ohlcvLoadedTo = meta.range_end || new Date().toISOString();
+      if (meta?.last_candle_time != null) {
+        S.ohlcvLoadedTo = Core.isoFromUnixSec(meta.last_candle_time);
+        S.lastCandleTime = Number(meta.last_candle_time);
+      } else if (S.lastCandles.length) {
+        const lastT = S.lastCandles[S.lastCandles.length - 1].time;
+        S.ohlcvLoadedTo = Core.isoFromUnixSec(lastT);
+        S.lastCandleTime = lastT;
+      } else {
+        S.ohlcvLoadedTo = meta.range_end || new Date().toISOString();
+      }
     }
     S.lastChopMapData = mergeChopMapPayload(S.lastChopMapData, data);
     if (S.lastCandles.length && S.lastChopMapData) {
@@ -213,6 +222,7 @@ async function refreshBundle(opts = {}) {
     if (S.chartFitPending) {
       applyChartViewport(candles.length);
       S.chartFitPending = false;
+      scrollChartToLatestCandles();
     } else {
       refreshMainPriceAutoscale();
     }
@@ -223,6 +233,15 @@ async function refreshBundle(opts = {}) {
       strategy_stage_regions: data.strategy_stage_regions,
     };
     syncSubcharts(candles, S.lastOverlays);
+    if (
+      typeof refreshFeatureMetricsPanel === "function" &&
+      Core.chopMetricsTableActive(S.featureStrategyFocus, S.selectedFeatureColumns)
+    ) {
+      refreshFeatureMetricsPanel(S.highlightBarTime ?? S.lastCandleTime ?? null, {
+        rebuild: true,
+        scrollNow: false,
+      });
+    }
   }
 
   const markers = data.markers || [];
