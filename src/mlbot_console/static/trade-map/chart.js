@@ -206,7 +206,12 @@ function initMainChart() {
     if (stack) {
       const stackRo = new ResizeObserver(() => {
         resizeAllSubcharts();
-        if (Core.chopGridUsesMetricsTable("chop_grid", S.featureStrategyFocus)) {
+        if (
+          Core.chopMetricsTableActive(
+            S.featureStrategyFocus,
+            S.selectedFeatureColumns
+          )
+        ) {
           if (typeof refreshFeatureMetricsPanel === "function") {
             refreshFeatureMetricsPanel(S.highlightBarTime ?? null);
           }
@@ -269,6 +274,8 @@ function initMainChart() {
     legend.classList.remove("hidden");
     if (typeof refreshThresholdTablesAtTime === "function") {
       refreshThresholdTablesAtTime(param.time);
+    } else if (typeof refreshFeatureMetricsPanel === "function") {
+      refreshFeatureMetricsPanel(param.time);
     }
   });
 }

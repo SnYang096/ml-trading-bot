@@ -194,6 +194,12 @@ async function refreshBundle(opts = {}) {
       applyMainOverlays(data.main_overlays, { merge: false });
     }
     syncSubcharts(S.lastCandles, S.lastOverlays || {});
+    if (
+      typeof refreshFeatureMetricsPanel === "function" &&
+      Core.chopMetricsTableActive(S.featureStrategyFocus, S.selectedFeatureColumns)
+    ) {
+      refreshFeatureMetricsPanel(S.highlightBarTime ?? null);
+    }
   } else if (mode !== "poll") {
     const candles = Core.sanitizeCandlesForLwc(data.ohlcv?.candles || []);
     S.lastCandles = candles;

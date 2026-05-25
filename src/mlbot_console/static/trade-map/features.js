@@ -69,10 +69,14 @@ function applyPresetForStrategy(strategyId) {
 
 /** Toolbar chips / dropdown: switch strategy focus, preset columns, refresh subcharts. */
 function switchMapStrategy(strategyId) {
-  const sid =
+  let sid =
     strategyId != null && String(strategyId).trim()
       ? String(strategyId).trim()
       : null;
+  if (!sid && layersState().multiLeg) {
+    const strategies = Core.listStrategiesForLayers(layersState());
+    if (strategies.some((s) => s.id === "chop_grid")) sid = "chop_grid";
+  }
   setFeatureStrategyFocus(sid, { refreshPicker: true, refreshSubcharts: false });
   if (sid) applyPresetForStrategy(sid);
   if (S.lastCandles?.length) {
@@ -123,8 +127,13 @@ function applyLayerStrategyDefaults() {
   if (!strategies.length) {
     setFeatureStrategyFocus(null, { refreshPicker: true, refreshSubcharts: false });
   } else if (inferred && (!focus || !allowed.has(focus))) {
-    setFeatureStrategyFocus(inferred, { refreshPicker: true, refreshSubcharts: false });
-    applyPresetForStrategy(inferred);
+    const pick =
+      layers.multiLeg && allowed.has("chop_grid") ? "chop_grid" : inferred;
+    setFeatureStrategyFocus(pick, { refreshPicker: true, refreshSubcharts: false });
+    applyPresetForStrategy(pick);
+  } else if (!focus && layers.multiLeg && allowed.has("chop_grid")) {
+    setFeatureStrategyFocus("chop_grid", { refreshPicker: true, refreshSubcharts: false });
+    applyPresetForStrategy("chop_grid");
   } else if (focus && !allowed.has(focus)) {
     setFeatureStrategyFocus(inferred || null, {
       refreshPicker: true,

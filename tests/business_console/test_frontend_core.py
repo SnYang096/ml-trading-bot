@@ -92,6 +92,58 @@ const resolved = Core.resolveSubchartColumns(
   "chop_grid",
   6
 );
+const chopPresetCols = Core.presetColumnsForStrategy(
+  "chop_grid",
+  ["bpc_semantic_chop", "box_pos_60", "box_stability_60"],
+  8
+);
+Core.setFeatureTaxonomy({
+  strategies: [
+    { id: "chop_grid", account_layer: "multi_leg", title: "Chop Grid", stages: {
+      regime: ["bpc_semantic_chop", "box_stability_60"],
+      prefilter: ["box_pos_60"],
+    }},
+    { id: "trend_scalp", account_layer: "multi_leg", title: "Trend Scalp", stages: { gate: ["trend_confidence"] }},
+    { id: "tpc", account_layer: "trend", title: "TPC", stages: { prefilter: ["tpc_pullback_depth"], gate: ["tpc_semantic_chop"] } },
+    { id: "spot_accum_simple", account_layer: "spot", title: "Spot", stages: { prefilter: ["weekly_ema_200_position"] } },
+  ],
+  index: {
+    "bpc_semantic_chop": [{ column: "bpc_semantic_chop", account_layer: "multi_leg", strategy: "chop_grid", stage: "regime" }],
+    "box_pos_60": [{ column: "box_pos_60", account_layer: "multi_leg", strategy: "chop_grid", stage: "prefilter" }],
+    "box_stability_60": [{ column: "box_stability_60", account_layer: "multi_leg", strategy: "chop_grid", stage: "regime" }],
+    "tpc_pullback_depth": [{ column: "tpc_pullback_depth", account_layer: "trend", strategy: "tpc", stage: "prefilter" }],
+    "weekly_ema_200_position": [{ column: "weekly_ema_200_position", account_layer: "spot", strategy: "spot_accum_simple", stage: "prefilter" }],
+    "tpc_semantic_chop": [{ column: "tpc_semantic_chop", account_layer: "trend", strategy: "tpc", stage: "gate" }],
+    "trend_confidence": [{ column: "trend_confidence", account_layer: "multi_leg", strategy: "trend_scalp", stage: "gate" }],
+  },
+  stage_order: ["regime", "prefilter", "gate"],
+  stage_labels: { regime: "Regime", prefilter: "Prefilter", gate: "Gate" },
+});
+const chopColsOnly = ["bpc_semantic_chop", "box_pos_60"];
+const layersMultiTrend = { trend: true, multiLeg: true, spot: false };
+const planNoFocus = Core.orderFeaturePaneItems(chopColsOnly, layersMultiTrend, "");
+const chopMetricsActive = Core.chopMetricsTableActive("", chopColsOnly);
+const chopMetricsInactiveFocus = Core.chopMetricsTableActive("trend_scalp", chopColsOnly);
+const chopMetricsNeedsFocus = Core.chopMetricsTableActive("chop_grid", []);
+const overlaysEnter = {
+  bpc_semantic_chop: {
+    points: [{ time: 5000, value: 0.55 }],
+    reference_lines: [{ y: 0.5, operator: ">=" }, { y: 0.32, operator: "<" }],
+  },
+  box_pos_60: {
+    points: [{ time: 5000, value: 0.5 }],
+    reference_lines: [{ y: 0.35, operator: ">=" }, { y: 0.65, operator: "<=" }],
+  },
+};
+const overlaysLowChop = {
+  ...overlaysEnter,
+  bpc_semantic_chop: {
+    points: [{ time: 5000, value: 0.4 }],
+    reference_lines: overlaysEnter.bpc_semantic_chop.reference_lines,
+  },
+};
+const chopBarCanEnter = Core.chopGridBarCanEnter(chopColsOnly, overlaysEnter, 5000);
+const chopBarBlocked = Core.chopGridBarCanEnter(chopColsOnly, overlaysLowChop, 5000);
 const meta = Core.lookupFeatureMeta("tpc_pullback_depth");
 const hit = Core.findMarkerByTime(markers, 1, 7200);
 const sel = Core.markersToLwc(markers, "trend:orders:1");
@@ -153,14 +205,17 @@ console.log(JSON.stringify({
   resolvedChop: resolved,
   chopFeatureCols: chopPlan.filter((p) => p.type === "feature").map((p) => p.column),
   chopPlanTypes: chopPlan.map((p) => p.type),
+  planNoFocusTypes: planNoFocus.map((p) => p.type),
+  planNoFocusHeaderCount: planNoFocus.filter((p) => p.type === "header").length,
+  chopMetricsActive,
+  chopMetricsInactiveFocus,
+  chopMetricsNeedsFocus,
+  chopBarCanEnter,
+  chopBarBlocked,
   chopMetricsSpecs: Core.chopGridMetricsColumnSpecs(
     ["bpc_semantic_chop", "box_pos_60", "box_stability_60"]
   ).length,
-  chopPreset: Core.presetColumnsForStrategy(
-    "chop_grid",
-    ["bpc_semantic_chop", "box_pos_60", "box_stability_60"],
-    8
-  ),
+  chopPreset: chopPresetCols,
   trendPreset: Core.presetColumnsForStrategy(
     "trend_scalp",
     ["trend_confidence", "bpc_semantic_chop", "box_pos_60"],
@@ -253,6 +308,13 @@ def test_trade_map_core_node():
     assert out["resolvedChop"] == ["bpc_semantic_chop", "box_pos_60"]
     assert out["chopFeatureCols"] == []
     assert "metrics_table" in out["chopPlanTypes"]
+    assert out["planNoFocusTypes"] == ["metrics_table"]
+    assert out["planNoFocusHeaderCount"] == 0
+    assert out["chopMetricsActive"] is True
+    assert out["chopMetricsInactiveFocus"] is False
+    assert out["chopMetricsNeedsFocus"] is True
+    assert out["chopBarCanEnter"] is True
+    assert out["chopBarBlocked"] is False
     assert out["chopMetricsSpecs"] >= 2
     assert out["chopPreset"] == ["bpc_semantic_chop", "box_pos_60"]
     assert out["trendPreset"] == ["trend_confidence", "bpc_semantic_chop"]

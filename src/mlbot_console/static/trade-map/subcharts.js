@@ -33,6 +33,32 @@ function visibleCandleIndexRange(candles) {
   return { from: Math.min(from, to), to: Math.max(from, to) };
 }
 
+function candleIndexAtTime(candles, timeSec) {
+  const list = candles || [];
+  const t = Number(timeSec);
+  if (!list.length || !Number.isFinite(t)) return -1;
+  for (let i = 0; i < list.length; i++) {
+    if (Number(list[i].time) === t) return i;
+  }
+  let best = -1;
+  for (let i = 0; i < list.length; i++) {
+    if (Number(list[i].time) <= t) best = i;
+  }
+  return best;
+}
+
+/** Visible window plus crosshair bar (so highlight/scroll work when bar is off-screen). */
+function indicesForMetricsTable(candles, highlightTimeSec) {
+  let { from, to } = visibleCandleIndexRange(candles);
+  const hi = candleIndexAtTime(candles, highlightTimeSec);
+  if (hi >= 0) {
+    const pad = 12;
+    from = Math.min(from, Math.max(0, hi - pad));
+    to = Math.max(to, Math.min((candles || []).length - 1, hi + pad));
+  }
+  return { from, to };
+}
+
 function metricsTableDomId(item) {
   return subchartDomId(item.id || "metrics-table");
 }
@@ -49,14 +75,17 @@ function escHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
-function clearStrategyChrome() {
-  document
-    .querySelectorAll(
-      ".subchart-strategy-header, .subchart-stage-header, .subchart-strategy-gap, .subchart-threshold-status, .subchart-feature-metrics"
-    )
-    .forEach((el) => {
-      el.remove();
-    });
+function clearStrategyChrome({ keepMetricsTable = false } = {}) {
+  const selectors = [
+    ".subchart-strategy-header",
+    ".subchart-stage-header",
+    ".subchart-strategy-gap",
+    ".subchart-threshold-status",
+  ];
+  if (!keepMetricsTable) selectors.push(".subchart-feature-metrics");
+  document.querySelectorAll(selectors.join(", ")).forEach((el) => {
+    el.remove();
+  });
   const insp = document.getElementById("featureBarInspector");
   if (insp) insp.classList.add("hidden");
 }
@@ -393,7 +422,7 @@ function renderChopMetricsTableHtml(candles, overlays, cols, highlightTimeSec) {
   if (!rowSpecs.length) {
     return '<p class="muted">无指标列（请选 Chop 预设或勾选 bpc / box_pos / box 结构列）</p>';
   }
-  const { from, to } = visibleCandleIndexRange(candles);
+  const { from, to } = indicesForMetricsTable(candles, highlightTimeSec);
   const bars = [];
   for (let i = from; i <= to; i++) {
     const t = candles[i]?.time;
@@ -441,23 +470,24 @@ function renderChopMetricsTableHtml(candles, overlays, cols, highlightTimeSec) {
 function highlightMetricsTableColumn(timeSec) {
   const scroll = document.getElementById("featureMetricsScroll");
   if (!scroll) return;
+  const t = timeSec != null ? Number(timeSec) : null;
   scroll.querySelectorAll(".bar-col-active").forEach((el) => {
     el.classList.remove("bar-col-active");
   });
-  if (timeSec == null) return;
-  scroll.querySelectorAll(`[data-time="${timeSec}"]`).forEach((el) => {
-    el.classList.add("bar-col-active");
+  if (t == null || !Number.isFinite(t)) return;
+  scroll.querySelectorAll("[data-time]").forEach((el) => {
+    if (Number(el.getAttribute("data-time")) === t) {
+      el.classList.add("bar-col-active");
+    }
   });
-  const anchor =
-    scroll.querySelector(`th.bar-col-h[data-time="${timeSec}"]`) ||
-    scroll.querySelector(`td[data-time="${timeSec}"]`);
-  if (anchor) {
-    anchor.scrollIntoView({
-      block: "nearest",
-      inline: "center",
-      behavior: "smooth",
-    });
-  }
+  const anchor = scroll.querySelector("th.bar-col-h.bar-col-active");
+  if (!anchor) return;
+  const targetLeft =
+    anchor.offsetLeft - scroll.clientWidth / 2 + anchor.offsetWidth / 2;
+  scroll.scrollTo({
+    left: Math.max(0, targetLeft),
+    behavior: "smooth",
+  });
 }
 
 function ensureFeatureMetricsTablePane(item, candles, overlays, highlightTimeSec) {
@@ -471,7 +501,7 @@ function ensureFeatureMetricsTablePane(item, candles, overlays, highlightTimeSec
     const cap = document.createElement("div");
     cap.className = "metrics-table-caption";
     cap.textContent =
-      "Chop Grid · ✓/×=可开网格(chop+box_pos且非稳定箱) · 列=可见K线 · 十字线高亮并横向滚入视区";
+      "Chop Grid 指标表 · 列=可见K线+十字线bar · 顶行✓/×=可开网格 · 请点策略「Chop Grid」";
     const scroll = document.createElement("div");
     scroll.id = "featureMetricsScroll";
     scroll.className = "metrics-table-scroll layout-pivot-host";
@@ -498,17 +528,16 @@ function refreshFeatureMetricsPanel(highlightTimeSec) {
   if (!document.getElementById("subchartStack")) return;
   const overlays = S.lastOverlays || {};
   const candles = S.lastCandles || [];
-  const focus = String(S.featureStrategyFocus || "").trim();
-  if (focus !== "chop_grid" || !candles.length) return;
-  const host = document.querySelector(".subchart-feature-metrics");
-  if (!host) return;
   const cols = Core.resolveSubchartColumns(
     S.selectedFeatureColumns,
     S.availableFeatureColumns,
     layersState(),
-    focus,
+    S.featureStrategyFocus,
     S.MAX_FEATURE_SUBCHARTS
   );
+  if (!Core.chopMetricsTableActive(S.featureStrategyFocus, cols) || !candles.length) return;
+  const host = document.querySelector(".subchart-feature-metrics");
+  if (!host) return;
   const scroll = document.getElementById("featureMetricsScroll");
   if (!scroll) return;
   const timeSec =
@@ -528,7 +557,7 @@ function refreshFeatureMetricsPanel(highlightTimeSec) {
 
 function refreshThresholdTablesAtTime(timeSec) {
   if (!document.getElementById("subchartStack")) return;
-  if (Core.chopGridUsesMetricsTable("chop_grid", S.featureStrategyFocus)) {
+  if (Core.chopMetricsTableActive(S.featureStrategyFocus, S.selectedFeatureColumns)) {
     if (timeSec != null) S.highlightBarTime = timeSec;
     refreshFeatureMetricsPanel(timeSec);
     const insp = document.getElementById("featureBarInspector");
@@ -646,10 +675,27 @@ function ensureFeaturePane(column, overlay, colorIndex, candles) {
 function syncSubcharts(candles, overlays) {
   const showVol = document.getElementById("paneVolume").checked;
   ensureVolumePane(showVol, candles);
-  const tableFirst = Core.chopGridUsesMetricsTable(
-    "chop_grid",
-    S.featureStrategyFocus
+  const colsForPanesEarly = Core.resolveSubchartColumns(
+    S.selectedFeatureColumns,
+    S.availableFeatureColumns,
+    layersState(),
+    S.featureStrategyFocus,
+    S.MAX_FEATURE_SUBCHARTS
   );
+  const tableFirst = Core.chopMetricsTableActive(
+    S.featureStrategyFocus,
+    colsForPanesEarly
+  );
+  if (tableFirst) {
+    document
+      .querySelectorAll(
+        ".subchart-strategy-header, .subchart-stage-header, .subchart-strategy-gap, .subchart-threshold-status, .subchart-pane"
+      )
+      .forEach((el) => el.remove());
+    for (const id of [...S.subcharts.keys()]) {
+      if (id.startsWith("feat:")) destroySubchart(id);
+    }
+  }
   const wantFeatures = new Set(S.selectedFeatureColumns);
   for (const id of [...S.subcharts.keys()]) {
     if (id.startsWith("metrics-") && !tableFirst) destroySubchart(id);
@@ -657,16 +703,10 @@ function syncSubcharts(candles, overlays) {
       destroySubchart(id);
     }
   }
-  clearStrategyChrome();
+  clearStrategyChrome({ keepMetricsTable: tableFirst });
 
   const layers = layersState();
-  const colsForPanes = Core.resolveSubchartColumns(
-    S.selectedFeatureColumns,
-    S.availableFeatureColumns,
-    layers,
-    S.featureStrategyFocus,
-    S.MAX_FEATURE_SUBCHARTS
-  );
+  const colsForPanes = colsForPanesEarly;
   const panePlan = Core.orderFeaturePaneItems(colsForPanes, layers, S.featureStrategyFocus);
   const domOrder = [];
   if (showVol) domOrder.push(subchartDomId("volume"));

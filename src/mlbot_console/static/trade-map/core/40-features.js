@@ -560,6 +560,19 @@
       return sid === "chop_grid" && (!focus || focus === "chop_grid");
     }
 
+    /** Table UI when Chop Grid is focused or selected columns are chop_grid metrics. */
+    function chopMetricsTableActive(strategyFocus, columns) {
+      const focus = String(strategyFocus || "").trim().toLowerCase();
+      if (focus && focus !== "chop_grid") return false;
+      const cols = columns || [];
+      if (!cols.length) return focus === "chop_grid";
+      let chopN = 0;
+      for (const c of cols) {
+        if (inferStrategyIdFromColumn(c).strategy === "chop_grid") chopN += 1;
+      }
+      return chopN > 0;
+    }
+
     /** Column specs for per-bar metrics table (headers carry YAML thresholds). */
     function chopGridMetricsColumnSpecs(columns) {
       const colSet = new Set(columns || []);
@@ -705,7 +718,10 @@
       if (String(stratId).toLowerCase() !== "chop_grid") {
         return { chartCols: list, statusCols: [], skipStage: false };
       }
-      if (chopGridUsesMetricsTable(stratId, strategyFocus)) {
+      if (
+        chopMetricsTableActive(strategyFocus, list) ||
+        chopGridUsesMetricsTable(stratId, strategyFocus)
+      ) {
         if (stage === "other") {
           return { chartCols: [], statusCols: [], skipStage: true };
         }
@@ -741,8 +757,7 @@
 
     function orderFeaturePaneItems(columns, layers, strategyFocus) {
       const focus = strategyFocus ? String(strategyFocus).trim() : "";
-      const chopTableOnly =
-        focus === "chop_grid" && chopGridUsesMetricsTable("chop_grid", focus);
+      const chopTableOnly = chopMetricsTableActive(focus, columns);
       const tree = _bucketColumnsByTaxonomy(columns);
       const items = [];
       let firstLayer = true;
@@ -768,6 +783,7 @@
         ];
         let firstStrat = true;
         for (const stratId of stratIds) {
+          if (chopTableOnly && stratId !== "chop_grid") continue;
           if (focus && stratId !== focus) continue;
           const stageNode = layerNode[stratId];
           if (!stageNode) continue;
@@ -777,7 +793,8 @@
           firstStrat = false;
           const sample = stageNode[Object.keys(stageNode)[0]][0];
           const sm = lookupFeatureMeta(sample);
-          const tableMode = chopGridUsesMetricsTable(stratId, focus);
+          const tableMode =
+            stratId === "chop_grid" && chopMetricsTableActive(focus, columns);
           if (!tableMode) {
             items.push({
               type: "header",
@@ -914,6 +931,7 @@
     valuePassesRefLine,
     subchartColumnsForStrategy,
     chopGridUsesMetricsTable,
+    chopMetricsTableActive,
     chopGridMetricsColumnSpecs,
     chopGridMetricsCell,
     chopGridMetricsRowSpecs,

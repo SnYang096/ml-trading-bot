@@ -121,10 +121,14 @@ function applyLayoutToControls(layout) {
   const layerGt = document.getElementById("layerGate");
   if (layerPf) layerPf.checked = layout.layerPrefilter !== false;
   if (layerGt) layerGt.checked = !!layout.layerGate;
-  S.featureStrategyFocus =
+  let focus =
     layout.featureStrategyFocus != null && String(layout.featureStrategyFocus).trim()
       ? String(layout.featureStrategyFocus).trim()
       : null;
+  if (!focus && layout.chopGrid !== false) {
+    focus = "chop_grid";
+  }
+  S.featureStrategyFocus = focus;
   S.selectedFeatureColumns = Array.isArray(layout.features) ? [...layout.features] : [];
   S.ordersDockOpen = !!layout.ordersDock;
   Shell.applyOrdersFilterToControls(Shell.loadOrdersFilter());
