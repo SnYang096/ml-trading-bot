@@ -101,6 +101,10 @@ const merged = Core.mergeCandlesByTime(
   [{ time: 100, open: 1, high: 2, low: 0.5, close: 1 }],
   [{ time: 200, open: 2, high: 3, low: 1, close: 2 }, { time: 100, open: 9, high: 9, low: 9, close: 9 }]
 );
+const mergedVol = Core.mergeCandlesByTime(
+  [{ time: 100, open: 1, high: 2, low: 0.5, close: 1, volume: 42 }],
+  [{ time: 100, open: 9, high: 9, low: 9, close: 9 }]
+);
 console.log(JSON.stringify({
   scopes, lwcCount: lwc.length, pendingShape: lwc[1].shape, grafana, spacing,
   vis, range, cleanLen: clean.length, cleanTime: clean[1].time,
@@ -122,6 +126,7 @@ console.log(JSON.stringify({
   mergedLen: merged.length,
   mergedFirst: merged[0].time,
   mergedLast: merged[1].time,
+  mergedVolKeep: mergedVol[0].volume,
   tpText: Core.markersToLwc(markers)[2].text,
   l2Pending: Core.markersToLwc(markers)[3].text,
   s1Filled: Core.markersToLwc(markers)[4].text,
@@ -211,6 +216,7 @@ def test_trade_map_core_node():
     assert out["mergedLen"] == 2
     assert out["mergedFirst"] == 100
     assert out["mergedLast"] == 200
+    assert out["mergedVolKeep"] == 42
     assert out["tpText"] == "L1_TP"
     assert out["l2Pending"] == "L2 挂单"
     assert out["s1Filled"] == "S1 成交"

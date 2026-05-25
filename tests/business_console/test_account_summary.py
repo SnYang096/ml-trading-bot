@@ -9,8 +9,10 @@ import pytest
 
 from mlbot_console.services.account_summary import (
     _link_pnl_usdt,
+    aggregate_weekly_realized,
     build_account_summary,
     build_order_pnl_maps,
+    cumulative_realized_curve,
     latest_close_prices,
 )
 
@@ -146,6 +148,26 @@ def test_account_summary_api(client) -> None:
     assert len(body["data"]["scopes"]) == 3
     assert body["meta"]["lookback_days"] == 0
     assert "recent_realized" in body["data"]
+    assert "weekly_realized" in body["data"]
+    assert "cumulative_realized" in body["data"]
+    assert "this_week_pnl" in body["data"]["recent_realized"]
+
+
+def test_aggregate_weekly_and_cumulative_curve() -> None:
+    daily = [
+        {"date": "2026-05-19", "pnl": 1.0},
+        {"date": "2026-05-20", "pnl": 2.0},
+        {"date": "2026-05-22", "pnl": -0.5},
+        {"date": "2026-05-26", "pnl": 4.0},
+    ]
+    weekly = aggregate_weekly_realized(daily)
+    assert len(weekly) == 2
+    assert weekly[0]["week_start"] == "2026-05-18"  # Mon of week containing 05-19
+    assert weekly[0]["pnl"] == pytest.approx(2.5)
+    assert weekly[1]["week_start"] == "2026-05-25"
+    assert weekly[1]["pnl"] == pytest.approx(4.0)
+    curve = cumulative_realized_curve(daily)
+    assert [c["cumulative"] for c in curve] == pytest.approx([1.0, 3.0, 2.5, 6.5])
 
 
 def test_account_summary_multileg_realized(

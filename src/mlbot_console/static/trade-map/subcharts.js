@@ -72,6 +72,14 @@ function reorderSubchartStackDom(orderedDomIds) {
   }
 }
 
+function scheduleSubchartLayout() {
+  resizeAllSubcharts();
+  requestAnimationFrame(() => {
+    resizeAllSubcharts();
+    syncSubchartsToMainRange();
+  });
+}
+
 function ensureSubchartHost(id, label, strategyId) {
   const domId = subchartDomId(id);
   let host = document.getElementById(domId);
@@ -113,10 +121,18 @@ function ensureVolumePane(show, candles) {
     cap.title = "每根K线周期内1分钟成交量求和（与0-1特征尺度不同）";
   }
   const data = (candles || [])
-    .filter((x) => x.volume != null)
-    .map((x) => ({ time: x.time, value: x.volume, color: "#546e7a" }));
+    .filter((x) => x.volume != null && Number.isFinite(Number(x.volume)))
+    .map((x) => ({ time: x.time, value: Number(x.volume), color: "#546e7a" }));
   pane.series.setData(data);
-  requestAnimationFrame(() => resizeAllSubcharts());
+  if (cap) {
+    if (!data.length) {
+      cap.title =
+        "K 线无 volume 字段（检查 feature bus bars_1min 是否含成交量列）";
+    } else {
+      cap.title = "每根K线周期内1分钟成交量求和（与0-1特征尺度不同）";
+    }
+  }
+  scheduleSubchartLayout();
 }
 
 function featurePaneCaption(column, overlay) {
@@ -235,10 +251,7 @@ function ensureFeaturePane(column, overlay, colorIndex, candles) {
   );
   pane.series.setData(pts);
   syncFeatureRefLines(pane, overlay, pts, candles);
-  requestAnimationFrame(() => {
-    resizeAllSubcharts();
-    syncSubchartsToMainRange();
-  });
+  scheduleSubchartLayout();
 }
 
 function syncSubcharts(candles, overlays) {
@@ -289,10 +302,7 @@ function syncSubcharts(candles, overlays) {
   }
   reorderSubchartStackDom(domOrder);
 
-  requestAnimationFrame(() => {
-    resizeAllSubcharts();
-    syncSubchartsToMainRange();
-  });
+  scheduleSubchartLayout();
 }
 
 function formatOverlayStatus(overlays) {

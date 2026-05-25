@@ -4,7 +4,8 @@
 (function (root) {
   const SYMBOL_KEY = "mlbot_console_symbol";
   const SCOPES_KEY = "mlbot_console_scopes";
-  const ORDERS_FILTER_KEY = "mlbot_orders_filter";
+  const ORDERS_FILTER_KEY = "mlbot_orders_filter_v2";
+  const ORDERS_FILTER_KEY_LEGACY = "mlbot_orders_filter";
   const TRADE_MAP_LAYOUT_KEY = "mlbot_trade_map_layout_v2";
   const SYMBOL_ALL = "*";
 
@@ -421,8 +422,8 @@
 
   function defaultOrdersFilter() {
     return {
-      hideExpired: true,
-      hideCanceled: true,
+      hideExpired: false,
+      hideCanceled: false,
       hideRejected: false,
       hidePending: false,
     };
@@ -435,10 +436,10 @@
       const layout = JSON.parse(raw);
       if (layout == null || typeof layout !== "object") return null;
       return {
-        hideExpired: layout.hideExpired !== false,
-        hideCanceled: layout.hideCanceled !== false,
-        hideRejected: false,
-        hidePending: false,
+        hideExpired: !!layout.hideExpired,
+        hideCanceled: !!layout.hideCanceled,
+        hideRejected: !!layout.hideRejected,
+        hidePending: !!layout.hidePending,
       };
     } catch (_) {
       return null;

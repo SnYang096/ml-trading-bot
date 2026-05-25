@@ -78,7 +78,16 @@
         if (c && c.time != null) byTime.set(Number(c.time), c);
       }
       for (const c of incoming || []) {
-        if (c && c.time != null) byTime.set(Number(c.time), c);
+        if (!c || c.time == null) continue;
+        const t = Number(c.time);
+        const prev = byTime.get(t);
+        if (prev) {
+          const next = { ...prev, ...c };
+          if (c.volume == null && prev.volume != null) next.volume = prev.volume;
+          byTime.set(t, next);
+        } else {
+          byTime.set(t, c);
+        }
       }
       return [...byTime.values()].sort((a, b) => a.time - b.time);
     }

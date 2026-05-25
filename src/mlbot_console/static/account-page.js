@@ -73,20 +73,34 @@ function renderGlobalKpis(totals, ledger) {
 
 function renderRecentRealized(recent) {
   const r = recent || {};
-  if (r.last_day == null && !r.last_7d_pnl) return "";
+  if (
+    r.last_day == null &&
+    r.this_week_pnl == null &&
+    r.last_week_pnl == null &&
+    !r.last_7d_pnl
+  ) {
+    return "";
+  }
   const dayCls = pnlClassNum(r.last_day_pnl);
-  const wkCls = pnlClassNum(r.last_7d_pnl);
+  const thisWkCls = pnlClassNum(r.this_week_pnl);
+  const lastWkCls = pnlClassNum(r.last_week_pnl);
+  const twStart = r.this_week_start || "—";
+  const lwStart = r.last_week_start || "—";
   return `<section class="account-recent-realized panel">
-    <h3>已实现盈亏（按日）</h3>
-    <p class="muted">最近平仓计入 <code>daily_realized</code>；与交易所浮盈分开显示。</p>
+    <h3>已实现盈亏速览</h3>
+    <p class="muted">自然周按 UTC 周一重计；最近平仓计入 <code>daily_realized</code>。</p>
     <div class="account-kpi-row">
       <div class="account-kpi-card">
         <div class="account-kpi-label">最近交易日</div>
         <div class="account-kpi-value ${dayCls}">${Shell.escHtml(r.last_day || "—")} · ${Shell.escHtml(fmtPnlNum(r.last_day_pnl))} USDT</div>
       </div>
       <div class="account-kpi-card">
-        <div class="account-kpi-label">近 7 日已实现</div>
-        <div class="account-kpi-value ${wkCls}">${Shell.escHtml(fmtPnlNum(r.last_7d_pnl))} USDT</div>
+        <div class="account-kpi-label">本周已实现 <span class="muted">(${Shell.escHtml(twStart)} 起)</span></div>
+        <div class="account-kpi-value ${thisWkCls}">${Shell.escHtml(fmtPnlNum(r.this_week_pnl))} USDT</div>
+      </div>
+      <div class="account-kpi-card">
+        <div class="account-kpi-label">上周已实现 <span class="muted">(${Shell.escHtml(lwStart)} 起)</span></div>
+        <div class="account-kpi-value ${lastWkCls}">${Shell.escHtml(fmtPnlNum(r.last_week_pnl))} USDT</div>
       </div>
     </div>
   </section>`;
@@ -200,25 +214,96 @@ function renderStrategiesTable(strategies) {
   </table>`;
 }
 
-function renderDailyChart(daily) {
-  const pts = daily || [];
+function renderPnlBars(pts, valueKey) {
   if (!pts.length) return '<p class="muted">回看期内无已实现盈亏记录</p>';
-  const values = pts.map((p) => Math.abs(Number(p.pnl) || 0));
+  const values = pts.map((p) => Math.abs(Number(p[valueKey]) || 0));
   const maxAbs = Math.max(...values, 1e-6);
   const bars = pts
     .map((p) => {
-      const v = Number(p.pnl) || 0;
+      const v = Number(p[valueKey]) || 0;
       const h = Math.max(4, (Math.abs(v) / maxAbs) * 72);
       const cls = v >= 0 ? "bar-pos" : "bar-neg";
-      const title = `${p.date}: ${fmtPnlNum(v)}`;
+      const label = p.label || p.date || p.week_start || "";
+      const title = `${label}: ${fmtPnlNum(v)}`;
       return `<div class="daily-bar ${cls}" style="height:${h}px" title="${Shell.escHtml(title)}"></div>`;
     })
     .join("");
+  const step = Math.max(1, Math.ceil(pts.length / 6));
   const labels = pts
-    .filter((_, i) => i === 0 || i === pts.length - 1 || i % Math.ceil(pts.length / 6) === 0)
-    .map((p) => `<span>${Shell.escHtml(p.date)}</span>`)
+    .filter((_, i) => i === 0 || i === pts.length - 1 || i % step === 0)
+    .map((p) => {
+      const t = p.label || p.week_start || p.date || "";
+      return `<span title="${Shell.escHtml(t)}">${Shell.escHtml(String(t).slice(5))}</span>`;
+    })
     .join("");
   return `<div class="daily-bars">${bars}</div><div class="daily-labels">${labels}</div>`;
+}
+
+function renderDailyChart(daily) {
+  return renderPnlBars(daily || [], "pnl");
+}
+
+function renderWeeklyChart(weekly) {
+  return renderPnlBars(weekly || [], "pnl");
+}
+
+function renderWeeklyTable(weekly) {
+  const pts = weekly || [];
+  if (!pts.length) return "";
+  const rows = [...pts]
+    .reverse()
+    .map(
+      (w) => `<tr>
+      <td>${Shell.escHtml(w.label || w.week_start || "—")}</td>
+      <td class="${pnlClassNum(w.pnl)}">${Shell.escHtml(fmtPnlNum(w.pnl))}</td>
+    </tr>`
+    )
+    .join("");
+  return `<table class="account-table account-weekly-table">
+    <thead><tr><th>自然周</th><th>已实现 (USDT)</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+function renderEquityCurve(curve) {
+  const pts = curve || [];
+  if (!pts.length) return '<p class="muted">回看期内无已实现盈亏记录</p>';
+  const vals = pts.map((p) => Number(p.cumulative) || 0);
+  let minV = Math.min(...vals, 0);
+  let maxV = Math.max(...vals, 0);
+  if (minV === maxV) {
+    minV -= 1;
+    maxV += 1;
+  }
+  const span = maxV - minV;
+  const w = 900;
+  const h = 160;
+  const padX = 12;
+  const padY = 14;
+  const innerW = w - padX * 2;
+  const innerH = h - padY * 2;
+  const zeroY =
+    padY + innerH - ((0 - minV) / span) * innerH;
+  const coords = pts.map((p, i) => {
+    const x = padX + (i / Math.max(1, pts.length - 1)) * innerW;
+    const y = padY + innerH - ((vals[i] - minV) / span) * innerH;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  const last = vals[vals.length - 1];
+  const firstDate = pts[0].date || "";
+  const lastDate = pts[pts.length - 1].date || "";
+  const lineCls = last >= 0 ? "equity-line-pos" : "equity-line-neg";
+  return `<div class="equity-curve-wrap">
+    <svg class="equity-curve-svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="累计已实现盈亏曲线">
+      <line class="equity-zero-line" x1="${padX}" y1="${zeroY.toFixed(1)}" x2="${w - padX}" y2="${zeroY.toFixed(1)}" />
+      <polyline class="equity-curve-line ${lineCls}" points="${coords.join(" ")}" />
+    </svg>
+    <div class="equity-curve-meta">
+      <span>${Shell.escHtml(firstDate)}</span>
+      <span class="${pnlClassNum(last)}">累计 ${Shell.escHtml(fmtPnlNum(last))} USDT</span>
+      <span>${Shell.escHtml(lastDate)}</span>
+    </div>
+  </div>`;
 }
 
 async function refreshGlobalAccount() {
@@ -407,6 +492,16 @@ async function refreshScopedAccount() {
     const recentEl = document.getElementById("recentRealizedPanel");
     if (recentEl) {
       recentEl.innerHTML = renderRecentRealized(scopedData.recent_realized);
+    }
+    const weeklyEl = document.getElementById("weeklyChart");
+    if (weeklyEl) weeklyEl.innerHTML = renderWeeklyChart(scopedData.weekly_realized);
+    const weeklyTableEl = document.getElementById("weeklyTable");
+    if (weeklyTableEl) {
+      weeklyTableEl.innerHTML = renderWeeklyTable(scopedData.weekly_realized);
+    }
+    const curveEl = document.getElementById("equityCurveChart");
+    if (curveEl) {
+      curveEl.innerHTML = renderEquityCurve(scopedData.cumulative_realized);
     }
     document.getElementById("dailyChart").innerHTML = renderDailyChart(scopedData.daily_realized);
     const notes = (scopedData.notes || []).map((n) => `· ${n}`).join("\n");

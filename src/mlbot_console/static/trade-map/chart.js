@@ -184,6 +184,14 @@ function initMainChart() {
       resizeAllSubcharts();
     });
     ro.observe(el);
+    const stack = document.getElementById("subchartStack");
+    if (stack) {
+      const stackRo = new ResizeObserver(() => {
+        resizeAllSubcharts();
+        syncSubchartsToMainRange();
+      });
+      stackRo.observe(stack);
+    }
   }
   resize();
   bindTimeScaleSync();

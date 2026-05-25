@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
@@ -503,6 +503,85 @@ def _merge_daily(series_list: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]
     return [{"date": d, "pnl": daily[d]} for d in sorted(daily)]
 
 
+def _parse_utc_date(date_str: str) -> datetime:
+    return datetime.strptime(str(date_str), "%Y-%m-%d").replace(tzinfo=timezone.utc)
+
+
+def _iso_week_start(date_str: str) -> str:
+    """Monday (UTC) of the ISO week containing date_str (YYYY-MM-DD)."""
+    d = _parse_utc_date(date_str)
+    monday = d - timedelta(days=d.weekday())
+    return monday.strftime("%Y-%m-%d")
+
+
+def aggregate_weekly_realized(daily: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Sum daily realized PnL by calendar week (Mon–Sun, UTC)."""
+    weekly_pnl: Dict[str, float] = defaultdict(float)
+    week_end: Dict[str, str] = {}
+    for pt in daily or []:
+        day = str(pt.get("date") or "")
+        if not day:
+            continue
+        ws = _iso_week_start(day)
+        weekly_pnl[ws] += float(pt.get("pnl") or 0.0)
+        if ws not in week_end or day > week_end[ws]:
+            week_end[ws] = day
+    rows: List[Dict[str, Any]] = []
+    for ws in sorted(weekly_pnl):
+        we = week_end.get(ws, ws)
+        rows.append(
+            {
+                "week_start": ws,
+                "week_end": we,
+                "pnl": weekly_pnl[ws],
+                "label": f"{ws} ~ {we}",
+            }
+        )
+    return rows
+
+
+def cumulative_realized_curve(daily: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Running sum of daily realized PnL (equity curve of closed PnL only)."""
+    cum = 0.0
+    out: List[Dict[str, Any]] = []
+    for pt in daily or []:
+        pnl = float(pt.get("pnl") or 0.0)
+        cum += pnl
+        out.append(
+            {
+                "date": str(pt.get("date") or ""),
+                "pnl": pnl,
+                "cumulative": cum,
+            }
+        )
+    return out
+
+
+def _weekly_realized_kpis(daily: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """This week / last week realized totals (UTC, week starts Monday)."""
+    now = datetime.now(timezone.utc)
+    this_monday = (now - timedelta(days=now.weekday())).date()
+    last_monday = this_monday - timedelta(days=7)
+    this_week_pnl = 0.0
+    last_week_pnl = 0.0
+    for pt in daily or []:
+        day = str(pt.get("date") or "")
+        if not day:
+            continue
+        d = _parse_utc_date(day).date()
+        pnl = float(pt.get("pnl") or 0.0)
+        if d >= this_monday:
+            this_week_pnl += pnl
+        elif last_monday <= d < this_monday:
+            last_week_pnl += pnl
+    return {
+        "this_week_start": this_monday.isoformat(),
+        "last_week_start": last_monday.isoformat(),
+        "this_week_pnl": this_week_pnl,
+        "last_week_pnl": last_week_pnl,
+    }
+
+
 def build_account_summary(
     *,
     trend_db: Path,
@@ -619,6 +698,10 @@ def build_account_summary(
         tail = daily[-7:]
         last_7d_pnl = sum(float(d.get("pnl") or 0.0) for d in tail)
 
+    weekly = aggregate_weekly_realized(daily)
+    weekly_kpis = _weekly_realized_kpis(daily)
+    cumulative = cumulative_realized_curve(daily)
+
     return {
         "symbol": "ALL" if _is_all_symbols(symbol) else str(symbol).upper(),
         "lookback_days": lookback_days,
@@ -628,7 +711,10 @@ def build_account_summary(
             "last_day_pnl": last_day_pnl,
             "last_7d_pnl": last_7d_pnl,
             "last_day": daily[-1]["date"] if daily else None,
+            **weekly_kpis,
         },
+        "weekly_realized": weekly,
+        "cumulative_realized": cumulative,
         "exchange_ledger": ledger,
         "scopes": scope_blocks,
         "strategies": sorted(

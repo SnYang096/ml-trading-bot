@@ -157,11 +157,13 @@ async function refreshBundle(opts = {}) {
           : null;
       const merged = Core.mergeCandlesByTime(S.lastCandles, newCandles);
       S.lastCandles = merged;
+      const mergedByTime = new Map(merged.map((row) => [Number(row.time), row]));
       for (const c of newCandles) {
         const t = Number(c.time);
         if (!Number.isFinite(t)) continue;
         if (prevLast != null && t < prevLast) continue;
-        S.candleSeries.update(c);
+        const row = mergedByTime.get(t) || c;
+        S.candleSeries.update(row);
       }
       S.ohlcvLoadedTo = meta.range_end || new Date().toISOString();
     }
