@@ -287,6 +287,14 @@
   color: #e6edf3;
 }
 
+.page-trade-map label.layer-inactive {
+  opacity: 0.42;
+}
+
+.page-trade-map label.layer-inactive input {
+  cursor: not-allowed;
+}
+
 .page-trade-map .map-strategy-hint {
   font-size: 0.8rem;
 }

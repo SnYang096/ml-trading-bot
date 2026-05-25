@@ -76,6 +76,17 @@ function bindControls() {
             refreshMainChartForStrategyFocus();
           }
         }
+        if (
+          id === "layerChopGrid" ||
+          id === "layerMultiLeg" ||
+          id === "layerPrefilter" ||
+          id === "layerGate"
+        ) {
+          syncLayerControlsForStrategyFocus();
+          if (typeof refreshMainChartForStrategyFocus === "function") {
+            refreshMainChartForStrategyFocus();
+          }
+        }
         renderFeaturePicker();
       }
       if (S.ordersDockOpen) refreshOrdersList().catch(() => { });
@@ -105,6 +116,7 @@ function bindControls() {
     Shell.initAppNav("trade-map");
     applyScopesFromStorage();
     applyLayoutToControls(loadLayout());
+    syncLayerControlsForStrategyFocus();
     initMainChart();
     bindFeaturePanel();
     bindControls();

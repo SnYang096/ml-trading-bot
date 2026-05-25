@@ -59,20 +59,24 @@ function captureChartViewport() {
 
 function restoreChartViewport(snap) {
   if (!snap || !S.chart?.timeScale) return;
+  if (snap.logical && Number.isFinite(Number(snap.logical.from))) {
+    try {
+      S.chart.timeScale().setVisibleLogicalRange(snap.logical);
+      syncSubchartsToMainRange();
+      refreshMainPriceAutoscale();
+      return;
+    } catch (_) {
+      /* fall through to time */
+    }
+  }
   if (snap.time && snap.time.from != null && snap.time.to != null) {
     try {
       S.chart.timeScale().setVisibleRange(snap.time);
       syncSubchartsToMainRange();
       refreshMainPriceAutoscale();
-      return;
     } catch (_) {
-      /* fall through to logical */
+      /* ignore */
     }
-  }
-  if (snap.logical && Number.isFinite(Number(snap.logical.from))) {
-    S.chart.timeScale().setVisibleLogicalRange(snap.logical);
-    syncSubchartsToMainRange();
-    refreshMainPriceAutoscale();
   }
 }
 
@@ -172,12 +176,6 @@ function syncSubchartsToMainRange() {
           /* subchart may not have data at range edges yet */
         }
       }
-      if (typeof refreshFeatureMetricsPanel === "function") {
-        refreshFeatureMetricsPanel(S.highlightBarTime ?? null, {
-          rebuild: true,
-          preserveScrollLeft: true,
-        });
-      }
       return;
     }
     const logical = S.chart.timeScale().getVisibleLogicalRange();
@@ -201,12 +199,6 @@ function syncSubchartsToMainRange() {
       } catch (_) {
         /* ignore */
       }
-    }
-    if (typeof refreshFeatureMetricsPanel === "function") {
-      refreshFeatureMetricsPanel(S.highlightBarTime ?? null, {
-        rebuild: true,
-        preserveScrollLeft: true,
-      });
     }
   } finally {
     S.syncingTimeScale = false;
@@ -243,6 +235,7 @@ function initMainChart() {
   });
   S.candleSeries.setMarkers([]);
 
+  let chartResizeRaf = null;
   const resize = () => {
     const snap = captureChartViewport();
     S.chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
@@ -259,32 +252,24 @@ function initMainChart() {
       layoutChopGridLabels(S.lastCandles);
     }
   };
-  window.addEventListener("resize", () => {
-    resize();
-    resizeAllSubcharts();
-  });
-  if (typeof ResizeObserver !== "undefined") {
-    const ro = new ResizeObserver(() => {
+  const scheduleChartResize = () => {
+    if (chartResizeRaf != null) return;
+    chartResizeRaf = requestAnimationFrame(() => {
+      chartResizeRaf = null;
       resize();
       resizeAllSubcharts();
     });
+  };
+  window.addEventListener("resize", scheduleChartResize);
+  if (typeof ResizeObserver !== "undefined") {
+    const ro = new ResizeObserver(scheduleChartResize);
     ro.observe(el);
     const stack = document.getElementById("subchartStack");
     if (stack) {
       const stackRo = new ResizeObserver(() => {
         resizeAllSubcharts();
-        if (
-          Core.chopMetricsTableActive(
-            S.featureStrategyFocus,
-            S.selectedFeatureColumns
-          )
-        ) {
-          if (typeof refreshFeatureMetricsPanel === "function") {
-            refreshFeatureMetricsPanel(S.highlightBarTime ?? null, {
-              rebuild: true,
-              preserveScrollLeft: true,
-            });
-          }
+        if (typeof scheduleMetricsTableViewportSync === "function") {
+          scheduleMetricsTableViewportSync();
         } else {
           syncSubchartsToMainRange();
         }
@@ -292,7 +277,7 @@ function initMainChart() {
       stackRo.observe(stack);
     }
   }
-  resize();
+  scheduleChartResize();
   bindTimeScaleSync();
   S.chart.subscribeClick((param) => {
     if (!param || param.time === undefined) return;
@@ -312,12 +297,8 @@ function initMainChart() {
     if (!param || !param.time || param.point.x < 0 || param.point.y < 0) {
       legend.classList.add("hidden");
       S.crosshairOnChart = false;
-      S.highlightBarTime = null;
       if (typeof cancelMetricsTableScrollSchedule === "function") {
         cancelMetricsTableScrollSchedule();
-      }
-      if (typeof refreshThresholdTablesAtTime === "function") {
-        refreshThresholdTablesAtTime(null);
       }
       return;
     }
@@ -352,7 +333,7 @@ function initMainChart() {
       refreshThresholdTablesAtTime(param.time);
     } else if (typeof refreshFeatureMetricsPanel === "function") {
       refreshFeatureMetricsPanel(param.time, { rebuild: false, preserveScrollLeft: true });
-      highlightMetricsTableColumn(param.time, { allowScroll: true });
+      highlightMetricsTableColumn(param.time, { allowScroll: false });
     }
   });
 }

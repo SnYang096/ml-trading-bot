@@ -159,6 +159,16 @@
       return markers;
     }
 
+    /** Bar times (unix sec) where chop regime hysteresis turns off — for metrics table headers. */
+    function chopRegimeExitBarTimes(candles, overlays) {
+      const times = new Set();
+      for (const m of synthesizeChopRegimeExitMarkers(candles, overlays)) {
+        const t = Number(m.time);
+        if (Number.isFinite(t)) times.add(t);
+      }
+      return times;
+    }
+
     function mergeRegimeExitMarkers(markers, regimeExits) {
       const base = markers || [];
       const adds = regimeExits || [];
@@ -324,6 +334,7 @@
     chopRegimeThresholdsFromOverlay,
     chopGridHysteresisActive,
     synthesizeChopRegimeExitMarkers,
+    chopRegimeExitBarTimes,
     mergeRegimeExitMarkers,
     chopGridLegSide,
     chopGridLabelAnchor,

@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import json
+import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
+
+_RUN_ID_TS = re.compile(r"^(\d{8})[_-](\d{6})$")
 
 from mlbot_console.services.strategy_registry import (
     account_layer_label,
@@ -145,6 +149,37 @@ def _allowed_sides_for(slug: str, data: Dict[str, Any]) -> List[str]:
     return ["long", "short"]
 
 
+def _parse_eval_run_id(run_id: str) -> Optional[str]:
+    """Turn multileg eval run_id (20260510_232349) into ISO-ish display time."""
+    m = _RUN_ID_TS.match(str(run_id).strip())
+    if not m:
+        return None
+    try:
+        return datetime.strptime(f"{m.group(1)}_{m.group(2)}", "%Y%m%d_%H%M%S").isoformat(
+            sep=" "
+        )
+    except ValueError:
+        return None
+
+
+def _config_reference_at(data: Dict[str, Any]) -> Optional[str]:
+    """
+    Baseline time for regime thresholds / locked config (Tier-0 calibrate or eval writeback).
+
+    Drift monitor compares live quantiles to last_calibration.plateaus from this baseline.
+    """
+    lc = data.get("last_calibration")
+    if isinstance(lc, dict):
+        ts = lc.get("timestamp") or lc.get("calibrated_at")
+        if ts:
+            return str(ts)
+    ev = data.get("last_multileg_evaluation")
+    if isinstance(ev, dict) and ev.get("run_id"):
+        parsed = _parse_eval_run_id(str(ev["run_id"]))
+        return parsed or str(ev["run_id"])
+    return None
+
+
 def _last_calibration_for_display(
     data: Dict[str, Any], source_label: str
 ) -> Dict[str, Any]:
@@ -185,10 +220,14 @@ def fetch_regime_ops_snapshot(
     slugs = strategies or _discover_strategy_slugs(strategies_root)
     drift_path = _latest_drift_report(project_root)
     drift_by_strategy: Dict[str, Dict[str, Any]] = {}
+    drift_checked_at: Optional[str] = None
     if drift_path and drift_path.is_file():
         try:
             drift_doc = json.loads(drift_path.read_text(encoding="utf-8"))
             drift_by_strategy = _parse_drift_document(drift_doc)
+            raw_at = drift_doc.get("generated_at")
+            if raw_at:
+                drift_checked_at = str(raw_at)
         except json.JSONDecodeError:
             pass
 
@@ -217,6 +256,8 @@ def fetch_regime_ops_snapshot(
                 "drift": drift_item,
                 "drift_status": drift_status,
                 "drift_detail": drift_detail,
+                "drift_checked_at": drift_checked_at,
+                "config_reference_at": _config_reference_at(data),
                 "drift_report_path": str(drift_path) if drift_path else None,
             }
         )

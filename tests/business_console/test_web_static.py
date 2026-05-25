@@ -119,6 +119,13 @@ def test_trade_map_js_layer_toggle_does_not_reset_history(client):
     subcharts = client.get("/static/trade-map/subcharts.js").text
     assert "pane.chart" in subcharts
     assert "pane.S.chart" not in subcharts
+    assert "scheduleMetricsTableViewportSync" in subcharts
+    chart_js = client.get("/static/trade-map/chart.js").text
+    assert "setVisibleLogicalRange(snap.logical)" in chart_js
+    assert "subscribeVisibleTimeRangeChange" not in chart_js
+    history_js = client.get("/static/trade-map/history.js").text
+    assert "scheduleMetricsTableViewportSync" in history_js
+    assert "subscribeVisibleTimeRangeChange" not in history_js
     assert "mergeChopMapPayload" in bundle
     assert "stage_regions" in bundle
     chop = client.get("/static/trade-map/chop.js").text

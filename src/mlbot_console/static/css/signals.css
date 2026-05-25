@@ -425,6 +425,28 @@
   color: #f85149;
 }
 
+.feature-metrics-table .row-regime-exit-h {
+  font-size: 0.72rem;
+  color: #ff7043;
+  vertical-align: bottom;
+}
+
+.feature-metrics-table .bar-regime-exit-h {
+  font-size: 0.72rem;
+  line-height: 1.2;
+  padding: 2px 4px 4px;
+}
+
+.feature-metrics-table th.bar-regime-exit-hit .bar-regime-exit-mark {
+  color: #ff7043;
+  font-weight: 700;
+}
+
+.feature-metrics-table .bar-regime-exit-empty {
+  color: #484f58;
+  font-weight: 400;
+}
+
 .feature-metrics-table td.pass-ok {
   color: #7ee787;
 }

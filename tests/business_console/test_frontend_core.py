@@ -122,9 +122,15 @@ Core.setFeatureTaxonomy({
 const chopColsOnly = ["bpc_semantic_chop", "box_pos_60"];
 const layersMultiTrend = { trend: true, multiLeg: true, spot: false };
 const planNoFocus = Core.orderFeaturePaneItems(chopColsOnly, layersMultiTrend, "");
-const chopMetricsActive = Core.chopMetricsTableActive("", chopColsOnly);
-const chopMetricsInactiveFocus = Core.chopMetricsTableActive("trend_scalp", chopColsOnly);
-const chopMetricsNeedsFocus = Core.chopMetricsTableActive("chop_grid", []);
+const chopMetricsActive = Core.strategyMetricsTableActive("", chopColsOnly);
+const chopMetricsInactiveFocus = Core.strategyMetricsTableActive(
+  "trend_scalp",
+  chopColsOnly
+);
+const chopMetricsNeedsFocus = Core.strategyMetricsTableActive("chop_grid", []);
+const trendCols = ["trend_confidence", "bpc_semantic_chop"];
+const trendTableActive = Core.strategyMetricsTableActive("trend_scalp", trendCols);
+const trendPlan = Core.orderFeaturePaneItems(trendCols, layersMultiTrend, "trend_scalp");
 const overlaysEnter = {
   bpc_semantic_chop: {
     points: [{ time: 5000, value: 0.55 }],
@@ -212,9 +218,12 @@ console.log(JSON.stringify({
   chopMetricsNeedsFocus,
   chopBarCanEnter,
   chopBarBlocked,
-  chopMetricsSpecs: Core.chopGridMetricsColumnSpecs(
+  chopMetricsSpecs: Core.strategyMetricsColumnSpecs(
+    "chop_grid",
     ["bpc_semantic_chop", "box_pos_60", "box_stability_60"]
   ).length,
+  trendTableActive,
+  trendPlanHasMetrics: trendPlan.some((p) => p.type === "metrics_table"),
   chopPreset: chopPresetCols,
   trendPreset: Core.presetColumnsForStrategy(
     "trend_scalp",
@@ -288,6 +297,26 @@ console.log(JSON.stringify({
     });
     return Core.listStrategiesForLayers({ trend: false, spot: false, multiLeg: true, pending: false }).map((s) => s.id);
   })(),
+  regimeExitBarTimes: (() => {
+    const candles = [
+      { time: 1000 },
+      { time: 2000 },
+      { time: 3000 },
+      { time: 4000 },
+    ];
+    const overlays = {
+      bpc_semantic_chop: {
+        points: [
+          { time: 1000, value: 0.55 },
+          { time: 2000, value: 0.55 },
+          { time: 3000, value: 0.25 },
+          { time: 4000, value: 0.25 },
+        ],
+        reference_lines: [{ y: 0.5, operator: ">=" }, { y: 0.32, operator: "<" }],
+      },
+    };
+    return [...Core.chopRegimeExitBarTimes(candles, overlays)];
+  })(),
 }));
 """
 
@@ -352,11 +381,13 @@ def test_trade_map_core_node():
     assert out["resolvedChop"] == ["bpc_semantic_chop", "box_pos_60"]
     assert out["chopFeatureCols"] == []
     assert "metrics_table" in out["chopPlanTypes"]
-    assert out["planNoFocusTypes"] == ["metrics_table"]
-    assert out["planNoFocusHeaderCount"] == 0
-    assert out["chopMetricsActive"] is True
+    assert "metrics_table" not in out["planNoFocusTypes"]
+    assert out["planNoFocusHeaderCount"] >= 1
+    assert out["chopMetricsActive"] is False
     assert out["chopMetricsInactiveFocus"] is False
     assert out["chopMetricsNeedsFocus"] is True
+    assert out["trendTableActive"] is True
+    assert out["trendPlanHasMetrics"] is True
     assert out["chopBarCanEnter"] is True
     assert out["chopBarBlocked"] is False
     assert out["regimeExitText"] == "regime退出"
@@ -365,6 +396,7 @@ def test_trade_map_core_node():
     assert out["regimeExitLwc"]["position"] == "inBar"
     assert len(out["synthRegimeExit"]) == 1
     assert out["synthRegimeExit"][0]["time"] == 3000
+    assert out["regimeExitBarTimes"] == [3000]
     assert out["chopMetricsSpecs"] >= 2
     assert out["chopPreset"] == ["bpc_semantic_chop", "box_pos_60"]
     assert out["trendPreset"] == ["trend_confidence", "bpc_semantic_chop"]
@@ -536,6 +568,10 @@ try {
 } catch (e) {
   gridLabelsOk = false;
 }
+context.MLBotTradeMapPage.featureStrategyFocus = 'tpc';
+const chopOverlayTpc = context.chopGridOverlayEnabled();
+context.MLBotTradeMapPage.featureStrategyFocus = 'chop_grid';
+const chopOverlayCg = context.chopGridOverlayEnabled();
 console.log(JSON.stringify({
   loaded: typeof context.refreshBundle === 'function',
   initMainChart: typeof context.initMainChart === 'function',
@@ -550,6 +586,8 @@ console.log(JSON.stringify({
     !pollSpotPayload.chop_grid_overlay?.center &&
     !(pollSpotPayload.chop_regime_regions || []).length,
   gridLabelsOk,
+  chopOverlayTpc,
+  chopOverlayCg,
 }));
 """
 
@@ -580,3 +618,5 @@ def test_trade_map_modules_load_in_one_browser_context():
     assert out["pollMergedChopEnd"] == 8
     assert out["pollSpotClearsChop"] is True
     assert out["gridLabelsOk"] is True
+    assert out["chopOverlayTpc"] is False
+    assert out["chopOverlayCg"] is True

@@ -12,7 +12,7 @@ from mlbot_console.services.trade_links import (
 )
 
 
-def test_open_l1_shows_planned_tp_link_and_exit_marker(multi_leg_db):
+def test_open_l1_with_pending_tp_emits_no_trade_link(multi_leg_db):
     from src.order_management.multi_leg_storage import MultiLegStorage
 
     storage = MultiLegStorage(str(multi_leg_db))
@@ -55,10 +55,7 @@ def test_open_l1_shows_planned_tp_link_and_exit_marker(multi_leg_db):
         }
     )
     links, extras = multi_leg_trade_links(multi_leg_db, "BNBUSDT")
-    assert len(links) == 1
-    assert links[0]["status"] == "open"
-    assert links[0]["entry_price"] == 637.11
-    assert links[0]["exit_price"] == 643.55
+    assert links == []
     assert extras == []
     from mlbot_console.services.trade_markers import multi_leg_markers
 
@@ -112,6 +109,7 @@ def test_filled_tp_closes_link(multi_leg_db):
     assert len(links) == 1
     assert links[0]["status"] == "closed"
     assert links[0]["exit_kind"] == "take_profit"
+    assert links[0]["color"] == "#26a69a"
     assert extras == []
 
 
@@ -224,7 +222,7 @@ def test_links_outside_window_are_not_clipped_into_view(multi_leg_db):
     )
 
 
-def test_trend_open_position_draws_current_price_link(trend_db):
+def test_trend_open_position_emits_no_trade_link(trend_db):
     import sqlite3
 
     conn = sqlite3.connect(trend_db)
@@ -249,11 +247,7 @@ def test_trend_open_position_draws_current_price_link(trend_db):
     )
 
     open_links = [lk for lk in links if lk["entry_marker_id"].endswith("p_open:entry")]
-    assert len(open_links) == 1
-    assert open_links[0]["status"] == "open"
-    assert open_links[0]["exit_kind"] == "current"
-    assert open_links[0]["exit_time"] == current_time
-    assert open_links[0]["exit_price"] == 115.0
+    assert open_links == []
 
 
 def test_trend_add_operation_draws_add_to_exit_link(trend_db):
@@ -308,9 +302,10 @@ def test_spot_buy_sell_orders_draw_closed_link(spot_db):
     assert links[0]["exit_marker_id"] == "spot:spot_orders:s_sell"
     assert links[0]["entry_price"] == 2000.0
     assert links[0]["exit_price"] == 2100.0
+    assert links[0]["color"] == "#26a69a"
 
 
-def test_collect_trade_links_includes_spot_and_open_trend(
+def test_collect_trade_links_includes_spot_but_not_open_trend(
     trend_db, spot_db, multi_leg_db
 ):
     import sqlite3
@@ -351,4 +346,4 @@ def test_collect_trade_links_includes_spot_and_open_trend(
     )
 
     assert any(lk["strategy"] == "spot_accum_simple" for lk in links)
-    assert any(lk["entry_marker_id"].endswith("p_open2:entry") for lk in links)
+    assert not any(lk["entry_marker_id"].endswith("p_open2:entry") for lk in links)

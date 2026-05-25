@@ -208,11 +208,8 @@ function bindTimeScaleSync() {
       cancelMetricsTableScrollSchedule();
     }
     syncSubchartsToMainRange();
-    if (typeof refreshFeatureMetricsPanel === "function") {
-      refreshFeatureMetricsPanel(metricsTableHighlightTime(), {
-        rebuild: true,
-        preserveScrollLeft: true,
-      });
+    if (typeof scheduleMetricsTableViewportSync === "function") {
+      scheduleMetricsTableViewportSync();
     }
     if (typeof isViewingHistoricalBars !== "function" || !isViewingHistoricalBars()) {
       refreshMainPriceAutoscale();
@@ -226,12 +223,6 @@ function bindTimeScaleSync() {
     onMainViewportChange();
     scheduleHistoryPrefetch(range);
   });
-  if (typeof S.chart.timeScale().subscribeVisibleTimeRangeChange === "function") {
-    S.chart.timeScale().subscribeVisibleTimeRangeChange((range) => {
-      if (!range) return;
-      onMainViewportChange();
-    });
-  }
 }
 
 

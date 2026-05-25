@@ -1,11 +1,11 @@
-"""market_exit must not duplicate an existing entry link (open TP or closed TP)."""
+"""market_exit must not duplicate an existing closed entry→TP link."""
 
 from __future__ import annotations
 
 from mlbot_console.services.trade_links import multi_leg_trade_links
 
 
-def test_market_exit_skipped_when_open_tp_link_exists(multi_leg_db):
+def test_market_exit_links_entry_when_only_pending_tp(multi_leg_db):
     from src.order_management.multi_leg_storage import MultiLegStorage
 
     storage = MultiLegStorage(str(multi_leg_db))
@@ -62,8 +62,9 @@ def test_market_exit_skipped_when_open_tp_link_exists(multi_leg_db):
     )
     links, _ = multi_leg_trade_links(multi_leg_db, "BNBUSDT")
     assert len(links) == 1
-    assert links[0]["status"] == "open"
-    assert links[0]["exit_kind"] == "take_profit_planned"
+    assert links[0]["status"] == "closed"
+    assert links[0]["exit_kind"] == "market_exit"
+    assert links[0]["exit_price"] == 638.0
 
 
 def test_market_exit_skipped_when_filled_tp_link_exists(multi_leg_db):

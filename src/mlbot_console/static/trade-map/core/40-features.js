@@ -48,7 +48,7 @@
       let selected = (selectedColumns || []).slice(0, max);
       const focus = strategyFocus ? String(strategyFocus).trim() : "";
       if (focus) {
-        selected = subchartColumnsForStrategy(focus, selected);
+        selected = subchartColumnsForStrategy(focus, selected, focus);
       }
       const filtered = filterSubchartColumns(selected, layers, focus);
       if (!focus) {
@@ -553,27 +553,115 @@
       "box_touches_hi_60",
       "box_touches_lo_60",
     ]);
+    const REGIME_BOX_TABLE_COLS = CHOP_GRID_REGIME_TABLE_COLS;
+    const METRICS_TABLE_STAGES = [
+      "regime",
+      "prefilter",
+      "gate",
+      "direction",
+      "entry",
+      "evidence",
+    ];
+    const METRICS_TABLE_DEFAULT_STRATEGIES = new Set([
+      "chop_grid",
+      "trend_scalp",
+      "tpc",
+      "bpc",
+      "spot_accum_simple",
+    ]);
 
-    function chopGridUsesMetricsTable(strategyId, strategyFocus) {
-      const sid = String(strategyId || "").toLowerCase();
-      const focus = String(strategyFocus || "").trim();
-      return sid === "chop_grid" && (!focus || focus === "chop_grid");
+    function isRegimeBoxMetricColumn(col) {
+      return (
+        REGIME_BOX_TABLE_COLS.has(col) ||
+        /^box_(stability|width_pct|touches)/.test(String(col || ""))
+      );
     }
 
-    /** Table UI when Chop Grid is focused or selected columns are chop_grid metrics. */
-    function chopMetricsTableActive(strategyFocus, columns) {
+    function scalarThresholdHint(column, overlay) {
+      const refs = overlay?.reference_lines || [];
+      if (!refs.length) return "";
+      return refs
+        .map((r) => r.label || `${r.operator || ""}${r.y != null ? r.y : ""}`)
+        .filter(Boolean)
+        .join(" · ");
+    }
+
+    function columnsForStrategy(strategyId, columns) {
+      const sid = String(strategyId || "").toLowerCase();
+      return (columns || []).filter(
+        (c) => inferStrategyIdFromColumn(c).strategy === sid
+      );
+    }
+
+    /** Pivot metrics table when a specific strategy is focused and it has table columns. */
+    function strategyMetricsTableActive(strategyFocus, columns) {
       const focus = String(strategyFocus || "").trim().toLowerCase();
-      if (focus && focus !== "chop_grid") return false;
-      const cols = columns || [];
-      if (!cols.length) return focus === "chop_grid";
-      let chopN = 0;
-      for (const c of cols) {
-        if (inferStrategyIdFromColumn(c).strategy === "chop_grid") chopN += 1;
+      if (!focus) return false;
+      const all = columns || [];
+      const scoped = columnsForStrategy(focus, all);
+      if (all.length && !scoped.length) return false;
+      if (!scoped.length) {
+        return METRICS_TABLE_DEFAULT_STRATEGIES.has(focus);
       }
-      return chopN > 0;
+      return strategyMetricsColumnSpecs(focus, scoped, {}).length > 0;
+    }
+
+    function chopMetricsTableActive(strategyFocus, columns) {
+      return strategyMetricsTableActive(strategyFocus, columns);
+    }
+
+    function strategyUsesMetricsTable(strategyId, strategyFocus) {
+      const sid = String(strategyId || "").toLowerCase();
+      const focus = String(strategyFocus || "").trim().toLowerCase();
+      return !!focus && sid === focus;
+    }
+
+    function chopGridUsesMetricsTable(strategyId, strategyFocus) {
+      return strategyUsesMetricsTable(strategyId, strategyFocus);
     }
 
     /** Column specs for per-bar metrics table (headers carry YAML thresholds). */
+    function strategyMetricsColumnSpecs(strategyId, columns, overlays) {
+      const sid = String(strategyId || "").toLowerCase();
+      if (sid === "chop_grid") {
+        return chopGridMetricsColumnSpecs(columns);
+      }
+      const colSet = new Set(columnsForStrategy(sid, columns));
+      const specs = [];
+      const seenScalar = new Set();
+      const strat = knownStrategyRecord(sid);
+      const ordered = [];
+      for (const stage of METRICS_TABLE_STAGES) {
+        for (const c of (strat?.stages && strat.stages[stage]) || []) {
+          if (colSet.has(c) && !isRegimeBoxMetricColumn(c)) ordered.push(c);
+        }
+      }
+      for (const c of colSet) {
+        if (!ordered.includes(c) && !isRegimeBoxMetricColumn(c)) ordered.push(c);
+      }
+      for (const c of ordered) {
+        if (seenScalar.has(c)) continue;
+        seenScalar.add(c);
+        const hint = scalarThresholdHint(c, overlays?.[c]);
+        specs.push({
+          kind: "scalar",
+          column: c,
+          header: c,
+          threshold: hint || "—",
+        });
+      }
+      const regimeBoxCols = [...colSet].filter((c) => isRegimeBoxMetricColumn(c));
+      if (regimeBoxCols.length) {
+        specs.push({
+          kind: "regime_box",
+          columns: regimeBoxCols,
+          header: "regime.box_prefilter",
+          threshold: "stability/width/touches",
+        });
+      }
+      return specs;
+    }
+
     function chopGridMetricsColumnSpecs(columns) {
       const colSet = new Set(columns || []);
       const specs = [];
@@ -641,10 +729,78 @@
       return { value: parts.join(" "), pass };
     }
 
+    function strategyMetricsRowCell(strategyId, row, overlays, timeSec) {
+      if (row.kind === "scalar") {
+        return strategyMetricsCell(
+          {
+            kind: "scalar",
+            column: row.column,
+            header: row.label,
+            threshold: row.threshold,
+          },
+          overlays,
+          timeSec
+        );
+      }
+      const built = buildThresholdMetricRows(row.regimeCols, overlays, timeSec);
+      const hit =
+        built.find((r) => r.yaml === row.yaml) ||
+        built.find((r) => r.label === row.label);
+      if (!hit) return { value: "—", pass: null };
+      return { value: hit.value != null ? String(hit.value) : "—", pass: hit.pass };
+    }
+
+    function strategyMetricsCell(spec, overlays, timeSec) {
+      if (spec.kind === "scalar") {
+        const o = overlays?.[spec.column];
+        const v = overlayValueAtTime(o, timeSec);
+        if (v == null || !Number.isFinite(v)) return { value: "—", pass: null };
+        const refs = o?.reference_lines || [];
+        let pass = null;
+        if (spec.column === "box_pos_60" && refs.length >= 2) {
+          const lo = refs.find((r) => String(r.operator).includes(">="));
+          const hi = refs.find((r) => String(r.operator).includes("<="));
+          pass =
+            valuePassesRefLine(v, lo) === true && valuePassesRefLine(v, hi) === true;
+        } else if (refs.length === 1) {
+          pass = valuePassesRefLine(v, refs[0]);
+        } else if (refs.length >= 2 && String(spec.column).includes("chop")) {
+          const enter = refs.find((r) => String(r.operator).includes(">="));
+          pass = enter ? valuePassesRefLine(v, enter) : null;
+        } else if (refs.length >= 1) {
+          pass = refs.every((r) => valuePassesRefLine(v, r) === true)
+            ? true
+            : refs.some((r) => valuePassesRefLine(v, r) === false)
+              ? false
+              : null;
+        }
+        const decimals =
+          String(spec.column).includes("chop") ||
+          String(spec.column).includes("pos") ||
+          String(spec.column).includes("confidence")
+            ? 3
+            : 2;
+        return { value: v.toFixed(decimals), pass };
+      }
+      const rows = buildThresholdMetricRows(spec.columns, overlays, timeSec);
+      if (!rows.length) return { value: "—", pass: null };
+      const parts = rows.map((r) => {
+        const badge = r.pass === true ? "✓" : r.pass === false ? "✗" : "·";
+        return `${r.label}:${r.value ?? "—"}${badge}`;
+      });
+      const pass = rows.every((r) => r.pass === true)
+        ? true
+        : rows.some((r) => r.pass === false)
+          ? false
+          : null;
+      return { value: parts.join(" "), pass };
+    }
+
     /** Pivot table: one row per metric; columns = visible bars (no vertical scroll on crosshair). */
-    function chopGridMetricsRowSpecs(columns, overlays) {
+    function strategyMetricsRowSpecs(strategyId, columns, overlays) {
+      const sid = String(strategyId || "").toLowerCase();
       const out = [];
-      for (const spec of chopGridMetricsColumnSpecs(columns)) {
+      for (const spec of strategyMetricsColumnSpecs(sid, columns, overlays)) {
         if (spec.kind === "scalar") {
           out.push({
             kind: "scalar",
@@ -669,20 +825,32 @@
       return out;
     }
 
+    function chopGridMetricsRowSpecs(columns, overlays) {
+      return strategyMetricsRowSpecs("chop_grid", columns, overlays);
+    }
+
     function chopGridMetricsRowCell(row, overlays, timeSec) {
-      if (row.kind === "scalar") {
-        return chopGridMetricsCell(
-          { kind: "scalar", column: row.column, header: row.label, threshold: row.threshold },
-          overlays,
-          timeSec
-        );
+      return strategyMetricsRowCell("chop_grid", row, overlays, timeSec);
+    }
+
+    /** Top-row gate for pivot table: strategy-specific or generic all-pass. */
+    function strategyBarGateEvaluator(strategyId, columns, overlays, timeSec) {
+      const sid = String(strategyId || "").toLowerCase();
+      if (sid === "chop_grid") {
+        return chopGridBarCanEnter(columns, overlays, timeSec);
       }
-      const built = buildThresholdMetricRows(row.regimeCols, overlays, timeSec);
-      const hit =
-        built.find((r) => r.yaml === row.yaml) ||
-        built.find((r) => r.label === row.label);
-      if (!hit) return { value: "—", pass: null };
-      return { value: hit.value != null ? String(hit.value) : "—", pass: hit.pass };
+      const rows = strategyMetricsRowSpecs(sid, columns, overlays);
+      if (!rows.length) return null;
+      let anyFail = false;
+      let anyPass = false;
+      for (const row of rows) {
+        const cell = strategyMetricsRowCell(sid, row, overlays, timeSec);
+        if (cell.pass === false) anyFail = true;
+        if (cell.pass === true) anyPass = true;
+      }
+      if (anyFail) return false;
+      if (anyPass) return true;
+      return null;
     }
 
     /**
@@ -712,16 +880,29 @@
       return true;
     }
 
+    function strategyStagePanePlan(stratId, stage, cols, strategyFocus) {
+      const list = cols || [];
+      const sid = String(stratId).toLowerCase();
+      const focus = strategyFocus ? String(strategyFocus).trim().toLowerCase() : "";
+      if (strategyMetricsTableActive(focus, list) && focus === sid) {
+        if (stage === "other") {
+          return { chartCols: [], statusCols: [], skipStage: true };
+        }
+        return { chartCols: [], statusCols: [], skipStage: false };
+      }
+      if (sid !== "chop_grid") {
+        return { chartCols: list, statusCols: [], skipStage: false };
+      }
+      return chopGridStagePanePlan(stratId, stage, cols, strategyFocus);
+    }
+
     /** One chop line chart + YAML table for box_prefilter; prefilter = box_pos chart only. */
     function chopGridStagePanePlan(stratId, stage, cols, strategyFocus) {
       const list = cols || [];
       if (String(stratId).toLowerCase() !== "chop_grid") {
         return { chartCols: list, statusCols: [], skipStage: false };
       }
-      if (
-        chopMetricsTableActive(strategyFocus, list) ||
-        chopGridUsesMetricsTable(stratId, strategyFocus)
-      ) {
+      if (strategyMetricsTableActive(strategyFocus, list)) {
         if (stage === "other") {
           return { chartCols: [], statusCols: [], skipStage: true };
         }
@@ -749,15 +930,23 @@
       return { chartCols: [], statusCols: [], skipStage: true };
     }
 
-    function subchartColumnsForStrategy(strategyId, columns) {
+    function subchartColumnsForStrategy(strategyId, columns, strategyFocus) {
       const sid = String(strategyId || "").toLowerCase();
+      const focus = strategyFocus ? String(strategyFocus).trim().toLowerCase() : "";
+      if (
+        focus &&
+        sid === focus &&
+        strategyMetricsTableActive(focus, columns)
+      ) {
+        return [];
+      }
       if (sid !== "chop_grid") return columns || [];
       return (columns || []).filter((c) => !CHOP_GRID_SKIP_SUBCHART.has(c));
     }
 
     function orderFeaturePaneItems(columns, layers, strategyFocus) {
       const focus = strategyFocus ? String(strategyFocus).trim() : "";
-      const chopTableOnly = chopMetricsTableActive(focus, columns);
+      const tableOnly = strategyMetricsTableActive(focus, columns);
       const tree = _bucketColumnsByTaxonomy(columns);
       const items = [];
       let firstLayer = true;
@@ -765,7 +954,7 @@
         if (!isLayerEnabled(layerId, layers)) continue;
         const layerNode = tree[layerId];
         if (!layerNode) continue;
-        if (!chopTableOnly) {
+        if (!tableOnly) {
           if (!firstLayer) items.push({ type: "gap", id: `gap-layer-${layerId}` });
           firstLayer = false;
           const layerTitle = (Core.ACCOUNT_LAYER_META[layerId] || {}).title || layerId;
@@ -783,18 +972,21 @@
         ];
         let firstStrat = true;
         for (const stratId of stratIds) {
-          if (chopTableOnly && stratId !== "chop_grid") continue;
+          if (tableOnly && stratId !== focus) continue;
           if (focus && stratId !== focus) continue;
           const stageNode = layerNode[stratId];
           if (!stageNode) continue;
-          if (!chopTableOnly && !firstStrat) {
+          if (!tableOnly && !firstStrat) {
             items.push({ type: "gap", id: `gap-strat-${layerId}-${stratId}` });
           }
           firstStrat = false;
           const sample = stageNode[Object.keys(stageNode)[0]][0];
           const sm = lookupFeatureMeta(sample);
           const tableMode =
-            stratId === "chop_grid" && chopMetricsTableActive(focus, columns);
+            focus && stratId === focus && strategyMetricsTableActive(focus, columns);
+          const tableCols = tableMode
+            ? columnsForStrategy(stratId, columns)
+            : [];
           if (!tableMode) {
             items.push({
               type: "header",
@@ -807,10 +999,10 @@
           if (tableMode) {
             items.push({
               type: "metrics_table",
-              id: "metrics-chop_grid",
+              id: `metrics-${stratId}`,
               strategy: stratId,
               accountLayer: layerId,
-              columns: columns.slice(),
+              columns: tableCols.length ? tableCols : columns.slice(),
             });
             continue;
           }
@@ -830,7 +1022,7 @@
               accountLayer: layerId,
               stage,
             });
-            const plan = chopGridStagePanePlan(stratId, stage, cols, focus);
+            const plan = strategyStagePanePlan(stratId, stage, cols, focus);
             if (plan.skipStage) continue;
             if (plan.statusCols.length) {
               items.push({
@@ -930,6 +1122,14 @@
     overlayValueAtTime,
     valuePassesRefLine,
     subchartColumnsForStrategy,
+    strategyMetricsTableActive,
+    strategyUsesMetricsTable,
+    strategyMetricsColumnSpecs,
+    strategyMetricsRowSpecs,
+    strategyMetricsRowCell,
+    strategyBarGateEvaluator,
+    strategyStagePanePlan,
+    columnsForStrategy,
     chopGridUsesMetricsTable,
     chopMetricsTableActive,
     chopGridMetricsColumnSpecs,

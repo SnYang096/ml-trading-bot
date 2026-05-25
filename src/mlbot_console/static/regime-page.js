@@ -14,12 +14,29 @@ function esc(s) {
 
 function fmtLc(lc) {
   if (!lc || typeof lc !== "object") return "—";
-  const ts = lc.timestamp || lc.data_source || "";
   const notes = lc.notes ? String(lc.notes).slice(0, 80) : "";
-  return [ts, notes].filter(Boolean).join(" · ") || "—";
+  if (notes) return notes;
+  const ts = lc.timestamp || lc.data_source || "";
+  return ts || "—";
 }
 
-function fmtDriftCell(row) {
+function fmtIsoShort(iso) {
+  const s = String(iso || "").trim();
+  if (!s) return "";
+  const norm = s.includes("T") ? s.replace("T", " ") : s;
+  return norm.length > 19 ? norm.slice(0, 19) : norm;
+}
+
+/** Drift check time (report) or config baseline (calibrate / eval writeback). */
+function fmtDriftTime(row, meta) {
+  const checked = row.drift_checked_at || meta?.drift_generated_at;
+  if (checked) return { prefix: "检测", at: fmtIsoShort(checked) };
+  const baseline = row.config_reference_at;
+  if (baseline) return { prefix: "基准", at: fmtIsoShort(baseline) };
+  return null;
+}
+
+function fmtDriftCell(row, meta) {
   const st = row.drift_status || "—";
   const detail = row.drift_detail || "";
   const cls =
@@ -29,10 +46,14 @@ function fmtDriftCell(row) {
         ? "pnl-pos"
         : "";
   const title = detail ? ` title="${esc(detail)}"` : "";
-  return `<span class="${cls}"${title}>${esc(st)}</span>`;
+  const time = fmtDriftTime(row, meta);
+  const timeHtml = time
+    ? `<br/><span class="account-sub">${esc(time.prefix)} ${esc(time.at)}</span>`
+    : "";
+  return `<span class="${cls}"${title}>${esc(st)}</span>${timeHtml}`;
 }
 
-function renderRows(rows) {
+function renderRows(rows, meta) {
   const tbody = document.getElementById("regimeBody");
   if (!rows.length) {
     tbody.innerHTML = '<tr><td colspan="7" class="muted">无数据</td></tr>';
@@ -50,7 +71,7 @@ function renderRows(rows) {
         <td>${r.n_rules ?? 0}</td>
         <td>${esc((r.allowed_sides || []).join(", "))}</td>
         <td>${esc(fmtLc(r.last_calibration))}</td>
-        <td>${fmtDriftCell(r)}</td>
+        <td>${fmtDriftCell(r, meta)}</td>
       </tr>`;
     })
     .join("");
@@ -59,7 +80,7 @@ function renderRows(rows) {
 async function refresh() {
   document.getElementById("statusLine").textContent = "加载中…";
   const { data, meta } = await Shell.api("/api/trend/regime-ops");
-  renderRows(data || []);
+  renderRows(data || [], meta || {});
   const driftHint = meta.drift_report_path
     ? ` · drift ${meta.drift_generated_at ? String(meta.drift_generated_at).slice(0, 19) : meta.drift_report_path}`
     : " · 无 drift 报告";

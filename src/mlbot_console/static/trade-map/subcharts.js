@@ -425,10 +425,28 @@ function formatMetricsBarHeader(timeSec) {
   return s.length > 14 ? s.slice(5, 16) : s;
 }
 
-function renderChopMetricsTableHtml(candles, overlays, cols, highlightTimeSec) {
-  const rowSpecs = Core.chopGridMetricsRowSpecs(cols, overlays);
+function metricsTableCaption(strategyId) {
+  const title = Core.strategyFocusLabel(strategyId) || strategyId || "策略";
+  const sid = String(strategyId || "").toLowerCase();
+  if (sid === "chop_grid") {
+    return "Chop Grid 指标表 · 顶行✓/×=可新开网格 · regime退出=主图橙标 · 点击列定位 K 线 · 十字线停 3s 横滚";
+  }
+  return `${title} 指标表 · 顶行✓/×=门槛汇总 · 点击列定位主图 · 十字线停住约3s才自动横滚`;
+}
+
+function renderStrategyMetricsTableHtml(
+  strategyId,
+  candles,
+  overlays,
+  cols,
+  highlightTimeSec
+) {
+  const sid = String(strategyId || S.featureStrategyFocus || "chop_grid").toLowerCase();
+  const rowSpecs = Core.strategyMetricsRowSpecs(sid, cols, overlays);
   if (!rowSpecs.length) {
-    return '<p class="muted">无指标列（请选 Chop 预设或勾选 bpc / box_pos / box 结构列）</p>';
+    return `<p class="muted">无指标列（请选择「${escHtml(
+      Core.strategyFocusLabel(sid) || sid
+    )}」预设或勾选该策略 regime/prefilter/gate 特征列）</p>`;
   }
   const { from, to } = indicesForMetricsTable(candles, highlightTimeSec);
   const bars = [];
@@ -440,16 +458,44 @@ function renderChopMetricsTableHtml(candles, overlays, cols, highlightTimeSec) {
   if (!bars.length) {
     return '<p class="muted">主图可见区间无 K 线</p>';
   }
+  const regimeExitTimes =
+    sid === "chop_grid" && typeof Core.chopRegimeExitBarTimes === "function"
+      ? Core.chopRegimeExitBarTimes(candles, overlays)
+      : new Set();
   let head = '<thead><tr><th class="row-label-h">可入场</th>';
   for (const b of bars) {
     const active =
       highlightTimeSec != null && Number(highlightTimeSec) === Number(b.time);
-    const canEnter = Core.chopGridBarCanEnter(cols, overlays, b.time);
-    const gate = canEnter ? "✓" : "×";
-    const gateCls = canEnter ? "bar-enter-ok" : "bar-enter-fail";
+    const canEnter = Core.strategyBarGateEvaluator(sid, cols, overlays, b.time);
+    const gate = canEnter === true ? "✓" : canEnter === false ? "×" : "·";
+    const gateCls =
+      canEnter === true
+        ? "bar-enter-ok"
+        : canEnter === false
+          ? "bar-enter-fail"
+          : "";
     head += `<th class="bar-col-h bar-enter-h ${gateCls}${active ? " bar-col-active" : ""}" data-time="${b.time}"><span class="bar-enter-mark">${gate}</span></th>`;
   }
-  head += '</tr><tr><th class="row-label-h">时间</th>';
+  head += '</tr>';
+  if (sid === "chop_grid") {
+    head += '<tr><th class="row-label-h row-regime-exit-h">regime退出</th>';
+    for (const b of bars) {
+      const active =
+        highlightTimeSec != null && Number(highlightTimeSec) === Number(b.time);
+      const isExit = regimeExitTimes.has(Number(b.time));
+      head += `<th class="bar-col-h bar-regime-exit-h${
+        isExit ? " bar-regime-exit-hit" : ""
+      }${active ? " bar-col-active" : ""}" data-time="${b.time}">${
+        isExit
+          ? `<span class="bar-regime-exit-mark" title="${escHtml(
+              "chop 低于退出阈值，与主图 regime退出 标记一致"
+            )}">退出</span>`
+          : '<span class="bar-regime-exit-mark bar-regime-exit-empty">·</span>'
+      }</th>`;
+    }
+    head += "</tr>";
+  }
+  head += '<tr><th class="row-label-h">时间</th>';
   for (const b of bars) {
     const active =
       highlightTimeSec != null && Number(highlightTimeSec) === Number(b.time);
@@ -461,7 +507,7 @@ function renderChopMetricsTableHtml(candles, overlays, cols, highlightTimeSec) {
     body += "<tr>";
     body += `<th class="row-label"><div class="col-name">${escHtml(row.label)}</div><div class="col-thresh">${escHtml(row.threshold || "")}</div></th>`;
     for (const b of bars) {
-      const cell = Core.chopGridMetricsRowCell(row, overlays, b.time);
+      const cell = Core.strategyMetricsRowCell(sid, row, overlays, b.time);
       const active =
         highlightTimeSec != null && Number(highlightTimeSec) === Number(b.time);
       const cls =
@@ -475,10 +521,42 @@ function renderChopMetricsTableHtml(candles, overlays, cols, highlightTimeSec) {
   return `<table class="feature-metrics-table layout-pivot">${head}${body}</table>`;
 }
 
+function renderChopMetricsTableHtml(candles, overlays, cols, highlightTimeSec) {
+  return renderStrategyMetricsTableHtml(
+    "chop_grid",
+    candles,
+    overlays,
+    cols,
+    highlightTimeSec
+  );
+}
+
 const METRICS_TABLE_SCROLL_DELAY_MS = 3000;
+const METRICS_VIEWPORT_SYNC_MS = 200;
 let metricsTableScrollTimer = null;
 let metricsTableScrollPendingTime = null;
+let metricsViewportSyncTimer = null;
 let lastMetricsTableRangeKey = "";
+
+/** Debounced metrics table rebuild when chart viewport changes (avoids resize/pan jitter). */
+function scheduleMetricsTableViewportSync() {
+  if (metricsViewportSyncTimer != null) clearTimeout(metricsViewportSyncTimer);
+  metricsViewportSyncTimer = setTimeout(() => {
+    metricsViewportSyncTimer = null;
+    if (typeof refreshFeatureMetricsPanel !== "function") return;
+    refreshFeatureMetricsPanel(metricsTableHighlightTime(), {
+      rebuild: true,
+      preserveScrollLeft: true,
+    });
+  }, METRICS_VIEWPORT_SYNC_MS);
+}
+
+function cancelMetricsTableViewportSync() {
+  if (metricsViewportSyncTimer != null) {
+    clearTimeout(metricsViewportSyncTimer);
+    metricsViewportSyncTimer = null;
+  }
+}
 
 function visibleMetricsRangeKey(candles, highlightTimeSec) {
   const { from, to } = indicesForMetricsTable(candles, highlightTimeSec);
@@ -596,15 +674,14 @@ function ensureFeatureMetricsTablePane(item, candles, overlays, highlightTimeSec
     host.dataset.strategy = item.strategy || "";
     const cap = document.createElement("div");
     cap.className = "metrics-table-caption";
-    cap.textContent =
-      "Chop Grid 指标表 · 顶行✓/×=可新开网格 · 点击列可定位主图 K 线 · 十字线停住约3s才自动横滚";
+    cap.textContent = metricsTableCaption(item.strategy);
     const scroll = document.createElement("div");
     scroll.id = "featureMetricsScroll";
     scroll.className = "metrics-table-scroll layout-pivot-host";
     host.appendChild(cap);
     host.appendChild(scroll);
     document.getElementById("subchartStack").appendChild(host);
-    const subId = item.id || "metrics-chop_grid";
+    const subId = item.id || `metrics-${item.strategy || "table"}`;
     S.subcharts.set(subId, { kind: "metrics_table", scrollEl: scroll, host });
   }
   const scroll = document.getElementById("featureMetricsScroll");
@@ -618,7 +695,8 @@ function ensureFeatureMetricsTablePane(item, candles, overlays, highlightTimeSec
     return domId;
   }
   const cols = item.columns || [];
-  scroll.innerHTML = renderChopMetricsTableHtml(
+  scroll.innerHTML = renderStrategyMetricsTableHtml(
+    item.strategy,
     candles,
     overlays,
     cols,
@@ -653,7 +731,8 @@ function refreshFeatureMetricsPanel(
     S.featureStrategyFocus,
     S.MAX_FEATURE_SUBCHARTS
   );
-  if (!Core.chopMetricsTableActive(S.featureStrategyFocus, cols) || !candles.length) return;
+  if (!Core.strategyMetricsTableActive(S.featureStrategyFocus, cols) || !candles.length)
+    return;
   const host = document.querySelector(".subchart-feature-metrics");
   if (!host) return;
   const scroll = document.getElementById("featureMetricsScroll");
@@ -674,7 +753,14 @@ function refreshFeatureMetricsPanel(
   }
   const prevScrollLeft =
     preserveScrollLeft && hasTable ? scroll.scrollLeft : null;
-  scroll.innerHTML = renderChopMetricsTableHtml(candles, overlays, cols, timeSec);
+  const sid = S.featureStrategyFocus || "";
+  scroll.innerHTML = renderStrategyMetricsTableHtml(
+    sid,
+    candles,
+    overlays,
+    cols,
+    timeSec
+  );
   lastMetricsTableRangeKey = rangeKey;
   if (prevScrollLeft != null) scroll.scrollLeft = prevScrollLeft;
   requestAnimationFrame(() => highlightMetricsTableColumn(timeSec));
@@ -682,10 +768,15 @@ function refreshFeatureMetricsPanel(
 
 function refreshThresholdTablesAtTime(timeSec) {
   if (!document.getElementById("subchartStack")) return;
-  if (Core.chopMetricsTableActive(S.featureStrategyFocus, S.selectedFeatureColumns)) {
+  if (Core.strategyMetricsTableActive(S.featureStrategyFocus, S.selectedFeatureColumns)) {
     if (timeSec != null) S.highlightBarTime = timeSec;
+    const scroll = document.getElementById("featureMetricsScroll");
+    const needsBar =
+      timeSec != null &&
+      scroll &&
+      !metricsTableHasBarColumn(scroll, timeSec);
     refreshFeatureMetricsPanel(timeSec, {
-      rebuild: timeSec != null,
+      rebuild: needsBar,
       preserveScrollLeft: true,
     });
     const insp = document.getElementById("featureBarInspector");
@@ -708,7 +799,8 @@ function refreshThresholdTablesAtTime(timeSec) {
       }
     );
   });
-  if (!Core.chopGridUsesMetricsTable("chop_grid", S.featureStrategyFocus)) {
+  const focus = String(S.featureStrategyFocus || "").trim();
+  if (!focus || !Core.strategyUsesMetricsTable(focus, focus)) {
     updateFeatureBarInspector(timeSec, overlays);
   }
 }
@@ -810,7 +902,7 @@ function syncSubcharts(candles, overlays) {
     S.featureStrategyFocus,
     S.MAX_FEATURE_SUBCHARTS
   );
-  const tableFirst = Core.chopMetricsTableActive(
+  const tableFirst = Core.strategyMetricsTableActive(
     S.featureStrategyFocus,
     colsForPanesEarly
   );

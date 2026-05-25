@@ -221,12 +221,14 @@ async function refreshBundle(opts = {}) {
     if (data.main_overlays && Object.keys(data.main_overlays).length) {
       applyMainOverlays(data.main_overlays, { merge: true });
     }
-    const metricsActive = Core.chopMetricsTableActive(
+    const metricsActive = Core.strategyMetricsTableActive(
       S.featureStrategyFocus,
       S.selectedFeatureColumns
     );
     if (metricsActive) {
-      if (typeof refreshFeatureMetricsPanel === "function") {
+      if (typeof scheduleMetricsTableViewportSync === "function") {
+        scheduleMetricsTableViewportSync();
+      } else if (typeof refreshFeatureMetricsPanel === "function") {
         refreshFeatureMetricsPanel(S.highlightBarTime ?? null, {
           rebuild: false,
           preserveScrollLeft: true,
@@ -240,7 +242,17 @@ async function refreshBundle(opts = {}) {
     S.lastCandles = candles;
     S.candleSeries.setData(candles);
     applyMainOverlays(data.main_overlays || {});
-    applyChopMapLayers(data, candles);
+    S.lastChopMapData = {
+      chop_grid_overlay: data.chop_grid_overlay,
+      chop_regime_regions: data.chop_regime_regions,
+      strategy_stage_regions: data.strategy_stage_regions,
+    };
+    applyChopMapLayers(
+      typeof chopMapDataForStrategyFocus === "function"
+        ? chopMapDataForStrategyFocus(S.lastChopMapData)
+        : data,
+      candles
+    );
     applyLoadedOhlcvRange(meta, candles);
     if (S.chartFitPending) {
       applyChartViewport(candles.length);
@@ -250,15 +262,10 @@ async function refreshBundle(opts = {}) {
       refreshMainPriceAutoscale();
     }
     S.lastOverlays = data.overlays || {};
-    S.lastChopMapData = {
-      chop_grid_overlay: data.chop_grid_overlay,
-      chop_regime_regions: data.chop_regime_regions,
-      strategy_stage_regions: data.strategy_stage_regions,
-    };
     syncSubcharts(candles, S.lastOverlays);
     if (
       typeof refreshFeatureMetricsPanel === "function" &&
-      Core.chopMetricsTableActive(S.featureStrategyFocus, S.selectedFeatureColumns)
+      Core.strategyMetricsTableActive(S.featureStrategyFocus, S.selectedFeatureColumns)
     ) {
       refreshFeatureMetricsPanel(S.highlightBarTime ?? S.lastCandleTime ?? null, {
         rebuild: true,

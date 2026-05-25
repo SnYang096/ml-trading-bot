@@ -67,8 +67,62 @@ function applyPresetForStrategy(strategyId) {
   setSelectedFeatures(picks, { refresh: false });
 }
 
+/** Dim layer toggles that do not apply to the current strategy focus (checkbox may stay on). */
+function syncLayerControlsForStrategyFocus() {
+  const focus = String(S.featureStrategyFocus || "").trim().toLowerCase();
+  const multi = layersState().multiLeg;
+  const chopEl = document.getElementById("layerChopGrid");
+  const chopOn = !!chopEl?.checked;
+  const chopActive =
+    multi && chopOn && (!focus || focus === "chop_grid" || focus === "trend_scalp");
+  const chopLabel = chopEl?.closest("label");
+  if (chopLabel) {
+    chopLabel.classList.toggle("layer-inactive", chopOn && !chopActive);
+    if (focus && focus !== "chop_grid" && focus !== "trend_scalp") {
+      chopLabel.title = `当前策略 ${focus}：网格线不生效（仅 Chop Grid / Trend Scalp）`;
+    } else if (!multi) {
+      chopLabel.title = "需勾选 C·Multi-leg";
+    } else {
+      chopLabel.title =
+        chopEl?.title ||
+        "chop_grid 中心/档位/成交/TP 价格线 + 震荡(chop)区间底色";
+    }
+  }
+  const pfEl = document.getElementById("layerPrefilter");
+  const pfLabel = pfEl?.closest("label");
+  const pfOn = !!pfEl?.checked;
+  const pfActive = pfOn && !!focus;
+  if (pfLabel) {
+    pfLabel.classList.toggle("layer-inactive", pfOn && !pfActive);
+    pfLabel.title = pfActive
+      ? pfEl?.title || ""
+      : focus
+        ? `当前策略 ${focus}：Prefilter 区已按策略过滤`
+        : "请选择具体策略以显示对应 Prefilter 区间";
+  }
+  const gateEl = document.getElementById("layerGate");
+  const gateLabel = gateEl?.closest("label");
+  const gateOn = !!gateEl?.checked;
+  const gateActive = gateOn && !!focus;
+  if (gateLabel) {
+    gateLabel.classList.toggle("layer-inactive", gateOn && !gateActive);
+  }
+}
+
+function clearMarkerSelectionIfStrategyMismatch() {
+  if (!S.selectedMarkerId) return;
+  const m = S.markerById.get(S.selectedMarkerId);
+  const focus = String(S.featureStrategyFocus || "").trim().toLowerCase();
+  if (!focus || !m) return;
+  const ms = String(m.strategy || "").toLowerCase();
+  if (ms && ms !== focus) {
+    document.getElementById("detailPanel")?.classList.add("hidden");
+    selectMarker(null, { scrollChart: false, showDetail: false });
+  }
+}
+
 /** Toolbar chips / dropdown: switch strategy focus, preset columns, refresh subcharts. */
-function switchMapStrategy(strategyId) {
+async function switchMapStrategy(strategyId) {
   let sid =
     strategyId != null && String(strategyId).trim()
       ? String(strategyId).trim()
@@ -79,17 +133,20 @@ function switchMapStrategy(strategyId) {
   }
   setFeatureStrategyFocus(sid, { refreshPicker: true, refreshSubcharts: false });
   if (sid) applyPresetForStrategy(sid);
+  syncLayerControlsForStrategyFocus();
+  clearMarkerSelectionIfStrategyMismatch();
   if (typeof refreshMainChartForStrategyFocus === "function") {
     refreshMainChartForStrategyFocus();
   }
-  if (S.lastCandles?.length) {
-    syncSubcharts(S.lastCandles, S.lastOverlays || {});
-  }
   saveLayout();
-  if (S.ordersDockOpen) {
-    refreshOrdersList().catch((e) => setStatus(String(e)));
+  try {
+    await refreshBundle({ mode: "full" });
+    if (S.ordersDockOpen) await refreshOrdersList();
+  } catch (e) {
+    setStatus(String(e));
   }
-  refreshBundle({ mode: "full" }).catch((e) => setStatus(String(e)));
+  syncLayerControlsForStrategyFocus();
+  renderFeaturePicker();
 }
 
 function renderMapStrategyChips() {
@@ -150,6 +207,7 @@ function applyLayerStrategyDefaults() {
     renderMapStrategyChips();
     syncFeatureStrategySelectOptions();
   }
+  syncLayerControlsForStrategyFocus();
   if (typeof refreshMainChartForStrategyFocus === "function") {
     refreshMainChartForStrategyFocus();
   }
@@ -161,6 +219,7 @@ function setFeatureStrategyFocus(strategyId, { refreshPicker = true, refreshSubc
       ? String(strategyId).trim()
       : null;
   syncFeatureStrategySelectOptions();
+  syncLayerControlsForStrategyFocus();
   if (refreshPicker) renderFeaturePicker();
   saveLayout();
   if (refreshSubcharts && S.lastCandles?.length) {

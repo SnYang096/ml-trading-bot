@@ -46,7 +46,4 @@ def test_cg_client_id_links_via_leg_id(multi_leg_db):
         }
     )
     links, _ = multi_leg_trade_links(multi_leg_db, "BNBUSDT")
-    assert len(links) == 1
-    assert links[0]["status"] == "open"
-    assert links[0]["entry_price"] == 640.0
-    assert links[0]["exit_price"] == 646.0
+    assert links == []

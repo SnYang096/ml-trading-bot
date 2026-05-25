@@ -6,7 +6,8 @@ var Shell = globalThis.MLBotConsole;
 function applyMarkers(rawMarkers, opts = {}) {
   let incoming = rawMarkers || [];
   const focus = String(S.featureStrategyFocus || "").trim().toLowerCase();
-  const chopFocus = !focus || focus === "chop_grid";
+  const chopFocus =
+    !focus || focus === "chop_grid" || focus === "trend_scalp";
   if (
     chopFocus &&
     S.lastCandles?.length &&
@@ -78,7 +79,7 @@ function tradeLinkAccountLayer(link) {
   return "trend";
 }
 
-/** Only links for enabled account layers / strategy focus; spot needs buy→sell pair. */
+/** Closed round-trips only; open positions show entry markers without lines. */
 function tradeLinksForDisplay(links) {
   const layers = layersState();
   const allowed = [];
@@ -90,10 +91,8 @@ function tradeLinksForDisplay(links) {
     const layer = tradeLinkAccountLayer(lk);
     if (!allowed.includes(layer)) return false;
     if (focus && String(lk.strategy || "").toLowerCase() !== focus) return false;
-    if (layer === "spot") {
-      if (String(lk.status || "").toLowerCase() === "open") return false;
-      if (!lk.exit_marker_id) return false;
-    }
+    if (String(lk.status || "").toLowerCase() !== "closed") return false;
+    if (!lk.exit_marker_id) return false;
     return true;
   });
 }
@@ -146,13 +145,12 @@ function applyTradeLinks(links) {
     if (t1 <= t0) {
       t1 = t0 + Core.barDurationSec(document.getElementById("timeframeSelect")?.value || "2h");
     }
-    const color = lk.color || "#73BF69";
-    const open = String(lk.status || "").toLowerCase() === "open";
+    const color = lk.color || "#8b949e";
     const series = S.chart.addLineSeries(
       mainChartOverlaySeriesOptions({
         color,
-        lineWidth: 1,
-        lineStyle: open ? 2 : 0,
+        lineWidth: 1.5,
+        lineStyle: 0,
         lastValueVisible: false,
       })
     );

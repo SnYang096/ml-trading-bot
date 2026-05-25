@@ -8,7 +8,6 @@ from typing import Any, Dict, List, Optional, Tuple
 from mlbot_console.services.multileg_order_links import (
     _is_filled_row,
     _pick_filled_tp,
-    _pick_planned_tp,
     _price,
     _protection_tp_rows,
     annotate_leg_group,
@@ -24,6 +23,10 @@ from mlbot_console.services.trade_markers import (
     _marker_id,
     _parse_ts,
 )
+
+PNL_LINK_COLOR_WIN = "#26a69a"
+PNL_LINK_COLOR_LOSS = "#ef5350"
+PNL_LINK_COLOR_FLAT = "#8b949e"
 
 
 def _order_rows(db_path: Path, symbol: str) -> List[Dict[str, Any]]:
@@ -47,6 +50,47 @@ def _ts_row(row: Dict[str, Any]) -> Optional[int]:
     return int(ts) if ts is not None else None
 
 
+def _leg_position_side(row: Dict[str, Any]) -> str:
+    side = str(row.get("side") or "").upper()
+    if side == "BUY":
+        return "long"
+    if side == "SELL":
+        return "short"
+    return "long"
+
+
+def _closed_link_color(
+    *,
+    strategy: str,
+    side: str,
+    entry_price: float,
+    exit_price: float,
+    pnl_usdt: Optional[float] = None,
+) -> str:
+    if pnl_usdt is not None:
+        try:
+            pnl = float(pnl_usdt)
+            if pnl > 0:
+                return PNL_LINK_COLOR_WIN
+            if pnl < 0:
+                return PNL_LINK_COLOR_LOSS
+            return PNL_LINK_COLOR_FLAT
+        except (TypeError, ValueError):
+            pass
+    try:
+        ep = float(entry_price)
+        xp = float(exit_price)
+    except (TypeError, ValueError):
+        return STRATEGY_COLORS.get(str(strategy or "").lower(), "#aaaaaa")
+    side_l = str(side or "long").lower()
+    diff = (xp - ep) if side_l == "long" else (ep - xp)
+    if diff > 0:
+        return PNL_LINK_COLOR_WIN
+    if diff < 0:
+        return PNL_LINK_COLOR_LOSS
+    return PNL_LINK_COLOR_FLAT
+
+
 def _append_link(
     out: List[Dict[str, Any]],
     *,
@@ -60,7 +104,13 @@ def _append_link(
     exit_marker_id: Optional[str],
     status: str,
     exit_kind: str,
+    side: str = "long",
+    pnl_usdt: Optional[float] = None,
 ) -> None:
+    if str(status).lower() != "closed":
+        return
+    if exit_marker_id is None or not str(exit_marker_id).strip():
+        return
     if exit_time < entry_time:
         exit_time = entry_time
     strat = str(strategy or "multi_leg").lower()
@@ -68,7 +118,7 @@ def _append_link(
         {
             "strategy": strat,
             "leg": leg,
-            "status": status,
+            "status": "closed",
             "exit_kind": exit_kind,
             "entry_time": entry_time,
             "entry_price": entry_price,
@@ -76,7 +126,15 @@ def _append_link(
             "exit_price": exit_price,
             "entry_marker_id": entry_marker_id,
             "exit_marker_id": exit_marker_id,
-            "color": STRATEGY_COLORS.get(strat, "#aaaaaa"),
+            "side": side,
+            "pnl_usdt": pnl_usdt,
+            "color": _closed_link_color(
+                strategy=strat,
+                side=side,
+                entry_price=entry_price,
+                exit_price=exit_price,
+                pnl_usdt=pnl_usdt,
+            ),
         }
     )
 
@@ -97,20 +155,6 @@ def _link_overlaps_window(
     if end_ts is not None and entry_ts > end_ts:
         return False
     return True
-
-
-def _current_link_endpoint(
-    *,
-    current_time: Optional[int],
-    current_price: Optional[float],
-    entry_ts: int,
-    entry_px: float,
-) -> Optional[Tuple[int, float]]:
-    if current_time is None or current_price is None:
-        return None
-    if current_time < entry_ts:
-        return None
-    return int(current_time), float(current_price)
 
 
 def _append_entry_tp_links(
@@ -165,34 +209,9 @@ def _append_entry_tp_links(
             exit_marker_id=exit_mid,
             status="closed",
             exit_kind="take_profit",
+            side=_leg_position_side(row),
         )
         return
-
-    planned = _pick_planned_tp(tp_rows)
-    if planned is None:
-        return
-    exit_px = _price(planned)
-    exit_ts = _ts_row(planned) or entry_ts
-    if exit_px is None:
-        return
-    exit_mid = _marker_id(
-        "multi_leg",
-        "multi_leg_orders",
-        str(planned.get("local_order_id") or ""),
-    )
-    _append_link(
-        links,
-        strategy=strat,
-        leg=leg_label,
-        entry_time=entry_ts,
-        entry_price=entry_px,
-        exit_time=exit_ts,
-        exit_price=exit_px,
-        entry_marker_id=entry_mid,
-        exit_marker_id=exit_mid,
-        status="open",
-        exit_kind="take_profit_planned",
-    )
 
 
 def multi_leg_trade_links(
@@ -257,6 +276,7 @@ def multi_leg_trade_links(
                     exit_marker_id=exit_mid,
                     status="closed",
                     exit_kind="market_exit",
+                    side=_leg_position_side(ent),
                 )
 
     links = [
@@ -306,47 +326,26 @@ def trend_trade_links(
         strat = str(row.get("strategy_id") or "trend").lower()
         pid = str(row.get("position_id") or "")
         entry_mid = _marker_id("trend", "positions", f"{pid}:entry")
-        if exit_ts is not None and exit_px is not None:
-            exit_mid = _marker_id("trend", "positions", f"{pid}:exit")
-            _append_link(
-                links,
-                strategy=strat,
-                leg="",
-                entry_time=int(entry_ts),
-                entry_price=entry_px,
-                exit_time=int(exit_ts),
-                exit_price=exit_px,
-                entry_marker_id=entry_mid,
-                exit_marker_id=exit_mid,
-                status="closed",
-                exit_kind="exit",
-            )
-        else:
-            status = str(row.get("status") or "").lower()
-            if status in {"closed", "exited", "flat"}:
-                continue
-            endpoint = _current_link_endpoint(
-                current_time=current_time,
-                current_price=current_price,
-                entry_ts=int(entry_ts),
-                entry_px=entry_px,
-            )
-            if endpoint is None:
-                continue
-            curr_ts, curr_px = endpoint
-            _append_link(
-                links,
-                strategy=strat,
-                leg="",
-                entry_time=int(entry_ts),
-                entry_price=entry_px,
-                exit_time=curr_ts,
-                exit_price=curr_px,
-                entry_marker_id=entry_mid,
-                exit_marker_id=None,
-                status="open",
-                exit_kind="current",
-            )
+        if exit_ts is None or exit_px is None:
+            continue
+        exit_mid = _marker_id("trend", "positions", f"{pid}:exit")
+        pnl = row.get("realized_pnl")
+        side = str(row.get("side") or "long").lower()
+        _append_link(
+            links,
+            strategy=strat,
+            leg="",
+            entry_time=int(entry_ts),
+            entry_price=entry_px,
+            exit_time=int(exit_ts),
+            exit_price=exit_px,
+            entry_marker_id=entry_mid,
+            exit_marker_id=exit_mid,
+            status="closed",
+            exit_kind="exit",
+            side=side,
+            pnl_usdt=float(pnl) if pnl is not None else None,
+        )
     op_sql = """
         SELECT po.operation_id, po.operation_type, po.operation_time, po.price,
                p.position_id, p.side, p.exit_time, p.exit_price, p.status, p.strategy_id
@@ -368,23 +367,13 @@ def trend_trade_links(
             exit_px = float(row.get("exit_price"))
         except (TypeError, ValueError):
             exit_px = None
-        status = "closed"
-        exit_kind = "exit"
         if exit_ts is None or exit_px is None:
-            endpoint = _current_link_endpoint(
-                current_time=current_time,
-                current_price=current_price,
-                entry_ts=int(add_ts),
-                entry_px=add_px,
-            )
-            if endpoint is None:
-                continue
-            exit_ts, exit_px = endpoint
-            status = "open"
-            exit_kind = "current"
+            continue
         strat = str(row.get("strategy_id") or "trend").lower()
         op_id = str(row.get("operation_id") or "")
         pid = str(row.get("position_id") or "")
+        side = str(row.get("position_side") or row.get("side") or "long").lower()
+        exit_mid = _marker_id("trend", "positions", f"{pid}:exit")
         _append_link(
             links,
             strategy=strat,
@@ -394,13 +383,10 @@ def trend_trade_links(
             exit_time=int(exit_ts),
             exit_price=float(exit_px),
             entry_marker_id=_marker_id("trend", "position_operations", op_id),
-            exit_marker_id=(
-                _marker_id("trend", "positions", f"{pid}:exit")
-                if status == "closed"
-                else None
-            ),
-            status=status,
-            exit_kind=exit_kind,
+            exit_marker_id=exit_mid,
+            status="closed",
+            exit_kind="exit",
+            side=side,
         )
     return [
         lk
@@ -465,6 +451,7 @@ def spot_trade_links(
             ),
             status="closed",
             exit_kind="sell",
+            side="long",
         )
     return [
         lk
