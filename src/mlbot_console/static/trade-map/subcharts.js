@@ -403,7 +403,16 @@ function renderChopMetricsTableHtml(candles, overlays, cols, highlightTimeSec) {
   if (!bars.length) {
     return '<p class="muted">主图可见区间无 K 线</p>';
   }
-  let head = '<thead><tr><th class="row-label-h">指标 · 阈</th>';
+  let head = '<thead><tr><th class="row-label-h">可入场</th>';
+  for (const b of bars) {
+    const active =
+      highlightTimeSec != null && Number(highlightTimeSec) === Number(b.time);
+    const canEnter = Core.chopGridBarCanEnter(cols, overlays, b.time);
+    const gate = canEnter ? "✓" : "×";
+    const gateCls = canEnter ? "bar-enter-ok" : "bar-enter-fail";
+    head += `<th class="bar-col-h bar-enter-h ${gateCls}${active ? " bar-col-active" : ""}" data-time="${b.time}"><span class="bar-enter-mark">${gate}</span></th>`;
+  }
+  head += '</tr><tr><th class="row-label-h">时间</th>';
   for (const b of bars) {
     const active =
       highlightTimeSec != null && Number(highlightTimeSec) === Number(b.time);
@@ -439,6 +448,16 @@ function highlightMetricsTableColumn(timeSec) {
   scroll.querySelectorAll(`[data-time="${timeSec}"]`).forEach((el) => {
     el.classList.add("bar-col-active");
   });
+  const anchor =
+    scroll.querySelector(`th.bar-col-h[data-time="${timeSec}"]`) ||
+    scroll.querySelector(`td[data-time="${timeSec}"]`);
+  if (anchor) {
+    anchor.scrollIntoView({
+      block: "nearest",
+      inline: "center",
+      behavior: "smooth",
+    });
+  }
 }
 
 function ensureFeatureMetricsTablePane(item, candles, overlays, highlightTimeSec) {
@@ -452,7 +471,7 @@ function ensureFeatureMetricsTablePane(item, candles, overlays, highlightTimeSec
     const cap = document.createElement("div");
     cap.className = "metrics-table-caption";
     cap.textContent =
-      "指标表 · 行=特征+阈值 · 列=主图可见 K 线 · 十字线只高亮列（不纵向滚动）";
+      "Chop Grid · ✓/×=可开网格(chop+box_pos且非稳定箱) · 列=可见K线 · 十字线高亮并横向滚入视区";
     const scroll = document.createElement("div");
     scroll.id = "featureMetricsScroll";
     scroll.className = "metrics-table-scroll layout-pivot-host";
@@ -659,6 +678,7 @@ function syncSubcharts(candles, overlays) {
       ensureStrategyGap(item.id);
       domOrder.push(subchartDomId(item.id));
     } else if (item.type === "header") {
+      if (tableFirst) continue;
       ensureSubchartHeader(item);
       domOrder.push(subchartDomId(headerDomKey(item)));
     } else if (item.type === "metrics_table") {

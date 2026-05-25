@@ -672,6 +672,33 @@
       return { value: hit.value != null ? String(hit.value) : "—", pass: hit.pass };
     }
 
+    /**
+     * Match chop_grid live: enter when chop≥entry, box_pos in band, and not a stable box
+     * (all regime.box_prefilter rows pass).
+     */
+    function chopGridBarCanEnter(columns, overlays, timeSec) {
+      const rows = chopGridMetricsRowSpecs(columns, overlays);
+      let chopPass = null;
+      let boxPosPass = null;
+      const regimePasses = [];
+      for (const row of rows) {
+        const cell = chopGridMetricsRowCell(row, overlays, timeSec);
+        if (row.kind === "scalar" && row.column === "bpc_semantic_chop") {
+          chopPass = cell.pass;
+        } else if (row.kind === "scalar" && row.column === "box_pos_60") {
+          boxPosPass = cell.pass;
+        } else if (row.kind === "threshold_row") {
+          regimePasses.push(cell.pass);
+        }
+      }
+      if (chopPass !== true) return false;
+      if (boxPosPass === false) return false;
+      const stableBox =
+        regimePasses.length > 0 && regimePasses.every((p) => p === true);
+      if (stableBox) return false;
+      return true;
+    }
+
     /** One chop line chart + YAML table for box_prefilter; prefilter = box_pos chart only. */
     function chopGridStagePanePlan(stratId, stage, cols, strategyFocus) {
       const list = cols || [];
@@ -714,6 +741,8 @@
 
     function orderFeaturePaneItems(columns, layers, strategyFocus) {
       const focus = strategyFocus ? String(strategyFocus).trim() : "";
+      const chopTableOnly =
+        focus === "chop_grid" && chopGridUsesMetricsTable("chop_grid", focus);
       const tree = _bucketColumnsByTaxonomy(columns);
       const items = [];
       let firstLayer = true;
@@ -721,15 +750,17 @@
         if (!isLayerEnabled(layerId, layers)) continue;
         const layerNode = tree[layerId];
         if (!layerNode) continue;
-        if (!firstLayer) items.push({ type: "gap", id: `gap-layer-${layerId}` });
-        firstLayer = false;
-        const layerTitle = (Core.ACCOUNT_LAYER_META[layerId] || {}).title || layerId;
-        items.push({
-          type: "header",
-          strategy: layerId,
-          title: layerTitle,
-          headerKind: "layer",
-        });
+        if (!chopTableOnly) {
+          if (!firstLayer) items.push({ type: "gap", id: `gap-layer-${layerId}` });
+          firstLayer = false;
+          const layerTitle = (Core.ACCOUNT_LAYER_META[layerId] || {}).title || layerId;
+          items.push({
+            type: "header",
+            strategy: layerId,
+            title: layerTitle,
+            headerKind: "layer",
+          });
+        }
         const stratOrder = _strategyOrderForLayer(layerId);
         const stratIds = [
           ...stratOrder.filter((id) => layerNode[id]),
@@ -740,17 +771,32 @@
           if (focus && stratId !== focus) continue;
           const stageNode = layerNode[stratId];
           if (!stageNode) continue;
-          if (!firstStrat) items.push({ type: "gap", id: `gap-strat-${layerId}-${stratId}` });
+          if (!chopTableOnly && !firstStrat) {
+            items.push({ type: "gap", id: `gap-strat-${layerId}-${stratId}` });
+          }
           firstStrat = false;
           const sample = stageNode[Object.keys(stageNode)[0]][0];
           const sm = lookupFeatureMeta(sample);
-          items.push({
-            type: "header",
-            strategy: stratId,
-            title: sm.strategy_title || stratId,
-            headerKind: "strategy",
-            accountLayer: layerId,
-          });
+          const tableMode = chopGridUsesMetricsTable(stratId, focus);
+          if (!tableMode) {
+            items.push({
+              type: "header",
+              strategy: stratId,
+              title: sm.strategy_title || stratId,
+              headerKind: "strategy",
+              accountLayer: layerId,
+            });
+          }
+          if (tableMode) {
+            items.push({
+              type: "metrics_table",
+              id: "metrics-chop_grid",
+              strategy: stratId,
+              accountLayer: layerId,
+              columns: columns.slice(),
+            });
+            continue;
+          }
           for (const stage of orderedStagesForNode(stageNode)) {
             const cols = stageNode[stage];
             if (!cols || !cols.length) continue;
@@ -788,15 +834,6 @@
                 stage,
               });
             }
-          }
-          if (chopGridUsesMetricsTable(stratId, focus)) {
-            items.push({
-              type: "metrics_table",
-              id: "metrics-chop_grid",
-              strategy: stratId,
-              accountLayer: layerId,
-              columns: columns.slice(),
-            });
           }
         }
       }
@@ -881,6 +918,7 @@
     chopGridMetricsCell,
     chopGridMetricsRowSpecs,
     chopGridMetricsRowCell,
+    chopGridBarCanEnter,
     presetColumnsForStrategy,
     presetColumnsForAccountLayer,
     inferStrategyIdFromColumn,

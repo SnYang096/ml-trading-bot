@@ -393,6 +393,24 @@
   font-weight: 600;
 }
 
+.feature-metrics-table .bar-enter-h {
+  font-size: 0.85rem;
+  line-height: 1.2;
+  padding: 4px 4px 2px;
+}
+
+.feature-metrics-table .bar-enter-mark {
+  font-weight: 700;
+}
+
+.feature-metrics-table th.bar-enter-ok .bar-enter-mark {
+  color: #7ee787;
+}
+
+.feature-metrics-table th.bar-enter-fail .bar-enter-mark {
+  color: #f85149;
+}
+
 .feature-metrics-table td.pass-ok {
   color: #7ee787;
 }
