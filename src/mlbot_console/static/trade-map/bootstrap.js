@@ -36,11 +36,7 @@ function bindControls() {
   ].forEach((id) =>
     document.getElementById(id).addEventListener("change", () => {
       if (id === "mapStrategySelect") {
-        const sid = document.getElementById("mapStrategySelect").value;
-        setFeatureStrategyFocus(sid || null, { refreshSubcharts: false });
-        if (sid) applyPresetForStrategy(sid);
-        saveLayout();
-        rerun();
+        switchMapStrategy(document.getElementById("mapStrategySelect").value || null);
         return;
       }
       if (id === "paneVolume") {

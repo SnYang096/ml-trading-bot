@@ -238,10 +238,22 @@ def semantic_hint_for_column(column: str, value: Optional[float]) -> str:
         return f"箱外({v:.3f}), 阈0.35–0.65"
     if col == "box_stability_60":
         ok = v >= 0.85
-        return f"{'稳定' if ok else '不稳'}({v:.3f}), 阈≥0.85"
+        return (
+            f"{'稳定' if ok else '不稳'}({v:.3f}), regime.box≥0.85 "
+            f"(非 rules 段)"
+        )
     if col == "box_width_pct_60":
         ok = 0.04 <= v <= 0.30
-        return f"{'宽度OK' if ok else '宽度异常'}({v:.3f}), 阈0.04–0.30"
+        return (
+            f"{'宽度OK' if ok else '宽度异常'}({v:.3f}), regime.box 0.04–0.30 "
+            f"(非 rules)"
+        )
+    if col in ("box_touches_hi_60", "box_touches_lo_60"):
+        ok = v >= 5
+        return (
+            f"触边{int(v) if v == v else 0}次, regime.box≥5 "
+            f"(非 rules; rules 只看 box_pos_60)"
+        )
     if col == "bpc_volume_compression_pct":
         ok = v >= 0.9295
         return f"{'通过' if ok else '未过'}({v:.3f}), 阈≥0.9295"

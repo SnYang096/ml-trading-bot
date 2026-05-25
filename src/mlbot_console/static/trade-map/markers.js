@@ -4,10 +4,17 @@ var Core = globalThis.MLBotTradeMapCore;
 var Shell = globalThis.MLBotConsole;
 
 function applyMarkers(rawMarkers, opts = {}) {
-  const scoped = Core.filterMarkersByStrategy(rawMarkers || [], S.featureStrategyFocus);
-  const aligned = alignMarkersToLoadedCandles(scoped);
-  S.lastRawMarkers = opts.merge ? mergeMarkersById(S.lastRawMarkers, aligned) : aligned;
-  S.markerById = new Map(S.lastRawMarkers.map((m) => [m.id, m]));
+  const aligned = alignMarkersToLoadedCandles(rawMarkers || []);
+  const merged = opts.merge
+    ? mergeMarkersById(S.allRawMarkers || [], aligned)
+    : aligned;
+  S.allRawMarkers = merged;
+  S.markerById = new Map(merged.map((m) => [m.id, m]));
+  S.lastRawMarkers = Core.markersForChartDisplay(
+    merged,
+    S.featureStrategyFocus,
+    S.selectedMarkerId
+  );
   S.candleSeries.setMarkers(Core.markersToLwc(S.lastRawMarkers, S.selectedMarkerId));
 }
 
@@ -117,7 +124,16 @@ function applyTradeLinks(links) {
 
 function scrollChartToMarker(markerTime) {
   if (!S.chart || !S.lastCandles.length) return;
-  const idx = Core.scrollIndexForTime(S.lastCandles, markerTime);
+  const t = Number(markerTime);
+  if (!Number.isFinite(t)) return;
+  const first = Number(S.lastCandles[0].time);
+  const last = Number(S.lastCandles[S.lastCandles.length - 1].time);
+  if (t < first || t > last) {
+    setStatus(
+      "订单时间不在当前已加载 K 线内；请点「刷新」或向左拖图加载更早历史后再选该行"
+    );
+  }
+  const idx = Core.scrollIndexForTime(S.lastCandles, t);
   if (idx < 0) return;
   const pad = 15;
   const from = Math.max(0, idx - pad);
@@ -137,13 +153,19 @@ function highlightOrdersTableRow(markerId) {
   });
 }
 
-function selectMarker(markerId, { scrollChart = true, showDetail = true } = {}) {
+function selectMarker(
+  markerId,
+  { scrollChart = true, showDetail = true, scrollTime = null } = {}
+) {
   S.selectedMarkerId = markerId || null;
-  applyMarkers(S.lastRawMarkers);
+  applyMarkers(S.allRawMarkers || []);
   highlightOrdersTableRow(S.selectedMarkerId);
-  if (S.selectedMarkerId && scrollChart) {
-    const raw = S.markerById.get(S.selectedMarkerId);
-    if (raw?.time != null) scrollChartToMarker(raw.time);
+  if (scrollChart) {
+    const raw = S.selectedMarkerId
+      ? S.markerById.get(S.selectedMarkerId)
+      : null;
+    const t = Number(scrollTime != null ? scrollTime : raw?.time);
+    if (Number.isFinite(t) && t > 0) scrollChartToMarker(t);
   }
   if (S.selectedMarkerId && showDetail) {
     showMarkerDetail(S.selectedMarkerId);
@@ -209,12 +231,18 @@ async function refreshOrdersList() {
       tr.addEventListener("click", () => {
         tbody.querySelectorAll("tr").forEach((x) => x.classList.remove("selected"));
         tr.classList.add("selected");
-        const mid = tr.getAttribute("data-marker-id");
-        if (mid) selectMarker(mid);
-        else {
+        const mid = (tr.getAttribute("data-marker-id") || "").trim();
+        const rowTime = tr.getAttribute("data-marker-time");
+        if (mid || rowTime) {
+          selectMarker(mid || null, {
+            scrollChart: true,
+            showDetail: !!mid,
+            scrollTime: rowTime,
+          });
+        } else {
           S.selectedMarkerId = null;
           highlightOrdersTableRow(null);
-          applyMarkers(S.lastRawMarkers);
+          applyMarkers(S.allRawMarkers || []);
         }
       });
     });

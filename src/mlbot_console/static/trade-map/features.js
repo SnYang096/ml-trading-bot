@@ -47,9 +47,28 @@ function syncFeatureStrategySelectOptions() {
 function applyPresetForStrategy(strategyId) {
   const sid = String(strategyId || "").trim();
   if (!sid) return;
-  const pool = pickerSourceColumns();
+  const pool = Core.filterColumnsForFeaturePicker(
+    S.availableFeatureColumns,
+    layersState(),
+    null
+  );
   const picks = Core.presetColumnsForStrategy(sid, pool, S.MAX_FEATURE_SUBCHARTS);
-  if (picks.length) setSelectedFeatures(picks, { refresh: false });
+  setSelectedFeatures(picks, { refresh: false });
+}
+
+/** Toolbar chips / dropdown: switch strategy focus, preset columns, refresh subcharts. */
+function switchMapStrategy(strategyId) {
+  const sid =
+    strategyId != null && String(strategyId).trim()
+      ? String(strategyId).trim()
+      : null;
+  setFeatureStrategyFocus(sid, { refreshPicker: true, refreshSubcharts: false });
+  if (sid) applyPresetForStrategy(sid);
+  if (S.lastCandles?.length) {
+    syncSubcharts(S.lastCandles, S.lastOverlays || {});
+  }
+  saveLayout();
+  refreshBundle({ mode: "full" }).catch((e) => setStatus(String(e)));
 }
 
 function renderMapStrategyChips() {
@@ -75,12 +94,9 @@ function renderMapStrategyChips() {
   host.querySelectorAll(".map-strategy-chip").forEach((btn) => {
     btn.addEventListener("click", () => {
       const sid = btn.getAttribute("data-strategy") || "";
-      setFeatureStrategyFocus(sid || null, { refreshSubcharts: false });
-      if (sid) applyPresetForStrategy(sid);
       const sel = document.getElementById("mapStrategySelect");
       if (sel) sel.value = sid;
-      saveLayout();
-      refreshBundle({ mode: "full" }).catch((e) => setStatus(String(e)));
+      switchMapStrategy(sid || null);
     });
   });
 }
@@ -234,8 +250,7 @@ function bindFeaturePanel() {
   const stratSel = document.getElementById("featureStrategySelect");
   if (stratSel) {
     stratSel.addEventListener("change", () => {
-      const v = stratSel.value;
-      setFeatureStrategyFocus(v || null);
+      switchMapStrategy(stratSel.value || null);
     });
   }
   drawer.querySelectorAll("[data-feature-action]").forEach((el) => {
@@ -258,15 +273,11 @@ function bindFeaturePanel() {
           "spot_accum_simple",
         ]);
         if (strategyPresets.has(key)) {
-          setFeatureStrategyFocus(key, { refreshPicker: false });
+          switchMapStrategy(key);
+          return;
         }
         const pool = pickerSourceColumns();
-        let picks = [];
-        if (strategyPresets.has(key)) {
-          picks = Core.presetColumnsForStrategy(key, pool, S.MAX_FEATURE_SUBCHARTS);
-        } else {
-          picks = Core.presetColumnsForAccountLayer(key, pool, S.MAX_FEATURE_SUBCHARTS);
-        }
+        let picks = Core.presetColumnsForAccountLayer(key, pool, S.MAX_FEATURE_SUBCHARTS);
         if (!picks.length) {
           const preset = Core.FEATURE_PRESETS[key] || Core.FEATURE_PRESETS.default;
           for (const name of preset) {

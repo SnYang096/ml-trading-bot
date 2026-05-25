@@ -344,12 +344,14 @@
         lastBatch = null;
       }
       const mid = r.marker_id || "";
+      const rowTime = Number(r.time);
+      const timeAttr = Number.isFinite(rowTime) && rowTime > 0 ? String(rowTime) : "";
       const symCell = showSymbol ? `<td>${esc(r.symbol || "")}</td>` : "";
       const tpRow = isTpLegRow(r);
       const slRow = isSlLegRow(r);
       const rowCls = tpRow ? "orders-leg-tp-row" : slRow ? "orders-leg-sl-row" : "";
       parts.push(
-        `<tr data-idx="${i}" data-marker-id="${esc(mid)}" data-symbol="${esc(r.symbol || "")}"` +
+        `<tr data-idx="${i}" data-marker-id="${esc(mid)}" data-marker-time="${esc(timeAttr)}" data-symbol="${esc(r.symbol || "")}"` +
           (batch ? ` data-grid-batch="${esc(batch)}"` : "") +
           (rowCls ? ` class="${rowCls}"` : "") +
           `>

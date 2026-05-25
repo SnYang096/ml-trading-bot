@@ -4,6 +4,9 @@
 (function (root) {
   const ENTRY_SHAPES = { long: "arrowUp", short: "arrowDown" };
   const EXIT_SHAPE = "circle";
+  /** Filled take-profit markers (chop_grid legs); pending TP stays gray circle. */
+  const TP_MARKER_COLOR = "#E8B923";
+  const TP_MARKER_SHAPE = "square";
 
   function scopesFromLayers(layers) {
     const parts = [];
@@ -23,7 +26,9 @@
 
   function markerShape(marker) {
     const role = markerRole(marker);
-    if (role === "tp" || role === "exit") return EXIT_SHAPE;
+    const pending = (marker.status || "filled").toLowerCase() === "pending";
+    if (role === "tp") return pending ? "circle" : TP_MARKER_SHAPE;
+    if (role === "exit") return EXIT_SHAPE;
     if (role === "grid") return "square";
     const side = (marker.side || "long").toLowerCase();
     if (marker.is_add && side === "long") return "diamond";
@@ -40,7 +45,7 @@
     if (role === "exit" && pnl != null) {
       return pnl >= 0 ? "#26a69a" : "#ef5350";
     }
-    if (role === "tp") return marker.color || "#73BF69";
+    if (role === "tp") return TP_MARKER_COLOR;
     if (role === "grid") return marker.color || "#73BF69";
     if (role === "entry") {
       return side === "long" ? "#2e7d32" : "#c62828";
@@ -221,12 +226,48 @@
     });
   }
 
+  /**
+   * Columns to render in feature subcharts: honor strategy focus, fall back to preset
+   * when the current selection belongs to another strategy.
+   */
+  function resolveSubchartColumns(
+    selectedColumns,
+    availableColumns,
+    layers,
+    strategyFocus,
+    maxCols
+  ) {
+    const max = Math.max(1, Number(maxCols) || 6);
+    const selected = (selectedColumns || []).slice(0, max);
+    const focus = strategyFocus ? String(strategyFocus).trim() : "";
+    const filtered = filterSubchartColumns(selected, layers, focus);
+    if (!focus) {
+      return filtered.length ? filtered : filterSubchartColumns(selected, layers, null).slice(0, max);
+    }
+    const hasForeign = selected.some((col) => lookupFeatureMeta(col).strategy !== focus);
+    if (!hasForeign && filtered.length) return filtered;
+    const pool = filterColumnsForFeaturePicker(availableColumns, layers, null);
+    const preset = presetColumnsForStrategy(focus, pool, max);
+    return preset.length ? preset : filtered;
+  }
+
   function filterMarkersByStrategy(markers, strategyFocus) {
     const focus = strategyFocus ? String(strategyFocus).trim().toLowerCase() : "";
     if (!focus) return markers || [];
     return (markers || []).filter(
       (m) => String(m.strategy || "").toLowerCase() === focus
     );
+  }
+
+  /** Chart markers: strategy filter + keep selected id visible for highlight/scroll. */
+  function markersForChartDisplay(allMarkers, strategyFocus, selectedMarkerId) {
+    const scoped = filterMarkersByStrategy(allMarkers || [], strategyFocus);
+    const sel = selectedMarkerId ? String(selectedMarkerId).trim() : "";
+    if (!sel) return scoped;
+    if (scoped.some((m) => m.id === sel)) return scoped;
+    const hit = (allMarkers || []).find((m) => m.id === sel);
+    if (!hit) return scoped;
+    return [...scoped, hit].sort((a, b) => Number(a.time) - Number(b.time));
   }
 
   function isoFromUnixSec(sec) {
@@ -350,12 +391,14 @@
           position = aboveBar ? "aboveBar" : "belowBar";
         }
       }
+      const isTp = role === "tp";
+      const highlightSelected = selected && !isTp;
       return {
         time: m.time,
         position,
-        color: selected ? "#ffeb3b" : markerColor(m),
-        shape: pending ? "circle" : markerShape(m),
-        text: selected ? `★ ${baseText}` : baseText,
+        color: highlightSelected ? "#ffeb3b" : markerColor(m),
+        shape: markerShape(m),
+        text: highlightSelected ? `★ ${baseText}` : baseText,
         id: m.id,
       };
     });
@@ -792,6 +835,12 @@
         if (picks.length >= maxCols) return picks;
       }
     }
+    if (sid === "trend_scalp") {
+      for (const c of ["trend_confidence", "bpc_semantic_chop"]) {
+        if (avail.has(c) && !picks.includes(c)) picks.push(c);
+        if (picks.length >= maxCols) return picks;
+      }
+    }
     if (featureTaxonomy && featureTaxonomy.strategies) {
       const strat = featureTaxonomy.strategies.find((s) => s.id === sid);
       if (strat) {
@@ -987,7 +1036,9 @@
     forwardFillOverlayToCandles,
     alignSeriesToCandleTimes,
     filterSubchartColumns,
+    resolveSubchartColumns,
     filterMarkersByStrategy,
+    markersForChartDisplay,
     isoFromUnixSec,
     mainOverlaysQueryParam,
     stageRegionsQueryParam,

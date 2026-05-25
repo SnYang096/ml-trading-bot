@@ -13,6 +13,7 @@
   if (S.candleSeries === undefined) S.candleSeries = null;
   if (S.pollTimer === undefined) S.pollTimer = null;
   if (S.markerById == null) S.markerById = new Map();
+  if (S.allRawMarkers == null) S.allRawMarkers = [];
   if (S.lastRawMarkers == null) S.lastRawMarkers = [];
   if (S.lastCandles == null) S.lastCandles = [];
   if (S.selectedMarkerId === undefined) S.selectedMarkerId = null;

@@ -251,10 +251,12 @@ function syncSubcharts(candles, overlays) {
   clearStrategyChrome();
 
   const layers = layersState();
-  const colsForPanes = Core.filterSubchartColumns(
-    S.selectedFeatureColumns.slice(0, S.MAX_FEATURE_SUBCHARTS),
+  const colsForPanes = Core.resolveSubchartColumns(
+    S.selectedFeatureColumns,
+    S.availableFeatureColumns,
     layers,
-    S.featureStrategyFocus
+    S.featureStrategyFocus,
+    S.MAX_FEATURE_SUBCHARTS
   );
   const panePlan = Core.orderFeaturePaneItems(colsForPanes, layers, S.featureStrategyFocus);
   const domOrder = [];

@@ -81,3 +81,11 @@ def test_build_reference_lines_chop_grid_regime_hysteresis(tmp_path):
 def test_semantic_hint_weekly_ema_position():
     assert "深熊" in semantic_hint_for_column("weekly_ema_200_position", -0.05)
     assert "EMA上方" in semantic_hint_for_column("weekly_ema_200_position", 0.02)
+
+
+def test_semantic_hint_chop_regime_box_vs_rules():
+    """regime.box_prefilter columns are labeled distinct from rules (box_pos)."""
+    assert "非 rules" in semantic_hint_for_column("box_stability_60", 0.9)
+    assert "rules 只看 box_pos_60" in semantic_hint_for_column("box_touches_hi_60", 7)
+    assert "箱中" in semantic_hint_for_column("box_pos_60", 0.5)
+    assert "非 rules" not in semantic_hint_for_column("box_pos_60", 0.5)

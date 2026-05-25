@@ -80,9 +80,18 @@ const filtered = Core.filterSubchartColumns(
   { trend: true, multiLeg: true, spot: false },
   "chop_grid"
 );
+const resolved = Core.resolveSubchartColumns(
+  ["box_stability_60", "trend_confidence"],
+  ["box_stability_60", "trend_confidence", "bpc_semantic_chop", "box_pos_60"],
+  { trend: true, multiLeg: true, spot: false },
+  "chop_grid",
+  6
+);
 const meta = Core.lookupFeatureMeta("tpc_pullback_depth");
 const hit = Core.findMarkerByTime(markers, 1, 7200);
 const sel = Core.markersToLwc(markers, "trend:orders:1");
+const tpFilled = Core.markersToLwc(markers)[5];
+const tpFilledSel = Core.markersToLwc(markers, "multi_leg:orders:6")[5];
 const merged = Core.mergeCandlesByTime(
   [{ time: 100, open: 1, high: 2, low: 0.5, close: 1 }],
   [{ time: 200, open: 2, high: 3, low: 1, close: 2 }, { time: 100, open: 9, high: 9, low: 9, close: 9 }]
@@ -96,6 +105,11 @@ console.log(JSON.stringify({
   planTypes: plan.map((p) => p.type),
   metaStage: meta.stage,
   hitId: hit && hit.id, selColor: sel[0].color,
+  tpColor: tpFilled.color,
+  tpShape: tpFilled.shape,
+  tpSelSameColor: tpFilled.color === tpFilledSel.color,
+  tpSelSameShape: tpFilled.shape === tpFilledSel.shape,
+  tpSelNoStar: !tpFilledSel.text.startsWith("★"),
   init2h: Core.tradeMapInitialDays("2h"),
   init1d: Core.ohlcvInitialQueryRange("1d"),
   init2hRange: Core.ohlcvInitialQueryRange("2h"),
@@ -126,7 +140,26 @@ console.log(JSON.stringify({
   ffMainLen: ffMain.length,
   ffMainMid: ffMain[1].value,
   filteredCols: filtered,
+  resolvedChop: resolved,
   chopFeatureCols: chopPlan.filter((p) => p.type === "feature").map((p) => p.column),
+  chopPreset: Core.presetColumnsForStrategy(
+    "chop_grid",
+    ["bpc_semantic_chop", "box_pos_60", "box_stability_60"],
+    8
+  ),
+  trendPreset: Core.presetColumnsForStrategy(
+    "trend_scalp",
+    ["trend_confidence", "bpc_semantic_chop", "box_pos_60"],
+    8
+  ),
+  markerDisplayIds: Core.markersForChartDisplay(
+    [
+      { id: "m1", time: 10, strategy: "chop_grid" },
+      { id: "m2", time: 20, strategy: "trend_scalp" },
+    ],
+    "trend_scalp",
+    "m1"
+  ).map((m) => m.id),
 }));
 """
 
@@ -160,6 +193,11 @@ def test_trade_map_core_node():
     assert "header" in out["planTypes"] and "feature" in out["planTypes"]
     assert out["hitId"] == "trend:orders:1"
     assert out["selColor"] == "#ffeb3b"
+    assert out["tpColor"] == "#E8B923"
+    assert out["tpShape"] == "square"
+    assert out["tpSelSameColor"] is True
+    assert out["tpSelSameShape"] is True
+    assert out["tpSelNoStar"] is True
     assert out["init2h"] == 60
     assert out["init1d"]["full_range"] == "true"
     assert "from" not in out["init1d"]
@@ -182,7 +220,11 @@ def test_trade_map_core_node():
     assert out["ffMainLen"] == 3
     assert out["ffMainMid"] == 10
     assert out["filteredCols"] == ["bpc_semantic_chop"]
+    assert out["resolvedChop"] == ["bpc_semantic_chop", "box_pos_60"]
     assert set(out["chopFeatureCols"]) == {"bpc_semantic_chop", "box_pos_60"}
+    assert out["chopPreset"] == ["bpc_semantic_chop", "box_pos_60"]
+    assert out["trendPreset"] == ["trend_confidence", "bpc_semantic_chop"]
+    assert out["markerDisplayIds"] == ["m1", "m2"]
     assert len(out["segPts"]) >= 4
     assert out["segPts"][2]["value"] is None  # NaN segment gap
     assert out["prAuto2"]["minValue"] < 600
