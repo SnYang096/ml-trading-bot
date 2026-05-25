@@ -156,7 +156,7 @@ def test_align_ffill_after_last_feature_row(tmp_path):
 
 
 def test_align_leading_candles_blank_before_first_feature(tmp_path):
-    """Before the first feature row, sub-chart should stay empty (no bfill)."""
+    """merge_asof + ffill/bfill: leading candles get first known feature value."""
     feat_dir = tmp_path / "features" / "120T"
     feat_dir.mkdir(parents=True)
     start = pd.Timestamp("2024-01-01", tz="UTC")
@@ -183,9 +183,12 @@ def test_align_leading_candles_blank_before_first_feature(tmp_path):
         candles=candles,
     )
     pts = overlays["regime_score"]["points"]
-    assert len(pts) < len(candles)
-    assert pts[0]["time"] == int(feat_start.timestamp())
+    assert len(pts) == len(candles)
+    assert pts[0]["time"] == candles[0]["time"]
     assert pts[0]["value"] == pytest.approx(0.15)
+    # Bar at feat_start is the first row with a backward match before bfill.
+    feat_idx = int((feat_start - start) / pd.Timedelta(hours=2))
+    assert pts[feat_idx]["time"] == int(feat_start.timestamp())
 
 
 def test_load_multiple_overlays(bus_root):
