@@ -429,7 +429,7 @@ function metricsTableCaption(strategyId) {
   const title = Core.strategyFocusLabel(strategyId) || strategyId || "策略";
   const sid = String(strategyId || "").toLowerCase();
   if (sid === "chop_grid") {
-    return "Chop Grid 指标表 · 顶行✓/×=可新开网格 · regime退出=主图橙标 · 点击列定位 K 线 · 十字线停 3s 横滚";
+    return "Chop Grid 指标表 · 顶行✓/×=可新开网格 · regime退出=主图橙标(与表「退出」列同 bar) · 点击列定位 K 线";
   }
   return `${title} 指标表 · 顶行✓/×=门槛汇总 · 点击列定位主图 · 十字线停住约3s才自动横滚`;
 }

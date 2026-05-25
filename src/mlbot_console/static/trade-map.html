@@ -110,12 +110,14 @@
 
   <main class="trade-map-main">
     <div class="chart-stack">
-      <div id="chart" class="chart-pane main-pane" title="主图：K 线 + 所选账户层成交标记">
-        <div id="chartLegend" class="chart-legend"></div>
-        <div id="chopGridLabelLayer" class="chop-grid-label-layer" aria-hidden="true"></div>
+      <div class="chart-stack-primary">
+        <div id="chart" class="chart-pane main-pane" title="主图：K 线 + 所选账户层成交标记">
+          <div id="chartLegend" class="chart-legend"></div>
+          <div id="chopGridLabelLayer" class="chop-grid-label-layer" aria-hidden="true"></div>
+        </div>
+        <div id="subchartStack" class="subchart-stack"></div>
       </div>
-      <div id="subchartStack" class="subchart-stack"></div>
-      <section id="detailPanel" class="marker-detail-drawer hidden">
+      <section id="detailPanel" class="marker-detail-drawer hidden" aria-label="标记详情">
         <div class="drawer-head">
           <h3>标记详情</h3>
           <button type="button" id="detailCloseBtn" class="drawer-close">关闭</button>

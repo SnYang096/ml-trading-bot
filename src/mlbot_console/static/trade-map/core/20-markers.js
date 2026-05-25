@@ -86,6 +86,29 @@
       }
       return best;
     }
+
+    /** Prefer markers pinned to the clicked bar (avoids jumping to another bar's marker). */
+    function findMarkerOnBar(markers, clickTime, toleranceSec) {
+      const t = Number(clickTime);
+      if (!Number.isFinite(t)) return null;
+      const onBar = (markers || []).filter((m) => Number(m.time) === t);
+      if (!onBar.length) return findMarkerByTime(markers, clickTime, toleranceSec);
+      const regime = onBar.filter(
+        (m) =>
+          String(m.event || "").toLowerCase() === "exit" &&
+          m.detail &&
+          String(m.detail.exit_kind || "").toLowerCase() === "regime_or_risk_exit"
+      );
+      if (regime.length) return regime[regime.length - 1];
+      return onBar[onBar.length - 1];
+    }
+
+    function isFeatureBusRegimeExitMarker(m) {
+      if (!m) return false;
+      const id = String(m.id || "");
+      if (!id.startsWith("multi_leg:regime_exit:")) return false;
+      return String(m.detail?.source || "") === "feature_bus_hysteresis";
+    }
     function chopRegimeThresholdsFromOverlay(overlay) {
       let entryMin = 0.5;
       let exitBelow = 0.32;
@@ -330,6 +353,8 @@
     filterMarkersByStrategy,
     markersForChartDisplay,
     findMarkerByTime,
+    findMarkerOnBar,
+    isFeatureBusRegimeExitMarker,
     chopGridMarkerDisplayText,
     chopRegimeThresholdsFromOverlay,
     chopGridHysteresisActive,

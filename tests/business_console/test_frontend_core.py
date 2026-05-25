@@ -317,6 +317,23 @@ console.log(JSON.stringify({
     };
     return [...Core.chopRegimeExitBarTimes(candles, overlays)];
   })(),
+  findMarkerOnBarPrefersRegime: (() => {
+    const ms = [
+      { id: "entry", time: 3000, event: "entry", strategy: "chop_grid" },
+      {
+        id: "reg",
+        time: 3000,
+        event: "exit",
+        strategy: "chop_grid",
+        detail: { exit_kind: "regime_or_risk_exit" },
+      },
+    ];
+    return Core.findMarkerOnBar(ms, 3000, 7200).id;
+  })(),
+  isFbRegime: Core.isFeatureBusRegimeExitMarker({
+    id: "multi_leg:regime_exit:BNB:1",
+    detail: { source: "feature_bus_hysteresis" },
+  }),
 }));
 """
 
@@ -397,6 +414,8 @@ def test_trade_map_core_node():
     assert len(out["synthRegimeExit"]) == 1
     assert out["synthRegimeExit"][0]["time"] == 3000
     assert out["regimeExitBarTimes"] == [3000]
+    assert out["findMarkerOnBarPrefersRegime"] == "reg"
+    assert out["isFbRegime"] is True
     assert out["chopMetricsSpecs"] >= 2
     assert out["chopPreset"] == ["bpc_semantic_chop", "box_pos_60"]
     assert out["trendPreset"] == ["trend_confidence", "bpc_semantic_chop"]

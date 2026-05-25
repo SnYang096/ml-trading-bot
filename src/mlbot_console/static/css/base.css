@@ -331,5 +331,49 @@ body {
 html {
   height: 100%;
   overflow-x: hidden;
+  scrollbar-color: #484f58 #161b22;
+  scrollbar-width: thin;
+}
+
+/* Dark-theme scrollbars (Trade Map, orders dock, feature drawer, page) */
+* {
+  scrollbar-color: #484f58 #161b22;
+  scrollbar-width: thin;
+}
+
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+*::-webkit-scrollbar-track {
+  background: #161b22;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #545d68 0%, #3d444d 100%);
+  border-radius: 9px;
+  border: 2px solid #161b22;
+  min-height: 28px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #6e7681 0%, #545d68 100%);
+}
+
+*::-webkit-scrollbar-thumb:active {
+  background: #58a6ff;
+}
+
+*::-webkit-scrollbar-corner {
+  background: #161b22;
+}
+
+.page-trade-map,
+.page-trade-map .metrics-table-scroll,
+.page-trade-map .orders-table-wrap,
+.page-trade-map .marker-detail-drawer,
+.page-trade-map .feature-column-list {
+  scrollbar-color: #545d68 #0f1419;
 }
 

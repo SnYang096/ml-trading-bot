@@ -126,6 +126,13 @@ def test_trade_map_js_layer_toggle_does_not_reset_history(client):
     history_js = client.get("/static/trade-map/history.js").text
     assert "scheduleMetricsTableViewportSync" in history_js
     assert "subscribeVisibleTimeRangeChange" not in history_js
+    assert "chart-stack-primary" in client.get("/static/trade-map.html").text
+    markers_js = client.get("/static/trade-map/markers.js").text
+    assert "isFeatureBusRegimeExitMarker" in markers_js
+    assert "findMarkerOnBar" in client.get("/static/trade-map/core/20-markers.js").text
+    base_css = client.get("/static/css/base.css").text
+    assert "scrollbar-thumb" in base_css
+    assert "scrollbar-color" in base_css
     assert "mergeChopMapPayload" in bundle
     assert "stage_regions" in bundle
     chop = client.get("/static/trade-map/chop.js").text

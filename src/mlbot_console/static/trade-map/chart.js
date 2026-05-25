@@ -288,8 +288,15 @@ function initMainChart() {
     }
     const tf = document.getElementById("timeframeSelect")?.value || "2h";
     const tol = Core.timeframeToleranceSec(tf);
-    const hit = Core.findMarkerByTime(S.lastRawMarkers, param.time, tol);
-    if (hit?.id) selectMarker(hit.id);
+    const hit = Core.findMarkerOnBar
+      ? Core.findMarkerOnBar(S.lastRawMarkers, param.time, tol)
+      : Core.findMarkerByTime(S.lastRawMarkers, param.time, tol);
+    if (typeof scrollChartToBarTime === "function") {
+      scrollChartToBarTime(param.time);
+    }
+    if (hit?.id) {
+      selectMarker(hit.id, { scrollChart: false, scrollTime: param.time });
+    }
   });
 
   const legend = document.getElementById("chartLegend");

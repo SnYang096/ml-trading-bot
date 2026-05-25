@@ -5,6 +5,9 @@ var Shell = globalThis.MLBotConsole;
 
 function applyMarkers(rawMarkers, opts = {}) {
   let incoming = rawMarkers || [];
+  if (typeof Core.isFeatureBusRegimeExitMarker === "function") {
+    incoming = incoming.filter((m) => !Core.isFeatureBusRegimeExitMarker(m));
+  }
   const focus = String(S.featureStrategyFocus || "").trim().toLowerCase();
   const chopFocus =
     !focus || focus === "chop_grid" || focus === "trend_scalp";
@@ -34,6 +37,19 @@ function applyMarkers(rawMarkers, opts = {}) {
   S.candleSeries.setMarkers(Core.markersToLwc(S.lastRawMarkers, S.selectedMarkerId));
 }
 
+function candleTimeAtOrBefore(rawTime) {
+  const t = Number(rawTime);
+  if (!Number.isFinite(t) || !S.lastCandles.length) return t;
+  let best = Number(S.lastCandles[0].time);
+  for (const c of S.lastCandles) {
+    const ct = Number(c.time);
+    if (!Number.isFinite(ct)) continue;
+    if (ct <= t) best = ct;
+    else break;
+  }
+  return best;
+}
+
 function nearestLoadedCandleTime(rawTime) {
   const t = Number(rawTime);
   if (!Number.isFinite(t) || !S.lastCandles.length) return t;
@@ -49,6 +65,14 @@ function nearestLoadedCandleTime(rawTime) {
     }
   }
   return best;
+}
+
+function isSyntheticRegimeExitMarker(m) {
+  if (!m) return false;
+  if (String(m.detail?.exit_kind || "").toLowerCase() !== "regime_or_risk_exit")
+    return false;
+  const id = String(m.id || "");
+  return id.startsWith("multi_leg:regime_exit:");
 }
 
 function alignMarkersToLoadedCandles(markers) {
@@ -67,6 +91,7 @@ function alignMarkersToLoadedCandles(markers) {
     out.detail = detail;
     if (t < first) out.time = first;
     else if (t > last) out.time = last;
+    else if (isSyntheticRegimeExitMarker(out)) out.time = candleTimeAtOrBefore(t);
     else out.time = nearestLoadedCandleTime(t);
     return out;
   });

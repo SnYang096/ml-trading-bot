@@ -97,7 +97,8 @@
 .page-trade-map .chart-stack {
   flex: 1;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: stretch;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -106,9 +107,18 @@
 .chart-stack {
   flex: 1;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   min-width: 0;
   min-height: 0;
+}
+
+.page-trade-map .chart-stack-primary {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .page-trade-map .orders-dock {
@@ -168,12 +178,18 @@
 }
 
 .marker-detail-drawer {
-  flex: 0 0 auto;
-  max-height: 28vh;
-  overflow: auto;
-  border-top: 1px solid #30363d;
+  flex: 0 0 min(22rem, 36vw);
+  width: min(22rem, 36vw);
+  max-height: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-left: 1px solid #30363d;
   background: #161b22;
-  padding: 8px 12px;
+  padding: 8px 10px;
+}
+
+.marker-detail-drawer.hidden {
+  display: none;
 }
 
 .marker-detail-drawer h3 {
@@ -199,9 +215,12 @@
 }
 
 .marker-detail-drawer pre {
-  font-size: 0.7rem;
+  font-size: 0.68rem;
+  line-height: 1.45;
   margin: 0;
   white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 
