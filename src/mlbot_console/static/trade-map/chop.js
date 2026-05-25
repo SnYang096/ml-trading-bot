@@ -74,6 +74,9 @@ function refreshMainChartForStrategyFocus() {
   if (typeof applyMarkers === "function") {
     applyMarkers(S.allRawMarkers || []);
   }
+  if (typeof applyTradeLinks === "function") {
+    applyTradeLinks(S.lastTradeLinks || []);
+  }
 }
 
 function flattenStageRegions(byStrategy, stage) {

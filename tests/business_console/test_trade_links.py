@@ -281,6 +281,11 @@ def test_trend_add_operation_draws_add_to_exit_link(trend_db):
     assert add_links[0]["status"] == "closed"
 
 
+def test_spot_buy_only_no_trade_link(spot_db):
+    links = spot_trade_links(spot_db, "ETHUSDT")
+    assert links == []
+
+
 def test_spot_buy_sell_orders_draw_closed_link(spot_db):
     import sqlite3
 

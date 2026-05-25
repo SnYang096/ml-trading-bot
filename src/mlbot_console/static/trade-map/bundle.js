@@ -271,12 +271,11 @@ async function refreshBundle(opts = {}) {
   if (mode === "poll") {
     applyMarkers(markers, { merge: true });
     S.lastTradeLinks = mergeTradeLinks(S.lastTradeLinks, data.trade_links || []);
-    applyTradeLinks(S.lastTradeLinks);
   } else {
     applyMarkers(markers);
     S.lastTradeLinks = data.trade_links || [];
-    applyTradeLinks(S.lastTradeLinks);
   }
+  applyTradeLinks(S.lastTradeLinks);
 
   if (mode !== "poll") {
     setStatusFromBundle(

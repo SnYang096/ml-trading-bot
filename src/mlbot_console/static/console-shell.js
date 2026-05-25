@@ -425,7 +425,7 @@
     return {
       hideExpired: true,
       hideCanceled: true,
-      hideRejected: false,
+      hideRejected: true,
       hidePending: false,
     };
   }

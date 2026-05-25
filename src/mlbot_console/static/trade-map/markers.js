@@ -71,6 +71,33 @@ function alignMarkersToLoadedCandles(markers) {
   });
 }
 
+function tradeLinkAccountLayer(link) {
+  const strat = String(link?.strategy || "").toLowerCase();
+  if (strat === "spot_accum_simple" || strat.startsWith("spot")) return "spot";
+  if (strat === "chop_grid" || strat === "trend_scalp") return "multi_leg";
+  return "trend";
+}
+
+/** Only links for enabled account layers / strategy focus; spot needs buy→sell pair. */
+function tradeLinksForDisplay(links) {
+  const layers = layersState();
+  const allowed = [];
+  if (layers.trend) allowed.push("trend");
+  if (layers.spot) allowed.push("spot");
+  if (layers.multiLeg) allowed.push("multi_leg");
+  const focus = String(S.featureStrategyFocus || "").trim().toLowerCase();
+  return (links || []).filter((lk) => {
+    const layer = tradeLinkAccountLayer(lk);
+    if (!allowed.includes(layer)) return false;
+    if (focus && String(lk.strategy || "").toLowerCase() !== focus) return false;
+    if (layer === "spot") {
+      if (String(lk.status || "").toLowerCase() === "open") return false;
+      if (!lk.exit_marker_id) return false;
+    }
+    return true;
+  });
+}
+
 function clearTradeLinks() {
   if (!S.chart) return;
   for (const s of S.tradeLinkSeries) {
@@ -105,10 +132,11 @@ function clipLinkToCandles(link, candles) {
 
 function applyTradeLinks(links) {
   clearTradeLinks();
-  if (!S.chart || !Array.isArray(links) || !links.length) return;
+  const scoped = tradeLinksForDisplay(links);
+  if (!S.chart || !Array.isArray(scoped) || !scoped.length) return;
   const clipped = S.lastCandles.length
-    ? links.map((lk) => clipLinkToCandles(lk, S.lastCandles))
-    : links;
+    ? scoped.map((lk) => clipLinkToCandles(lk, S.lastCandles))
+    : scoped;
   for (const lk of clipped) {
     const t0 = Number(lk.entry_time);
     let t1 = Number(lk.exit_time);

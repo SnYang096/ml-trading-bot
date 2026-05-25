@@ -88,7 +88,7 @@ function bindControls() {
   document.getElementById("ordersDockToggle").addEventListener("click", () => {
     toggleOrdersDock();
   });
-  ["hideExpired", "hideCanceled"].forEach((id) => {
+  ["hideExpired", "hideCanceled", "hideRejected"].forEach((id) => {
     const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener("change", () => {
