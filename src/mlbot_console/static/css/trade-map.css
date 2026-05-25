@@ -211,3 +211,57 @@ main {
 .chop-grid-label--below {
   transform: translate(-100%, 4px);
 }
+
+.page-trade-map .module-strategy {
+  flex: 1 1 100%;
+  min-width: 280px;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 4px 0 2px;
+  border-left: 3px solid #58a6ff;
+  padding-left: 10px;
+}
+
+.page-trade-map .map-strategy-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-width: min(720px, 70vw);
+}
+
+.page-trade-map .map-strategy-chip {
+  font-size: 0.8rem;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid #30363d;
+  background: #21262d;
+  color: #c9d1d9;
+  cursor: pointer;
+}
+
+.page-trade-map .map-strategy-chip:hover {
+  border-color: #58a6ff;
+  color: #fff;
+}
+
+.page-trade-map .map-strategy-chip.active {
+  background: #1f3d5c;
+  border-color: #58a6ff;
+  color: #fff;
+  font-weight: 600;
+}
+
+.page-trade-map .map-strategy-select {
+  min-width: 11rem;
+  font-size: 0.85rem;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid #30363d;
+  background: #0d1117;
+  color: #e6edf3;
+}
+
+.page-trade-map .map-strategy-hint {
+  font-size: 0.8rem;
+}

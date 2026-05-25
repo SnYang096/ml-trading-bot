@@ -47,17 +47,11 @@
           id="mainWeeklyEma200" checked /> 周线EMA200</label>
     </div>
 
-    <div class="module module-accounts" title="账户层 A/B/C：控制主图成交标记 + 自动隐藏对应层的附图列（取消勾选后已选附图列会被清除，需重新选）">
+    <div class="module module-accounts" title="账户层 A/B/C：控制哪些系统的数据参与展示">
       <span class="module-label">账户层</span>
       <label><input type="checkbox" id="layerTrend" checked /> B·Trend</label>
       <label><input type="checkbox" id="layerSpot" checked /> A·Spot</label>
       <label><input type="checkbox" id="layerMultiLeg" checked /> C·Multi-leg</label>
-      <label class="strategy-focus-pill" title="筛选主图标记、网格线、Prefilter 色带与附图列（需与上方账户层配合）">
-        策略
-        <select id="mapStrategySelect">
-          <option value="">全部</option>
-        </select>
-      </label>
       <label title="在已成交标记之外，叠加显示 open/pending 网格限价单与 TP 保护单（不含 expired/canceled）"><input type="checkbox"
           id="layerPending" /> 含挂单</label>
       <label class="chk-pill" title="chop_grid 中心/档位/成交/TP 价格线 + 震荡(chop)区间底色（需勾选 C·Multi-leg）"><input type="checkbox"
@@ -66,6 +60,15 @@
           type="checkbox" id="layerPrefilter" checked /> Prefilter区</label>
       <label class="chk-pill" title="按 gate.yaml 在主图标出 Gate 通过区间（Trend 策略）"><input type="checkbox"
           id="layerGate" /> Gate区</label>
+    </div>
+
+    <div class="module module-strategy"
+      title="每个账户层下有多个策略（B: bpc/tpc/…，C: chop_grid/trend_scalp）。必须选具体策略才能正确画主图标记与附图特征。">
+      <span class="module-label">具体策略</span>
+      <div id="mapStrategyChips" class="map-strategy-chips" role="group" aria-label="策略快捷选择"></div>
+      <select id="mapStrategySelect" class="map-strategy-select" aria-label="具体策略下拉">
+        <option value="">请先选账户层…</option>
+      </select>
     </div>
 
     <div class="module module-subcharts">

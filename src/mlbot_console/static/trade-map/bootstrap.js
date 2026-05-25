@@ -36,9 +36,9 @@ function bindControls() {
   ].forEach((id) =>
     document.getElementById(id).addEventListener("change", () => {
       if (id === "mapStrategySelect") {
-        setFeatureStrategyFocus(document.getElementById("mapStrategySelect").value, {
-          refreshSubcharts: false,
-        });
+        const sid = document.getElementById("mapStrategySelect").value;
+        setFeatureStrategyFocus(sid || null, { refreshSubcharts: false });
+        if (sid) applyPresetForStrategy(sid);
         saveLayout();
         rerun();
         return;
@@ -56,9 +56,7 @@ function bindControls() {
         resetMarkerQueryRange();
         S.chartFitPending = true;
         if (id.startsWith("layer")) {
-          const inferred = Core.inferStrategyFocusFromLayers(layersState());
-          if (inferred) setFeatureStrategyFocus(inferred, { refreshPicker: true });
-          else syncFeatureStrategySelectOptions();
+          applyLayerStrategyDefaults();
           renderFeaturePicker();
         }
         if (S.ordersDockOpen) refreshOrdersList().catch(() => { });
@@ -77,10 +75,8 @@ function bindControls() {
             S.selectedFeatureColumns = filtered;
             saveLayout();
           }
+          applyLayerStrategyDefaults();
         }
-        const inferred = Core.inferStrategyFocusFromLayers(layers);
-        if (inferred) setFeatureStrategyFocus(inferred, { refreshPicker: true });
-        else syncFeatureStrategySelectOptions();
         renderFeaturePicker();
       }
       if (S.ordersDockOpen) refreshOrdersList().catch(() => { });

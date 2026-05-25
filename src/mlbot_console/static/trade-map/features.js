@@ -27,17 +27,86 @@ function syncFeatureStrategySelectOptions() {
   const layers = layersState();
   const strategies = Core.listStrategiesForLayers(layers);
   const prev = S.featureStrategyFocus || "";
-  const options = [
-    `<option value="">全部</option>`,
-    ...strategies.map(
-      (s) =>
-        `<option value="${escHtml(s.id)}"${s.id === prev ? " selected" : ""}>${escHtml(s.title || s.id)}</option>`
-    ),
-  ];
+  const options = strategies.length
+    ? [
+        `<option value="">全部（不推荐，附图会混杂）</option>`,
+        ...strategies.map(
+          (s) =>
+            `<option value="${escHtml(s.id)}"${s.id === prev ? " selected" : ""}>${escHtml(s.title || s.id)}</option>`
+        ),
+      ]
+    : [`<option value="">请先勾选账户层</option>`];
   const html = options.join("");
   for (const id of ["featureStrategySelect", "mapStrategySelect"]) {
     const sel = document.getElementById(id);
     if (sel) sel.innerHTML = html;
+  }
+  renderMapStrategyChips();
+}
+
+function applyPresetForStrategy(strategyId) {
+  const sid = String(strategyId || "").trim();
+  if (!sid) return;
+  const pool = pickerSourceColumns();
+  const picks = Core.presetColumnsForStrategy(sid, pool, S.MAX_FEATURE_SUBCHARTS);
+  if (picks.length) setSelectedFeatures(picks, { refresh: false });
+}
+
+function renderMapStrategyChips() {
+  const host = document.getElementById("mapStrategyChips");
+  if (!host) return;
+  const strategies = Core.listStrategiesForLayers(layersState());
+  const focus = S.featureStrategyFocus || "";
+  if (!strategies.length) {
+    host.innerHTML =
+      '<span class="muted map-strategy-hint">先勾选上方 B/A/C 账户层</span>';
+    return;
+  }
+  const buttons = [
+    `<button type="button" class="map-strategy-chip${focus === "" ? " active" : ""}" data-strategy="">全部</button>`,
+    ...strategies.map(
+      (s) =>
+        `<button type="button" class="map-strategy-chip${
+          focus === s.id ? " active" : ""
+        }" data-strategy="${escHtml(s.id)}">${escHtml(s.title || s.id)}</button>`
+    ),
+  ];
+  host.innerHTML = buttons.join("");
+  host.querySelectorAll(".map-strategy-chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const sid = btn.getAttribute("data-strategy") || "";
+      setFeatureStrategyFocus(sid || null, { refreshSubcharts: false });
+      if (sid) applyPresetForStrategy(sid);
+      const sel = document.getElementById("mapStrategySelect");
+      if (sel) sel.value = sid;
+      saveLayout();
+      refreshBundle({ mode: "full" }).catch((e) => setStatus(String(e)));
+    });
+  });
+}
+
+/** After account-layer toggles: pick default strategy + preset feature columns. */
+function applyLayerStrategyDefaults() {
+  const layers = layersState();
+  const strategies = Core.listStrategiesForLayers(layers);
+  const inferred = Core.inferStrategyFocusFromLayers(layers);
+  const focus = S.featureStrategyFocus || "";
+  const allowed = new Set(strategies.map((s) => s.id));
+
+  if (!strategies.length) {
+    setFeatureStrategyFocus(null, { refreshPicker: true, refreshSubcharts: false });
+  } else if (inferred && (!focus || !allowed.has(focus))) {
+    setFeatureStrategyFocus(inferred, { refreshPicker: true, refreshSubcharts: false });
+    applyPresetForStrategy(inferred);
+  } else if (focus && !allowed.has(focus)) {
+    setFeatureStrategyFocus(inferred || null, {
+      refreshPicker: true,
+      refreshSubcharts: false,
+    });
+    if (inferred) applyPresetForStrategy(inferred);
+  } else {
+    renderMapStrategyChips();
+    syncFeatureStrategySelectOptions();
   }
 }
 
@@ -250,11 +319,7 @@ async function loadFeatureColumns() {
   } catch (_) {
     S.availableFeatureColumns = [];
   }
-  if (!S.featureStrategyFocus) {
-    const inferred = Core.inferStrategyFocusFromLayers(layersState());
-    if (inferred) S.featureStrategyFocus = inferred;
-  }
-  syncFeatureStrategySelectOptions();
+  applyLayerStrategyDefaults();
   renderFeaturePicker();
   saveLayout();
 }
