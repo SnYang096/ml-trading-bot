@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from typing import Dict, List, Optional
 
@@ -65,12 +66,15 @@ def get_live_console_strategies() -> List[Dict[str, str]]:
         from mlbot_console.config import SETTINGS
         from src.live_data_stream.constitution_config import (
             load_constitution_dict,
-            resolve_constitution_yaml_path,
             strategies_for_slot_metrics_from_constitution,
         )
 
-        path = resolve_constitution_yaml_path(override=str(SETTINGS.constitution_yaml))
+        path = str(SETTINGS.constitution_yaml)
+        if not path or not os.path.isfile(path):
+            return []
         cfg = load_constitution_dict(path)
+        if not cfg:
+            return []
         out: List[Dict[str, str]] = []
         for sid in strategies_for_slot_metrics_from_constitution(cfg):
             key = str(sid).strip().lower()

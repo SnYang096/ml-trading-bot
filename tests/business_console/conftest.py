@@ -310,13 +310,27 @@ def console_settings(
         "symbols:\n  ETHUSDT: {}\n  SOLUSDT: {}\n",
         encoding="utf-8",
     )
+    constitution = tmp_path / "constitution.yaml"
+    constitution.write_text(
+        "resource_allocation:\n"
+        "  enabled_archetypes:\n"
+        "    - tpc\n"
+        "multi_leg:\n"
+        "  strategies:\n"
+        "    - chop_grid\n"
+        "    - trend_scalp\n"
+        "spot:\n"
+        "  strategies:\n"
+        "    - spot_accum_simple\n",
+        encoding="utf-8",
+    )
     return ConsoleSettings(
         repo_root=tmp_path,
         feature_bus_root=bus_root,
         live_data_root=tmp_path,
         engine_data_root=tmp_path,
         live_root=tmp_path,
-        constitution_yaml=tmp_path / "constitution.yaml",
+        constitution_yaml=constitution,
         universe_yaml=universe,
         trend_order_db=trend_db,
         live_monitor_db=tmp_path / "live_monitor.db",

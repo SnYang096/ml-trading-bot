@@ -25,7 +25,14 @@ docker compose up -d --build
 
 Build context is the **repository root** (`../..` → `/opt/quant-engine`): image includes `src/mlbot_console`, `src/time_series_model`, `src/config` (archetype prefilter/gate regions), and `config/strategies`. Account overview uses `requests`, `ccxt`, and `python-dotenv` via `mlbot_console.services.spot_ccxt` (no `order_management` copy).
 
-CI packs `deploy/business-console`, `src/`, `config/strategies`, and `live/highcap/universe.yaml` under `/opt/quant-engine/` (same layout as the git repo).
+CI packs `deploy/business-console`, `src/`, `config/strategies`, `live/highcap/universe.yaml`, and `live/highcap/config/constitution/constitution.yaml` under `/opt/quant-engine/` (same layout as the git repo).
+
+**Pre-deploy smoke** (no CI wait):
+
+```bash
+./scripts/smoke_console_live_strategies.sh
+./scripts/smoke_console_live_strategies.sh --remote ubuntu@YOUR_HOST -i ~/.ssh/key.pem
+```
 
 **systemd**: `deploy/systemd/quant-business-console.service` — `PYTHONPATH=/opt/quant-engine/src`, `uvicorn mlbot_console.main:app`.
 
