@@ -120,6 +120,12 @@ def test_trade_map_js_layer_toggle_does_not_reset_history(client):
     assert "pane.chart" in subcharts
     assert "pane.S.chart" not in subcharts
     assert "scheduleMetricsTableViewportSync" in subcharts
+    assert "flushDeferredCrosshairWork" in subcharts
+    assert "pendingMetricsViewportSync" in subcharts
+    assert "regime滞回" in subcharts
+    assert "regime退出" in subcharts
+    ohlcv_js = client.get("/static/trade-map/core/10-ohlcv.js").text
+    assert "overlayAsOfAtCandleTimes" in ohlcv_js
     chart_js = client.get("/static/trade-map/chart.js").text
     assert "setVisibleLogicalRange(snap.logical)" in chart_js
     assert "subscribeVisibleTimeRangeChange" not in chart_js

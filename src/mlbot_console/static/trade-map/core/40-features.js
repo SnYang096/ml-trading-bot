@@ -465,6 +465,15 @@
       return Number(best.value);
     }
 
+    /** Regime chop: same as-of + no stale extension as regime滞回 / regime退出. */
+    function overlayChopValueAtBar(candles, overlay, timeSec) {
+      if (!candles?.length || !overlay?.points?.length || timeSec == null) return null;
+      const series = Core.overlayAsOfAtCandleTimes(overlay.points, candles);
+      const hit = series.find((p) => Number(p.time) === Number(timeSec));
+      if (!hit || hit.value == null || !Number.isFinite(Number(hit.value))) return null;
+      return Number(hit.value);
+    }
+
     /** YAML-shaped rows for regime.box_prefilter + rules (table, not multi-scale charts). */
     function buildThresholdMetricRows(columns, overlays, timeSec) {
       const colSet = new Set(columns || []);
@@ -693,10 +702,13 @@
       return specs;
     }
 
-    function chopGridMetricsCell(spec, overlays, timeSec) {
+    function chopGridMetricsCell(spec, overlays, timeSec, candles) {
       if (spec.kind === "scalar") {
         const o = overlays?.[spec.column];
-        const v = overlayValueAtTime(o, timeSec);
+        const v =
+          spec.column === "bpc_semantic_chop" && candles?.length
+            ? overlayChopValueAtBar(candles, o, timeSec)
+            : overlayValueAtTime(o, timeSec);
         if (v == null || !Number.isFinite(v)) return { value: "—", pass: null };
         const refs = o?.reference_lines || [];
         let pass = null;
@@ -729,7 +741,11 @@
       return { value: parts.join(" "), pass };
     }
 
-    function strategyMetricsRowCell(strategyId, row, overlays, timeSec) {
+    function strategyMetricsRowCell(strategyId, row, overlays, timeSec, candles) {
+      const sid = String(strategyId || "").toLowerCase();
+      if (sid === "chop_grid") {
+        return chopGridMetricsCell(row, overlays, timeSec, candles);
+      }
       if (row.kind === "scalar") {
         return strategyMetricsCell(
           {
@@ -829,15 +845,15 @@
       return strategyMetricsRowSpecs("chop_grid", columns, overlays);
     }
 
-    function chopGridMetricsRowCell(row, overlays, timeSec) {
-      return strategyMetricsRowCell("chop_grid", row, overlays, timeSec);
+    function chopGridMetricsRowCell(row, overlays, timeSec, candles) {
+      return chopGridMetricsCell(row, overlays, timeSec, candles);
     }
 
     /** Top-row gate for pivot table: strategy-specific or generic all-pass. */
-    function strategyBarGateEvaluator(strategyId, columns, overlays, timeSec) {
+    function strategyBarGateEvaluator(strategyId, columns, overlays, timeSec, candles) {
       const sid = String(strategyId || "").toLowerCase();
       if (sid === "chop_grid") {
-        return chopGridBarCanEnter(columns, overlays, timeSec);
+        return chopGridBarCanEnter(columns, overlays, timeSec, candles);
       }
       const rows = strategyMetricsRowSpecs(sid, columns, overlays);
       if (!rows.length) return null;
@@ -857,13 +873,13 @@
      * Match chop_grid live: enter when chop≥entry, box_pos in band, and not a stable box
      * (all regime.box_prefilter rows pass).
      */
-    function chopGridBarCanEnter(columns, overlays, timeSec) {
+    function chopGridBarCanEnter(columns, overlays, timeSec, candles) {
       const rows = chopGridMetricsRowSpecs(columns, overlays);
       let chopPass = null;
       let boxPosPass = null;
       const regimePasses = [];
       for (const row of rows) {
-        const cell = chopGridMetricsRowCell(row, overlays, timeSec);
+        const cell = chopGridMetricsCell(row, overlays, timeSec, candles);
         if (row.kind === "scalar" && row.column === "bpc_semantic_chop") {
           chopPass = cell.pass;
         } else if (row.kind === "scalar" && row.column === "box_pos_60") {

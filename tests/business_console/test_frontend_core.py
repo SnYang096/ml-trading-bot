@@ -334,6 +334,48 @@ console.log(JSON.stringify({
     id: "multi_leg:regime_exit:BNB:1",
     detail: { source: "feature_bus_hysteresis" },
   }),
+  regimeExitNoTrailingFfill: (() => {
+    const candles = [
+      { time: 1000 },
+      { time: 2000 },
+      { time: 3000 },
+      { time: 4000 },
+    ];
+    const overlays = {
+      bpc_semantic_chop: {
+        points: [
+          { time: 1000, value: 0.55 },
+          { time: 2000, value: 0.55 },
+        ],
+        reference_lines: [{ y: 0.5, operator: ">=" }, { y: 0.32, operator: "<" }],
+      },
+    };
+    const exits = Core.synthesizeChopRegimeExitMarkers(candles, overlays).map((m) => m.time);
+    const onAt = Core.chopRegimeHysteresisOnAtTime(candles, overlays, 4000);
+    return { exits, onAt4000: onAt };
+  })(),
+  chopStaleMetricsCell: (() => {
+    const candles = [
+      { time: 1000 },
+      { time: 2000 },
+      { time: 3000 },
+      { time: 4000 },
+    ];
+    const overlays = {
+      bpc_semantic_chop: {
+        points: [
+          { time: 1000, value: 0.55 },
+          { time: 2000, value: 0.55 },
+        ],
+        reference_lines: [{ y: 0.5, operator: ">=" }, { y: 0.32, operator: "<" }],
+      },
+    };
+    const rows = Core.chopGridMetricsRowSpecs(["bpc_semantic_chop"], overlays);
+    const chopRow = rows.find((r) => r.column === "bpc_semantic_chop");
+    const at4000 = Core.chopGridMetricsRowCell(chopRow, overlays, 4000, candles);
+    const hysteresisOn = Core.chopRegimeHysteresisOnAtTime(candles, overlays, 4000);
+    return { at4000, hysteresisOn };
+  })(),
 }));
 """
 
@@ -416,6 +458,11 @@ def test_trade_map_core_node():
     assert out["regimeExitBarTimes"] == [3000]
     assert out["findMarkerOnBarPrefersRegime"] == "reg"
     assert out["isFbRegime"] is True
+    assert out["regimeExitNoTrailingFfill"]["exits"] == [3000]
+    assert out["regimeExitNoTrailingFfill"]["onAt4000"] is False
+    assert out["chopStaleMetricsCell"]["at4000"]["value"] == "—"
+    assert out["chopStaleMetricsCell"]["at4000"]["pass"] is None
+    assert out["chopStaleMetricsCell"]["hysteresisOn"] is False
     assert out["chopMetricsSpecs"] >= 2
     assert out["chopPreset"] == ["bpc_semantic_chop", "box_pos_60"]
     assert out["trendPreset"] == ["trend_confidence", "bpc_semantic_chop"]

@@ -104,6 +104,46 @@
       });
     }
 
+    /**
+     * Per-candle backward as-of only (no forward-fill past last feature row).
+     * Use for chop regime hysteresis so stale 1.0 does not block exit on later bars.
+     */
+    function overlayAsOfAtCandleTimes(points, candles) {
+      if (!candles?.length) return [];
+      const sorted = [...(points || [])]
+        .filter(
+          (p) =>
+            p &&
+            Number.isFinite(Number(p.time)) &&
+            Number.isFinite(Number(p.value))
+        )
+        .sort((a, b) => Number(a.time) - Number(b.time));
+      const out = [];
+      for (const c of candles) {
+        const t = Number(c?.time);
+        if (!Number.isFinite(t)) continue;
+        if (!sorted.length) {
+          out.push({ time: t, value: null });
+          continue;
+        }
+        const lastPtTime = Number(sorted[sorted.length - 1].time);
+        let idx = -1;
+        for (let k = 0; k < sorted.length; k++) {
+          if (Number(sorted[k].time) <= t) idx = k;
+          else break;
+        }
+        let v = idx >= 0 ? Number(sorted[idx].value) : null;
+        if (v != null && Number.isFinite(v) && t > lastPtTime) {
+          v = null;
+        }
+        out.push({
+          time: t,
+          value: v != null && Number.isFinite(v) ? v : null,
+        });
+      }
+      return out;
+    }
+
     /** Main-chart MA overlays: one point per candle, backward as-of + forward-fill. */
     function forwardFillOverlayToCandles(points, candles) {
       if (!candles?.length) return [];
@@ -175,6 +215,7 @@
     mergeCandlesByTime,
     clipOverlayPointsToCandles,
     forwardFillOverlayToCandles,
+    overlayAsOfAtCandleTimes,
     alignSeriesToCandleTimes,
     isoFromUnixSec,
   });

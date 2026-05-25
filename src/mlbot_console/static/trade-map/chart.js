@@ -237,7 +237,7 @@ function initMainChart() {
 
   let chartResizeRaf = null;
   const resize = () => {
-    const snap = captureChartViewport();
+    const snap = S.crosshairOnChart ? null : captureChartViewport();
     S.chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
     for (const pane of S.subcharts.values()) {
       if (!pane.chart || !pane.host) continue;
@@ -246,7 +246,7 @@ function initMainChart() {
         height: pane.host.clientHeight,
       });
     }
-    restoreChartViewport(snap);
+    if (!S.crosshairOnChart) restoreChartViewport(snap);
     syncSubchartsToMainRange();
     if (typeof layoutChopGridLabels === "function") {
       layoutChopGridLabels(S.lastCandles);
@@ -267,6 +267,7 @@ function initMainChart() {
     const stack = document.getElementById("subchartStack");
     if (stack) {
       const stackRo = new ResizeObserver(() => {
+        if (S.crosshairOnChart) return;
         resizeAllSubcharts();
         if (typeof scheduleMetricsTableViewportSync === "function") {
           scheduleMetricsTableViewportSync();
@@ -284,18 +285,15 @@ function initMainChart() {
     S.highlightBarTime = param.time;
     if (typeof refreshFeatureMetricsPanel === "function") {
       refreshFeatureMetricsPanel(param.time, { rebuild: false, preserveScrollLeft: true });
-      highlightMetricsTableColumn(param.time, { allowScroll: true });
+      highlightMetricsTableColumn(param.time, { allowScroll: false });
     }
     const tf = document.getElementById("timeframeSelect")?.value || "2h";
     const tol = Core.timeframeToleranceSec(tf);
     const hit = Core.findMarkerOnBar
       ? Core.findMarkerOnBar(S.lastRawMarkers, param.time, tol)
       : Core.findMarkerByTime(S.lastRawMarkers, param.time, tol);
-    if (typeof scrollChartToBarTime === "function") {
-      scrollChartToBarTime(param.time);
-    }
     if (hit?.id) {
-      selectMarker(hit.id, { scrollChart: false, scrollTime: param.time });
+      selectMarker(hit.id, { scrollChart: false, showDetail: true });
     }
   });
 
@@ -306,6 +304,9 @@ function initMainChart() {
       S.crosshairOnChart = false;
       if (typeof cancelMetricsTableScrollSchedule === "function") {
         cancelMetricsTableScrollSchedule();
+      }
+      if (typeof flushDeferredCrosshairWork === "function") {
+        flushDeferredCrosshairWork();
       }
       return;
     }
@@ -336,10 +337,7 @@ function initMainChart() {
 
     legend.innerHTML = `${timeStr}  O <span class="legend-price">${o.toFixed(4)}</span>  H <span class="legend-price">${h.toFixed(4)}</span>  L <span class="legend-price">${l.toFixed(4)}</span>  C <span class="legend-price">${c.toFixed(4)}</span>  <span class="${cls}">${sign}${pct}%</span>${overlayText}`;
     legend.classList.remove("hidden");
-    if (typeof refreshThresholdTablesAtTime === "function") {
-      refreshThresholdTablesAtTime(param.time);
-    } else if (typeof refreshFeatureMetricsPanel === "function") {
-      refreshFeatureMetricsPanel(param.time, { rebuild: false, preserveScrollLeft: true });
+    if (typeof highlightMetricsTableColumn === "function") {
       highlightMetricsTableColumn(param.time, { allowScroll: false });
     }
   });

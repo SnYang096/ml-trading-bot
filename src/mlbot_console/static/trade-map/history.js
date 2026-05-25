@@ -208,8 +208,10 @@ function bindTimeScaleSync() {
       cancelMetricsTableScrollSchedule();
     }
     syncSubchartsToMainRange();
-    if (typeof scheduleMetricsTableViewportSync === "function") {
+    if (!S.crosshairOnChart && typeof scheduleMetricsTableViewportSync === "function") {
       scheduleMetricsTableViewportSync();
+    } else if (S.crosshairOnChart) {
+      S.pendingMetricsViewportSync = true;
     }
     if (typeof isViewingHistoricalBars !== "function" || !isViewingHistoricalBars()) {
       refreshMainPriceAutoscale();

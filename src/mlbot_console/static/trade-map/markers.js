@@ -4,6 +4,10 @@ var Core = globalThis.MLBotTradeMapCore;
 var Shell = globalThis.MLBotConsole;
 
 function applyMarkers(rawMarkers, opts = {}) {
+  if (opts.merge && S.crosshairOnChart) {
+    S.pendingPollMarkers = rawMarkers || [];
+    return;
+  }
   let incoming = rawMarkers || [];
   if (typeof Core.isFeatureBusRegimeExitMarker === "function") {
     incoming = incoming.filter((m) => !Core.isFeatureBusRegimeExitMarker(m));

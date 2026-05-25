@@ -425,6 +425,21 @@
   color: #f85149;
 }
 
+.feature-metrics-table .row-regime-on-h {
+  color: #8b949e;
+  font-size: 0.62rem;
+  white-space: nowrap;
+}
+
+.feature-metrics-table .bar-regime-on-hit .bar-regime-on-mark {
+  color: #73bf69;
+  font-weight: 600;
+}
+
+.feature-metrics-table .bar-regime-on-off {
+  color: #484f58;
+}
+
 .feature-metrics-table .row-regime-exit-h {
   font-size: 0.72rem;
   color: #ff7043;

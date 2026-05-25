@@ -226,7 +226,11 @@ async function refreshBundle(opts = {}) {
       S.selectedFeatureColumns
     );
     if (metricsActive) {
-      if (typeof scheduleMetricsTableViewportSync === "function") {
+      if (S.crosshairOnChart) {
+        if (typeof highlightMetricsTableColumn === "function") {
+          highlightMetricsTableColumn(S.highlightBarTime ?? null, { allowScroll: false });
+        }
+      } else if (typeof scheduleMetricsTableViewportSync === "function") {
         scheduleMetricsTableViewportSync();
       } else if (typeof refreshFeatureMetricsPanel === "function") {
         refreshFeatureMetricsPanel(S.highlightBarTime ?? null, {
@@ -276,7 +280,11 @@ async function refreshBundle(opts = {}) {
 
   const markers = data.markers || [];
   if (mode === "poll") {
-    applyMarkers(markers, { merge: true });
+    if (S.crosshairOnChart) {
+      S.pendingPollMarkers = markers;
+    } else {
+      applyMarkers(markers, { merge: true });
+    }
     S.lastTradeLinks = mergeTradeLinks(S.lastTradeLinks, data.trade_links || []);
   } else {
     applyMarkers(markers);

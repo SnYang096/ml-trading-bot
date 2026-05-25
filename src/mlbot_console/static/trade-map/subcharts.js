@@ -47,16 +47,9 @@ function candleIndexAtTime(candles, timeSec) {
   return best;
 }
 
-/** Visible window plus crosshair bar (so highlight/scroll work when bar is off-screen). */
-function indicesForMetricsTable(candles, highlightTimeSec) {
-  let { from, to } = visibleCandleIndexRange(candles);
-  const hi = candleIndexAtTime(candles, highlightTimeSec);
-  if (hi >= 0) {
-    const pad = 12;
-    from = Math.min(from, Math.max(0, hi - pad));
-    to = Math.max(to, Math.min((candles || []).length - 1, hi + pad));
-  }
-  return { from, to };
+/** Metrics columns = main-chart visible bars only (crosshair must not widen/rebuild range). */
+function indicesForMetricsTable(candles) {
+  return visibleCandleIndexRange(candles);
 }
 
 /** Active metrics column: crosshair/click only — never default to latest bar (avoids poll drift). */
@@ -429,9 +422,9 @@ function metricsTableCaption(strategyId) {
   const title = Core.strategyFocusLabel(strategyId) || strategyId || "策略";
   const sid = String(strategyId || "").toLowerCase();
   if (sid === "chop_grid") {
-    return "Chop Grid 指标表 · 顶行✓/×=可新开网格 · regime退出=主图橙标(与表「退出」列同 bar) · 点击列定位 K 线";
+    return "Chop Grid 指标表 · 可入场=滞回ON+box_pos+非稳定箱 · regime滞回/退出=主图逻辑 · 点主图不缩放";
   }
-  return `${title} 指标表 · 顶行✓/×=门槛汇总 · 点击列定位主图 · 十字线停住约3s才自动横滚`;
+  return `${title} 指标表 · 顶行✓/×=门槛汇总 · 点主图仅高亮列不缩放 · 点表列可定位主图`;
 }
 
 function renderStrategyMetricsTableHtml(
@@ -448,7 +441,7 @@ function renderStrategyMetricsTableHtml(
       Core.strategyFocusLabel(sid) || sid
     )}」预设或勾选该策略 regime/prefilter/gate 特征列）</p>`;
   }
-  const { from, to } = indicesForMetricsTable(candles, highlightTimeSec);
+  const { from, to } = indicesForMetricsTable(candles);
   const bars = [];
   for (let i = from; i <= to; i++) {
     const t = candles[i]?.time;
@@ -462,11 +455,15 @@ function renderStrategyMetricsTableHtml(
     sid === "chop_grid" && typeof Core.chopRegimeExitBarTimes === "function"
       ? Core.chopRegimeExitBarTimes(candles, overlays)
       : new Set();
+  const regimeOnTimes =
+    sid === "chop_grid" && typeof Core.chopRegimeHysteresisOnBarTimes === "function"
+      ? Core.chopRegimeHysteresisOnBarTimes(candles, overlays)
+      : new Set();
   let head = '<thead><tr><th class="row-label-h">可入场</th>';
   for (const b of bars) {
     const active =
       highlightTimeSec != null && Number(highlightTimeSec) === Number(b.time);
-    const canEnter = Core.strategyBarGateEvaluator(sid, cols, overlays, b.time);
+    const canEnter = Core.strategyBarGateEvaluator(sid, cols, overlays, b.time, candles);
     const gate = canEnter === true ? "✓" : canEnter === false ? "×" : "·";
     const gateCls =
       canEnter === true
@@ -478,6 +475,22 @@ function renderStrategyMetricsTableHtml(
   }
   head += '</tr>';
   if (sid === "chop_grid") {
+    head += '<tr><th class="row-label-h row-regime-on-h">regime滞回</th>';
+    for (const b of bars) {
+      const active =
+        highlightTimeSec != null && Number(highlightTimeSec) === Number(b.time);
+      const on = regimeOnTimes.has(Number(b.time));
+      head += `<th class="bar-col-h bar-regime-on-h${
+        on ? " bar-regime-on-hit" : ""
+      }${active ? " bar-col-active" : ""}" data-time="${b.time}">${
+        on
+          ? `<span class="bar-regime-on-mark" title="${escHtml(
+              "chop≥0.50 滞回 ON（与 live 一致；无特征=0 视为 OFF）"
+            )}">ON</span>`
+          : '<span class="bar-regime-on-mark bar-regime-on-off">OFF</span>'
+      }</th>`;
+    }
+    head += "</tr>";
     head += '<tr><th class="row-label-h row-regime-exit-h">regime退出</th>';
     for (const b of bars) {
       const active =
@@ -488,7 +501,7 @@ function renderStrategyMetricsTableHtml(
       }${active ? " bar-col-active" : ""}" data-time="${b.time}">${
         isExit
           ? `<span class="bar-regime-exit-mark" title="${escHtml(
-              "chop 低于退出阈值，与主图 regime退出 标记一致"
+              "滞回 ON→OFF 当根 bar（chop&lt;0.32），与主图 regime退出 一致"
             )}">退出</span>`
           : '<span class="bar-regime-exit-mark bar-regime-exit-empty">·</span>'
       }</th>`;
@@ -507,7 +520,7 @@ function renderStrategyMetricsTableHtml(
     body += "<tr>";
     body += `<th class="row-label"><div class="col-name">${escHtml(row.label)}</div><div class="col-thresh">${escHtml(row.threshold || "")}</div></th>`;
     for (const b of bars) {
-      const cell = Core.strategyMetricsRowCell(sid, row, overlays, b.time);
+      const cell = Core.strategyMetricsRowCell(sid, row, overlays, b.time, candles);
       const active =
         highlightTimeSec != null && Number(highlightTimeSec) === Number(b.time);
       const cls =
@@ -540,15 +553,35 @@ let lastMetricsTableRangeKey = "";
 
 /** Debounced metrics table rebuild when chart viewport changes (avoids resize/pan jitter). */
 function scheduleMetricsTableViewportSync() {
+  if (S.crosshairOnChart) {
+    S.pendingMetricsViewportSync = true;
+    return;
+  }
   if (metricsViewportSyncTimer != null) clearTimeout(metricsViewportSyncTimer);
   metricsViewportSyncTimer = setTimeout(() => {
     metricsViewportSyncTimer = null;
+    if (S.crosshairOnChart) {
+      S.pendingMetricsViewportSync = true;
+      return;
+    }
     if (typeof refreshFeatureMetricsPanel !== "function") return;
     refreshFeatureMetricsPanel(metricsTableHighlightTime(), {
       rebuild: true,
       preserveScrollLeft: true,
     });
   }, METRICS_VIEWPORT_SYNC_MS);
+}
+
+function flushDeferredCrosshairWork() {
+  if (S.pendingMetricsViewportSync) {
+    S.pendingMetricsViewportSync = false;
+    scheduleMetricsTableViewportSync();
+  }
+  if (S.pendingPollMarkers) {
+    const pending = S.pendingPollMarkers;
+    S.pendingPollMarkers = null;
+    applyMarkers(pending, { merge: true });
+  }
 }
 
 function cancelMetricsTableViewportSync() {
@@ -558,15 +591,9 @@ function cancelMetricsTableViewportSync() {
   }
 }
 
-function visibleMetricsRangeKey(candles, highlightTimeSec) {
-  const { from, to } = indicesForMetricsTable(candles, highlightTimeSec);
-  const hi =
-    highlightTimeSec != null
-      ? Number(highlightTimeSec)
-      : S.highlightBarTime != null
-        ? Number(S.highlightBarTime)
-        : null;
-  return `${from}:${to}:${hi ?? ""}`;
+function visibleMetricsRangeKey(candles) {
+  const { from, to } = indicesForMetricsTable(candles);
+  return `${from}:${to}`;
 }
 
 function applyMetricsColumnHighlight(scroll, timeSec) {
@@ -702,7 +729,7 @@ function ensureFeatureMetricsTablePane(item, candles, overlays, highlightTimeSec
     cols,
     highlightTimeSec
   );
-  lastMetricsTableRangeKey = visibleMetricsRangeKey(candles, highlightTimeSec);
+  lastMetricsTableRangeKey = visibleMetricsRangeKey(candles);
   requestAnimationFrame(() => highlightMetricsTableColumn(highlightTimeSec));
   return domId;
 }
@@ -741,12 +768,10 @@ function refreshFeatureMetricsPanel(
   const timeSec = metricsTableHighlightTime(
     highlightTimeSec !== undefined ? highlightTimeSec : undefined
   );
-  const rangeKey = visibleMetricsRangeKey(candles, timeSec);
+  const rangeKey = visibleMetricsRangeKey(candles);
   const hasTable = !!scroll.querySelector(".feature-metrics-table");
   const rangeChanged = rangeKey !== lastMetricsTableRangeKey;
-  const needsBar =
-    rebuild && (!hasTable || !metricsTableHasBarColumn(scroll, timeSec));
-  const mustRebuild = rebuild && (needsBar || rangeChanged);
+  const mustRebuild = rebuild && (!hasTable || rangeChanged);
   if (!mustRebuild) {
     highlightMetricsTableColumn(timeSec);
     return;
@@ -770,15 +795,14 @@ function refreshThresholdTablesAtTime(timeSec) {
   if (!document.getElementById("subchartStack")) return;
   if (Core.strategyMetricsTableActive(S.featureStrategyFocus, S.selectedFeatureColumns)) {
     if (timeSec != null) S.highlightBarTime = timeSec;
-    const scroll = document.getElementById("featureMetricsScroll");
-    const needsBar =
-      timeSec != null &&
-      scroll &&
-      !metricsTableHasBarColumn(scroll, timeSec);
-    refreshFeatureMetricsPanel(timeSec, {
-      rebuild: needsBar,
-      preserveScrollLeft: true,
-    });
+    if (S.crosshairOnChart) {
+      highlightMetricsTableColumn(timeSec, { allowScroll: false });
+    } else {
+      refreshFeatureMetricsPanel(timeSec, {
+        rebuild: true,
+        preserveScrollLeft: true,
+      });
+    }
     const insp = document.getElementById("featureBarInspector");
     if (insp) insp.classList.add("hidden");
     return;

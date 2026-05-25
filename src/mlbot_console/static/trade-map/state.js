@@ -23,6 +23,8 @@
   if (S.timeSyncBound === undefined) S.timeSyncBound = false;
   if (S.syncingTimeScale === undefined) S.syncingTimeScale = false;
   if (S.crosshairOnChart === undefined) S.crosshairOnChart = false;
+  if (S.pendingMetricsViewportSync === undefined) S.pendingMetricsViewportSync = false;
+  if (S.pendingPollMarkers === undefined) S.pendingPollMarkers = null;
   if (S.clockTimer === undefined) S.clockTimer = null;
   if (S.tradeLinkSeries == null) S.tradeLinkSeries = [];
   if (S.chopGridPriceLines == null) S.chopGridPriceLines = [];

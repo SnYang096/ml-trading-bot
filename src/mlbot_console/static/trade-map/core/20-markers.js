@@ -123,12 +123,14 @@
       return { entryMin, exitBelow };
     }
 
+    /** Match live: missing chop reads as 0.0 → not in regime (do not hold active on gaps). */
     function chopGridHysteresisActive(values, entryMin, exitBelow) {
       let active = false;
       const out = [];
       for (const val of values) {
         if (val == null || !Number.isFinite(val)) {
-          out.push(active);
+          active = false;
+          out.push(false);
           continue;
         }
         if (!active) active = val >= entryMin;
@@ -138,17 +140,37 @@
       return out;
     }
 
+    function chopRegimeSeriesFromOverlay(candles, overlays) {
+      const ol = overlays?.bpc_semantic_chop;
+      if (!ol || !Array.isArray(candles) || !candles.length) {
+        return { series: [], vals: [], chopOn: [], entryMin: 0.5, exitBelow: 0.32 };
+      }
+      const series = Core.overlayAsOfAtCandleTimes(ol.points || [], candles);
+      const { entryMin, exitBelow } = chopRegimeThresholdsFromOverlay(ol);
+      const vals = series.map((p) =>
+        p.value == null || !Number.isFinite(Number(p.value)) ? null : Number(p.value)
+      );
+      const chopOn = chopGridHysteresisActive(vals, entryMin, exitBelow);
+      return { series, vals, chopOn, entryMin, exitBelow };
+    }
+
+    function chopRegimeHysteresisOnAtTime(candles, overlays, timeSec) {
+      const { series, chopOn } = chopRegimeSeriesFromOverlay(candles, overlays);
+      const t = Number(timeSec);
+      if (!Number.isFinite(t)) return false;
+      for (let i = 0; i < series.length; i++) {
+        if (Number(series[i].time) === t) return !!chopOn[i];
+      }
+      return false;
+    }
+
     /** Synthetic regime exits from bpc_semantic_chop overlay (matches live hysteresis flatten). */
     function synthesizeChopRegimeExitMarkers(candles, overlays) {
       const ol = overlays?.bpc_semantic_chop;
       if (!ol || !Array.isArray(candles) || !candles.length) return [];
-      const filled = Core.forwardFillOverlayToCandles(ol.points || [], candles);
-      if (!filled.length) return [];
+      const { series, vals, chopOn } = chopRegimeSeriesFromOverlay(candles, overlays);
+      if (!series.length) return [];
       const { entryMin, exitBelow } = chopRegimeThresholdsFromOverlay(ol);
-      const vals = filled.map((p) =>
-        p.value == null || !Number.isFinite(Number(p.value)) ? null : Number(p.value)
-      );
-      const chopOn = chopGridHysteresisActive(vals, entryMin, exitBelow);
       const sym = String(
         (candles[0] && candles[0].symbol) || "BNBUSDT"
       ).toUpperCase();
@@ -156,7 +178,7 @@
       for (let i = 1; i < chopOn.length; i++) {
         if (!(chopOn[i - 1] && !chopOn[i])) continue;
         const val = vals[i];
-        if (val == null || val >= exitBelow) continue;
+        if (val != null && Number.isFinite(val) && val >= exitBelow) continue;
         const t = Number(candles[i].time);
         if (!Number.isFinite(t)) continue;
         markers.push({
@@ -190,6 +212,15 @@
         if (Number.isFinite(t)) times.add(t);
       }
       return times;
+    }
+
+    function chopRegimeHysteresisOnBarTimes(candles, overlays) {
+      const { series, chopOn } = chopRegimeSeriesFromOverlay(candles, overlays);
+      const on = new Set();
+      for (let i = 0; i < series.length; i++) {
+        if (chopOn[i]) on.add(Number(series[i].time));
+      }
+      return on;
     }
 
     function mergeRegimeExitMarkers(markers, regimeExits) {
@@ -360,6 +391,9 @@
     chopGridHysteresisActive,
     synthesizeChopRegimeExitMarkers,
     chopRegimeExitBarTimes,
+    chopRegimeSeriesFromOverlay,
+    chopRegimeHysteresisOnAtTime,
+    chopRegimeHysteresisOnBarTimes,
     mergeRegimeExitMarkers,
     chopGridLegSide,
     chopGridLabelAnchor,
