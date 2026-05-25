@@ -46,7 +46,7 @@ function renderRows(rows) {
       return `<tr data-account-layer="${esc(r.account_layer || "")}">
         <td>${esc(layer)}</td>
         <td><strong>${esc(r.strategy)}</strong></td>
-        <td class="muted">${present} ${esc(src)}<br/><span class="account-sub">${esc(r.regime_path)}</span></td>
+        <td class="muted regime-config-cell">${present} ${esc(src)}<br/><span class="account-sub">${esc(r.regime_path)}</span></td>
         <td>${r.n_rules ?? 0}</td>
         <td>${esc((r.allowed_sides || []).join(", "))}</td>
         <td>${esc(fmtLc(r.last_calibration))}</td>

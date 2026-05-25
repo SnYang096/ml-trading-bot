@@ -79,3 +79,27 @@ def test_trade_map_page_loads(live_server):
         assert page.locator("#appNav").text_content()
         assert "策略信号" in (page.locator("#appNav").text_content() or "")
         browser.close()
+
+
+@pytest.mark.integration
+def test_regime_page_main_uses_column_layout(live_server):
+    """Regression: global main{display:flex} row broke Regime table (empty left gutter)."""
+    url = f"{live_server}/regime"
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page(viewport={"width": 1280, "height": 800})
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_selector("#regimeBody tr", state="attached", timeout=20000)
+        main = page.locator("main.regime-main")
+        assert main.evaluate("el => getComputedStyle(el).flexDirection") == "column"
+        widths = page.locator(".signals-table-wrap").evaluate(
+            """el => {
+              const main = el.closest('main');
+              const r = el.getBoundingClientRect();
+              const m = main.getBoundingClientRect();
+              return { wrap: r.width, main: m.width, left: r.left - m.left };
+            }"""
+        )
+        assert widths["wrap"] >= widths["main"] * 0.85
+        assert widths["left"] < 40
+        browser.close()

@@ -78,7 +78,8 @@
   border-color: #58a6ff;
 }
 
-main {
+.page-trade-map main,
+.page-trade-map main.trade-map-main {
   display: flex;
   height: calc(100vh - 72px);
 }
