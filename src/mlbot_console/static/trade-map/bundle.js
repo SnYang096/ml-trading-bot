@@ -198,7 +198,10 @@ async function refreshBundle(opts = {}) {
       typeof refreshFeatureMetricsPanel === "function" &&
       Core.chopMetricsTableActive(S.featureStrategyFocus, S.selectedFeatureColumns)
     ) {
-      refreshFeatureMetricsPanel(S.highlightBarTime ?? null);
+      refreshFeatureMetricsPanel(S.highlightBarTime ?? null, {
+        rebuild: true,
+        scrollNow: false,
+      });
     }
   } else if (mode !== "poll") {
     const candles = Core.sanitizeCandlesForLwc(data.ohlcv?.candles || []);

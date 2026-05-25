@@ -234,6 +234,9 @@ def trade_map_markers(
         symbol=symbol,
         scopes=scope_list,
         engine_data_root=SETTINGS.engine_data_root,
+        feature_bus_root=SETTINGS.feature_bus_root,
+        strategies_root=SETTINGS.strategies_root,
+        map_timeframe="2h",
         **mk,
     )
     if include_pending and not from_ and not to:
@@ -381,6 +384,9 @@ def trade_map_bundle(
         scopes=scope_list,
         engine_data_root=SETTINGS.engine_data_root,
         strategies=strat_list,
+        feature_bus_root=SETTINGS.feature_bus_root,
+        strategies_root=SETTINGS.strategies_root,
+        map_timeframe=tf,
         **mk,
     )
     marker_counts = marker_scope_counts(markers)

@@ -114,7 +114,10 @@ function syncSubchartsToMainRange() {
         }
       }
       if (typeof refreshFeatureMetricsPanel === "function") {
-        refreshFeatureMetricsPanel(S.highlightBarTime ?? null);
+        refreshFeatureMetricsPanel(S.highlightBarTime ?? null, {
+          rebuild: true,
+          scrollNow: true,
+        });
       }
       return;
     }
@@ -141,7 +144,10 @@ function syncSubchartsToMainRange() {
       }
     }
     if (typeof refreshFeatureMetricsPanel === "function") {
-      refreshFeatureMetricsPanel(S.highlightBarTime ?? null);
+      refreshFeatureMetricsPanel(S.highlightBarTime ?? null, {
+        rebuild: true,
+        scrollNow: true,
+      });
     }
   } finally {
     S.syncingTimeScale = false;
@@ -213,7 +219,10 @@ function initMainChart() {
           )
         ) {
           if (typeof refreshFeatureMetricsPanel === "function") {
-            refreshFeatureMetricsPanel(S.highlightBarTime ?? null);
+            refreshFeatureMetricsPanel(S.highlightBarTime ?? null, {
+              rebuild: true,
+              scrollNow: true,
+            });
           }
         } else {
           syncSubchartsToMainRange();
@@ -228,7 +237,7 @@ function initMainChart() {
     if (!param || param.time === undefined) return;
     S.highlightBarTime = param.time;
     if (typeof refreshFeatureMetricsPanel === "function") {
-      refreshFeatureMetricsPanel(param.time);
+      refreshFeatureMetricsPanel(param.time, { rebuild: true, scrollNow: true });
     }
     const tf = document.getElementById("timeframeSelect")?.value || "2h";
     const tol = Core.timeframeToleranceSec(tf);

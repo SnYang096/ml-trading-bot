@@ -14,6 +14,11 @@
     function markerShape(marker) {
       const role = markerRole(marker);
       const pending = (marker.status || "filled").toLowerCase() === "pending";
+      const regimeExit =
+        role === "exit" &&
+        marker.detail &&
+        String(marker.detail.exit_kind || "").toLowerCase() === "regime_or_risk_exit";
+      if (regimeExit) return "arrowDown";
       if (role === "tp") return pending ? "circle" : Core.TP_MARKER_SHAPE;
       if (role === "exit") return Core.EXIT_SHAPE;
       if (role === "grid") return "square";
@@ -33,6 +38,13 @@
         return pnl >= 0 ? "#26a69a" : "#ef5350";
       }
       if (role === "tp") return Core.TP_MARKER_COLOR;
+      if (
+        role === "exit" &&
+        marker.detail &&
+        String(marker.detail.exit_kind || "").toLowerCase() === "regime_or_risk_exit"
+      ) {
+        return marker.color || "#ff7043";
+      }
       if (role === "grid") return marker.color || "#73BF69";
       if (role === "entry") {
         return side === "long" ? "#2e7d32" : "#c62828";
@@ -80,6 +92,13 @@
       const leg = String((m.detail && m.detail.leg_label) || "").trim().toUpperCase();
       if (!leg) return "";
       const ev = String(m.event || "").toLowerCase();
+      if (
+        ev === "exit" &&
+        m.detail &&
+        String(m.detail.exit_kind || "").toLowerCase() === "regime_or_risk_exit"
+      ) {
+        return "regime退出";
+      }
       if (ev === "tp") return leg.endsWith("_TP") ? leg : `${leg}_TP`;
       if (ev === "entry" && !pending) return `${leg} 成交`;
       if (pending || ev === "grid") return `${leg} 挂单`;
@@ -142,6 +161,13 @@
         let aboveBar = role === "exit" || role === "tp";
         let position = aboveBar ? "aboveBar" : "belowBar";
         if (strat === "chop_grid") {
+          const regimeExit =
+            role === "exit" &&
+            m.detail &&
+            String(m.detail.exit_kind || "").toLowerCase() === "regime_or_risk_exit";
+          if (regimeExit) {
+            position = "aboveBar";
+          } else {
           const legSide = chopGridLegSide(
             (m.detail && m.detail.leg_label) || (m.detail && m.detail.leg_id) || legToken
           );
@@ -156,6 +182,7 @@
             else if (legSide === "long") position = "belowBar";
           } else {
             position = aboveBar ? "aboveBar" : "belowBar";
+          }
           }
         }
         const isTp = role === "tp";

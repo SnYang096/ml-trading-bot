@@ -177,7 +177,10 @@ function bindTimeScaleSync() {
   const onMainViewportChange = () => {
     syncSubchartsToMainRange();
     if (typeof refreshFeatureMetricsPanel === "function") {
-      refreshFeatureMetricsPanel(S.highlightBarTime ?? null);
+      refreshFeatureMetricsPanel(S.highlightBarTime ?? null, {
+        rebuild: true,
+        scrollNow: true,
+      });
     }
     if (typeof isViewingHistoricalBars !== "function" || !isViewingHistoricalBars()) {
       refreshMainPriceAutoscale();

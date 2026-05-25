@@ -53,6 +53,38 @@ def test_hysteresis_active_enter_exit():
     assert out == [False, True, True, False, False]
 
 
+def test_chop_grid_regime_exit_markers(bus_root) -> None:
+    from mlbot_console.services.strategy_stage_regions import (
+        load_chop_grid_regime_exit_markers,
+    )
+
+    sym = "ETHUSDT"
+    feat_dir = bus_root / "features" / "120T"
+    path = feat_dir / f"{sym}.parquet"
+    start = pd.Timestamp("2024-01-01", tz="UTC")
+    rows = []
+    for i in range(6):
+        chop = 0.55 if i < 3 else 0.25
+        rows.append(
+            {
+                "timestamp": start + pd.Timedelta(hours=2 * i),
+                "bpc_semantic_chop": chop,
+            }
+        )
+    pd.DataFrame(rows).to_parquet(path, index=False)
+    markers = load_chop_grid_regime_exit_markers(
+        bus_root,
+        sym,
+        "2h",
+        STRATEGIES_ROOT,
+        start=start,
+        end=start + pd.Timedelta(days=2),
+    )
+    assert len(markers) == 1
+    assert markers[0]["event"] == "exit"
+    assert markers[0]["detail"]["exit_kind"] == "regime_or_risk_exit"
+
+
 def test_evaluate_prefilter_all_of():
     rules = [
         {

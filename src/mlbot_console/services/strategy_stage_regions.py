@@ -358,6 +358,91 @@ def load_chop_grid_prefilter_regions(
     )
 
 
+def _chop_grid_regime_params(
+    strategies_root: Path,
+) -> Tuple[str, float, float]:
+    pre_path = strategies_root / "chop_grid" / "archetypes" / "prefilter.yaml"
+    raw = _load_yaml(pre_path)
+    regime_cfg = raw.get("regime") if isinstance(raw.get("regime"), dict) else {}
+    entry_feat = str(regime_cfg.get("entry_feature") or "bpc_semantic_chop")
+    entry_min = float(regime_cfg.get("entry_chop_min", 0.50))
+    exit_below = float(regime_cfg.get("exit_chop_below", 0.32))
+    return entry_feat, entry_min, exit_below
+
+
+def load_chop_grid_regime_exit_markers(
+    feature_bus_root: Path,
+    symbol: str,
+    timeframe: str,
+    strategies_root: Path,
+    *,
+    start: Optional[Any] = None,
+    end: Optional[Any] = None,
+) -> List[Dict[str, Any]]:
+    """Synthetic exit markers when chop hysteresis turns off (chop < exit_chop_below).
+
+    Matches live ``ChopGridLiveEngine`` regime flatten (``regime_or_risk_exit``), not
+    per-leg TP fills. Shown when feature bus is available even if DB lacks market_exit rows.
+    """
+    entry_feat, entry_min, exit_below = _chop_grid_regime_params(strategies_root)
+    columns: Set[str] = {entry_feat}
+    columns.update(_MULTILEG_RUNTIME_ALIASES.get(entry_feat, []))
+    df = _load_feature_frame(
+        feature_bus_root, symbol, timeframe, columns, start=start, end=end
+    )
+    if df.empty:
+        return []
+
+    times: List[int] = []
+    chop_vals: List[Optional[float]] = []
+    for _, row in df.iterrows():
+        ts = _parse_ts(row["timestamp"])
+        if ts is None:
+            continue
+        times.append(ts)
+        chop_vals.append(_resolve_feature_value(row, entry_feat))
+
+    if not times:
+        return []
+
+    chop_on = _hysteresis_active(
+        chop_vals, entry_min=entry_min, exit_below=exit_below
+    )
+    sym = symbol.upper()
+    markers: List[Dict[str, Any]] = []
+    for i in range(1, len(times)):
+        if not (chop_on[i - 1] and not chop_on[i]):
+            continue
+        val = chop_vals[i]
+        if val is None or val != val or val >= exit_below:
+            continue
+        t = times[i]
+        markers.append(
+            {
+                "id": f"multi_leg:regime_exit:{sym}:{t}",
+                "time": t,
+                "symbol": sym,
+                "scope": "multi_leg",
+                "strategy": "chop_grid",
+                "event": "exit",
+                "side": "long",
+                "price": None,
+                "qty": None,
+                "status": "filled",
+                "color": "#ff7043",
+                "detail": {
+                    "exit_kind": "regime_or_risk_exit",
+                    "exit_reason": "regime_or_risk_exit",
+                    "chop": val,
+                    "entry_chop_min": entry_min,
+                    "exit_chop_below": exit_below,
+                    "source": "feature_bus_hysteresis",
+                },
+            }
+        )
+    return markers
+
+
 def load_bundle_stage_regions(
     feature_bus_root: Path,
     strategies_root: Path,

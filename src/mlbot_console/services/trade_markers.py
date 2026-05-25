@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,6 +49,8 @@ STRATEGY_COLORS: Dict[str, str] = {
     "spot_accum_simple": "#2e7d32",
 }
 
+CHOP_GRID_REGIME_EXIT_COLOR = "#ff7043"
+
 
 def _parse_ts(raw: Any) -> Optional[int]:
     if raw is None or raw == "":
@@ -72,6 +75,52 @@ def _parse_ts(raw: Any) -> Optional[int]:
 
 def _marker_id(scope: str, source: str, key: str) -> str:
     return f"{scope}:{source}:{key}"
+
+
+def _action_reason_from_row(row: Dict[str, Any]) -> str:
+    raw = row.get("raw")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            raw = None
+    if isinstance(raw, dict):
+        return str(raw.get("reason") or raw.get("exit_reason") or "").strip()
+    return ""
+
+
+def _merge_chop_regime_exit_markers(
+    markers: List[Dict[str, Any]],
+    regime_exits: List[Dict[str, Any]],
+    *,
+    time_tolerance_sec: int = 1,
+) -> List[Dict[str, Any]]:
+    """Add feature-bus regime exits unless a chop_grid exit marker already exists at that bar."""
+    if not regime_exits:
+        return markers
+    chop_exit_times: Set[int] = set()
+    for m in markers:
+        if str(m.get("strategy") or "").lower() != "chop_grid":
+            continue
+        if str(m.get("event") or "").lower() != "exit":
+            continue
+        try:
+            chop_exit_times.add(int(m["time"]))
+        except (TypeError, ValueError):
+            continue
+    seen_ids: Set[str] = {str(m.get("id") or "") for m in markers}
+    out = list(markers)
+    for m in regime_exits:
+        mid = str(m.get("id") or "")
+        if mid in seen_ids:
+            continue
+        t = int(m["time"])
+        if any(abs(t - et) <= time_tolerance_sec for et in chop_exit_times):
+            continue
+        seen_ids.add(mid)
+        out.append(m)
+    out.sort(key=lambda x: x["time"])
+    return out
 
 
 def _multi_leg_event(
@@ -140,6 +189,7 @@ def _append(
     status: str = "filled",
     pnl_usdt: Optional[float] = None,
     extra: Optional[Dict[str, Any]] = None,
+    color: Optional[str] = None,
 ) -> None:
     mid = _marker_id(scope, source, key)
     if mid in seen:
@@ -163,7 +213,7 @@ def _append(
         "pnl_usdt": pnl_usdt,
         "is_add": bool(is_add),
         "status": status,
-        "color": STRATEGY_COLORS.get(strat, "#aaaaaa"),
+        "color": color or STRATEGY_COLORS.get(strat, "#aaaaaa"),
     }
     if extra:
         payload["detail"] = {k: v for k, v in extra.items() if k != "time"}
@@ -496,6 +546,27 @@ def multi_leg_markers(
         leg_label = _leg_label_from_order_id(local_oid) or _leg_label_from_order_id(
             str(row.get("leg_id") or "")
         )
+        action_reason = _action_reason_from_row(row)
+        extra: Dict[str, Any] = {
+            "time": ts,
+            "purpose": purpose,
+            "order_type": order_type,
+            "order_status": status,
+            "local_order_id": row.get("local_order_id"),
+            "leg_id": row.get("leg_id"),
+            "leg_label": leg_label,
+            "take_profit_price": tp_price,
+            "stop_price": _f(row.get("stop_price")),
+        }
+        if action_reason:
+            extra["exit_reason"] = action_reason
+            if event == "exit" and "regime" in action_reason.lower():
+                extra["exit_kind"] = "regime_or_risk_exit"
+        marker_color = (
+            CHOP_GRID_REGIME_EXIT_COLOR
+            if event == "exit" and extra.get("exit_kind") == "regime_or_risk_exit"
+            else None
+        )
         _append(
             out,
             seen,
@@ -509,17 +580,8 @@ def multi_leg_markers(
             qty=filled_qty or _f(row.get("quantity")),
             strategy=strat,
             status="filled" if is_filled else "pending",
-            extra={
-                "time": ts,
-                "purpose": purpose,
-                "order_type": order_type,
-                "order_status": status,
-                "local_order_id": row.get("local_order_id"),
-                "leg_id": row.get("leg_id"),
-                "leg_label": leg_label,
-                "take_profit_price": tp_price,
-                "stop_price": _f(row.get("stop_price")),
-            },
+            extra=extra,
+            color=marker_color,
         )
 
     rep_sql = """
@@ -643,6 +705,9 @@ def collect_markers(
     include_pending: bool = False,
     engine_data_root: Optional[Path] = None,
     strategies: Optional[List[str]] = None,
+    feature_bus_root: Optional[Path] = None,
+    strategies_root: Optional[Path] = None,
+    map_timeframe: str = "2h",
 ) -> List[Dict[str, Any]]:
     merged: List[Dict[str, Any]] = []
     scope_set = {s.strip().lower() for s in scopes if s.strip()}
@@ -681,6 +746,41 @@ def collect_markers(
                 engine_data_root=engine_data_root,
             )
         )
+    if (
+        "multi_leg" in scope_set
+        and feature_bus_root is not None
+        and strategies_root is not None
+        and feature_bus_root.is_dir()
+        and strategies_root.is_dir()
+    ):
+        try:
+            from mlbot_console.services.strategy_stage_regions import (
+                load_chop_grid_regime_exit_markers,
+            )
+
+            regime_exits = load_chop_grid_regime_exit_markers(
+                feature_bus_root,
+                symbol,
+                map_timeframe,
+                strategies_root,
+                start=_pandas_ts_from_unix(start_ts),
+                end=_pandas_ts_from_unix(end_ts),
+            )
+            if strategies:
+                allowed = {str(s).strip().lower() for s in strategies if str(s).strip()}
+                if allowed:
+                    regime_exits = [
+                        m
+                        for m in regime_exits
+                        if str(m.get("strategy") or "").lower() in allowed
+                    ]
+            merged = _merge_chop_regime_exit_markers(merged, regime_exits)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).debug(
+                "chop_grid regime exit markers skipped", exc_info=True
+            )
     merged.sort(key=lambda m: m["time"])
     merged = _filter_pending(merged, include_pending)
     if strategies:
@@ -692,6 +792,14 @@ def collect_markers(
                 if str(m.get("strategy") or "").lower() in allowed
             ]
     return merged
+
+
+def _pandas_ts_from_unix(ts: Optional[int]) -> Any:
+    if ts is None:
+        return None
+    import pandas as pd
+
+    return pd.Timestamp(int(ts), unit="s", tz="UTC")
 
 
 def _f(raw: Any) -> Optional[float]:
