@@ -748,18 +748,25 @@ def build_order_pnl_maps(
     feature_bus_root: Optional[Path] = None,
     symbol: str = "*",
     mark_prices: Optional[Dict[str, float]] = None,
+    scopes: Optional[Tuple[str, ...]] = None,
 ) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
     """Return (trend_by_order_id, spot_by_order_id, multileg_by_order_id) enrichment maps."""
-    symbols = _discover_symbols(
-        trend_db=trend_db, spot_db=spot_db, multi_leg_db=multi_leg_db
-    )
+    scope_set = {str(s).strip().lower() for s in (scopes or ()) if str(s).strip()}
+    if not scope_set:
+        scope_set = {"trend", "spot", "multi_leg"}
+    sym = None if _is_all_symbols(symbol) else symbol.upper()
     marks = dict(mark_prices or {})
     if not marks and feature_bus_root is not None and feature_bus_root.is_dir():
-        marks = latest_close_prices(feature_bus_root, symbols)
-    sym = None if _is_all_symbols(symbol) else symbol.upper()
+        if sym:
+            marks = latest_close_prices(feature_bus_root, [sym])
+        else:
+            symbols = _discover_symbols(
+                trend_db=trend_db, spot_db=spot_db, multi_leg_db=multi_leg_db
+            )
+            marks = latest_close_prices(feature_bus_root, symbols)
 
     trend_map: Dict[str, Dict[str, Any]] = {}
-    if trend_db.is_file():
+    if "trend" in scope_set and trend_db.is_file():
         where = ""
         params: tuple[Any, ...] = ()
         if sym:
@@ -840,13 +847,13 @@ def build_order_pnl_maps(
             trend_map[oid] = existing if existing else _trend_unrealized_rec(upnl)
 
     spot_map: Dict[str, Dict[str, Any]] = {}
-    if spot_db.is_file():
+    if "spot" in scope_set and spot_db.is_file():
         spot_map = compute_spot_order_pnl(
             spot_db, symbol=symbol if sym else None, mark_prices=marks
         )
 
     multileg_map: Dict[str, Dict[str, Any]] = {}
-    if multi_leg_db.is_file():
+    if "multi_leg" in scope_set and multi_leg_db.is_file():
         from mlbot_console.services.multileg_leg_pnl import multileg_pnl_by_order_id
 
         if sym:

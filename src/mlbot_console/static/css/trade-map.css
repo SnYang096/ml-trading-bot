@@ -142,6 +142,30 @@ main {
   overflow: auto;
 }
 
+.page-trade-map .orders-loading-cell {
+  text-align: center;
+  padding: 1rem 0.5rem;
+  color: #8b949e;
+}
+
+.page-trade-map .orders-loading-spinner {
+  display: inline-block;
+  width: 0.85rem;
+  height: 0.85rem;
+  margin-right: 0.45rem;
+  vertical-align: -0.1em;
+  border: 2px solid #30363d;
+  border-top-color: #58a6ff;
+  border-radius: 50%;
+  animation: orders-dock-spin 0.7s linear infinite;
+}
+
+@keyframes orders-dock-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .marker-detail-drawer {
   flex: 0 0 auto;
   max-height: 28vh;

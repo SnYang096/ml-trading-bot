@@ -41,6 +41,41 @@ function clearChopGridOverlay() {
   }
 }
 
+function filterStageRegionsForFocus(byStrategy) {
+  if (!byStrategy || typeof byStrategy !== "object" || byStrategy.error) {
+    return byStrategy;
+  }
+  const focus = String(S.featureStrategyFocus || "").trim().toLowerCase();
+  if (!focus) return byStrategy;
+  const out = {};
+  for (const [k, v] of Object.entries(byStrategy)) {
+    if (String(k).toLowerCase() === focus) out[k] = v;
+  }
+  return Object.keys(out).length ? out : byStrategy;
+}
+
+function chopMapDataForStrategyFocus(data) {
+  const raw = data || S.lastChopMapData || {};
+  const stages = filterStageRegionsForFocus(raw.strategy_stage_regions);
+  if (chopGridOverlayEnabled()) {
+    return { ...raw, strategy_stage_regions: stages };
+  }
+  return {
+    chop_grid_overlay: { batches: [] },
+    chop_regime_regions: [],
+    strategy_stage_regions: stages,
+  };
+}
+
+/** Re-apply main-chart layers after strategy/layer switch (before bundle returns). */
+function refreshMainChartForStrategyFocus() {
+  if (!S.chart || !S.lastCandles?.length) return;
+  applyChopMapLayers(chopMapDataForStrategyFocus(S.lastChopMapData), S.lastCandles);
+  if (typeof applyMarkers === "function") {
+    applyMarkers(S.allRawMarkers || []);
+  }
+}
+
 function flattenStageRegions(byStrategy, stage) {
   const spans = [];
   if (!byStrategy || typeof byStrategy !== "object") return spans;
@@ -367,11 +402,12 @@ function applyChopGridOverlay(overlay, candles, lineSpans) {
 function applyChopMapLayers(data, candles) {
   clearChopGridOverlay();
   if (!data) return;
-  applyStrategyStageRegions(data, candles);
-  const gridSpans = chopGridLineSpans(candles, data);
+  const payload = chopMapDataForStrategyFocus(data);
+  applyStrategyStageRegions(payload, candles);
+  const gridSpans = chopGridLineSpans(candles, payload);
   if (chopGridOverlayEnabled()) {
-    applyChopPriceBand(gridSpans, candles, data.chop_grid_overlay || {});
-    applyChopGridOverlay(data.chop_grid_overlay || {}, candles, gridSpans);
+    applyChopPriceBand(gridSpans, candles, payload.chop_grid_overlay || {});
+    applyChopGridOverlay(payload.chop_grid_overlay || {}, candles, gridSpans);
     bindChopGridLabelSync();
     layoutChopGridLabels(candles);
   }

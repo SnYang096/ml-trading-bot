@@ -489,6 +489,12 @@ const pts = context.spanHighlightCandles(
   [{ time: 1, low: 10, high: 20 }, { time: 2, low: 12, high: 22 }],
   [{ start: 1, end: 1 }]
 );
+const chopLayerIds = new Set(['layerChopGrid', 'layerMultiLeg', 'layerTrend', 'layerSpot']);
+context.document.getElementById = (id) => {
+  if (chopLayerIds.has(id)) return { ...fakeEl(), checked: true };
+  return fakeEl();
+};
+context.MLBotTradeMapPage.featureStrategyFocus = 'chop_grid';
 const mergedPayload = context.mergeChopMapPayload(
   {
     chop_regime_regions: [{ start: 10, end: 20 }],
@@ -505,6 +511,11 @@ const pollPayload = context.mergeChopMapPayload(
     chop_regime_regions: [{ start: 1, end: 5 }],
   },
   { chop_regime_regions: [{ start: 4, end: 8 }] }
+);
+context.MLBotTradeMapPage.featureStrategyFocus = 'spot_accum_simple';
+const pollSpotPayload = context.mergeChopMapPayload(
+  { chop_grid_overlay: { center: 100 }, chop_regime_regions: [{ start: 1, end: 5 }] },
+  {}
 );
 context.MLBotTradeMapPage.chart = context.LightweightCharts.createChart();
 context.MLBotTradeMapPage.candleSeries = context.MLBotTradeMapPage.chart.addCandlestickSeries();
@@ -535,6 +546,9 @@ console.log(JSON.stringify({
   mergedPrefilterEnd: mergedPayload.strategy_stage_regions.chop_grid.prefilter[0].end,
   pollKeepsOverlay: pollPayload.chop_grid_overlay?.center === 100,
   pollMergedChopEnd: pollPayload.chop_regime_regions[0].end,
+  pollSpotClearsChop:
+    !pollSpotPayload.chop_grid_overlay?.center &&
+    !(pollSpotPayload.chop_regime_regions || []).length,
   gridLabelsOk,
 }));
 """
@@ -564,4 +578,5 @@ def test_trade_map_modules_load_in_one_browser_context():
     assert out["mergedPrefilterEnd"] == 30
     assert out["pollKeepsOverlay"] is True
     assert out["pollMergedChopEnd"] == 8
+    assert out["pollSpotClearsChop"] is True
     assert out["gridLabelsOk"] is True

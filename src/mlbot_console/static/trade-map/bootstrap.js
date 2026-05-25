@@ -72,6 +72,9 @@ function bindControls() {
             saveLayout();
           }
           applyLayerStrategyDefaults();
+          if (typeof refreshMainChartForStrategyFocus === "function") {
+            refreshMainChartForStrategyFocus();
+          }
         }
         renderFeaturePicker();
       }

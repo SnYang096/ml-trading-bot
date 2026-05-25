@@ -805,22 +805,17 @@ def enrich_orders_pnl(
     multi_leg_db: Path,
     feature_bus_root: Optional[Path],
     symbol: str,
+    scopes: Optional[List[str]] = None,
 ) -> None:
     """Attach PnL from DB links and mark prices (multileg works without feature bus)."""
-    from mlbot_console.services.account_summary import (
-        build_order_pnl_maps,
-        latest_close_prices,
-        _discover_symbols,
-    )
+    from mlbot_console.services.account_summary import build_order_pnl_maps
     from mlbot_console.services.multileg_leg_pnl import attach_multileg_display_pnl
 
+    scope_set = {str(s).strip().lower() for s in (scopes or []) if str(s).strip()}
+    if not scope_set:
+        scope_set = {"trend", "spot", "multi_leg"}
+
     bus = feature_bus_root if feature_bus_root is not None and feature_bus_root.is_dir() else None
-    marks: Dict[str, float] = {}
-    if bus is not None:
-        syms = _discover_symbols(
-            trend_db=trend_db, spot_db=spot_db, multi_leg_db=multi_leg_db
-        )
-        marks = latest_close_prices(bus, syms)
 
     trend_map, spot_map, multileg_map = build_order_pnl_maps(
         trend_db=trend_db,
@@ -828,7 +823,7 @@ def enrich_orders_pnl(
         multi_leg_db=multi_leg_db,
         feature_bus_root=bus,
         symbol=symbol,
-        mark_prices=marks,
+        scopes=tuple(scope_set),
     )
     _attach_pnl_fields(
         rows,
@@ -837,12 +832,19 @@ def enrich_orders_pnl(
         multileg_map=multileg_map,
     )
 
-    attach_multileg_display_pnl(
-        rows,
-        db_path=multi_leg_db,
-        symbol=symbol,
-        mark_prices=marks,
-    )
+    if "multi_leg" in scope_set and multi_leg_db.is_file():
+        marks: Dict[str, float] = {}
+        sym_u = str(symbol or "").strip().upper()
+        if bus is not None and sym_u and sym_u not in {"", "*", "ALL", "__ALL__"}:
+            from mlbot_console.services.account_summary import latest_close_prices
+
+            marks = latest_close_prices(bus, [sym_u])
+        attach_multileg_display_pnl(
+            rows,
+            db_path=multi_leg_db,
+            symbol=symbol,
+            mark_prices=marks,
+        )
 
 
 def collect_orders(
@@ -906,5 +908,6 @@ def collect_orders(
         multi_leg_db=multi_leg_db,
         feature_bus_root=feature_bus_root,
         symbol=symbol,
+        scopes=list(scope_set),
     )
     return merged

@@ -18,6 +18,7 @@
   if (S.lastCandles == null) S.lastCandles = [];
   if (S.selectedMarkerId === undefined) S.selectedMarkerId = null;
   if (S.ordersDockOpen === undefined) S.ordersDockOpen = false;
+  if (S.ordersListSeq === undefined) S.ordersListSeq = 0;
   if (S.chartFitPending === undefined) S.chartFitPending = true;
   if (S.timeSyncBound === undefined) S.timeSyncBound = false;
   if (S.syncingTimeScale === undefined) S.syncingTimeScale = false;

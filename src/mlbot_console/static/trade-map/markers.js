@@ -201,6 +201,18 @@ function toggleOrdersDock(forceOpen) {
   });
 }
 
+function setOrdersDockLoading(message) {
+  const tbody = document.getElementById("ordersDockBody");
+  const countEl = document.getElementById("ordersDockCount");
+  const symbol = document.getElementById("symbolSelect")?.value || "";
+  const showSym = Shell.isAllSymbols(symbol);
+  const colspan = Shell.ordersTableColspan(showSym);
+  if (tbody) {
+    tbody.innerHTML = `<tr><td colspan="${colspan}" class="orders-loading-cell"><span class="orders-loading-spinner" aria-hidden="true"></span>${escHtml(message || "加载订单…")}</td></tr>`;
+  }
+  if (countEl) countEl.textContent = "(…)";
+}
+
 async function refreshOrdersList() {
   if (!S.ordersDockOpen) return;
   const symbol = document.getElementById("symbolSelect").value;
@@ -211,6 +223,8 @@ async function refreshOrdersList() {
     th.classList.toggle("hidden", !showSym);
   });
   const colspan = Shell.ordersTableColspan(showSym);
+  const reqId = ++S.ordersListSeq;
+  setOrdersDockLoading("加载订单…");
   const q = new URLSearchParams({
     symbol,
     scopes: scopesParam(),
@@ -220,6 +234,7 @@ async function refreshOrdersList() {
   if (exclude) q.set("exclude_status", exclude);
   try {
     const { data, meta } = await Shell.api(`/api/orders/list?${q}`);
+    if (reqId !== S.ordersListSeq) return;
     const rows = data || [];
     countEl.textContent = `(${meta.count ?? rows.length})`;
     if (!rows.length) {
@@ -252,6 +267,7 @@ async function refreshOrdersList() {
     });
     highlightOrdersTableRow(S.selectedMarkerId);
   } catch (e) {
+    if (reqId !== S.ordersListSeq) return;
     tbody.innerHTML = `<tr><td colspan="${colspan}" class="muted">${escHtml(String(e))}</td></tr>`;
     countEl.textContent = "";
   }

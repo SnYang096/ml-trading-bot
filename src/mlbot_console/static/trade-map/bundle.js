@@ -5,18 +5,29 @@ var Shell = globalThis.MLBotConsole;
 
 function mergeChopMapPayload(prev, data) {
   const out = { ...(prev || {}) };
-  if (data?.chop_grid_overlay != null) out.chop_grid_overlay = data.chop_grid_overlay;
-  if (data?.chop_regime_regions?.length) {
-    out.chop_regime_regions = mergeRegionList(
-      out.chop_regime_regions || [],
-      data.chop_regime_regions
-    );
+  const chopOn =
+    typeof chopGridOverlayEnabled === "function" && chopGridOverlayEnabled();
+  if (chopOn) {
+    if (data?.chop_grid_overlay != null) out.chop_grid_overlay = data.chop_grid_overlay;
+    if (data?.chop_regime_regions?.length) {
+      out.chop_regime_regions = mergeRegionList(
+        out.chop_regime_regions || [],
+        data.chop_regime_regions
+      );
+    }
+  } else {
+    out.chop_grid_overlay = { batches: [] };
+    out.chop_regime_regions = [];
   }
   if (data?.strategy_stage_regions != null) {
-    out.strategy_stage_regions = mergeStageRegions(
+    const merged = mergeStageRegions(
       out.strategy_stage_regions || {},
       data.strategy_stage_regions
     );
+    out.strategy_stage_regions =
+      typeof filterStageRegionsForFocus === "function"
+        ? filterStageRegionsForFocus(merged)
+        : merged;
   }
   return out;
 }
@@ -93,6 +104,9 @@ async function refreshBundle(opts = {}) {
     document.getElementById("layerGate")?.checked
   );
   const stratFocus = String(S.featureStrategyFocus || "").trim();
+  if (mode === "full" && S.ordersDockOpen) {
+    refreshOrdersList().catch((e) => setStatus(String(e)));
+  }
   if (mode === "full") {
     setStatusLoading();
     if (opts.resetMarkerRange) {
@@ -180,7 +194,12 @@ async function refreshBundle(opts = {}) {
     }
     S.lastChopMapData = mergeChopMapPayload(S.lastChopMapData, data);
     if (S.lastCandles.length && S.lastChopMapData) {
-      applyChopMapLayers(S.lastChopMapData, S.lastCandles);
+      applyChopMapLayers(
+        typeof chopMapDataForStrategyFocus === "function"
+          ? chopMapDataForStrategyFocus(S.lastChopMapData)
+          : S.lastChopMapData,
+        S.lastCandles
+      );
       if (typeof isViewingHistoricalBars === "function" && !isViewingHistoricalBars()) {
         refreshMainPriceAutoscale();
       }
@@ -270,10 +289,6 @@ async function refreshBundle(opts = {}) {
     );
   }
   tickClock();
-
-  if (S.ordersDockOpen && mode !== "poll") {
-    await refreshOrdersList();
-  }
 
   const markerId = pageUrl.searchParams.get("marker_id");
   if (markerId && S.markerById.has(markerId)) {

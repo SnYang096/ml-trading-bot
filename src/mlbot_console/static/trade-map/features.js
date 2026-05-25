@@ -79,10 +79,16 @@ function switchMapStrategy(strategyId) {
   }
   setFeatureStrategyFocus(sid, { refreshPicker: true, refreshSubcharts: false });
   if (sid) applyPresetForStrategy(sid);
+  if (typeof refreshMainChartForStrategyFocus === "function") {
+    refreshMainChartForStrategyFocus();
+  }
   if (S.lastCandles?.length) {
     syncSubcharts(S.lastCandles, S.lastOverlays || {});
   }
   saveLayout();
+  if (S.ordersDockOpen) {
+    refreshOrdersList().catch((e) => setStatus(String(e)));
+  }
   refreshBundle({ mode: "full" }).catch((e) => setStatus(String(e)));
 }
 
@@ -143,6 +149,9 @@ function applyLayerStrategyDefaults() {
   } else {
     renderMapStrategyChips();
     syncFeatureStrategySelectOptions();
+  }
+  if (typeof refreshMainChartForStrategyFocus === "function") {
+    refreshMainChartForStrategyFocus();
   }
 }
 
