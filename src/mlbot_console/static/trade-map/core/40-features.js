@@ -78,28 +78,17 @@
 
     function listStrategiesForLayers(layers) {
       const liveIds = featureTaxonomy && featureTaxonomy.live_strategy_ids;
-      const allowedLive =
-        Array.isArray(liveIds) && liveIds.length
-          ? new Set(liveIds.map((id) => String(id).toLowerCase()))
-          : null;
-      const fromTax =
-        featureTaxonomy && featureTaxonomy.strategies
-          ? featureTaxonomy.strategies.filter((s) => {
-              if (!isLayerEnabled(s.account_layer, layers)) return false;
-              if (allowedLive && !allowedLive.has(String(s.id).toLowerCase())) return false;
-              return true;
-            })
-          : [];
-      const out = [...fromTax];
-      const have = new Set(out.map((s) => String(s.id).toLowerCase()));
-      const seedIds = allowedLive
-        ? [...allowedLive]
-        : Core.KNOWN_STRATEGIES.map((s) => s.id);
-      for (const rawId of seedIds) {
+      if (!Array.isArray(liveIds) || !liveIds.length) {
+        return [];
+      }
+      const out = [];
+      const seen = new Set();
+      for (const rawId of liveIds) {
         const sid = String(rawId || "").trim().toLowerCase();
-        if (!sid || have.has(sid)) continue;
+        if (!sid || seen.has(sid)) continue;
         const meta = knownStrategyRecord(sid);
         if (!meta || !isLayerEnabled(meta.account_layer, layers)) continue;
+        seen.add(sid);
         out.push({
           id: meta.id || sid,
           account_layer: meta.account_layer,
@@ -110,7 +99,6 @@
           title: meta.title || sid,
           stages: meta.stages || {},
         });
-        have.add(sid);
       }
       return out.sort((a, b) => String(a.id).localeCompare(String(b.id)));
     }
@@ -158,6 +146,10 @@
 
     function setFeatureTaxonomy(taxonomy) {
       featureTaxonomy = taxonomy && typeof taxonomy === "object" ? taxonomy : null;
+    }
+
+    function getFeatureTaxonomy() {
+      return featureTaxonomy;
     }
 
     function taxonomyIndex() {
@@ -496,6 +488,7 @@
     inferStrategyFocusFromLayers,
     strategyFocusLabel,
     setFeatureTaxonomy,
+    getFeatureTaxonomy,
     lookupFeatureMeta,
     classifyFeatureColumn,
     strategyMeta,

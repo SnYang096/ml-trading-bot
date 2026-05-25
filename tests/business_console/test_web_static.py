@@ -78,8 +78,8 @@ def test_console_shell_has_account_nav(client):
     assert r.status_code == 200
     assert 'href: "/account"' in r.text
     assert "formatPnl" in r.text
-    assert "mlbot_orders_filter_v2" in r.text
-    assert "hideExpired: false" in r.text
+    assert "mlbot_orders_filter_v3" in r.text
+    assert "hideExpired: true" in r.text
     assert "loadOrdersFilter" in r.text
 
 

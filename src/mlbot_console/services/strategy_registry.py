@@ -88,7 +88,8 @@ def get_live_console_strategies() -> List[Dict[str, str]]:
                 )
         return sorted(out, key=lambda x: x["id"])
     except Exception:
-        return sorted(meta_by_id.values(), key=lambda x: x["id"])
+        # Fail closed: do not show research archetypes when constitution is unreadable.
+        return []
 
 
 @lru_cache(maxsize=1)

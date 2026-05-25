@@ -77,8 +77,17 @@ function renderMapStrategyChips() {
   const strategies = Core.listStrategiesForLayers(layersState());
   const focus = S.featureStrategyFocus || "";
   if (!strategies.length) {
-    host.innerHTML =
-      '<span class="muted map-strategy-hint">先勾选上方 B/A/C 账户层</span>';
+    const layers = layersState();
+    const hasLayer = layers.trend || layers.spot || layers.multiLeg;
+    const liveIds = (Core.getFeatureTaxonomy() || {}).live_strategy_ids;
+    let hint = "先勾选上方 B/A/C 账户层";
+    if (hasLayer) {
+      hint =
+        Array.isArray(liveIds) && liveIds.length
+          ? "当前账户层下无实盘策略"
+          : "实盘策略未加载（检查宪法 YAML / 控制台日志）";
+    }
+    host.innerHTML = `<span class="muted map-strategy-hint">${escHtml(hint)}</span>`;
     return;
   }
   const buttons = [

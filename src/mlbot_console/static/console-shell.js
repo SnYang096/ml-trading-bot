@@ -4,7 +4,8 @@
 (function (root) {
   const SYMBOL_KEY = "mlbot_console_symbol";
   const SCOPES_KEY = "mlbot_console_scopes";
-  const ORDERS_FILTER_KEY = "mlbot_orders_filter_v2";
+  const ORDERS_FILTER_KEY = "mlbot_orders_filter_v3";
+  const ORDERS_FILTER_KEY_V2 = "mlbot_orders_filter_v2";
   const ORDERS_FILTER_KEY_LEGACY = "mlbot_orders_filter";
   const TRADE_MAP_LAYOUT_KEY = "mlbot_trade_map_layout_v2";
   const SYMBOL_ALL = "*";
@@ -422,8 +423,8 @@
 
   function defaultOrdersFilter() {
     return {
-      hideExpired: false,
-      hideCanceled: false,
+      hideExpired: true,
+      hideCanceled: true,
       hideRejected: false,
       hidePending: false,
     };
@@ -436,8 +437,7 @@
       const layout = JSON.parse(raw);
       if (layout == null || typeof layout !== "object") return null;
       return {
-        hideExpired: !!layout.hideExpired,
-        hideCanceled: !!layout.hideCanceled,
+        ...defaultOrdersFilter(),
         hideRejected: !!layout.hideRejected,
         hidePending: !!layout.hidePending,
       };
@@ -453,6 +453,23 @@
         const stored = JSON.parse(raw);
         if (stored && typeof stored === "object") {
           return { ...defaultOrdersFilter(), ...stored };
+        }
+      }
+    } catch (_) {
+      /* fall through */
+    }
+    try {
+      const rawV2 = localStorage.getItem(ORDERS_FILTER_KEY_V2);
+      if (rawV2) {
+        const stored = JSON.parse(rawV2);
+        if (stored && typeof stored === "object") {
+          const migrated = {
+            ...defaultOrdersFilter(),
+            hideRejected: !!stored.hideRejected,
+            hidePending: !!stored.hidePending,
+          };
+          saveOrdersFilter(migrated);
+          return migrated;
         }
       }
     } catch (_) {

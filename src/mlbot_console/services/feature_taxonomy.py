@@ -27,12 +27,10 @@ def get_feature_taxonomy() -> Dict[str, Any]:
     if not root.is_dir():
         return dict(_EMPTY_TAXONOMY)
     try:
-        tax = build_console_feature_taxonomy(
-            root, strategies=get_console_strategies()
-        )
-        tax["live_strategy_ids"] = [
-            str(s["id"]) for s in get_live_console_strategies()
-        ]
+        live = get_live_console_strategies()
+        tax = build_console_feature_taxonomy(root, strategies=live)
+        tax["live_strategy_ids"] = [str(s["id"]) for s in live]
+        tax["constitution_source"] = str(SETTINGS.constitution_yaml)
         return tax
     except Exception:
         return dict(_EMPTY_TAXONOMY)
