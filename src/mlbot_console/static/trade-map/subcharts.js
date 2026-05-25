@@ -59,6 +59,14 @@ function indicesForMetricsTable(candles, highlightTimeSec) {
   return { from, to };
 }
 
+/** Active metrics column: crosshair/click only — never default to latest bar (avoids poll drift). */
+function metricsTableHighlightTime(override) {
+  if (arguments.length > 0) {
+    return override == null ? null : override;
+  }
+  return S.highlightBarTime != null ? S.highlightBarTime : null;
+}
+
 function metricsTableDomId(item) {
   return subchartDomId(item.id || "metrics-table");
 }
@@ -651,12 +659,9 @@ function refreshFeatureMetricsPanel(
   const scroll = document.getElementById("featureMetricsScroll");
   if (!scroll) return;
   bindMetricsTableClick(scroll);
-  const timeSec =
-    highlightTimeSec != null
-      ? highlightTimeSec
-      : S.highlightBarTime != null
-        ? S.highlightBarTime
-        : candles[candles.length - 1]?.time;
+  const timeSec = metricsTableHighlightTime(
+    highlightTimeSec !== undefined ? highlightTimeSec : undefined
+  );
   const rangeKey = visibleMetricsRangeKey(candles, timeSec);
   const hasTable = !!scroll.querySelector(".feature-metrics-table");
   const rangeChanged = rangeKey !== lastMetricsTableRangeKey;
@@ -679,7 +684,10 @@ function refreshThresholdTablesAtTime(timeSec) {
   if (!document.getElementById("subchartStack")) return;
   if (Core.chopMetricsTableActive(S.featureStrategyFocus, S.selectedFeatureColumns)) {
     if (timeSec != null) S.highlightBarTime = timeSec;
-    refreshFeatureMetricsPanel(timeSec, { rebuild: true, preserveScrollLeft: true });
+    refreshFeatureMetricsPanel(timeSec, {
+      rebuild: timeSec != null,
+      preserveScrollLeft: true,
+    });
     const insp = document.getElementById("featureBarInspector");
     if (insp) insp.classList.add("hidden");
     return;

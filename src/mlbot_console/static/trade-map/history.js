@@ -102,6 +102,7 @@ function scrollChartToLatestCandles() {
 
 function scheduleHistoryPrefetch(range) {
   if (!range || S.historyLoadInFlight || S.historyExhausted || !S.lastCandles.length) return;
+  if (S.syncingTimeScale) return;
   if (range.from > 25) return;
   if (S.historyLoadTimer) clearTimeout(S.historyLoadTimer);
   S.historyLoadTimer = setTimeout(() => {
@@ -144,13 +145,25 @@ async function loadMoreHistory() {
       S.historyExhausted = true;
       return;
     }
+    const prevLen = S.lastCandles.length;
+    const snap = typeof captureChartViewport === "function" ? captureChartViewport() : null;
     const merged = Core.mergeCandlesByTime(more, S.lastCandles);
     if (merged.length === S.lastCandles.length) {
       S.historyExhausted = true;
       return;
     }
+    const added = merged.length - prevLen;
     S.lastCandles = merged;
     S.candleSeries.setData(merged);
+    if (snap && added > 0 && snap.logical) {
+      const from = Number(snap.logical.from) + added;
+      const to = Number(snap.logical.to) + added;
+      if (Number.isFinite(from) && Number.isFinite(to)) {
+        S.chart.timeScale().setVisibleLogicalRange({ from, to });
+      }
+    } else if (typeof restoreChartViewport === "function") {
+      restoreChartViewport(snap);
+    }
     applyLoadedOhlcvRange(meta, merged);
     if (S.lastChopMapData) applyChopMapLayers(S.lastChopMapData, merged);
     if (data.main_overlays && Object.keys(data.main_overlays).length) {
@@ -191,9 +204,12 @@ function bindTimeScaleSync() {
   if (S.timeSyncBound) return;
   S.timeSyncBound = true;
   const onMainViewportChange = () => {
+    if (!S.crosshairOnChart && typeof cancelMetricsTableScrollSchedule === "function") {
+      cancelMetricsTableScrollSchedule();
+    }
     syncSubchartsToMainRange();
     if (typeof refreshFeatureMetricsPanel === "function") {
-      refreshFeatureMetricsPanel(S.highlightBarTime ?? null, {
+      refreshFeatureMetricsPanel(metricsTableHighlightTime(), {
         rebuild: true,
         preserveScrollLeft: true,
       });

@@ -200,7 +200,7 @@ async function refreshBundle(opts = {}) {
       S.lastOverlays = mergedOl;
     }
     if (data.main_overlays && Object.keys(data.main_overlays).length) {
-      applyMainOverlays(data.main_overlays, { merge: false });
+      applyMainOverlays(data.main_overlays, { merge: true });
     }
     const metricsActive = Core.chopMetricsTableActive(
       S.featureStrategyFocus,
@@ -208,8 +208,8 @@ async function refreshBundle(opts = {}) {
     );
     if (metricsActive) {
       if (typeof refreshFeatureMetricsPanel === "function") {
-        refreshFeatureMetricsPanel(S.highlightBarTime ?? S.lastCandleTime ?? null, {
-          rebuild: true,
+        refreshFeatureMetricsPanel(S.highlightBarTime ?? null, {
+          rebuild: false,
           preserveScrollLeft: true,
         });
       }

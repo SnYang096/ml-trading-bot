@@ -40,6 +40,42 @@ function subchartBaseOptions() {
   };
 }
 
+/** Snapshot main-chart viewport before setData/resize so idle refresh does not jump to old bars. */
+function captureChartViewport() {
+  if (!S.chart?.timeScale) return null;
+  let time = null;
+  if (typeof S.chart.timeScale().getVisibleRange === "function") {
+    try {
+      time = S.chart.timeScale().getVisibleRange();
+    } catch (_) {
+      time = null;
+    }
+  }
+  return {
+    logical: S.chart.timeScale().getVisibleLogicalRange() || null,
+    time,
+  };
+}
+
+function restoreChartViewport(snap) {
+  if (!snap || !S.chart?.timeScale) return;
+  if (snap.time && snap.time.from != null && snap.time.to != null) {
+    try {
+      S.chart.timeScale().setVisibleRange(snap.time);
+      syncSubchartsToMainRange();
+      refreshMainPriceAutoscale();
+      return;
+    } catch (_) {
+      /* fall through to logical */
+    }
+  }
+  if (snap.logical && Number.isFinite(Number(snap.logical.from))) {
+    S.chart.timeScale().setVisibleLogicalRange(snap.logical);
+    syncSubchartsToMainRange();
+    refreshMainPriceAutoscale();
+  }
+}
+
 function applyChartViewport(barCount) {
   const visible = Core.defaultVisibleBarCount(barCount);
   const spacing = Core.barSpacingForCount(visible);
@@ -208,6 +244,7 @@ function initMainChart() {
   S.candleSeries.setMarkers([]);
 
   const resize = () => {
+    const snap = captureChartViewport();
     S.chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
     for (const pane of S.subcharts.values()) {
       if (!pane.chart || !pane.host) continue;
@@ -216,6 +253,7 @@ function initMainChart() {
         height: pane.host.clientHeight,
       });
     }
+    restoreChartViewport(snap);
     syncSubchartsToMainRange();
     if (typeof layoutChopGridLabels === "function") {
       layoutChopGridLabels(S.lastCandles);
@@ -273,12 +311,17 @@ function initMainChart() {
   S.chart.subscribeCrosshairMove((param) => {
     if (!param || !param.time || param.point.x < 0 || param.point.y < 0) {
       legend.classList.add("hidden");
+      S.crosshairOnChart = false;
       S.highlightBarTime = null;
+      if (typeof cancelMetricsTableScrollSchedule === "function") {
+        cancelMetricsTableScrollSchedule();
+      }
       if (typeof refreshThresholdTablesAtTime === "function") {
         refreshThresholdTablesAtTime(null);
       }
       return;
     }
+    S.crosshairOnChart = true;
     S.highlightBarTime = param.time;
     const data = param.seriesData.get(S.candleSeries);
     if (!data) {
