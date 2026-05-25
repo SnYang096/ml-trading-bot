@@ -56,6 +56,14 @@ function applyChartViewport(barCount) {
   }
 }
 
+function isViewingHistoricalBars() {
+  if (!S.chart || !S.lastCandles?.length) return false;
+  const logical = S.chart.timeScale().getVisibleLogicalRange();
+  if (!logical) return false;
+  const tailIdx = S.lastCandles.length - 1;
+  return Number(logical.to) < tailIdx - 12;
+}
+
 function mainVisibleTimeRange() {
   if (!S.chart || !S.lastCandles?.length) return null;
   const logical = S.chart.timeScale().getVisibleLogicalRange();

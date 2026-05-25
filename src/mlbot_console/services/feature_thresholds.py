@@ -13,7 +13,8 @@ _BUILTIN_REFERENCE_LINES: Dict[str, List[Dict[str, Any]]] = {
         {"y": 0.40, "label": "regime ≤0.40", "operator": "<="},
     ],
     "bpc_semantic_chop": [
-        {"y": 0.50, "label": "chop grid ≥0.50", "operator": ">="},
+        {"y": 0.50, "label": "regime enter ≥0.50", "operator": ">="},
+        {"y": 0.32, "label": "regime exit <0.32", "operator": "<"},
     ],
     "bpc_volume_compression_pct": [
         {"y": 0.9295, "label": "prefilter ≥0.9295", "operator": ">="},

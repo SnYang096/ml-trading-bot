@@ -172,7 +172,9 @@ async function refreshBundle(opts = {}) {
     S.lastChopMapData = mergeChopMapPayload(S.lastChopMapData, data);
     if (S.lastCandles.length && S.lastChopMapData) {
       applyChopMapLayers(S.lastChopMapData, S.lastCandles);
-      refreshMainPriceAutoscale();
+      if (typeof isViewingHistoricalBars === "function" && !isViewingHistoricalBars()) {
+        refreshMainPriceAutoscale();
+      }
     }
     if (data.overlays && Object.keys(data.overlays).length) {
       const mergedOl = { ...(S.lastOverlays || {}) };

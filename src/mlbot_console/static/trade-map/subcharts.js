@@ -16,9 +16,19 @@ function subchartDomId(id) {
   return `subchart-${String(id).replace(/[^a-zA-Z0-9_-]/g, "_")}`;
 }
 
+function escHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 function clearStrategyChrome() {
   document
-    .querySelectorAll(".subchart-strategy-header, .subchart-stage-header, .subchart-strategy-gap")
+    .querySelectorAll(
+      ".subchart-strategy-header, .subchart-stage-header, .subchart-strategy-gap, .subchart-threshold-status"
+    )
     .forEach((el) => {
       el.remove();
     });
@@ -135,11 +145,29 @@ function ensureVolumePane(show, candles) {
   scheduleSubchartLayout();
 }
 
+function valuePassesRefLine(value, refLine) {
+  const v = Number(value);
+  const y = Number(refLine?.y);
+  if (!Number.isFinite(v) || !Number.isFinite(y)) return null;
+  const op = String(refLine.operator || "").trim();
+  if (op === ">=") return v >= y;
+  if (op === "<=") return v <= y;
+  if (op === "<") return v < y;
+  if (op === ">") return v > y;
+  return null;
+}
+
+function passBadge(passed) {
+  if (passed === true) return " ✓";
+  if (passed === false) return " ✗";
+  return "";
+}
+
 function featurePaneCaption(column, overlay) {
   const meta = Core.lookupFeatureMeta(column);
   const base =
     meta.strategy_title && meta.stage_title
-      ? `${meta.strategy_title}·${meta.stage_title}`
+      ? `${meta.strategy_title} · ${meta.stage_title}`
       : column;
   const latest = overlay?.latest;
   const hint = overlay?.semantic_hint || "";
@@ -157,7 +185,17 @@ function featurePaneCaption(column, overlay) {
         ? 3
         : 2;
     const valStr = v.toFixed(decimals);
-    const parts = [base, valStr];
+    let pass = null;
+    if (refLines.length === 2 && String(column).includes("box_pos")) {
+      const lo = refLines.find((r) => String(r.operator).includes(">="));
+      const hi = refLines.find((r) => String(r.operator).includes("<="));
+      const okLo = lo ? valuePassesRefLine(v, lo) : true;
+      const okHi = hi ? valuePassesRefLine(v, hi) : true;
+      pass = okLo === true && okHi === true;
+    } else if (refLines.length === 1) {
+      pass = valuePassesRefLine(v, refLines[0]);
+    }
+    const parts = [base, valStr + passBadge(pass)];
     if (hint) parts.push(`(${hint})`);
     else if (refHint) parts.push(`(${refHint})`);
     return parts.join(" ");
@@ -165,6 +203,42 @@ function featurePaneCaption(column, overlay) {
   if (refHint) return `${base} · ${refHint}`;
   if (overlay?.available === false) return `${base} · 无数据`;
   return base;
+}
+
+function thresholdStatusDomId(item) {
+  return subchartDomId(`status-${item.strategy}-${item.stage}`);
+}
+
+function ensureThresholdStatusPane(item, overlays) {
+  const domId = thresholdStatusDomId(item);
+  let el = document.getElementById(domId);
+  if (!el) {
+    el = document.createElement("div");
+    el.id = domId;
+    el.className = "subchart-threshold-status";
+    el.dataset.strategy = item.strategy || "";
+    el.dataset.stage = item.stage || "";
+    document.getElementById("subchartStack").appendChild(el);
+  }
+  const lines = (item.columns || []).map((col) => {
+    const o = overlays?.[col] || S.lastOverlays?.[col];
+    const refs = o?.reference_lines || [];
+    const latest = o?.latest;
+    const label = col.replace(/_60$/, "");
+    if (!o?.available || latest == null || latest !== latest) {
+      return `<div class="threshold-line muted">${escHtml(label)}: 无数据</div>`;
+    }
+    const v = Number(latest);
+    const valStr = Number.isFinite(v) ? v.toFixed(3) : "?";
+    const ref = refs[0];
+    const pass = ref ? valuePassesRefLine(v, ref) : null;
+    const thresh = ref ? ` ${ref.label || ref.operator + ref.y}` : "";
+    return `<div class="threshold-line">${escHtml(label)}: <strong>${escHtml(valStr)}</strong>${passBadge(pass)}${escHtml(thresh)}</div>`;
+  });
+  el.innerHTML =
+    lines.join("") ||
+    '<div class="threshold-line muted">box_prefilter: 无数据</div>';
+  return domId;
 }
 
 function refLineTimeline(pts, candles) {
@@ -283,6 +357,8 @@ function syncSubcharts(candles, overlays) {
     } else if (item.type === "header") {
       ensureSubchartHeader(item);
       domOrder.push(subchartDomId(headerDomKey(item)));
+    } else if (item.type === "threshold_status") {
+      domOrder.push(ensureThresholdStatusPane(item, overlays));
     } else if (item.type === "feature") {
       const fid = `feat:${item.column}`;
       const overlaySpec =

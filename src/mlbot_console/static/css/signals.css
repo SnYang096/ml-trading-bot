@@ -219,6 +219,27 @@
   border: none;
 }
 
+.subchart-threshold-status {
+  flex: 0 0 auto;
+  padding: 4px 12px 6px 20px;
+  font-size: 0.68rem;
+  line-height: 1.45;
+  color: #c9d1d9;
+  background: #0f1419;
+  border-bottom: 1px solid #21262d;
+  font-variant-numeric: tabular-nums;
+}
+
+.subchart-threshold-status .threshold-line {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.subchart-threshold-status .threshold-line.muted {
+  color: #8b949e;
+}
+
 .subchart-label {
   position: absolute;
   top: 4px;

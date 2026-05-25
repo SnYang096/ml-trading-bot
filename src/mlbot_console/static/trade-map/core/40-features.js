@@ -376,6 +376,34 @@
       });
     }
 
+    const CHOP_GRID_REGIME_CHART = new Set(["bpc_semantic_chop", "semantic_chop", "tpc_semantic_chop"]);
+    const CHOP_GRID_REGIME_STATUS = new Set([
+      "box_stability_60",
+      "box_width_pct_60",
+      "box_touches_hi_60",
+      "box_touches_lo_60",
+    ]);
+    const CHOP_GRID_PREFILTER_CHART = new Set(["box_pos_60"]);
+
+    /** One line chart + numeric box_prefilter row (avoid 4 mis-scaled regime panes). */
+    function chopGridStagePanePlan(stratId, stage, cols) {
+      const list = cols || [];
+      if (String(stratId).toLowerCase() !== "chop_grid") {
+        return { chartCols: list, statusCols: [] };
+      }
+      if (stage === "regime") {
+        const chart = list.filter((c) => CHOP_GRID_REGIME_CHART.has(c));
+        const status = list.filter((c) => CHOP_GRID_REGIME_STATUS.has(c));
+        const chartPick = chart.length ? [chart[0]] : list.slice(0, 1);
+        return { chartCols: chartPick, statusCols: status };
+      }
+      if (stage === "prefilter") {
+        const chart = list.filter((c) => CHOP_GRID_PREFILTER_CHART.has(c));
+        return { chartCols: chart.length ? chart : list.slice(0, 1), statusCols: [] };
+      }
+      return { chartCols: list, statusCols: [] };
+    }
+
     function orderFeaturePaneItems(columns, layers, strategyFocus) {
       const focus = strategyFocus ? String(strategyFocus).trim() : "";
       const tree = _bucketColumnsByTaxonomy(columns);
@@ -434,7 +462,18 @@
               accountLayer: layerId,
               stage,
             });
-            for (const col of cols) {
+            const plan = chopGridStagePanePlan(stratId, stage, cols);
+            if (plan.statusCols.length) {
+              items.push({
+                type: "threshold_status",
+                id: `status-${stratId}-${stage}`,
+                strategy: stratId,
+                accountLayer: layerId,
+                stage,
+                columns: plan.statusCols,
+              });
+            }
+            for (const col of plan.chartCols) {
               items.push({
                 type: "feature",
                 column: col,

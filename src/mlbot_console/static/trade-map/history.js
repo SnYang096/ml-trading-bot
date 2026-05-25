@@ -176,7 +176,9 @@ function bindTimeScaleSync() {
   S.timeSyncBound = true;
   const onMainViewportChange = () => {
     syncSubchartsToMainRange();
-    refreshMainPriceAutoscale();
+    if (typeof isViewingHistoricalBars !== "function" || !isViewingHistoricalBars()) {
+      refreshMainPriceAutoscale();
+    }
     if (typeof layoutChopGridLabels === "function") {
       layoutChopGridLabels(S.lastCandles);
     }
