@@ -202,15 +202,19 @@ async function refreshBundle(opts = {}) {
     if (data.main_overlays && Object.keys(data.main_overlays).length) {
       applyMainOverlays(data.main_overlays, { merge: false });
     }
-    syncSubcharts(S.lastCandles, S.lastOverlays || {});
-    if (
-      typeof refreshFeatureMetricsPanel === "function" &&
-      Core.chopMetricsTableActive(S.featureStrategyFocus, S.selectedFeatureColumns)
-    ) {
-      refreshFeatureMetricsPanel(S.highlightBarTime ?? null, {
-        rebuild: true,
-        scrollNow: false,
-      });
+    const metricsActive = Core.chopMetricsTableActive(
+      S.featureStrategyFocus,
+      S.selectedFeatureColumns
+    );
+    if (metricsActive) {
+      if (typeof refreshFeatureMetricsPanel === "function") {
+        refreshFeatureMetricsPanel(S.highlightBarTime ?? S.lastCandleTime ?? null, {
+          rebuild: true,
+          preserveScrollLeft: true,
+        });
+      }
+    } else {
+      syncSubcharts(S.lastCandles, S.lastOverlays || {});
     }
   } else if (mode !== "poll") {
     const candles = Core.sanitizeCandlesForLwc(data.ohlcv?.candles || []);
@@ -239,7 +243,7 @@ async function refreshBundle(opts = {}) {
     ) {
       refreshFeatureMetricsPanel(S.highlightBarTime ?? S.lastCandleTime ?? null, {
         rebuild: true,
-        scrollNow: false,
+        preserveScrollLeft: false,
       });
     }
   }

@@ -470,6 +470,18 @@ function renderChopMetricsTableHtml(candles, overlays, cols, highlightTimeSec) {
 const METRICS_TABLE_SCROLL_DELAY_MS = 3000;
 let metricsTableScrollTimer = null;
 let metricsTableScrollPendingTime = null;
+let lastMetricsTableRangeKey = "";
+
+function visibleMetricsRangeKey(candles, highlightTimeSec) {
+  const { from, to } = indicesForMetricsTable(candles, highlightTimeSec);
+  const hi =
+    highlightTimeSec != null
+      ? Number(highlightTimeSec)
+      : S.highlightBarTime != null
+        ? Number(S.highlightBarTime)
+        : null;
+  return `${from}:${to}:${hi ?? ""}`;
+}
 
 function applyMetricsColumnHighlight(scroll, timeSec) {
   const t = timeSec != null ? Number(timeSec) : null;
@@ -499,7 +511,7 @@ function scrollMetricsTableToActiveColumn(scroll, timeSec) {
     anchor.offsetLeft - scroll.clientWidth / 2 + anchor.offsetWidth / 2;
   scroll.scrollTo({
     left: Math.max(0, targetLeft),
-    behavior: "smooth",
+    behavior: "auto",
   });
 }
 
@@ -511,19 +523,14 @@ function cancelMetricsTableScrollSchedule() {
   metricsTableScrollPendingTime = null;
 }
 
-/** Highlight follows crosshair immediately; horizontal scroll debounced (~3s idle). */
-function highlightMetricsTableColumn(timeSec, { scrollNow = false } = {}) {
+/** Highlight only unless allowScroll (crosshair idle); poll/resize never scroll. */
+function highlightMetricsTableColumn(timeSec, { allowScroll = false } = {}) {
   const scroll = document.getElementById("featureMetricsScroll");
   if (!scroll) return;
   const t = timeSec != null ? Number(timeSec) : null;
   applyMetricsColumnHighlight(scroll, t);
-  if (t == null || !Number.isFinite(t)) {
+  if (!allowScroll || t == null || !Number.isFinite(t)) {
     cancelMetricsTableScrollSchedule();
-    return;
-  }
-  if (scrollNow) {
-    cancelMetricsTableScrollSchedule();
-    scrollMetricsTableToActiveColumn(scroll, t);
     return;
   }
   metricsTableScrollPendingTime = t;
@@ -550,7 +557,7 @@ function ensureFeatureMetricsTablePane(item, candles, overlays, highlightTimeSec
     const cap = document.createElement("div");
     cap.className = "metrics-table-caption";
     cap.textContent =
-      "Chop Grid 指标表 · 顶行✓/×=本 bar 可新开网格(非持仓) · 实盘退出 chop<0.32 滞回区 0.32–0.50 可继续持有 · 停十字线约3s后滚列";
+      "Chop Grid 指标表 · 顶行✓/×=可新开网格 · 滚轮自管横向位置 · 仅十字线停住约3s才自动滚到列";
     const scroll = document.createElement("div");
     scroll.id = "featureMetricsScroll";
     scroll.className = "metrics-table-scroll layout-pivot-host";
@@ -562,7 +569,13 @@ function ensureFeatureMetricsTablePane(item, candles, overlays, highlightTimeSec
   }
   const scroll = document.getElementById("featureMetricsScroll");
   if (!scroll) return domId;
-  const hadTable = !!scroll.querySelector(".feature-metrics-table");
+  if (scroll.querySelector(".feature-metrics-table")) {
+    refreshFeatureMetricsPanel(highlightTimeSec, {
+      rebuild: true,
+      preserveScrollLeft: true,
+    });
+    return domId;
+  }
   const cols = item.columns || [];
   scroll.innerHTML = renderChopMetricsTableHtml(
     candles,
@@ -570,9 +583,8 @@ function ensureFeatureMetricsTablePane(item, candles, overlays, highlightTimeSec
     cols,
     highlightTimeSec
   );
-  requestAnimationFrame(() =>
-    highlightMetricsTableColumn(highlightTimeSec, { scrollNow: !hadTable })
-  );
+  lastMetricsTableRangeKey = visibleMetricsRangeKey(candles, highlightTimeSec);
+  requestAnimationFrame(() => highlightMetricsTableColumn(highlightTimeSec));
   return domId;
 }
 
@@ -588,7 +600,7 @@ function metricsTableHasBarColumn(scroll, timeSec) {
 
 function refreshFeatureMetricsPanel(
   highlightTimeSec,
-  { rebuild = true, scrollNow = false, preserveScrollLeft = false } = {}
+  { rebuild = true, preserveScrollLeft = true } = {}
 ) {
   if (!document.getElementById("subchartStack")) return;
   const overlays = S.lastOverlays || {};
@@ -611,34 +623,29 @@ function refreshFeatureMetricsPanel(
       : S.highlightBarTime != null
         ? S.highlightBarTime
         : candles[candles.length - 1]?.time;
-  const mustRebuild =
-    rebuild && (!scroll.querySelector(".feature-metrics-table") || !metricsTableHasBarColumn(scroll, timeSec));
-  if (mustRebuild) {
-    const prevScrollLeft = preserveScrollLeft ? scroll.scrollLeft : null;
-    scroll.innerHTML = renderChopMetricsTableHtml(
-      candles,
-      overlays,
-      cols,
-      timeSec
-    );
-    if (prevScrollLeft != null) scroll.scrollLeft = prevScrollLeft;
-    requestAnimationFrame(() =>
-      highlightMetricsTableColumn(timeSec, { scrollNow: scrollNow })
-    );
+  const rangeKey = visibleMetricsRangeKey(candles, timeSec);
+  const hasTable = !!scroll.querySelector(".feature-metrics-table");
+  const rangeChanged = rangeKey !== lastMetricsTableRangeKey;
+  const needsBar =
+    rebuild && (!hasTable || !metricsTableHasBarColumn(scroll, timeSec));
+  const mustRebuild = rebuild && (needsBar || rangeChanged);
+  if (!mustRebuild) {
+    highlightMetricsTableColumn(timeSec);
     return;
   }
-  highlightMetricsTableColumn(timeSec, { scrollNow });
+  const prevScrollLeft =
+    preserveScrollLeft && hasTable ? scroll.scrollLeft : null;
+  scroll.innerHTML = renderChopMetricsTableHtml(candles, overlays, cols, timeSec);
+  lastMetricsTableRangeKey = rangeKey;
+  if (prevScrollLeft != null) scroll.scrollLeft = prevScrollLeft;
+  requestAnimationFrame(() => highlightMetricsTableColumn(timeSec));
 }
 
-function refreshThresholdTablesAtTime(timeSec, { fromSyncSubcharts = false } = {}) {
+function refreshThresholdTablesAtTime(timeSec) {
   if (!document.getElementById("subchartStack")) return;
   if (Core.chopMetricsTableActive(S.featureStrategyFocus, S.selectedFeatureColumns)) {
     if (timeSec != null) S.highlightBarTime = timeSec;
-    refreshFeatureMetricsPanel(timeSec, {
-      rebuild: true,
-      scrollNow: false,
-      preserveScrollLeft: fromSyncSubcharts,
-    });
+    refreshFeatureMetricsPanel(timeSec, { rebuild: true, preserveScrollLeft: true });
     const insp = document.getElementById("featureBarInspector");
     if (insp) insp.classList.add("hidden");
     return;
@@ -836,13 +843,14 @@ function syncSubcharts(candles, overlays) {
   }
   reorderSubchartStackDom(domOrder);
 
-  const stack = document.getElementById("subchartStack");
-  if (stack && S.lastCandles?.length) {
-    const tail = S.lastCandles[S.lastCandles.length - 1].time;
-    refreshThresholdTablesAtTime(
-      tableFirst && S.highlightBarTime != null ? S.highlightBarTime : tail,
-      { fromSyncSubcharts: true }
-    );
+  if (!tableFirst) {
+    const stack = document.getElementById("subchartStack");
+    if (stack && S.lastCandles?.length) {
+      const tail = S.lastCandles[S.lastCandles.length - 1].time;
+      refreshThresholdTablesAtTime(
+        S.highlightBarTime != null ? S.highlightBarTime : tail
+      );
+    }
   }
 
   if (tableFirst) {

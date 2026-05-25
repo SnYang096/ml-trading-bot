@@ -116,7 +116,7 @@ function syncSubchartsToMainRange() {
       if (typeof refreshFeatureMetricsPanel === "function") {
         refreshFeatureMetricsPanel(S.highlightBarTime ?? null, {
           rebuild: true,
-          scrollNow: true,
+          preserveScrollLeft: true,
         });
       }
       return;
@@ -146,7 +146,7 @@ function syncSubchartsToMainRange() {
     if (typeof refreshFeatureMetricsPanel === "function") {
       refreshFeatureMetricsPanel(S.highlightBarTime ?? null, {
         rebuild: true,
-        scrollNow: true,
+        preserveScrollLeft: true,
       });
     }
   } finally {
@@ -221,7 +221,7 @@ function initMainChart() {
           if (typeof refreshFeatureMetricsPanel === "function") {
             refreshFeatureMetricsPanel(S.highlightBarTime ?? null, {
               rebuild: true,
-              scrollNow: true,
+              preserveScrollLeft: true,
             });
           }
         } else {
@@ -237,7 +237,8 @@ function initMainChart() {
     if (!param || param.time === undefined) return;
     S.highlightBarTime = param.time;
     if (typeof refreshFeatureMetricsPanel === "function") {
-      refreshFeatureMetricsPanel(param.time, { rebuild: true, scrollNow: true });
+      refreshFeatureMetricsPanel(param.time, { rebuild: false, preserveScrollLeft: true });
+      highlightMetricsTableColumn(param.time, { allowScroll: true });
     }
     const tf = document.getElementById("timeframeSelect")?.value || "2h";
     const tol = Core.timeframeToleranceSec(tf);
@@ -284,7 +285,8 @@ function initMainChart() {
     if (typeof refreshThresholdTablesAtTime === "function") {
       refreshThresholdTablesAtTime(param.time);
     } else if (typeof refreshFeatureMetricsPanel === "function") {
-      refreshFeatureMetricsPanel(param.time);
+      refreshFeatureMetricsPanel(param.time, { rebuild: false, preserveScrollLeft: true });
+      highlightMetricsTableColumn(param.time, { allowScroll: true });
     }
   });
 }

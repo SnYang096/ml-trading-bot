@@ -195,7 +195,7 @@ function bindTimeScaleSync() {
     if (typeof refreshFeatureMetricsPanel === "function") {
       refreshFeatureMetricsPanel(S.highlightBarTime ?? null, {
         rebuild: true,
-        scrollNow: true,
+        preserveScrollLeft: true,
       });
     }
     if (typeof isViewingHistoricalBars !== "function" || !isViewingHistoricalBars()) {
