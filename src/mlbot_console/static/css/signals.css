@@ -318,6 +318,11 @@
   padding: 0 8px 8px 12px;
 }
 
+.subchart-feature-metrics .metrics-table-scroll.layout-pivot-host {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
 .feature-metrics-table {
   width: 100%;
   border-collapse: collapse;
@@ -354,16 +359,36 @@
   white-space: normal;
 }
 
-.feature-metrics-table .col-time {
+.feature-metrics-table.layout-pivot .row-label-h,
+.feature-metrics-table.layout-pivot th.row-label {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  min-width: 7.5rem;
+  max-width: 9rem;
+  background: #161b22;
+  text-align: left;
+  vertical-align: top;
+}
+
+.feature-metrics-table.layout-pivot .bar-col-h {
   white-space: nowrap;
-  color: #8b949e;
+  text-align: center;
+  font-size: 0.62rem;
+  min-width: 3.2rem;
 }
 
-.feature-metrics-table tr.bar-row-active td {
-  background: #1f2a3d;
+.feature-metrics-table.layout-pivot td.yaml-val {
+  text-align: center;
+  white-space: nowrap;
 }
 
-.feature-metrics-table tr.bar-row-active .col-time {
+.feature-metrics-table .bar-col-active {
+  background: #1f3a5f !important;
+  box-shadow: inset 0 0 0 1px #58a6ff;
+}
+
+.feature-metrics-table.layout-pivot thead .bar-col-active {
   color: #58a6ff;
   font-weight: 600;
 }

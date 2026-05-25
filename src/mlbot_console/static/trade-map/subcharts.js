@@ -380,48 +380,65 @@ function updateFeatureBarInspector(timeSec, overlays) {
   });
 }
 
+function formatMetricsBarHeader(timeSec) {
+  const s = Shell.formatOrderTime(timeSec);
+  if (!s) return String(timeSec);
+  const m = s.match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})/);
+  if (m) return `${m[2]}-${m[3]} ${m[4]}:${m[5]}`;
+  return s.length > 14 ? s.slice(5, 16) : s;
+}
+
 function renderChopMetricsTableHtml(candles, overlays, cols, highlightTimeSec) {
-  const specs = Core.chopGridMetricsColumnSpecs(cols);
-  if (!specs.length) {
+  const rowSpecs = Core.chopGridMetricsRowSpecs(cols, overlays);
+  if (!rowSpecs.length) {
     return '<p class="muted">无指标列（请选 Chop 预设或勾选 bpc / box_pos / box 结构列）</p>';
   }
   const { from, to } = visibleCandleIndexRange(candles);
-  let head =
-    "<thead><tr><th class=\"col-time\">时间</th>";
-  for (const spec of specs) {
-    head += `<th><div class="col-name">${escHtml(spec.header)}</div><div class="col-thresh">${escHtml(spec.threshold || "")}</div></th>`;
-  }
-  head += "</tr></thead>";
-  let body = "<tbody>";
+  const bars = [];
   for (let i = from; i <= to; i++) {
     const t = candles[i]?.time;
     if (t == null) continue;
+    bars.push({ time: t, label: formatMetricsBarHeader(t) });
+  }
+  if (!bars.length) {
+    return '<p class="muted">主图可见区间无 K 线</p>';
+  }
+  let head = '<thead><tr><th class="row-label-h">指标 · 阈</th>';
+  for (const b of bars) {
     const active =
-      highlightTimeSec != null && Number(highlightTimeSec) === Number(t);
-    body += `<tr data-time="${t}" class="${active ? "bar-row-active" : ""}">`;
-    body += `<td class="col-time">${escHtml(Shell.formatOrderTime(t))}</td>`;
-    for (const spec of specs) {
-      const cell = Core.chopGridMetricsCell(spec, overlays, t);
+      highlightTimeSec != null && Number(highlightTimeSec) === Number(b.time);
+    head += `<th class="bar-col-h${active ? " bar-col-active" : ""}" data-time="${b.time}">${escHtml(b.label)}</th>`;
+  }
+  head += "</tr></thead>";
+  let body = "<tbody>";
+  for (const row of rowSpecs) {
+    body += "<tr>";
+    body += `<th class="row-label"><div class="col-name">${escHtml(row.label)}</div><div class="col-thresh">${escHtml(row.threshold || "")}</div></th>`;
+    for (const b of bars) {
+      const cell = Core.chopGridMetricsRowCell(row, overlays, b.time);
+      const active =
+        highlightTimeSec != null && Number(highlightTimeSec) === Number(b.time);
       const cls =
-        cell.pass === true ? "pass-ok" : cell.pass === false ? "pass-fail" : "";
-      body += `<td class="yaml-val ${cls}">${escHtml(cell.value)}</td>`;
+        (cell.pass === true ? "pass-ok" : cell.pass === false ? "pass-fail" : "") +
+        (active ? " bar-col-active" : "");
+      body += `<td class="yaml-val ${cls}" data-time="${b.time}">${escHtml(cell.value)}</td>`;
     }
     body += "</tr>";
   }
   body += "</tbody>";
-  return `<table class="feature-metrics-table">${head}${body}</table>`;
+  return `<table class="feature-metrics-table layout-pivot">${head}${body}</table>`;
 }
 
-function scrollMetricsTableToTime(timeSec) {
+function highlightMetricsTableColumn(timeSec) {
   const scroll = document.getElementById("featureMetricsScroll");
-  if (!scroll || timeSec == null) return;
-  const row = scroll.querySelector(`tr[data-time="${timeSec}"]`);
-  scroll.querySelectorAll("tr.bar-row-active").forEach((tr) => {
-    tr.classList.remove("bar-row-active");
+  if (!scroll) return;
+  scroll.querySelectorAll(".bar-col-active").forEach((el) => {
+    el.classList.remove("bar-col-active");
   });
-  if (!row) return;
-  row.classList.add("bar-row-active");
-  row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  if (timeSec == null) return;
+  scroll.querySelectorAll(`[data-time="${timeSec}"]`).forEach((el) => {
+    el.classList.add("bar-col-active");
+  });
 }
 
 function ensureFeatureMetricsTablePane(item, candles, overlays, highlightTimeSec) {
@@ -435,10 +452,10 @@ function ensureFeatureMetricsTablePane(item, candles, overlays, highlightTimeSec
     const cap = document.createElement("div");
     cap.className = "metrics-table-caption";
     cap.textContent =
-      "指标表 · 行=主图可见 K 线 · 十字线/点击主图定位行（不随主图纵向拉伸）";
+      "指标表 · 行=特征+阈值 · 列=主图可见 K 线 · 十字线只高亮列（不纵向滚动）";
     const scroll = document.createElement("div");
     scroll.id = "featureMetricsScroll";
-    scroll.className = "metrics-table-scroll";
+    scroll.className = "metrics-table-scroll layout-pivot-host";
     host.appendChild(cap);
     host.appendChild(scroll);
     document.getElementById("subchartStack").appendChild(host);
@@ -454,9 +471,7 @@ function ensureFeatureMetricsTablePane(item, candles, overlays, highlightTimeSec
     cols,
     highlightTimeSec
   );
-  if (highlightTimeSec != null) {
-    requestAnimationFrame(() => scrollMetricsTableToTime(highlightTimeSec));
-  }
+  requestAnimationFrame(() => highlightMetricsTableColumn(highlightTimeSec));
   return domId;
 }
 
@@ -489,9 +504,7 @@ function refreshFeatureMetricsPanel(highlightTimeSec) {
     cols,
     timeSec
   );
-  if (timeSec != null) {
-    requestAnimationFrame(() => scrollMetricsTableToTime(timeSec));
-  }
+  requestAnimationFrame(() => highlightMetricsTableColumn(timeSec));
 }
 
 function refreshThresholdTablesAtTime(timeSec) {

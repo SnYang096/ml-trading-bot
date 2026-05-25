@@ -628,6 +628,50 @@
       return { value: parts.join(" "), pass };
     }
 
+    /** Pivot table: one row per metric; columns = visible bars (no vertical scroll on crosshair). */
+    function chopGridMetricsRowSpecs(columns, overlays) {
+      const out = [];
+      for (const spec of chopGridMetricsColumnSpecs(columns)) {
+        if (spec.kind === "scalar") {
+          out.push({
+            kind: "scalar",
+            column: spec.column,
+            label: spec.header,
+            threshold: spec.threshold,
+          });
+          continue;
+        }
+        const regimeCols = spec.columns || [];
+        const template = buildThresholdMetricRows(regimeCols, overlays, null);
+        for (const r of template) {
+          out.push({
+            kind: "threshold_row",
+            regimeCols,
+            yaml: r.yaml,
+            label: r.label,
+            threshold: r.threshold,
+          });
+        }
+      }
+      return out;
+    }
+
+    function chopGridMetricsRowCell(row, overlays, timeSec) {
+      if (row.kind === "scalar") {
+        return chopGridMetricsCell(
+          { kind: "scalar", column: row.column, header: row.label, threshold: row.threshold },
+          overlays,
+          timeSec
+        );
+      }
+      const built = buildThresholdMetricRows(row.regimeCols, overlays, timeSec);
+      const hit =
+        built.find((r) => r.yaml === row.yaml) ||
+        built.find((r) => r.label === row.label);
+      if (!hit) return { value: "—", pass: null };
+      return { value: hit.value != null ? String(hit.value) : "—", pass: hit.pass };
+    }
+
     /** One chop line chart + YAML table for box_prefilter; prefilter = box_pos chart only. */
     function chopGridStagePanePlan(stratId, stage, cols, strategyFocus) {
       const list = cols || [];
@@ -835,6 +879,8 @@
     chopGridUsesMetricsTable,
     chopGridMetricsColumnSpecs,
     chopGridMetricsCell,
+    chopGridMetricsRowSpecs,
+    chopGridMetricsRowCell,
     presetColumnsForStrategy,
     presetColumnsForAccountLayer,
     inferStrategyIdFromColumn,
