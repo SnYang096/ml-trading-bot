@@ -152,6 +152,10 @@ console.log(JSON.stringify({
   filteredCols: filtered,
   resolvedChop: resolved,
   chopFeatureCols: chopPlan.filter((p) => p.type === "feature").map((p) => p.column),
+  chopPlanTypes: chopPlan.map((p) => p.type),
+  chopMetricsSpecs: Core.chopGridMetricsColumnSpecs(
+    ["bpc_semantic_chop", "box_pos_60", "box_stability_60"]
+  ).length,
   chopPreset: Core.presetColumnsForStrategy(
     "chop_grid",
     ["bpc_semantic_chop", "box_pos_60", "box_stability_60"],
@@ -247,7 +251,9 @@ def test_trade_map_core_node():
     assert out["ffMainMid"] == 10
     assert out["filteredCols"] == ["bpc_semantic_chop"]
     assert out["resolvedChop"] == ["bpc_semantic_chop", "box_pos_60"]
-    assert set(out["chopFeatureCols"]) == {"bpc_semantic_chop", "box_pos_60"}
+    assert out["chopFeatureCols"] == []
+    assert "metrics_table" in out["chopPlanTypes"]
+    assert out["chopMetricsSpecs"] >= 2
     assert out["chopPreset"] == ["bpc_semantic_chop", "box_pos_60"]
     assert out["trendPreset"] == ["trend_confidence", "bpc_semantic_chop"]
     assert out["markerDisplayIds"] == ["m1", "m2"]

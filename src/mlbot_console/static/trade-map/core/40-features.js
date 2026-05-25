@@ -45,8 +45,11 @@
       maxCols
     ) {
       const max = Math.max(1, Number(maxCols) || 6);
-      const selected = (selectedColumns || []).slice(0, max);
+      let selected = (selectedColumns || []).slice(0, max);
       const focus = strategyFocus ? String(strategyFocus).trim() : "";
+      if (focus) {
+        selected = subchartColumnsForStrategy(focus, selected);
+      }
       const filtered = filterSubchartColumns(selected, layers, focus);
       if (!focus) {
         return filtered.length
@@ -175,6 +178,23 @@
       return featureTaxonomy;
     }
 
+    /** API stage_order may omit live-only stages (e.g. regime); still show buckets present in data. */
+    function orderedStagesForNode(stageNode) {
+      const present = Object.keys(stageNode || {});
+      if (!present.length) return [];
+      const tax = featureTaxonomy?.stage_order;
+      const skeleton = tax?.length ? [...tax, ...Core.STAGE_ORDER] : Core.STAGE_ORDER;
+      const out = [];
+      for (const s of skeleton) {
+        if (present.includes(s) && !out.includes(s)) out.push(s);
+      }
+      for (const s of present) {
+        if (s !== "other" && !out.includes(s)) out.push(s);
+      }
+      if (present.includes("other") && !out.includes("other")) out.push("other");
+      return out;
+    }
+
     function taxonomyIndex() {
       return (featureTaxonomy && featureTaxonomy.index) || {};
     }
@@ -250,6 +270,26 @@
       return { strategy: "shared", account_layer: "shared" };
     }
 
+    function inferStageForColumn(column, strategyId) {
+      const sid = String(strategyId || "").toLowerCase();
+      const lc = String(column || "").toLowerCase();
+      if (sid === "chop_grid") {
+        if (lc === "box_pos_60") return "prefilter";
+        if (
+          lc === "box_prefilter" ||
+          lc === "bpc_semantic_chop" ||
+          lc === "semantic_chop" ||
+          lc === "tpc_semantic_chop" ||
+          lc.startsWith("box_stability_") ||
+          lc.startsWith("box_width_pct_") ||
+          lc.startsWith("box_touches_")
+        ) {
+          return "regime";
+        }
+      }
+      return "other";
+    }
+
     function lookupFeatureMeta(column) {
       const col = String(column || "");
       const idx = taxonomyIndex();
@@ -259,14 +299,20 @@
       const layer = inferred.account_layer;
       const layerMeta = Core.ACCOUNT_LAYER_META[layer] || Core.ACCOUNT_LAYER_META.shared;
       const sm = strategyMeta(inferred.strategy);
+      const stage = inferStageForColumn(col, inferred.strategy);
+      const stageTitle =
+        (featureTaxonomy &&
+          featureTaxonomy.stage_labels &&
+          featureTaxonomy.stage_labels[stage]) ||
+        (stage === "regime" ? "Regime" : stage === "prefilter" ? "Prefilter" : "其他");
       return {
         column: col,
         account_layer: layer,
         account_layer_title: layerMeta.title,
         strategy: inferred.strategy,
         strategy_title: sm.title || inferred.strategy,
-        stage: "other",
-        stage_title: "其他",
+        stage,
+        stage_title: stageTitle,
       };
     }
 
@@ -336,10 +382,7 @@
           const stratTitle =
             (lookupFeatureMeta(stageNode[Object.keys(stageNode)[0]][0]) || {}).strategy_title ||
             stratId;
-          const stages = featureTaxonomy && featureTaxonomy.stage_order
-            ? featureTaxonomy.stage_order
-            : Core.STAGE_ORDER;
-          for (const stage of [...stages, "other"]) {
+          for (const stage of orderedStagesForNode(stageNode)) {
             const cols = stageNode[stage];
             if (!cols || !cols.length) continue;
             const stageTitle =
@@ -376,32 +419,253 @@
       });
     }
 
-    const CHOP_GRID_REGIME_CHART = new Set(["bpc_semantic_chop", "semantic_chop", "tpc_semantic_chop"]);
+    const CHOP_GRID_REGIME_CHART = new Set(["bpc_semantic_chop"]);
+    const CHOP_GRID_REGIME_CHART_FALLBACK = new Set([
+      "semantic_chop",
+      "tpc_semantic_chop",
+    ]);
     const CHOP_GRID_REGIME_STATUS = new Set([
       "box_stability_60",
       "box_width_pct_60",
       "box_touches_hi_60",
       "box_touches_lo_60",
     ]);
+    const CHOP_GRID_SKIP_SUBCHART = new Set([
+      "box_prefilter",
+      "semantic_chop",
+      "tpc_semantic_chop",
+    ]);
     const CHOP_GRID_PREFILTER_CHART = new Set(["box_pos_60"]);
 
-    /** One line chart + numeric box_prefilter row (avoid 4 mis-scaled regime panes). */
-    function chopGridStagePanePlan(stratId, stage, cols) {
+    function valuePassesRefLine(value, refLine) {
+      const v = Number(value);
+      const y = Number(refLine?.y);
+      if (!Number.isFinite(v) || !Number.isFinite(y)) return null;
+      const op = String(refLine.operator || "").trim();
+      if (op === ">=") return v >= y;
+      if (op === "<=") return v <= y;
+      if (op === "<") return v < y;
+      if (op === ">") return v > y;
+      return null;
+    }
+
+    function overlayValueAtTime(overlay, timeSec) {
+      const pts = overlay?.points;
+      if (!pts?.length || timeSec == null) return null;
+      const t = Number(timeSec);
+      if (!Number.isFinite(t)) return null;
+      let best = null;
+      for (const p of pts) {
+        const pt = Number(p.time);
+        if (!Number.isFinite(pt)) continue;
+        if (pt > t) break;
+        best = p;
+      }
+      if (!best || best.value == null || best.value !== best.value) return null;
+      return Number(best.value);
+    }
+
+    /** YAML-shaped rows for regime.box_prefilter + rules (table, not multi-scale charts). */
+    function buildThresholdMetricRows(columns, overlays, timeSec) {
+      const colSet = new Set(columns || []);
+      const rows = [];
+      const pickVal = (col) => {
+        const o = overlays?.[col];
+        if (!o?.available) return { value: null, overlay: o };
+        const at =
+          timeSec != null ? overlayValueAtTime(o, timeSec) : o.latest != null ? Number(o.latest) : null;
+        return { value: at, overlay: o };
+      };
+
+      if (colSet.has("box_touches_hi_60") || colSet.has("box_touches_lo_60")) {
+        const hi = pickVal("box_touches_hi_60");
+        const lo = pickVal("box_touches_lo_60");
+        const ref =
+          (hi.overlay?.reference_lines || [])[0] ||
+          (lo.overlay?.reference_lines || [])[0];
+        const minTouch = ref ? Number(ref.y) : null;
+        let pass = null;
+        if (
+          minTouch != null &&
+          hi.value != null &&
+          lo.value != null &&
+          Number.isFinite(hi.value) &&
+          Number.isFinite(lo.value)
+        ) {
+          pass = hi.value >= minTouch && lo.value >= minTouch;
+        }
+        rows.push({
+          yaml: "regime.box_prefilter.touches_min",
+          label: "touches_min",
+          value:
+            hi.value != null && lo.value != null
+              ? `hi=${hi.value.toFixed(0)} lo=${lo.value.toFixed(0)}`
+              : null,
+          threshold: minTouch != null ? `≥${minTouch}` : "—",
+          pass,
+        });
+      }
+
+      if (colSet.has("box_width_pct_60")) {
+        const { value, overlay: o } = pickVal("box_width_pct_60");
+        const refs = o?.reference_lines || [];
+        const lo = refs.find((r) => String(r.operator).includes(">="));
+        const hi = refs.find((r) => String(r.operator).includes("<="));
+        let pass = null;
+        if (value != null && lo && hi) {
+          const okLo = valuePassesRefLine(value, lo);
+          const okHi = valuePassesRefLine(value, hi);
+          pass = okLo === true && okHi === true;
+        }
+        const thresh =
+          lo && hi
+            ? `${lo.label || "≥" + lo.y} · ${hi.label || "≤" + hi.y}`
+            : "—";
+        rows.push({
+          yaml: "regime.box_prefilter.width",
+          label: "box_width_pct",
+          value: value != null && Number.isFinite(value) ? value.toFixed(3) : null,
+          threshold: thresh,
+          pass,
+        });
+      }
+
+      for (const col of ["box_stability_60", "box_width_pct_60", "box_touches_hi_60", "box_touches_lo_60"]) {
+        if (!colSet.has(col)) continue;
+        if (col === "box_width_pct_60" || col.startsWith("box_touches")) continue;
+        const { value, overlay: o } = pickVal(col);
+        const ref = (o?.reference_lines || [])[0];
+        const pass = ref && value != null ? valuePassesRefLine(value, ref) : null;
+        rows.push({
+          yaml: `regime.box_prefilter.${col.replace(/_60$/, "")}`,
+          label: col.replace(/_60$/, ""),
+          value: value != null && Number.isFinite(value) ? value.toFixed(3) : null,
+          threshold: ref ? ref.label || `${ref.operator}${ref.y}` : "—",
+          pass,
+        });
+      }
+      return rows;
+    }
+
+    const CHOP_GRID_REGIME_TABLE_COLS = new Set([
+      "box_stability_60",
+      "box_width_pct_60",
+      "box_touches_hi_60",
+      "box_touches_lo_60",
+    ]);
+
+    function chopGridUsesMetricsTable(strategyId, strategyFocus) {
+      const sid = String(strategyId || "").toLowerCase();
+      const focus = String(strategyFocus || "").trim();
+      return sid === "chop_grid" && (!focus || focus === "chop_grid");
+    }
+
+    /** Column specs for per-bar metrics table (headers carry YAML thresholds). */
+    function chopGridMetricsColumnSpecs(columns) {
+      const colSet = new Set(columns || []);
+      const specs = [];
+      if (colSet.has("bpc_semantic_chop")) {
+        specs.push({
+          kind: "scalar",
+          column: "bpc_semantic_chop",
+          header: "bpc_semantic_chop",
+          threshold: "enter≥0.50 · exit<0.32",
+        });
+      }
+      if (colSet.has("box_pos_60")) {
+        specs.push({
+          kind: "scalar",
+          column: "box_pos_60",
+          header: "box_pos_60",
+          threshold: "rules 0.35–0.65",
+        });
+      }
+      const regimeCols = [...CHOP_GRID_REGIME_TABLE_COLS].filter((c) => colSet.has(c));
+      if (regimeCols.length) {
+        specs.push({
+          kind: "regime_box",
+          columns: regimeCols,
+          header: "regime.box_prefilter",
+          threshold: "stability/width/touches",
+        });
+      }
+      return specs;
+    }
+
+    function chopGridMetricsCell(spec, overlays, timeSec) {
+      if (spec.kind === "scalar") {
+        const o = overlays?.[spec.column];
+        const v = overlayValueAtTime(o, timeSec);
+        if (v == null || !Number.isFinite(v)) return { value: "—", pass: null };
+        const refs = o?.reference_lines || [];
+        let pass = null;
+        if (spec.column === "box_pos_60" && refs.length >= 2) {
+          const lo = refs.find((r) => String(r.operator).includes(">="));
+          const hi = refs.find((r) => String(r.operator).includes("<="));
+          pass =
+            valuePassesRefLine(v, lo) === true && valuePassesRefLine(v, hi) === true;
+        } else if (refs.length === 1) {
+          pass = valuePassesRefLine(v, refs[0]);
+        } else if (refs.length >= 2 && spec.column.includes("chop")) {
+          const enter = refs.find((r) => String(r.operator).includes(">="));
+          pass = enter ? valuePassesRefLine(v, enter) : null;
+        }
+        const decimals =
+          spec.column.includes("chop") || spec.column.includes("pos") ? 3 : 2;
+        return { value: v.toFixed(decimals), pass };
+      }
+      const rows = buildThresholdMetricRows(spec.columns, overlays, timeSec);
+      if (!rows.length) return { value: "—", pass: null };
+      const parts = rows.map((r) => {
+        const badge = r.pass === true ? "✓" : r.pass === false ? "✗" : "·";
+        return `${r.label}:${r.value ?? "—"}${badge}`;
+      });
+      const pass = rows.every((r) => r.pass === true)
+        ? true
+        : rows.some((r) => r.pass === false)
+          ? false
+          : null;
+      return { value: parts.join(" "), pass };
+    }
+
+    /** One chop line chart + YAML table for box_prefilter; prefilter = box_pos chart only. */
+    function chopGridStagePanePlan(stratId, stage, cols, strategyFocus) {
       const list = cols || [];
       if (String(stratId).toLowerCase() !== "chop_grid") {
-        return { chartCols: list, statusCols: [] };
+        return { chartCols: list, statusCols: [], skipStage: false };
+      }
+      if (chopGridUsesMetricsTable(stratId, strategyFocus)) {
+        if (stage === "other") {
+          return { chartCols: [], statusCols: [], skipStage: true };
+        }
+        return { chartCols: [], statusCols: [], skipStage: false };
+      }
+      if (stage === "other") {
+        return { chartCols: [], statusCols: [], skipStage: true };
       }
       if (stage === "regime") {
-        const chart = list.filter((c) => CHOP_GRID_REGIME_CHART.has(c));
+        let chartPick = list.filter((c) => CHOP_GRID_REGIME_CHART.has(c));
+        if (!chartPick.length) {
+          chartPick = list.filter((c) => CHOP_GRID_REGIME_CHART_FALLBACK.has(c));
+        }
         const status = list.filter((c) => CHOP_GRID_REGIME_STATUS.has(c));
-        const chartPick = chart.length ? [chart[0]] : list.slice(0, 1);
-        return { chartCols: chartPick, statusCols: status };
+        return { chartCols: chartPick.slice(0, 1), statusCols: status, skipStage: false };
       }
       if (stage === "prefilter") {
         const chart = list.filter((c) => CHOP_GRID_PREFILTER_CHART.has(c));
-        return { chartCols: chart.length ? chart : list.slice(0, 1), statusCols: [] };
+        return {
+          chartCols: chart.length ? chart : [],
+          statusCols: [],
+          skipStage: false,
+        };
       }
-      return { chartCols: list, statusCols: [] };
+      return { chartCols: [], statusCols: [], skipStage: true };
+    }
+
+    function subchartColumnsForStrategy(strategyId, columns) {
+      const sid = String(strategyId || "").toLowerCase();
+      if (sid !== "chop_grid") return columns || [];
+      return (columns || []).filter((c) => !CHOP_GRID_SKIP_SUBCHART.has(c));
     }
 
     function orderFeaturePaneItems(columns, layers, strategyFocus) {
@@ -443,10 +707,7 @@
             headerKind: "strategy",
             accountLayer: layerId,
           });
-          const stages = featureTaxonomy && featureTaxonomy.stage_order
-            ? featureTaxonomy.stage_order
-            : Core.STAGE_ORDER;
-          for (const stage of [...stages, "other"]) {
+          for (const stage of orderedStagesForNode(stageNode)) {
             const cols = stageNode[stage];
             if (!cols || !cols.length) continue;
             const stageTitle =
@@ -462,7 +723,8 @@
               accountLayer: layerId,
               stage,
             });
-            const plan = chopGridStagePanePlan(stratId, stage, cols);
+            const plan = chopGridStagePanePlan(stratId, stage, cols, focus);
+            if (plan.skipStage) continue;
             if (plan.statusCols.length) {
               items.push({
                 type: "threshold_status",
@@ -482,6 +744,15 @@
                 stage,
               });
             }
+          }
+          if (chopGridUsesMetricsTable(stratId, focus)) {
+            items.push({
+              type: "metrics_table",
+              id: "metrics-chop_grid",
+              strategy: stratId,
+              accountLayer: layerId,
+              columns: columns.slice(),
+            });
           }
         }
       }
@@ -557,6 +828,13 @@
     groupFeatureColumns,
     groupFeatureColumnsByStrategy,
     orderFeaturePaneItems,
+    buildThresholdMetricRows,
+    overlayValueAtTime,
+    valuePassesRefLine,
+    subchartColumnsForStrategy,
+    chopGridUsesMetricsTable,
+    chopGridMetricsColumnSpecs,
+    chopGridMetricsCell,
     presetColumnsForStrategy,
     presetColumnsForAccountLayer,
     inferStrategyIdFromColumn,

@@ -14,6 +14,9 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from src.config.multileg_config import load_multileg_effective_config
+from src.time_series_model.live.regime_box_prefilter import (
+    stable_box_blocks_trend_entry,
+)
 from src.config.strategy_layout import resolve_strategy_config_input
 from src.order_management.grid_execution_adapter import GridExecutionResult
 from src.order_management.multi_leg_reconciliation import (
@@ -167,6 +170,16 @@ class DualAddTrendLiveEngine:
     ) -> None:
         self.config_path = Path(config_path)
         self.state_path = Path(state_path)
+        cfg_path = Path(config_path)
+        config_dir, profile_path, engine_path = resolve_strategy_config_input(cfg_path)
+        multileg = load_multileg_effective_config(
+            config_dir=config_dir,
+            strategy_type="trend_scalp",
+            profile_path=profile_path,
+            engine_path=engine_path,
+        )
+        self.regime = multileg.get("regime", {}) or {}
+        self._prefilter_rules = multileg.get("rules", []) or []
         self.cfg = _load_dual_add_config(self.config_path)
         self.unit_notional = float(unit_notional)
         self.state = self.load_state()
@@ -264,7 +277,11 @@ class DualAddTrendLiveEngine:
         actions: List[Dict[str, Any]] = []
         trend_conf = _as_float(features.get("trend_confidence"), 0.0)
         chop = _as_float(features.get("semantic_chop"), 1.0)
-        is_box = bool(features.get("box_prefilter", False))
+        is_box = stable_box_blocks_trend_entry(
+            features,
+            self.regime,
+            rules=self._prefilter_rules,
+        )
         trend_side = (
             "LONG" if str(features.get("trend_direction", "UP")) == "UP" else "SHORT"
         )

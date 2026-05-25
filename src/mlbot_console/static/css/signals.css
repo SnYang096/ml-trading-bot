@@ -240,6 +240,142 @@
   color: #8b949e;
 }
 
+.threshold-table-caption {
+  font-size: 0.66rem;
+  color: #8b949e;
+  margin-bottom: 4px;
+}
+
+.threshold-metric-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.threshold-metric-table th,
+.threshold-metric-table td {
+  padding: 2px 8px 2px 0;
+  text-align: left;
+  border: none;
+}
+
+.threshold-metric-table .yaml-key {
+  color: #8b949e;
+  max-width: 220px;
+}
+
+.threshold-metric-table tr.pass-ok .yaml-val {
+  color: #7ee787;
+}
+
+.threshold-metric-table tr.pass-fail .yaml-val {
+  color: #f85149;
+}
+
+.feature-bar-inspector {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  background: #0d1117;
+  border-bottom: 1px solid #30363d;
+  max-height: 200px;
+  overflow: auto;
+}
+
+.feature-bar-inspector.hidden {
+  display: none;
+}
+
+.feature-bar-inspector .inspector-head {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #c9d1d9;
+  margin-bottom: 6px;
+}
+
+.subchart-feature-metrics {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  max-height: min(36vh, 320px);
+  min-height: 140px;
+  background: #0f1419;
+  border-bottom: 1px solid #21262d;
+  overflow: hidden;
+}
+
+.subchart-feature-metrics .metrics-table-caption {
+  flex: 0 0 auto;
+  padding: 5px 12px 4px 20px;
+  font-size: 0.66rem;
+  color: #8b949e;
+}
+
+.subchart-feature-metrics .metrics-table-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 8px 8px 12px;
+}
+
+.feature-metrics-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.feature-metrics-table th,
+.feature-metrics-table td {
+  border: 1px solid #21262d;
+  padding: 3px 6px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.feature-metrics-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #161b22;
+  color: #8b949e;
+  font-weight: 500;
+}
+
+.feature-metrics-table .col-name {
+  color: #c9d1d9;
+  font-weight: 600;
+}
+
+.feature-metrics-table .col-thresh {
+  font-size: 0.62rem;
+  color: #6e7681;
+  margin-top: 2px;
+  white-space: normal;
+}
+
+.feature-metrics-table .col-time {
+  white-space: nowrap;
+  color: #8b949e;
+}
+
+.feature-metrics-table tr.bar-row-active td {
+  background: #1f2a3d;
+}
+
+.feature-metrics-table tr.bar-row-active .col-time {
+  color: #58a6ff;
+  font-weight: 600;
+}
+
+.feature-metrics-table td.pass-ok {
+  color: #7ee787;
+}
+
+.feature-metrics-table td.pass-fail {
+  color: #f85149;
+}
+
 .subchart-label {
   position: absolute;
   top: 4px;

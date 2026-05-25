@@ -12,6 +12,31 @@ function destroySubchart(id) {
   S.subcharts.delete(id);
 }
 
+function visibleCandleIndexRange(candles) {
+  const list = candles || [];
+  if (!list.length) return { from: 0, to: 0 };
+  if (!S.chart?.timeScale) {
+    return { from: 0, to: list.length - 1 };
+  }
+  const logical = S.chart.timeScale().getVisibleLogicalRange();
+  if (!logical) {
+    return { from: Math.max(0, list.length - 80), to: list.length - 1 };
+  }
+  const from = Math.max(
+    0,
+    Math.min(list.length - 1, Math.floor(Number(logical.from)))
+  );
+  const to = Math.max(
+    0,
+    Math.min(list.length - 1, Math.ceil(Number(logical.to)))
+  );
+  return { from: Math.min(from, to), to: Math.max(from, to) };
+}
+
+function metricsTableDomId(item) {
+  return subchartDomId(item.id || "metrics-table");
+}
+
 function subchartDomId(id) {
   return `subchart-${String(id).replace(/[^a-zA-Z0-9_-]/g, "_")}`;
 }
@@ -27,11 +52,13 @@ function escHtml(s) {
 function clearStrategyChrome() {
   document
     .querySelectorAll(
-      ".subchart-strategy-header, .subchart-stage-header, .subchart-strategy-gap, .subchart-threshold-status"
+      ".subchart-strategy-header, .subchart-stage-header, .subchart-strategy-gap, .subchart-threshold-status, .subchart-feature-metrics"
     )
     .forEach((el) => {
       el.remove();
     });
+  const insp = document.getElementById("featureBarInspector");
+  if (insp) insp.classList.add("hidden");
 }
 
 function headerDomKey(item) {
@@ -145,18 +172,6 @@ function ensureVolumePane(show, candles) {
   scheduleSubchartLayout();
 }
 
-function valuePassesRefLine(value, refLine) {
-  const v = Number(value);
-  const y = Number(refLine?.y);
-  if (!Number.isFinite(v) || !Number.isFinite(y)) return null;
-  const op = String(refLine.operator || "").trim();
-  if (op === ">=") return v >= y;
-  if (op === "<=") return v <= y;
-  if (op === "<") return v < y;
-  if (op === ">") return v > y;
-  return null;
-}
-
 function passBadge(passed) {
   if (passed === true) return " ✓";
   if (passed === false) return " ✗";
@@ -189,11 +204,11 @@ function featurePaneCaption(column, overlay) {
     if (refLines.length === 2 && String(column).includes("box_pos")) {
       const lo = refLines.find((r) => String(r.operator).includes(">="));
       const hi = refLines.find((r) => String(r.operator).includes("<="));
-      const okLo = lo ? valuePassesRefLine(v, lo) : true;
-      const okHi = hi ? valuePassesRefLine(v, hi) : true;
+      const okLo = lo ? Core.valuePassesRefLine(v, lo) : true;
+      const okHi = hi ? Core.valuePassesRefLine(v, hi) : true;
       pass = okLo === true && okHi === true;
     } else if (refLines.length === 1) {
-      pass = valuePassesRefLine(v, refLines[0]);
+      pass = Core.valuePassesRefLine(v, refLines[0]);
     }
     const parts = [base, valStr + passBadge(pass)];
     if (hint) parts.push(`(${hint})`);
@@ -209,7 +224,32 @@ function thresholdStatusDomId(item) {
   return subchartDomId(`status-${item.strategy}-${item.stage}`);
 }
 
-function ensureThresholdStatusPane(item, overlays) {
+function renderThresholdMetricTable(rows, { caption } = {}) {
+  if (!rows.length) {
+    return '<p class="muted threshold-table-empty">box_prefilter: 无数据</p>';
+  }
+  const head = caption
+    ? `<div class="threshold-table-caption">${escHtml(caption)}</div>`
+    : "";
+  const body = rows
+    .map((r) => {
+      const passCls =
+        r.pass === true ? "pass-ok" : r.pass === false ? "pass-fail" : "pass-na";
+      const val = r.value != null ? escHtml(String(r.value)) : "—";
+      return `<tr class="${passCls}">
+        <td class="yaml-key">${escHtml(r.yaml)}</td>
+        <td class="yaml-val">${val}</td>
+        <td class="yaml-th">${escHtml(r.threshold)}</td>
+        <td class="yaml-pf">${passBadge(r.pass)}</td>
+      </tr>`;
+    })
+    .join("");
+  return `${head}<table class="threshold-metric-table"><thead><tr>
+    <th>YAML</th><th>值</th><th>阈</th><th></th>
+  </tr></thead><tbody>${body}</tbody></table>`;
+}
+
+function ensureThresholdStatusPane(item, overlays, timeSec) {
   const domId = thresholdStatusDomId(item);
   let el = document.getElementById(domId);
   if (!el) {
@@ -218,27 +258,270 @@ function ensureThresholdStatusPane(item, overlays) {
     el.className = "subchart-threshold-status";
     el.dataset.strategy = item.strategy || "";
     el.dataset.stage = item.stage || "";
+    el.dataset.columns = (item.columns || []).join(",");
     document.getElementById("subchartStack").appendChild(el);
   }
-  const lines = (item.columns || []).map((col) => {
-    const o = overlays?.[col] || S.lastOverlays?.[col];
-    const refs = o?.reference_lines || [];
-    const latest = o?.latest;
-    const label = col.replace(/_60$/, "");
-    if (!o?.available || latest == null || latest !== latest) {
-      return `<div class="threshold-line muted">${escHtml(label)}: 无数据</div>`;
-    }
-    const v = Number(latest);
-    const valStr = Number.isFinite(v) ? v.toFixed(3) : "?";
-    const ref = refs[0];
-    const pass = ref ? valuePassesRefLine(v, ref) : null;
-    const thresh = ref ? ` ${ref.label || ref.operator + ref.y}` : "";
-    return `<div class="threshold-line">${escHtml(label)}: <strong>${escHtml(valStr)}</strong>${passBadge(pass)}${escHtml(thresh)}</div>`;
-  });
-  el.innerHTML =
-    lines.join("") ||
-    '<div class="threshold-line muted">box_prefilter: 无数据</div>';
+  const rows = Core.buildThresholdMetricRows(item.columns || [], overlays, timeSec);
+  const cap =
+    timeSec != null
+      ? `regime.box_prefilter · ${Shell.formatOrderTime(timeSec)}`
+      : "regime.box_prefilter · 最新 bar";
+  el.innerHTML = renderThresholdMetricTable(rows, { caption: cap });
   return domId;
+}
+
+function ensureFeatureBarInspector() {
+  let el = document.getElementById("featureBarInspector");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "featureBarInspector";
+    el.className = "feature-bar-inspector hidden";
+    const stack = document.getElementById("subchartStack");
+    if (stack?.parentElement) {
+      stack.parentElement.insertBefore(el, stack);
+    }
+  }
+  return el;
+}
+
+function updateFeatureBarInspector(timeSec, overlays) {
+  const el = ensureFeatureBarInspector();
+  const focus = String(S.featureStrategyFocus || "").trim();
+  if (!focus || timeSec == null) {
+    el.classList.add("hidden");
+    return;
+  }
+  const layers = layersState();
+  const cols = Core.resolveSubchartColumns(
+    S.selectedFeatureColumns,
+    S.availableFeatureColumns,
+    layers,
+    focus,
+    S.MAX_FEATURE_SUBCHARTS
+  );
+  const regimeCols = (cols || []).filter((c) =>
+    ["box_stability_60", "box_width_pct_60", "box_touches_hi_60", "box_touches_lo_60"].includes(c)
+  );
+  const chopRows =
+    focus === "chop_grid" && regimeCols.length
+      ? Core.buildThresholdMetricRows(regimeCols, overlays, timeSec)
+      : [];
+  const prefilterCol = cols.find((c) => c === "box_pos_60");
+  const preRows = [];
+  if (prefilterCol) {
+    const o = overlays?.[prefilterCol] || S.lastOverlays?.[prefilterCol];
+    const v = Core.overlayValueAtTime(o, timeSec);
+    const refs = o?.reference_lines || [];
+    const lo = refs.find((r) => String(r.operator).includes(">="));
+    const hi = refs.find((r) => String(r.operator).includes("<="));
+    let pass = null;
+    if (v != null && lo && hi) {
+      pass =
+        Core.valuePassesRefLine(v, lo) === true && Core.valuePassesRefLine(v, hi) === true;
+    }
+    preRows.push({
+      yaml: "rules.box_pos_60",
+      label: "box_pos_60",
+      value: v != null ? v.toFixed(3) : null,
+      threshold: "0.35 – 0.65",
+      pass,
+    });
+  }
+  const chopLine = cols.find((c) => c === "bpc_semantic_chop");
+  const chopRows2 = [];
+  if (chopLine) {
+    const o = overlays?.[chopLine] || S.lastOverlays?.[chopLine];
+    const v = Core.overlayValueAtTime(o, timeSec);
+    const refs = o?.reference_lines || [];
+    const enter = refs.find((r) => String(r.operator).includes(">="));
+    const exitR = refs.find((r) => String(r.operator).includes("<"));
+    chopRows2.push({
+      yaml: "regime.entry_chop_min",
+      label: "enter",
+      value: v != null ? v.toFixed(3) : null,
+      threshold: enter ? enter.label : "≥0.50",
+      pass: enter && v != null ? Core.valuePassesRefLine(v, enter) : null,
+    });
+    chopRows2.push({
+      yaml: "regime.exit_chop_below",
+      label: "exit",
+      value: v != null ? v.toFixed(3) : null,
+      threshold: exitR ? exitR.label : "<0.32",
+      pass: exitR && v != null ? Core.valuePassesRefLine(v, exitR) : null,
+    });
+  }
+  let html = `<div class="inspector-head">${escHtml(focus)} · ${escHtml(Shell.formatOrderTime(timeSec))}</div>`;
+  if (chopRows2.length) {
+    html += renderThresholdMetricTable(chopRows2, { caption: "regime · bpc_semantic_chop" });
+  }
+  if (chopRows.length) {
+    html += renderThresholdMetricTable(chopRows, { caption: "regime.box_prefilter" });
+  }
+  if (preRows.length) {
+    html += renderThresholdMetricTable(preRows, { caption: "prefilter · rules" });
+  }
+  if (!chopRows2.length && !chopRows.length && !preRows.length) {
+    el.classList.add("hidden");
+    return;
+  }
+  el.innerHTML = html;
+  el.classList.remove("hidden");
+  document.querySelectorAll(".subchart-threshold-status").forEach((pane) => {
+    const cols = String(pane.dataset.columns || "")
+      .split(",")
+      .filter(Boolean);
+    if (!cols.length) return;
+    pane.innerHTML = renderThresholdMetricTable(
+      Core.buildThresholdMetricRows(cols, overlays, timeSec),
+      {
+        caption: `regime.box_prefilter · ${Shell.formatOrderTime(timeSec)}`,
+      }
+    );
+  });
+}
+
+function renderChopMetricsTableHtml(candles, overlays, cols, highlightTimeSec) {
+  const specs = Core.chopGridMetricsColumnSpecs(cols);
+  if (!specs.length) {
+    return '<p class="muted">无指标列（请选 Chop 预设或勾选 bpc / box_pos / box 结构列）</p>';
+  }
+  const { from, to } = visibleCandleIndexRange(candles);
+  let head =
+    "<thead><tr><th class=\"col-time\">时间</th>";
+  for (const spec of specs) {
+    head += `<th><div class="col-name">${escHtml(spec.header)}</div><div class="col-thresh">${escHtml(spec.threshold || "")}</div></th>`;
+  }
+  head += "</tr></thead>";
+  let body = "<tbody>";
+  for (let i = from; i <= to; i++) {
+    const t = candles[i]?.time;
+    if (t == null) continue;
+    const active =
+      highlightTimeSec != null && Number(highlightTimeSec) === Number(t);
+    body += `<tr data-time="${t}" class="${active ? "bar-row-active" : ""}">`;
+    body += `<td class="col-time">${escHtml(Shell.formatOrderTime(t))}</td>`;
+    for (const spec of specs) {
+      const cell = Core.chopGridMetricsCell(spec, overlays, t);
+      const cls =
+        cell.pass === true ? "pass-ok" : cell.pass === false ? "pass-fail" : "";
+      body += `<td class="yaml-val ${cls}">${escHtml(cell.value)}</td>`;
+    }
+    body += "</tr>";
+  }
+  body += "</tbody>";
+  return `<table class="feature-metrics-table">${head}${body}</table>`;
+}
+
+function scrollMetricsTableToTime(timeSec) {
+  const scroll = document.getElementById("featureMetricsScroll");
+  if (!scroll || timeSec == null) return;
+  const row = scroll.querySelector(`tr[data-time="${timeSec}"]`);
+  scroll.querySelectorAll("tr.bar-row-active").forEach((tr) => {
+    tr.classList.remove("bar-row-active");
+  });
+  if (!row) return;
+  row.classList.add("bar-row-active");
+  row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+function ensureFeatureMetricsTablePane(item, candles, overlays, highlightTimeSec) {
+  const domId = metricsTableDomId(item);
+  let host = document.getElementById(domId);
+  if (!host) {
+    host = document.createElement("div");
+    host.id = domId;
+    host.className = "subchart-feature-metrics";
+    host.dataset.strategy = item.strategy || "";
+    const cap = document.createElement("div");
+    cap.className = "metrics-table-caption";
+    cap.textContent =
+      "指标表 · 行=主图可见 K 线 · 十字线/点击主图定位行（不随主图纵向拉伸）";
+    const scroll = document.createElement("div");
+    scroll.id = "featureMetricsScroll";
+    scroll.className = "metrics-table-scroll";
+    host.appendChild(cap);
+    host.appendChild(scroll);
+    document.getElementById("subchartStack").appendChild(host);
+    const subId = item.id || "metrics-chop_grid";
+    S.subcharts.set(subId, { kind: "metrics_table", scrollEl: scroll, host });
+  }
+  const scroll = document.getElementById("featureMetricsScroll");
+  if (!scroll) return domId;
+  const cols = item.columns || [];
+  scroll.innerHTML = renderChopMetricsTableHtml(
+    candles,
+    overlays,
+    cols,
+    highlightTimeSec
+  );
+  if (highlightTimeSec != null) {
+    requestAnimationFrame(() => scrollMetricsTableToTime(highlightTimeSec));
+  }
+  return domId;
+}
+
+function refreshFeatureMetricsPanel(highlightTimeSec) {
+  if (!document.getElementById("subchartStack")) return;
+  const overlays = S.lastOverlays || {};
+  const candles = S.lastCandles || [];
+  const focus = String(S.featureStrategyFocus || "").trim();
+  if (focus !== "chop_grid" || !candles.length) return;
+  const host = document.querySelector(".subchart-feature-metrics");
+  if (!host) return;
+  const cols = Core.resolveSubchartColumns(
+    S.selectedFeatureColumns,
+    S.availableFeatureColumns,
+    layersState(),
+    focus,
+    S.MAX_FEATURE_SUBCHARTS
+  );
+  const scroll = document.getElementById("featureMetricsScroll");
+  if (!scroll) return;
+  const timeSec =
+    highlightTimeSec != null
+      ? highlightTimeSec
+      : S.highlightBarTime != null
+        ? S.highlightBarTime
+        : candles[candles.length - 1]?.time;
+  scroll.innerHTML = renderChopMetricsTableHtml(
+    candles,
+    overlays,
+    cols,
+    timeSec
+  );
+  if (timeSec != null) {
+    requestAnimationFrame(() => scrollMetricsTableToTime(timeSec));
+  }
+}
+
+function refreshThresholdTablesAtTime(timeSec) {
+  if (!document.getElementById("subchartStack")) return;
+  if (Core.chopGridUsesMetricsTable("chop_grid", S.featureStrategyFocus)) {
+    if (timeSec != null) S.highlightBarTime = timeSec;
+    refreshFeatureMetricsPanel(timeSec);
+    const insp = document.getElementById("featureBarInspector");
+    if (insp) insp.classList.add("hidden");
+    return;
+  }
+  const overlays = S.lastOverlays || {};
+  document.querySelectorAll(".subchart-threshold-status").forEach((pane) => {
+    const cols = String(pane.dataset.columns || "")
+      .split(",")
+      .filter(Boolean);
+    if (!cols.length) return;
+    pane.innerHTML = renderThresholdMetricTable(
+      Core.buildThresholdMetricRows(cols, overlays, timeSec),
+      {
+        caption:
+          timeSec != null
+            ? `regime.box_prefilter · ${Shell.formatOrderTime(timeSec)}`
+            : "regime.box_prefilter · 最新 bar",
+      }
+    );
+  });
+  if (!Core.chopGridUsesMetricsTable("chop_grid", S.featureStrategyFocus)) {
+    updateFeatureBarInspector(timeSec, overlays);
+  }
 }
 
 function refLineTimeline(pts, candles) {
@@ -331,9 +614,16 @@ function ensureFeaturePane(column, overlay, colorIndex, candles) {
 function syncSubcharts(candles, overlays) {
   const showVol = document.getElementById("paneVolume").checked;
   ensureVolumePane(showVol, candles);
+  const tableFirst = Core.chopGridUsesMetricsTable(
+    "chop_grid",
+    S.featureStrategyFocus
+  );
   const wantFeatures = new Set(S.selectedFeatureColumns);
   for (const id of [...S.subcharts.keys()]) {
-    if (id.startsWith("feat:") && !wantFeatures.has(id.slice(5))) destroySubchart(id);
+    if (id.startsWith("metrics-") && !tableFirst) destroySubchart(id);
+    if (id.startsWith("feat:") && (tableFirst || !wantFeatures.has(id.slice(5)))) {
+      destroySubchart(id);
+    }
   }
   clearStrategyChrome();
 
@@ -350,6 +640,7 @@ function syncSubcharts(candles, overlays) {
   if (showVol) domOrder.push(subchartDomId("volume"));
 
   let colorIdx = 0;
+  let metricsTableDone = false;
   for (const item of panePlan) {
     if (item.type === "gap") {
       ensureStrategyGap(item.id);
@@ -357,9 +648,24 @@ function syncSubcharts(candles, overlays) {
     } else if (item.type === "header") {
       ensureSubchartHeader(item);
       domOrder.push(subchartDomId(headerDomKey(item)));
+    } else if (item.type === "metrics_table") {
+      if (!metricsTableDone) {
+        domOrder.push(
+          ensureFeatureMetricsTablePane(
+            item,
+            candles,
+            overlays,
+            S.highlightBarTime ?? candles[candles.length - 1]?.time
+          )
+        );
+        metricsTableDone = true;
+      }
     } else if (item.type === "threshold_status") {
-      domOrder.push(ensureThresholdStatusPane(item, overlays));
+      if (!tableFirst) {
+        domOrder.push(ensureThresholdStatusPane(item, overlays, null));
+      }
     } else if (item.type === "feature") {
+      if (tableFirst) continue;
       const fid = `feat:${item.column}`;
       const overlaySpec =
         overlays?.[item.column] ||
@@ -378,7 +684,19 @@ function syncSubcharts(candles, overlays) {
   }
   reorderSubchartStackDom(domOrder);
 
-  scheduleSubchartLayout();
+  const stack = document.getElementById("subchartStack");
+  if (stack && S.lastCandles?.length) {
+    const tail = S.lastCandles[S.lastCandles.length - 1].time;
+    refreshThresholdTablesAtTime(
+      tableFirst && S.highlightBarTime != null ? S.highlightBarTime : tail
+    );
+  }
+
+  if (tableFirst) {
+    resizeAllSubcharts();
+  } else {
+    scheduleSubchartLayout();
+  }
 }
 
 function formatOverlayStatus(overlays) {

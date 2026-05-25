@@ -87,13 +87,14 @@ function syncSubchartScales() {
   const mainTs = S.chart.options()?.timeScale || {};
   const barSpacing = mainTs.barSpacing ?? 3;
   const rightOffset = mainTs.rightOffset ?? 8;
-  for (const pane of S.subcharts.values()) {
-    pane.chart.timeScale().applyOptions({
-      barSpacing,
-      rightOffset,
-      minBarSpacing: 0.5,
-    });
-  }
+    for (const pane of S.subcharts.values()) {
+      if (!pane.chart) continue;
+      pane.chart.timeScale().applyOptions({
+        barSpacing,
+        rightOffset,
+        minBarSpacing: 0.5,
+      });
+    }
 }
 
 function syncSubchartsToMainRange() {
@@ -105,11 +106,15 @@ function syncSubchartsToMainRange() {
       S.chart.timeScale().getVisibleRange?.() || mainVisibleTimeRange();
     if (timeRange && timeRange.from != null && timeRange.to != null) {
       for (const pane of S.subcharts.values()) {
+        if (!pane.chart) continue;
         try {
           pane.chart.timeScale().setVisibleRange(timeRange);
         } catch (_) {
           /* subchart may not have data at range edges yet */
         }
+      }
+      if (typeof refreshFeatureMetricsPanel === "function") {
+        refreshFeatureMetricsPanel(S.highlightBarTime ?? null);
       }
       return;
     }
@@ -128,11 +133,15 @@ function syncSubchartsToMainRange() {
     if (fromTime == null || toTime == null) return;
     const derived = { from: fromTime, to: toTime };
     for (const pane of S.subcharts.values()) {
+      if (!pane.chart) continue;
       try {
         pane.chart.timeScale().setVisibleRange(derived);
       } catch (_) {
         /* ignore */
       }
+    }
+    if (typeof refreshFeatureMetricsPanel === "function") {
+      refreshFeatureMetricsPanel(S.highlightBarTime ?? null);
     }
   } finally {
     S.syncingTimeScale = false;
@@ -172,6 +181,7 @@ function initMainChart() {
   const resize = () => {
     S.chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
     for (const pane of S.subcharts.values()) {
+      if (!pane.chart || !pane.host) continue;
       pane.chart.applyOptions({
         width: pane.host.clientWidth,
         height: pane.host.clientHeight,
@@ -196,7 +206,13 @@ function initMainChart() {
     if (stack) {
       const stackRo = new ResizeObserver(() => {
         resizeAllSubcharts();
-        syncSubchartsToMainRange();
+        if (Core.chopGridUsesMetricsTable("chop_grid", S.featureStrategyFocus)) {
+          if (typeof refreshFeatureMetricsPanel === "function") {
+            refreshFeatureMetricsPanel(S.highlightBarTime ?? null);
+          }
+        } else {
+          syncSubchartsToMainRange();
+        }
       });
       stackRo.observe(stack);
     }
@@ -205,6 +221,10 @@ function initMainChart() {
   bindTimeScaleSync();
   S.chart.subscribeClick((param) => {
     if (!param || param.time === undefined) return;
+    S.highlightBarTime = param.time;
+    if (typeof refreshFeatureMetricsPanel === "function") {
+      refreshFeatureMetricsPanel(param.time);
+    }
     const tf = document.getElementById("timeframeSelect")?.value || "2h";
     const tol = Core.timeframeToleranceSec(tf);
     const hit = Core.findMarkerByTime(S.lastRawMarkers, param.time, tol);
@@ -215,8 +235,13 @@ function initMainChart() {
   S.chart.subscribeCrosshairMove((param) => {
     if (!param || !param.time || param.point.x < 0 || param.point.y < 0) {
       legend.classList.add("hidden");
+      S.highlightBarTime = null;
+      if (typeof refreshThresholdTablesAtTime === "function") {
+        refreshThresholdTablesAtTime(null);
+      }
       return;
     }
+    S.highlightBarTime = param.time;
     const data = param.seriesData.get(S.candleSeries);
     if (!data) {
       legend.classList.add("hidden");
@@ -242,12 +267,15 @@ function initMainChart() {
 
     legend.innerHTML = `${timeStr}  O <span class="legend-price">${o.toFixed(4)}</span>  H <span class="legend-price">${h.toFixed(4)}</span>  L <span class="legend-price">${l.toFixed(4)}</span>  C <span class="legend-price">${c.toFixed(4)}</span>  <span class="${cls}">${sign}${pct}%</span>${overlayText}`;
     legend.classList.remove("hidden");
+    if (typeof refreshThresholdTablesAtTime === "function") {
+      refreshThresholdTablesAtTime(param.time);
+    }
   });
 }
 
 function resizeAllSubcharts() {
   for (const pane of S.subcharts.values()) {
-    if (!pane.host) continue;
+    if (!pane.chart || !pane.host) continue;
     const w = pane.host.clientWidth;
     const h = pane.host.clientHeight;
     if (w > 0 && h > 0) {
