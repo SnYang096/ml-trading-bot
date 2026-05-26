@@ -66,6 +66,16 @@ rolling:
 threshold_calibration:
   # slow 要跑完整特征寻找链：允许 prefilter/gate 树模型训练、SHAP/分裂点打分，再叠加阈值调整。
   enable_model_training: true
+  prefilter:
+    optimize: true
+  gate:
+    optimize: true
+  entry_filter:
+    optimize: true
+  execution_opt:
+    enabled: true
+  direction_tuning:
+    enabled: true
   # execution_opt / pcm_eval / direction_tuning 与 extends 的 turbo 一致，不写则继承。
 
 

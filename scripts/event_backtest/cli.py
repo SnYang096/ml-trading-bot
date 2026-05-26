@@ -20,6 +20,7 @@ from scripts.event_backtest.reporting.json_export import (
 )
 from scripts.event_backtest.reporting.trading_map import generate_trading_map_html
 from scripts.event_backtest.results import BacktestResult
+from scripts.event_backtest.variant_grid import run_variant_grid
 from scripts.capital_report import write_capital_report_from_trades
 
 try:
@@ -228,7 +229,19 @@ def main():
         default=False,
         help="降低逐信号日志级别（不影响回测逻辑，仅减少 stdout IO）",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--variant-grid",
+        default=None,
+        metavar="YAML",
+        help="YAML grid of variants; runs each then updates EXPERIMENT_INDEX.json",
+    )
+    args, extra = parser.parse_known_args()
+
+    if args.variant_grid:
+        grid_path = Path(args.variant_grid)
+        return run_variant_grid(grid_path, extra_argv=extra)
+    if extra:
+        parser.error(f"unrecognized arguments: {' '.join(extra)}")
 
     if args.quiet_signal_logs:
         logging.getLogger("src.time_series_model.live.generic_live_strategy").setLevel(

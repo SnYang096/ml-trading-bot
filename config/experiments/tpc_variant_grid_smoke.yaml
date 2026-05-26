@@ -1,0 +1,13 @@
+# Smoke grid for variant-grid CLI (short window). Full ABH grid: copy from EXPERIMENT_INDEX.
+experiment_id: tpc_variant_grid_smoke
+strategy: tpc
+promoted_variant: H
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+runs:
+  - variant: H_recent_smoke
+    strategies_root: config/strategies
+    start_date: "2026-03-01"
+    end_date: "2026-03-15"
+    output_dir: results/tpc/experiments/_smoke_grid_H
