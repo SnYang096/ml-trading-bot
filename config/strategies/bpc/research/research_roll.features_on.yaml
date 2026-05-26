@@ -126,6 +126,8 @@ strategies:
 
 shap_feature_selection:
   enabled: true
+  audit_only: true
+  promote_to_features_yaml: false
   n_folds: 8
   top_k: 20
   stability_threshold: 0.8

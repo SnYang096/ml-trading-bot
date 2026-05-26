@@ -977,6 +977,16 @@ Examples:
                 if not shap_cfg.get("enabled", False):
                     print("   ⏭️  SHAP feature selection disabled in config")
                     return
+                if (
+                    shap_cfg.get("audit_only")
+                    or shap_cfg.get("promote_to_features_yaml") is False
+                ):
+                    if args.promote:
+                        print(
+                            "   📋 SHAP audit_only: ignoring --promote "
+                            "(no write-back to features yaml)"
+                        )
+                    args.promote = False
 
     run_shap_selection(
         logs_path=args.logs,

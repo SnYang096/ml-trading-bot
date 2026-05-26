@@ -14,14 +14,20 @@ rolling:
   turbo_fixed_features:
     fixed_strategies_root: config/strategies
 
+rolling_calibration:
+  prefilter:
+    optimize: false
+  execution_opt:
+    enabled: false
+
 threshold_calibration:
   # enable_model_training: false → 阈值-only（与 BPC turbo 语义一致）。
   # 权威口径：本段 threshold_calibration；月度 replay 由 load_pipeline_config 汇总为 rolling_calibration.*（可读顶层 rolling_calibration 覆写节奏等）。
   enable_model_training: false
   prefilter:
-    optimize: true
+    optimize: false
   execution_opt:
-    enabled: true
+    enabled: false
 
 universe_group:
   file: config/download/crypto_4h_token_universe_groups.yaml

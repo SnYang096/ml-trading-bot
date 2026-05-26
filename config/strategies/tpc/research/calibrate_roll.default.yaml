@@ -2,7 +2,8 @@
 # TPC · turbo（turbo_fixed_features）— 目的与节奏
 # -----------------------------------------------------------------------------
 # 目的
-#   - 生产特征集固定；主要做「阈值漂移」与执行层标定；标定链关闭树模型训练。
+#   - 生产特征集固定；月度 calibrate_roll 为 **纯验证**（optimize=false, dry_run），不改 yaml。
+#   - 阈值/特征变更仅 Q-级 R&D（quick_layer_scan → event_backtest → 人审 promote）。
 # 建议节奏
 #   - 约每月：rolling_sim 在 holdout 内逐日历月重放（详见 docs/workflow/ROLLING_SIM_TIME_WINDOWS_CN.md）。
 # 何时不要用 turbo
@@ -21,22 +22,32 @@ rolling:
   turbo_fixed_features:
     fixed_strategies_root: config/strategies
 
+rolling_calibration:
+  prefilter:
+    optimize: false
+  execution_opt:
+    enabled: false
+  pcm_eval:
+    enabled: false
+  direction_tuning:
+    enabled: false
+
 threshold_calibration:
   # enable_model_training: false → 阈值-only（不做 prefilter/gate 树模型训练与 SHAP/分裂点特征发现）。
   # 权威口径：本段 threshold_calibration.*；load_pipeline_config 再汇总成 rolling_calibration.* 供月度 replay；可选顶层 rolling_calibration 做小范围覆写（如 step_months）。
   enable_model_training: false
   prefilter:
-    optimize: true
+    optimize: false
   gate:
-    optimize: true
+    optimize: false
   entry_filter:
-    optimize: true
+    optimize: false
   execution_opt:
-    enabled: true
+    enabled: false
   pcm_eval:
     enabled: false
   direction_tuning:
-    enabled: true
+    enabled: false
 
 universe_group:
   file: config/download/crypto_4h_token_universe_groups.yaml
@@ -72,7 +83,7 @@ strategies:
         locked_threshold_tuning:
           enabled: true
           skip_if_cached: false
-          search_mode: parquet_plateau
+          search_mode: dry_run
           plateau_scan_points: 25
           plateau_coord_rounds: 3
         scoring_method_fallbacks:
@@ -129,3 +140,8 @@ event_backtest:
 
 output:
   history_dir: results/tpc/calibrate_roll.default
+
+# Post-roll monitoring (cron / manual; does not modify yaml):
+#   python scripts/regime_watchdog.py --window-parquet <features.parquet> ...
+#   python scripts/regime_drift_monitor.py ...
+# IC baseline: config/monitoring/factor_ic_baseline_tpc_20260526.json

@@ -2660,6 +2660,10 @@ def run_strategy_pipeline(
     # research_pipeline.yaml / prod yaml 中设 shap_feature_selection.enabled: true。
     _skip_shap = skip_shap or (not _fs_effective) or not shap_cfg.get("enabled", False)
     shap_active = False  # 标记 SHAP 是否成功生成了 _shap.yaml
+    _shap_audit_only = bool(shap_cfg.get("audit_only", False))
+    _shap_promote_yaml = shap_cfg.get("promote_to_features_yaml", True)
+    if _shap_promote_yaml is False:
+        _shap_audit_only = True
     if not _skip_shap:
         shap_cmd = [
             "python",
@@ -2674,8 +2678,11 @@ def run_strategy_pipeline(
             config_path or str(DEFAULT_CONFIG),
             "--output",
             f"{prepare_dir}/shap",
-            "--promote",
         ]
+        if not _shap_audit_only:
+            shap_cmd.append("--promote")
+        else:
+            print("   📋 SHAP audit_only: running selection report without --promote")
         # Per-strategy SHAP override (e.g. ME 需要更宽松的 stability_threshold)
         _shap_ov = scfg.get("shap_override", {})
         if _shap_ov:
