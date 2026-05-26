@@ -1,0 +1,32 @@
+# Signed forward RR over H=3 bars (ATR-normalized). The tree learns to predict
+# this directly; sign of prediction → direction, |prediction| → τ plateau.
+
+name: fast_scalp_signed_forward_rr_h3
+target_column: label
+
+label_generator:
+  module: src.time_series_model.strategies.labels.forward_rr_signed_label
+  function: compute_signed_forward_rr_label
+  params:
+    horizon: 3
+    price_col: close
+    atr_col: atr14
+    rr_floor: 0.30
+
+label_meta:
+  label_type: continuous
+  semantic: |
+    label[t] = (close[t+3] - close[t]) / max(atr14[t], eps)
+    Positive → LONG context; negative → SHORT context.
+  horizon: 3 bars
+  rr_floor: 0.30
+  description: |
+    Used by the fast_scalp single-tree direction model. After training, run
+    holdout τ plateau on the `score` column (regression output) — promote
+    plateau mid to backtest.yaml long/short_entry_threshold.
+
+filters:
+  - column: label
+    notna: true
+
+post_label_filters: []

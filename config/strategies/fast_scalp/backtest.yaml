@@ -1,0 +1,31 @@
+# Single-leg execution driven directly by tree `score`.
+# Promote τ_long / τ_short from holdout plateau (see
+# docs/strategy/短期树独立策略_设计与落地_CN.md §5.3) — do NOT optimize here.
+
+backtest:
+  enabled: true
+  params:
+    price_col: close
+    freq: "120T"
+    use_signal_direction: true
+    long_entry_threshold: 0.55      # τ_long — fill from holdout plateau
+    long_exit_threshold: 0.50
+    short_entry_threshold: 0.45     # 1 - τ_short
+    short_exit_threshold: 0.50
+    initial_cash: 10000
+    fee: 0.0004
+    slippage: 0.0001
+    max_holding_bars: 6             # ≈ 2× H to give the regressor room
+    allow_flip: false
+    use_trailing_stop: true
+    trailing_atr_mult: 1.5
+    atr_col: atr14
+    atr_window: 14
+    pyramiding:
+      enabled: false
+    position_sizing:
+      type: atr_risk
+      risk_pct: 0.005               # tighter than B (0.01)
+      atr_col: atr14
+      atr_window: 14
+      max_size_cap: 5
