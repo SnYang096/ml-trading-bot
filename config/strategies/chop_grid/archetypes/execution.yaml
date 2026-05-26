@@ -14,6 +14,7 @@ inventory: # Inventory construction and order placement semantics.
     atr_mult: 1.00 # Grid spacing = ATR * this multiplier, subject to min_pct.
     min_pct: 0.010 # Minimum spacing as a fraction of price.
   max_levels_per_side: 2 # Maximum long levels and maximum short levels around center.
+  max_replenish_per_level_per_segment: null # null=unlimited post-TP replenishes (research); 0=one fill per level (live default).
   order_type: limit # Intended order type for resting grid entries.
 
 risk: # Runtime inventory limits and forced-exit rules, not report cost assumptions.

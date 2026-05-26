@@ -70,6 +70,13 @@ def _load_grid_defaults(path: Path) -> dict:
     return merge_chop_grid_yaml(path)
 
 
+def _parse_max_replenish_cli(value: str) -> int | None:
+    raw = str(value).strip().lower()
+    if raw in {"", "null", "none", "unlimited", "inf"}:
+        return None
+    return int(value)
+
+
 def _fmt(x: float, digits: int = 4) -> str:
     if pd.isna(x):
         return ""
@@ -401,6 +408,9 @@ def run_backtest(
         max_loss_per_grid=args.max_loss_per_grid,
         max_open_levels_total=args.max_open_levels_total,
         same_bar_entry_exit=bool(args.same_bar_entry_exit),
+        max_replenish_per_level_per_segment=getattr(
+            args, "max_replenish_per_level", None
+        ),
     )
     engine = ChopGridEngine(engine_cfg)
     symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
@@ -1083,6 +1093,15 @@ def main() -> None:
         "--grid-pct", type=float, default=defaults.get("grid_pct", 0.004)
     )
     parser.add_argument("--max-levels", type=int, default=defaults.get("max_levels", 3))
+    parser.add_argument(
+        "--max-replenish-per-level",
+        default=defaults.get("max_replenish_per_level"),
+        type=_parse_max_replenish_cli,
+        help=(
+            "Post-TP limit replenishes per level per regime segment "
+            "(0=one fill, null/unlimited=legacy backtest)."
+        ),
+    )
     parser.add_argument(
         "--same-bar-entry-exit",
         action=argparse.BooleanOptionalAction,

@@ -71,6 +71,8 @@ class GridState:
     current_regime: str = "idle"
     last_reconciliation_ok: bool = True
     last_reconciliation_issues: List[str] = field(default_factory=list)
+    # Completed round-trips per level key (L1..Ln, S1..Sn) within active grid segment.
+    level_replenish_count: Dict[str, int] = field(default_factory=dict)
 
 
 def _as_float(value: Any, default: float = 0.0) -> float:
@@ -191,7 +193,24 @@ def _load_grid_config(path: str | Path) -> GridEngineConfig:
         ),
         max_loss_per_grid=risk.get("max_loss_per_grid", 0.03),
         max_open_levels_total=risk.get("max_open_levels_total", 6),
+        max_replenish_per_level_per_segment=_parse_max_replenish(
+            inv.get("max_replenish_per_level_per_segment")
+        ),
     )
+
+
+def _parse_max_replenish(raw: Any) -> int | None:
+    if raw is None:
+        return None
+    if isinstance(raw, str) and raw.strip().lower() in {"", "null", "none"}:
+        return None
+    return int(raw)
+
+
+def _level_side_key(level: int, side: str) -> str:
+    s = str(side).upper()
+    prefix = "L" if s in {"LONG", "BUY"} else "S"
+    return f"{prefix}{int(level)}"
 
 
 class ChopGridLiveEngine:
@@ -312,6 +331,10 @@ class ChopGridLiveEngine:
             last_reconciliation_issues=[
                 str(x) for x in raw.get("last_reconciliation_issues", [])
             ],
+            level_replenish_count={
+                str(k): int(v)
+                for k, v in (raw.get("level_replenish_count") or {}).items()
+            },
         )
 
     def save_state(self) -> None:
@@ -466,6 +489,9 @@ class ChopGridLiveEngine:
 
     def on_execution_report(self, report: Dict[str, Any]) -> None:
         """Apply normalized user-stream fill updates to local pending inventory."""
+        if self._handle_protection_fill(report):
+            self.save_state()
+            return
         order = self._find_order(
             exchange_id=str(report.get("order_id") or ""),
             client_id=str(report.get("client_order_id") or ""),
@@ -892,6 +918,8 @@ class ChopGridLiveEngine:
             if self.bar_simulation:
                 actions.extend(self._simulate_fills(timestamp, high, low))
                 actions.extend(self._simulate_targets(timestamp, high, low))
+            else:
+                actions.extend(self._maybe_replenish_empty_levels(symbol, timestamp))
             if self._risk_stop(close):
                 should_exit = True
 
@@ -923,6 +951,7 @@ class ChopGridLiveEngine:
             spacing=spacing,
             last_timestamp=timestamp,
             current_regime="chop_grid",
+            level_replenish_count={},
         )
         actions: List[Dict[str, Any]] = []
         for level in range(1, self.cfg.max_levels_per_side + 1):
@@ -987,6 +1016,7 @@ class ChopGridLiveEngine:
                     entry_price=order.price,
                     quantity=order.quantity,
                     entry_time=timestamp,
+                    leg_id=order.order_id,
                 )
             )
             actions.append(
@@ -1034,6 +1064,7 @@ class ChopGridLiveEngine:
                         "timestamp": timestamp,
                     }
                 )
+                actions.extend(self._after_level_tp_closed(pos, timestamp))
             else:
                 remaining.append(pos)
         self.state.inventory = remaining
@@ -1098,9 +1129,157 @@ class ChopGridLiveEngine:
             )
         self.state.pending_orders = []
         self.state.inventory = []
+        self.state.level_replenish_count = {}
         self.state.active = False
         self.state.current_regime = "idle"
         return actions
+
+    def _may_replenish_level(self, level_key: str) -> bool:
+        max_r = self.cfg.max_replenish_per_level_per_segment
+        if max_r is None:
+            return True
+        return int(self.state.level_replenish_count.get(level_key, 0)) <= int(max_r)
+
+    def _grid_entry_price(self, level: int, pos_side: str) -> float:
+        lv = int(level)
+        if str(pos_side).upper() in {"LONG", "BUY"}:
+            return self.state.center - self.state.spacing * lv
+        return self.state.center + self.state.spacing * lv
+
+    def _entry_order_id(self, level: int, pos_side: str) -> str:
+        key = _level_side_key(level, pos_side)
+        trips = int(self.state.level_replenish_count.get(key, 0))
+        base = f"{self.state.grid_id}_{key}"
+        if trips <= 0:
+            return base
+        return f"{base}_r{trips}"
+
+    def _has_pending_at_level(self, level: int, pos_side: str) -> bool:
+        want_side = "BUY" if str(pos_side).upper() in {"LONG", "BUY"} else "SELL"
+        for order in self.state.pending_orders:
+            if int(order.level) == int(level) and order.side == want_side:
+                return True
+        return False
+
+    def _has_inventory_at_level(self, level: int, pos_side: str) -> bool:
+        want = "LONG" if str(pos_side).upper() in {"LONG", "BUY"} else "SHORT"
+        for pos in self.state.inventory:
+            if int(pos.level) == int(level) and str(pos.side).upper() == want:
+                return True
+        return False
+
+    def _replenish_actions_for_level(
+        self, symbol: str, level: int, pos_side: str, timestamp: str
+    ) -> List[Dict[str, Any]]:
+        if not self.state.active or self.state.spacing <= 0:
+            return []
+        level_key = _level_side_key(level, pos_side)
+        if not self._may_replenish_level(level_key):
+            return []
+        if self._has_pending_at_level(level, pos_side) or self._has_inventory_at_level(
+            level, pos_side
+        ):
+            return []
+        price = self._grid_entry_price(level, pos_side)
+        order_side = "BUY" if str(pos_side).upper() in {"LONG", "BUY"} else "SELL"
+        qty = self.level_notional / max(self.state.center, 1e-12)
+        order = GridOrder(
+            order_id=self._entry_order_id(level, pos_side),
+            symbol=symbol,
+            side=order_side,
+            level=int(level),
+            price=price,
+            quantity=qty,
+            created_at=timestamp,
+        )
+        self.state.pending_orders.append(order)
+        return [
+            {
+                "action": "place",
+                "order_type": "limit",
+                "expected_liquidity": "maker",
+                "expected_fee_bps": self._maker_fee_bps(),
+                **asdict(order),
+            }
+        ]
+
+    def _after_level_tp_closed(
+        self, pos: GridPosition, timestamp: str
+    ) -> List[Dict[str, Any]]:
+        level_key = _level_side_key(pos.level, pos.side)
+        self.state.inventory = [
+            p for p in self.state.inventory if p.leg_id != pos.leg_id
+        ]
+        self.state.level_replenish_count[level_key] = (
+            int(self.state.level_replenish_count.get(level_key, 0)) + 1
+        )
+        return self._replenish_actions_for_level(
+            pos.symbol, int(pos.level), pos.side, timestamp
+        )
+
+    def _maybe_replenish_empty_levels(
+        self, symbol: str, timestamp: str
+    ) -> List[Dict[str, Any]]:
+        """Reconcile fallback for missed TP execution reports.
+
+        Only acts on levels with ``level_replenish_count[key] >= 1`` (i.e. at
+        least one round-trip already recorded). This guards against
+        ``_sync_inventory_from_exchange`` clearing a position without a TP
+        signal, which would otherwise look identical to a post-TP empty level
+        and cause phantom duplicate orders.
+        """
+        if not self.state.active or self.state.symbol != symbol:
+            return []
+        if (
+            self._live_exchange_has_activity
+            and not self.state.pending_orders
+            and not self.state.inventory
+        ):
+            return []
+        actions: List[Dict[str, Any]] = []
+        for level in range(1, self.cfg.max_levels_per_side + 1):
+            for pos_side in ("LONG", "SHORT"):
+                key = _level_side_key(level, pos_side)
+                if int(self.state.level_replenish_count.get(key, 0)) <= 0:
+                    continue
+                actions.extend(
+                    self._replenish_actions_for_level(
+                        symbol, level, pos_side, timestamp
+                    )
+                )
+        return actions
+
+    def _handle_protection_fill(self, report: Dict[str, Any]) -> bool:
+        """Detect TP/SL protection fills so replenish + count++ stay accurate.
+
+        Matches by:
+          1. ``report.order_id`` (exchange id) against ``pos.protection_order_ids``
+             — populated by ``on_execution_results(action="place_protection")``.
+          2. ``report.client_order_id`` against the same id list (some streams
+             surface only the deterministic client id we supplied).
+          3. ``report.leg_id`` (or ``local_order_id``) — orchestrator-provided
+             hint of the entry order id, with optional ``_tp`` suffix.
+        """
+        status = str(report.get("status") or "").upper()
+        if status != "FILLED":
+            return False
+        ex_id = str(report.get("order_id") or "")
+        cid = str(report.get("client_order_id") or "")
+        leg_hint = str(report.get("leg_id") or report.get("local_order_id") or "")
+        if leg_hint.endswith("_tp"):
+            leg_hint = leg_hint[: -len("_tp")]
+        ts = str(report.get("trade_time") or self.state.last_timestamp)
+        for pos in list(self.state.inventory):
+            prot_ids = {str(x) for x in pos.protection_order_ids if str(x)}
+            if (ex_id and ex_id in prot_ids) or (cid and cid in prot_ids):
+                self._pending_actions.extend(self._after_level_tp_closed(pos, ts))
+                return True
+        if leg_hint:
+            pos = self._find_position(leg_hint)
+            if pos is not None:
+                self._pending_actions.extend(self._after_level_tp_closed(pos, ts))
+                return True
+        return False
 
     def _protection_actions(
         self, *, order_id: str, pos: GridPosition, timestamp: str

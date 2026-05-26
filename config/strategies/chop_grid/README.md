@@ -35,6 +35,15 @@ Research-only prototype for trading broad no-trend crypto regimes.
 - 当前价格上方挂卖出限价单，成交后形成 `SHORT` 库存，目标是在下一格止盈。
 - 每一层库存独立成交、独立止盈；策略整体保持中性网格，而不是全仓做多或全仓做空。
 
+同档补挂（`inventory.max_replenish_per_level_per_segment`）：
+
+- 含义：每个 regime 段、每个网格档位（L1/L2/…、S1/S2/…）在**止盈后**是否再挂同价限价单。
+- `0`：每档只成交一次（当前 live 默认，直到 sweep 后调高）。
+- `N>0`：止盈后最多再补挂 **N** 次（总入场 ≤ **1+N**）。
+- `null` / 省略：不限制补挂（研究回测默认，与历史 `ChopGridEngine` 行为一致）。
+- 补挂价位固定为段内首次 `_start_grid` 的 `center ± spacing × level`，不随 bar 的 `close` 重锚。
+- 历史选参：`python scripts/sweep_chop_grid_replenish.py`（见 `results/chop_grid/sweep_replenish*.csv`）。
+
 网格间距：
 
 ```text

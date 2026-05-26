@@ -27,6 +27,9 @@ class GridEngineConfig:
     max_loss_per_grid: float | None = 0.03
     max_open_levels_total: int | None = 6
     same_bar_entry_exit: bool = False
+    # None = unlimited replenishes per level per segment (legacy backtest).
+    # N = max post-TP replenishes; total fills per level <= 1 + N (N=0 = live one-shot).
+    max_replenish_per_level_per_segment: int | None = None
 
 
 @dataclass(frozen=True)
@@ -165,12 +168,21 @@ class ChopGridEngine:
 
         open_longs: Dict[int, Tuple[float, pd.Timestamp, int]] = {}
         open_shorts: Dict[int, Tuple[float, pd.Timestamp, int]] = {}
+        completed_long: Dict[int, int] = {}
+        completed_short: Dict[int, int] = {}
+        max_replenish = self.cfg.max_replenish_per_level_per_segment
         trades: List[GridTrade] = []
         equity_path: List[Tuple[pd.Timestamp, float]] = []
         max_open = 0
         risk_exit = False
+        replenish_tp = 0
 
         leg_notional = float(max(0.0, unit_notional_usdt))
+
+        def _may_enter_level(level_i: int, completed: Dict[int, int]) -> bool:
+            if max_replenish is None:
+                return True
+            return int(completed.get(level_i, 0)) <= int(max_replenish)
 
         def _record(
             *,
@@ -241,33 +253,45 @@ class ChopGridEngine:
                 target = entry + spacing
                 can_exit = self.cfg.same_bar_entry_exit or bar_i > fill_bar
                 if can_exit and high >= target:
+                    lvl = level_i + 1
+                    if completed_long.get(level_i, 0) > 0:
+                        replenish_tp += 1
                     _record(
                         side="LONG",
-                        level=level_i + 1,
+                        level=lvl,
                         entry_price=entry,
                         entry_time=entry_ts,
                         exit_price=target,
                         exit_time=ts,
                         exit_reason="grid_tp",
                     )
+                    completed_long[level_i] = completed_long.get(level_i, 0) + 1
                     del open_longs[level_i]
             for level_i, (entry, entry_ts, fill_bar) in list(open_shorts.items()):
                 target = entry - spacing
                 can_exit = self.cfg.same_bar_entry_exit or bar_i > fill_bar
                 if can_exit and low <= target:
+                    lvl = level_i + 1
+                    if completed_short.get(level_i, 0) > 0:
+                        replenish_tp += 1
                     _record(
                         side="SHORT",
-                        level=level_i + 1,
+                        level=lvl,
                         entry_price=entry,
                         entry_time=entry_ts,
                         exit_price=target,
                         exit_time=ts,
                         exit_reason="grid_tp",
                     )
+                    completed_short[level_i] = completed_short.get(level_i, 0) + 1
                     del open_shorts[level_i]
 
             for level_i, px in enumerate(long_levels):
-                if level_i not in open_longs and low <= px:
+                if (
+                    level_i not in open_longs
+                    and low <= px
+                    and _may_enter_level(level_i, completed_long)
+                ):
                     if account_risk_tracker is not None and leg_notional > 0:
                         ok, _ = account_risk_tracker.allow_open(leg_notional)
                         if not ok:
@@ -275,7 +299,11 @@ class ChopGridEngine:
                         account_risk_tracker.on_open(leg_notional)
                     open_longs[level_i] = (px, ts, bar_i)
             for level_i, px in enumerate(short_levels):
-                if level_i not in open_shorts and high >= px:
+                if (
+                    level_i not in open_shorts
+                    and high >= px
+                    and _may_enter_level(level_i, completed_short)
+                ):
                     if account_risk_tracker is not None and leg_notional > 0:
                         ok, _ = account_risk_tracker.allow_open(leg_notional)
                         if not ok:
@@ -391,6 +419,8 @@ class ChopGridEngine:
                 if t.exit_reason in {"regime_exit", "risk_exit"}
             ),
             "max_drawdown": max_drawdown,
+            "max_replenish_per_level": max_replenish,
+            "replenish_trades": replenish_tp,
         }
         return GridSegmentResult(trades, summary, equity_path)
 

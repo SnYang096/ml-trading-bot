@@ -141,6 +141,12 @@ def update_multileg_calibration_candidate(
             spacing["min_pct"] = float(candidate["min_pct"])
         if "max_levels_per_side" in candidate:
             inv["max_levels_per_side"] = int(candidate["max_levels_per_side"])
+        if "max_replenish_per_level_per_segment" in candidate:
+            raw = candidate["max_replenish_per_level_per_segment"]
+            inv["max_replenish_per_level_per_segment"] = (
+                None if raw is None or str(raw).lower() in {"null", "none", ""}
+                else int(raw)
+            )
         if "max_open_levels_total" in candidate:
             risk = exe.setdefault("risk", {})
             risk["max_open_levels_total"] = int(candidate["max_open_levels_total"])

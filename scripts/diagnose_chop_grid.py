@@ -64,6 +64,14 @@ def resolve_optional_repo_path(value: Any) -> str | None:
     return str(p.resolve())
 
 
+def _parse_max_replenish_inv(raw: Any) -> int | None:
+    if raw is None:
+        return None
+    if isinstance(raw, str) and raw.strip().lower() in {"", "null", "none"}:
+        return None
+    return int(raw)
+
+
 def merge_chop_grid_yaml(path: Path) -> Dict[str, Any]:
     """Load strategy knobs from ``grid.yaml`` for backtests, diagnostics, sweeps.
 
@@ -110,6 +118,9 @@ def merge_chop_grid_yaml(path: Path) -> Dict[str, Any]:
         "grid_atr_mult": float(spacing.get("atr_mult", 0.50)),
         "grid_pct": float(spacing.get("min_pct", 0.004)),
         "max_levels": int(inv.get("max_levels_per_side", 3)),
+        "max_replenish_per_level": _parse_max_replenish_inv(
+            inv.get("max_replenish_per_level_per_segment")
+        ),
         "same_bar_entry_exit": bool(grid_bt.get("same_bar_entry_exit", False)),
         "min_segment_bars": int(risk.get("min_segment_bars", 6)),
         "max_segment_bars": int(risk.get("max_segment_bars", 120)),
