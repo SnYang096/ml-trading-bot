@@ -12,6 +12,7 @@
 > - B 系统运维心智：[`B系统运维心智梳理.md`](B系统运维心智梳理.md)
 > - 树/ML 方法论：[`树模型方法论演进与短期树重建指南_CN.md`](树模型方法论演进与短期树重建指南_CN.md)
 > - regime 层：[`regime_layer.md`](regime_layer.md)
+> - **R&D 执行手册（quick_layer_scan → event_backtest → watchdog）**：[`方法论_R_and_D流程_CN.md`](方法论_R_and_D流程_CN.md) ← 把本文档的 §4 / §5 压成一条可重复流程
 
 ---
 
