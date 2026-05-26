@@ -204,7 +204,69 @@ PYTHONPATH=src:scripts python scripts/regime_watchdog.py \
 
 **任一 alert 触发新一轮 R&D**（回到阶段 [1]）。
 
-## 3. 反模式（不要做）
+## 3. ABC × 层 × 节奏 × 命令 速查
+
+> 把 [`WORKFLOW_..._CN.md`](WORKFLOW_整体架构与管线改进计划_CN.md) §2.2 + §3 + §8 的"哪些层活、哪些层冻、用什么算法"压成 4 张可直接复制的命令表。  
+> **任何命令都不改 live yaml**；任何 promote 都走 §2.5 的 `_new_decision_doc.py` + 人审。
+
+### 3.1 A1 系统（spot_accum_simple，规则化，几乎不动）
+
+| 层 | 现状 | 触发 | 命令 / 产物 | 改 yaml？ |
+|---|---|---|---|---|
+| Regime | 周 EMA200 死区（10 年一更）| 极端事件 | 人脑复盘（无 R&D 工具） | 年度 / 触发 |
+| Direction | 周 EMA200 上/下（粗）| 同上 | 同上 | 同上 |
+| Execution | 阶梯卖出（5×）| Q | `mlbot backtest --strategy spot_accum_simple ...` | Q / 触发 |
+
+> A2 spot_fattail 还在 bad-candidates 设计稿，需要时再单独建条流程（OI/funding/链上 → 离线打分 → shadow → 人审）。
+
+### 3.2 B 系统（BPC / TPC / ME / SRB，本手册主线）
+
+| 层 | 现状 | 触发 | 命令（可直接 copy-paste） | 产物 | 改 yaml？ |
+|---|---|---|---|---|---|
+| Regime | EMA1200 dead zone + chop（季度） | Q / drift | `PYTHONPATH=src:scripts python scripts/quick_layer_scan.py condition-set --features-parquet results/.../features_labeled.parquet --label success_no_rr_extreme --condition "H: abs(ema_1200_position)>0.10" --out results/<策略>/quick_scan/regime_<日期>.md` | regime_<日期>.md | 否 |
+| Prefilter | 4 archetype 形态（locked） | 半年 / drift | `PYTHONPATH=src:scripts python scripts/quick_layer_scan.py feature-plateau --features-parquet ... --feature tpc_pullback_depth --operator "<=" --grid 0.5,0.6,...,0.95 --out ...` | plateau 报告 | 否（仅复核） |
+| Direction | 公式（locked） | 年度 | — | — | 否 |
+| Gate | tail veto（小帽子树 / 单 τ）| Q | 先 `quick_layer_scan condition-set` 排候选，再 `event_backtest --variant-grid config/experiments/<grid>.yaml` 双段验 | EXPERIMENT_INDEX.json + `_new_decision_doc.py` | 是（人审 → archetypes/gate.yaml）|
+| Entry | OR rules（locked）| Q | 子样本 `quick_layer_scan feature-plateau`（filter 加 chop_pass + regime_pass）| top-3 候选报告 | 是（人审 → entry_filters.yaml）|
+| Execution | 紧 SL + 较快兑现 | 年度 | `execution_opt grid`（不自动 promote）| — | 否（默认）|
+| **监控** | bull_share / trigger_rate / IC / PSI | W cron | `PYTHONPATH=src:scripts python scripts/regime_watchdog.py --window-parquet ... --baseline-json config/monitoring/regime_watchdog_baseline.json` | report.json + exit=1 alert | 否 |
+| 漂移触发 | plateau drift / IC sign-flip | W cron | `PYTHONPATH=src:scripts python scripts/regime_drift_monitor.py --strategies tpc,bpc,me,srb --window-parquet ...` | drift report | 否 |
+
+### 3.3 C 系统（chop_grid / trend_scalp，多腿）
+
+> 与 B 关键差异：**用策略相关 KPI**（grid 段内 maker 回合期望 / `adverse_break` 率 / 5/5 period；trend_scalp 段级 `total_r/maxDD/费用占比`）做语义代理对照（[`WORKFLOW_..._CN.md`](WORKFLOW_整体架构与管线改进计划_CN.md) §2.2.1）。
+
+| 层 | 现状 | 触发 | 命令 | 产物 | 改 yaml？ |
+|---|---|---|---|---|---|
+| Regime（`semantic_chop` 0.50/0.32 双阈）| 半年看 | 半年 / drift | `quick_layer_scan feature-plateau --feature bpc_semantic_chop --operator ">="` | plateau 报告 | 否（仅复核） |
+| **语义代理选择**（§2.2.1）| 季度 R&D | Q | `quick_layer_scan condition-set --label <grid KPI 列>` + `event_backtest --variant-grid config/experiments/chop_grid_proxy_<日期>.yaml` | `results/<slug>/semantic_proxy_scan/<日期>.md` + 多腿回测 | 是（人审 → `entry_feature` / `max_semantic_chop_*`）|
+| Prefilter（路由）| locked | 半年 | 同 B Prefilter（仅复核） | — | 否 |
+| Execution（grid spacing / fee-aware TP）| 年度 | 触发 | 多腿回测 grid | — | 否（默认）|
+
+### 3.4 树通道（独立 slug，与 B/C 并行；详见 [`短期树独立策略_设计与落地_CN.md`](短期树独立策略_设计与落地_CN.md)）
+
+| 层 | 现状 | 触发 | 命令 | 产物 | 改 yaml？ |
+|---|---|---|---|---|---|
+| Regime（共享 B 的 EMA1200 / chop）| 季度 | Q | 同 §3.2 Regime | — | 否 |
+| **特征 IC 对齐 H** | 每次重训前 | Q | `mlbot analyze factor-eval --ic-decay-lags 1,3,5,10,20,50` → 取 best_lag | IC 衰减曲线 + best_lag 列表 | 否 |
+| **训练单棵树**（直接给方向）| 季度 | Q | `mlbot train final -c config/strategies/<fast_scalp\|short_term_swing>` | `predictions.parquet`（含 score） | 否 |
+| **τ plateau 标定** | 季度 | Q | holdout 上分位扫描（`scripts/regime_threshold_calibrate.py` 同套统计）| τ 区间 + plateau 中心 | 是（写 `backtest.yaml` 的 `long/short_entry_threshold`）|
+| **回测确认** | promote 前 | Q | `event_backtest --variant-grid ...` 双段 | EXPERIMENT_INDEX | 否 |
+| Execution（独立 SL/TP/trail）| 年度 | 触发 | — | — | 否（默认）|
+
+### 3.5 一句话总结
+
+| 系统 | 主要 R&D 节奏 | 用什么命令开局 |
+|---|---|---|
+| A1 | 几乎不动 | — |
+| A2（未上 live） | Q | 占位（尾部代理） |
+| B | **Q：gate / entry / regime**；W：watchdog | `quick_layer_scan` → `event_backtest --variant-grid` |
+| C | **Q：语义代理 + 阈值**；半年：regime 复核 | 同 B，但 KPI 换多腿指标 |
+| Tree | **Q：IC 对齐 → 训树 → τ plateau**；不与 B 合并仓位 | `factor-eval` → `mlbot train final` → 回测验证 |
+
+---
+
+## 4. 反模式（不要做）
 
 | 反模式 | 为什么 | 应该 |
 |---|---|---|
@@ -215,13 +277,13 @@ PYTHONPATH=src:scripts python scripts/regime_watchdog.py \
 | 直接改 live yaml 不更新 baseline | watchdog 失去意义 | promote 时同步重算 baseline |
 | `cp -r` 覆盖了实验目录的修改没注意 | 见 H 第一次跑挂的真实事故 | 改完 md5 / diff 校验 |
 
-## 4. 案例索引（学这条流程怎么用）
+## 5. 案例索引（学这条流程怎么用）
 
 | 案例 | 入口文档 | 触发的工具链 |
 |---|---|---|
 | TPC vol gate ABH 实验 | [`docs/decisions/tpc_gate_vol_ABH_experiment_20260526.md`](../decisions/tpc_gate_vol_ABH_experiment_20260526.md) | quick_layer_scan + 7 variants × 2 periods event_backtest + regime_watchdog |
 
-## 5. 与 ML4T 工作流对应
+## 6. 与 ML4T 工作流对应
 
 | 阶段 | ML4T 标准 | 我们的实现 |
 |---|---|---|
@@ -230,7 +292,7 @@ PYTHONPATH=src:scripts python scripts/regime_watchdog.py \
 | Cross-validation | 章节 7：Purged K-fold | **缺**：当前是双段对照，**未实现 Combinatorial Purged CV**（roadmap） |
 | Live → Monitoring | 章节 23 | `regime_watchdog` + `regime_drift_monitor`（待加 PSI / IC alert） |
 
-## 6. 后续 roadmap
+## 7. 后续 roadmap
 
 | 优先级 | 项 | 备注 |
 |---|---|---|
