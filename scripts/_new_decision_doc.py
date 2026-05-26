@@ -27,40 +27,27 @@ def _period_label(period: str) -> str:
     return period
 
 
-def build_markdown(
-    *,
-    topic: str,
-    experiment_id: str,
-    runs: List[Dict[str, Any]],
-    promoted_variant: Optional[str],
-) -> str:
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    lines = [
-        f"# {topic.replace('_', ' ').title()}",
-        "",
-        f"- **日期**: {ts}",
-        f"- **experiment_id**: `{experiment_id}`",
-    ]
-    if promoted_variant:
-        lines.append(f"- **决策**: Promote **{promoted_variant}** (fill after review)")
-    lines.extend(
-        ["", "## 1. 变体定义", "", "| ID | strategies_root | 说明 |", "|---|---|---|"]
-    )
-    seen: set[str] = set()
+_TEMPLATE_DEFAULT = "default"
+_TEMPLATE_C_PROXY = "c_semantic_proxy"
+_TEMPLATE_TREE_SLUG = "tree_slug"
+_TEMPLATES = (_TEMPLATE_DEFAULT, _TEMPLATE_C_PROXY, _TEMPLATE_TREE_SLUG)
+
+
+def _variant_rows(runs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    seen: Dict[str, Dict[str, Any]] = {}
     for run in runs:
         vid = str(run.get("variant", ""))
-        if not vid or vid in seen:
-            continue
-        seen.add(vid)
-        root = run.get("strategies_root") or "config/strategies"
-        lines.append(f"| **{vid}** | `{root}` | _(fill)_ |")
+        if vid and vid not in seen:
+            seen[vid] = run
+    return list(seen.values())
 
-    lines.extend(["", "## 2. Event backtest 结果", ""])
+
+def _backtest_section(runs: List[Dict[str, Any]]) -> List[str]:
     by_period: Dict[str, List[Dict[str, Any]]] = {}
     for run in runs:
         period = str(run.get("period", "unknown"))
         by_period.setdefault(period, []).append(run)
-
+    lines: List[str] = []
     sec = 1
     for period, group in sorted(by_period.items()):
         lines.append(f"### 2.{sec} {_period_label(period)}")
@@ -83,26 +70,126 @@ def build_markdown(
             mdd_s = f"{100 * abs(float(mdd)):.2f}%" if mdd is not None else "—"
             lines.append(f"| {vid} | {trades} | {tot_s} | {ret_s} | {mdd_s} | `{d}` |")
         lines.append("")
+    return lines
 
-    lines.extend(
+
+def _c_semantic_proxy_section(runs: List[Dict[str, Any]]) -> List[str]:
+    return (
         [
-            "## 2.3 按 side 分解（placeholder）",
+            "## 3. 语义代理 vs C KPI（fill from segment_label parquet + quick_layer_scan）",
             "",
-            "| 变体 | LONG totR | SHORT totR |",
-            "|---|---:|---:|",
-            "| _(fill from event_trades CSV)_ | | |",
+            "> 输入：`results/<slug>/segments/grid_segments.csv` + features parquet → ",
+            "> `scripts/_build_grid_segment_labels.py` → segment-level labeled parquet → ",
+            "> `quick_layer_scan condition-set --label seg_total_r_over_dd|seg_adverse_break_rate|seg_maker_return_per_round`.",
             "",
-            "## 3. 离线 label / IC（placeholder）",
+            "| entry_feature 候选 | n | seg_total_r_over_dd 中位 | seg_adverse_break_rate | seg_maker_return_per_round | |z| vs base |",
+            "|---|---:|---:|---:|---:|---:|",
+        ]
+        + [
+            f"| **{run.get('variant', '?')}**（{run.get('entry_feature', '_fill_')}）| | | | | |"
+            for run in _variant_rows(runs)
+        ]
+        + [
             "",
-            "- quick_layer_scan condition-set / ic-decay",
+            "## 4. Plateau 宽度（fill from quick_layer_scan feature-plateau）",
             "",
-            "## 4. 决策",
+            "| 候选 | 开带 | 关带 | plateau 宽度 | base_succ |",
+            "|---|---:|---:|---:|---:|",
+            "| _(fill: 每个 entry_feature 的 max_semantic_chop_* plateau)_ | | | | |",
             "",
-            "- [ ] Promote variant: ___",
-            "- [ ] Reject reason: ___",
+            "## 5. 决策",
+            "",
+            "- [ ] Promote `entry_feature` = ___ + plateau mid ___",
+            "- [ ] 拒绝理由 ___",
+            "- [ ] shadow 一个季度后再 live-deploy（同 §2.2.1 流程）",
             "",
         ]
     )
+
+
+def _tree_slug_section(runs: List[Dict[str, Any]]) -> List[str]:
+    return (
+        [
+            "## 3. IC 对齐与 τ plateau（fill from train_final + tau_plateau_*.md）",
+            "",
+            "| 变体 | H (bar) | best_lag 占比 (|IC|>0.02) | τ_long plateau | τ_short plateau |",
+            "|---|---:|---:|---:|---:|",
+        ]
+        + [
+            f"| **{run.get('variant', '?')}** | _(H)_ | | | |"
+            for run in _variant_rows(runs)
+        ]
+        + [
+            "",
+            "## 4. 与 B/C PCM 槽位影响",
+            "",
+            "- [ ] 新 slug 槽位预算 ___",
+            "- [ ] 同方向冲突仲裁规则 ___ (`score` 已 normalize 到 [0,1])",
+            "",
+            "## 5. 决策",
+            "",
+            "- [ ] Promote slug ___ + τ_long ___ / τ_short ___",
+            "- [ ] shadow ≥ 1 季度后再 live-deploy",
+            "",
+        ]
+    )
+
+
+def build_markdown(
+    *,
+    topic: str,
+    experiment_id: str,
+    runs: List[Dict[str, Any]],
+    promoted_variant: Optional[str],
+    template: str = _TEMPLATE_DEFAULT,
+) -> str:
+    if template not in _TEMPLATES:
+        raise ValueError(f"unknown template {template!r}; choose from {_TEMPLATES}")
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    lines = [
+        f"# {topic.replace('_', ' ').title()}",
+        "",
+        f"- **日期**: {ts}",
+        f"- **experiment_id**: `{experiment_id}`",
+        f"- **template**: `{template}`",
+    ]
+    if promoted_variant:
+        lines.append(f"- **决策**: Promote **{promoted_variant}** (fill after review)")
+    lines.extend(
+        ["", "## 1. 变体定义", "", "| ID | strategies_root | 说明 |", "|---|---|---|"]
+    )
+    for run in _variant_rows(runs):
+        vid = str(run.get("variant", "?"))
+        root = run.get("strategies_root") or "config/strategies"
+        lines.append(f"| **{vid}** | `{root}` | _(fill)_ |")
+
+    lines.extend(["", "## 2. 双段回测结果", ""])
+    lines.extend(_backtest_section(runs))
+
+    if template == _TEMPLATE_C_PROXY:
+        lines.extend(_c_semantic_proxy_section(runs))
+    elif template == _TEMPLATE_TREE_SLUG:
+        lines.extend(_tree_slug_section(runs))
+    else:
+        lines.extend(
+            [
+                "## 2.3 按 side 分解（placeholder）",
+                "",
+                "| 变体 | LONG totR | SHORT totR |",
+                "|---|---:|---:|",
+                "| _(fill from event_trades CSV)_ | | |",
+                "",
+                "## 3. 离线 label / IC（placeholder）",
+                "",
+                "- quick_layer_scan condition-set / ic-decay",
+                "",
+                "## 4. 决策",
+                "",
+                "- [ ] Promote variant: ___",
+                "- [ ] Reject reason: ___",
+                "",
+            ]
+        )
     return "\n".join(lines)
 
 
@@ -114,6 +201,17 @@ def main() -> int:
     )
     p.add_argument("--out", default=None, help="Override output path")
     p.add_argument("--date", default=None, help="YYYYMMDD suffix (default today UTC)")
+    p.add_argument(
+        "--topic-template",
+        choices=list(_TEMPLATES),
+        default=_TEMPLATE_DEFAULT,
+        help=(
+            "Skeleton variant: 'default' for B-system A/H/F' style; "
+            "'c_semantic_proxy' for chop_grid/trend_scalp semantic-proxy R&D "
+            "(entry_feature × C KPI table); 'tree_slug' for fast_scalp / "
+            "short_term_swing (IC alignment + τ plateau)."
+        ),
+    )
     args = p.parse_args()
 
     idx_path = Path(args.experiment_index)
@@ -143,6 +241,7 @@ def main() -> int:
         experiment_id=str(blob.get("experiment_id", args.topic)),
         runs=[r for r in runs if isinstance(r, dict)],
         promoted_variant=blob.get("promoted_variant"),
+        template=args.topic_template,
     )
     out.write_text(md, encoding="utf-8")
     print(f"wrote {out}")

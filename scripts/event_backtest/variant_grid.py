@@ -1,4 +1,21 @@
-"""Run multiple event_backtest variants from a YAML grid; update EXPERIMENT_INDEX."""
+"""Run multiple event_backtest variants from a YAML grid; update EXPERIMENT_INDEX.
+
+Engine dispatcher
+-----------------
+
+Each ``run:`` entry (or the grid-level fields) may specify ``engine``:
+
+- ``event_backtest`` (default): drives ``scripts.event_backtest`` — used for
+  B-system strategies (BPC/TPC/ME/SRB).
+- ``chop_grid``: drives ``scripts.chop_grid_backtest`` — used for C-system
+  semantic-proxy R&D (each variant = a different ``--config`` chop_grid YAML
+  pointing at an alternative ``entry_feature`` or ``max_semantic_chop_*`` band).
+
+Both engines write a per-run output directory and a ``capital_report.json``
+(``_new_decision_doc.py`` reads from there). For ``chop_grid`` runs the
+``capital_report.json`` is produced by ``chop_grid_backtest`` already
+(``write_capital_report_from_trades``).
+"""
 
 from __future__ import annotations
 
@@ -13,6 +30,10 @@ import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
+_ENGINE_EVENT = "event_backtest"
+_ENGINE_CHOP_GRID = "chop_grid"
+_VALID_ENGINES = (_ENGINE_EVENT, _ENGINE_CHOP_GRID)
+
 
 def _load_grid(path: Path) -> Dict[str, Any]:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -21,25 +42,24 @@ def _load_grid(path: Path) -> Dict[str, Any]:
     return data
 
 
-def _run_one(
+def _resolve_engine(run: Dict[str, Any], grid: Dict[str, Any]) -> str:
+    eng = str(run.get("engine") or grid.get("engine") or _ENGINE_EVENT)
+    if eng not in _VALID_ENGINES:
+        raise ValueError(f"unknown engine {eng!r}; choose from {_VALID_ENGINES}")
+    return eng
+
+
+def _build_event_backtest_cmd(
     *,
     run: Dict[str, Any],
     grid: Dict[str, Any],
+    out_path: Path,
     extra_argv: List[str],
-) -> int:
+) -> List[str]:
     strategy = str(run.get("strategy") or grid.get("strategy") or "tpc")
-    variant = str(run["variant"])
-    start = str(run["start_date"])
-    end = str(run["end_date"])
     strategies_root = str(
         run.get("strategies_root") or grid.get("strategies_root") or "config/strategies"
     )
-    out_dir = run.get("output_dir") or (f"results/{strategy}/experiments/{variant}")
-    out_path = Path(out_dir)
-    if not out_path.is_absolute():
-        out_path = (_REPO_ROOT / out_path).resolve()
-    out_path.mkdir(parents=True, exist_ok=True)
-
     trades_csv = out_path / f"event_trades_{strategy}.csv"
     symbols = run.get("symbols") or grid.get("symbols")
     sym_arg = (
@@ -47,7 +67,6 @@ def _run_one(
         if isinstance(symbols, list)
         else "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT"
     )
-
     cmd = [
         sys.executable,
         "-m",
@@ -57,9 +76,9 @@ def _run_one(
         "--symbols",
         sym_arg,
         "--start-date",
-        start,
+        str(run["start_date"]),
         "--end-date",
-        end,
+        str(run["end_date"]),
         "--strategies-root",
         strategies_root,
         "--trades-csv",
@@ -72,8 +91,78 @@ def _run_one(
     if data_path:
         cmd += ["--data-path", str(data_path)]
     cmd += extra_argv
+    return cmd
 
-    print(f"\n=== variant_grid: {variant} ({start} → {end}) ===")
+
+def _build_chop_grid_cmd(
+    *,
+    run: Dict[str, Any],
+    grid: Dict[str, Any],
+    out_path: Path,
+    extra_argv: List[str],
+) -> List[str]:
+    config = run.get("config") or grid.get("config")
+    if not config:
+        raise ValueError(
+            "chop_grid engine requires 'config' (path to grid_backtest YAML)"
+        )
+    symbols = run.get("symbols") or grid.get("symbols")
+    sym_arg = (
+        ",".join(symbols)
+        if isinstance(symbols, list)
+        else "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT"
+    )
+    cmd = [
+        sys.executable,
+        "-m",
+        "scripts.chop_grid_backtest",
+        "--config",
+        str(config),
+        "--symbols",
+        sym_arg,
+        "--start",
+        str(run["start_date"]),
+        "--end",
+        str(run["end_date"]),
+        "--out-dir",
+        str(out_path),
+        "--no-maps",
+    ]
+    timeframe = run.get("timeframe") or grid.get("timeframe")
+    if timeframe:
+        cmd += ["--timeframe", str(timeframe)]
+    cmd += extra_argv
+    return cmd
+
+
+def _run_one(
+    *,
+    run: Dict[str, Any],
+    grid: Dict[str, Any],
+    extra_argv: List[str],
+) -> int:
+    engine = _resolve_engine(run, grid)
+    strategy = str(run.get("strategy") or grid.get("strategy") or "tpc")
+    variant = str(run["variant"])
+    out_dir = run.get("output_dir") or (f"results/{strategy}/experiments/{variant}")
+    out_path = Path(out_dir)
+    if not out_path.is_absolute():
+        out_path = (_REPO_ROOT / out_path).resolve()
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    if engine == _ENGINE_EVENT:
+        cmd = _build_event_backtest_cmd(
+            run=run, grid=grid, out_path=out_path, extra_argv=extra_argv
+        )
+    else:
+        cmd = _build_chop_grid_cmd(
+            run=run, grid=grid, out_path=out_path, extra_argv=extra_argv
+        )
+
+    print(
+        f"\n=== variant_grid[{engine}]: {variant} "
+        f"({run.get('start_date')} → {run.get('end_date')}) ==="
+    )
     print(" ".join(cmd))
     rc = subprocess.run(cmd, cwd=str(_REPO_ROOT)).returncode
     return int(rc)
@@ -143,9 +232,11 @@ def run_variant_grid(
         runs_meta.append(
             {
                 "variant": variant,
+                "engine": _resolve_engine(run, grid),
                 "period": f"{run['start_date']}/{run['end_date']}",
                 "strategies_root": run.get("strategies_root")
                 or grid.get("strategies_root"),
+                "config": run.get("config") or grid.get("config"),
                 "dir": str(out_dir),
                 "exit_code": rc,
             }
