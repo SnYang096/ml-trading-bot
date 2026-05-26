@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
@@ -30,7 +32,9 @@ def test_weekly_ema_position_uses_current_close_not_weekly_close_ratio() -> None
     assert last < -0.05, f"expected negative position, got {last}"
 
 
-def test_weekly_ema_position_negative_when_close_below_ffilled_ema() -> None:
+def test_weekly_ema_position_negative_when_close_below_ffilled_ema(
+    tmp_path: Path,
+) -> None:
     idx = pd.date_range("2026-01-01", periods=500, freq="2h", tz="UTC")
     # Ramp then drop: current price well below slow weekly EMA.
     close = pd.Series(np.linspace(3000, 3500, 450), index=idx[:450])
@@ -38,11 +42,24 @@ def test_weekly_ema_position_negative_when_close_below_ffilled_ema() -> None:
     high = close * 1.001
     low = close * 0.999
 
+    seed_dir = tmp_path / "seed"
+    seed_dir.mkdir()
+    weekly = pd.DataFrame(
+        {
+            "week_ts": pd.date_range("2024-01-07", periods=80, freq="W-SUN", tz="UTC"),
+            "weekly_close": 3000.0,
+            "weekly_ema_200": 2540.0,
+        }
+    )
+    weekly.to_parquet(seed_dir / "ETHUSDT.parquet", index=False)
+
     out = compute_weekly_ema_position_from_ohlc(
         close=close,
         high=high,
         low=low,
-        ema_span_weeks=20,
+        ema_span_weeks=200,
+        weekly_ema_context_dir=str(seed_dir),
+        symbol="ETHUSDT",
     )["weekly_ema_200_position"]
 
     assert float(out.iloc[-1]) < 0.0

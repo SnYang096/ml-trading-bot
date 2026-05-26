@@ -17,6 +17,10 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+# Shared with CMS weekly overlay: reject stale / flat-line seed (~412) vs live spot.
+STALE_WEEKLY_SEED_LAG = pd.Timedelta(days=21)
+SEED_VS_SPOT_MAX_REL_GAP = 0.15
+
 VISION_SPOT_MONTHLY = "https://data.binance.vision/data/spot/monthly/klines"
 VISION_SPOT_DAILY = "https://data.binance.vision/data/spot/daily/klines"
 
@@ -111,7 +115,8 @@ def compute_weekly_ema_table(
         .dropna(subset=["close"])
     )
     span = max(2, int(ema_span_weeks))
-    min_periods = max(2, span // 5)
+    # EMA200 needs ~200 weekly closes; span//5 allowed biased values (~400) on short history.
+    min_periods = span
     weekly["weekly_ema_200"] = weekly["close"].ewm(
         span=span, adjust=False, min_periods=min_periods
     ).mean()
@@ -173,6 +178,60 @@ def macro_seeds_ready(
     return (len(missing) == 0, missing)
 
 
+def seed_last_timestamp(seed: pd.DataFrame) -> Optional[pd.Timestamp]:
+    if seed is None or seed.empty:
+        return None
+    if isinstance(seed.index, pd.DatetimeIndex):
+        ts = seed.index.max()
+    elif "week_ts" in seed.columns:
+        ts = pd.to_datetime(seed["week_ts"], utc=True, errors="coerce").max()
+    else:
+        return None
+    if ts is None or pd.isna(ts):
+        return None
+    out = pd.Timestamp(ts)
+    if out.tz is None:
+        return out.tz_localize("UTC")
+    return out.tz_convert("UTC")
+
+
+def seed_is_stale_for_bar(
+    seed: pd.DataFrame,
+    bar_ts: pd.Timestamp,
+    *,
+    max_lag: pd.Timedelta = STALE_WEEKLY_SEED_LAG,
+) -> bool:
+    """True when seed's last week is too old vs the decision bar (stale flat-line bug)."""
+    last = seed_last_timestamp(seed)
+    if last is None:
+        return True
+    ts = pd.Timestamp(bar_ts)
+    if ts.tz is None:
+        ts = ts.tz_localize("UTC")
+    else:
+        ts = ts.tz_convert("UTC")
+    return last < ts - max_lag
+
+
+def seed_ema_plausible_vs_close(
+    ema: float,
+    close: float,
+    *,
+    max_rel_gap: float = SEED_VS_SPOT_MAX_REL_GAP,
+) -> bool:
+    """Reject stale *low* seed EMA when price is far above it (frozen ~412 vs ~650).
+
+    When close is below EMA (deep bear), a large gap is expected — do not reject.
+    """
+    if not np.isfinite(ema) or not np.isfinite(close) or close <= 0 or ema <= 0:
+        return False
+    c = float(close)
+    e = float(ema)
+    if c <= e:
+        return True
+    return (c - e) / c <= float(max_rel_gap)
+
+
 def load_weekly_ema_seed(
     seed_root: Path | str,
     symbol: str,
@@ -200,18 +259,33 @@ def weekly_ema_position_from_seed(
     seed = load_weekly_ema_seed(seed_root, symbol)
     if seed is None or seed.empty:
         return None
-    ema = seed["weekly_ema_200"].dropna()
-    if ema.empty:
-        return None
     ts = pd.Timestamp(bar_ts)
     if ts.tz is None:
         ts = ts.tz_localize("UTC")
     else:
         ts = ts.tz_convert("UTC")
+    if seed_is_stale_for_bar(seed, ts):
+        logger.warning(
+            "weekly EMA seed stale for %s at %s (last week in seed too old)",
+            normalize_symbol(symbol),
+            ts.isoformat(),
+        )
+        return None
+    ema = seed["weekly_ema_200"].dropna()
+    if ema.empty:
+        return None
     # Last weekly EMA at or before bar time only (no bfill from future weeks).
     ema_at = ema.reindex(pd.DatetimeIndex([ts]), method="ffill")
     wk_val = float(ema_at.iloc[-1]) if not ema_at.isna().all() else float("nan")
     if not np.isfinite(wk_val) or not np.isfinite(close) or close == 0:
+        return None
+    if not seed_ema_plausible_vs_close(wk_val, float(close)):
+        logger.warning(
+            "weekly EMA seed implausible for %s: ema=%.2f close=%.2f",
+            normalize_symbol(symbol),
+            wk_val,
+            float(close),
+        )
         return None
     pos = (float(close) - wk_val) / float(close)
     if not np.isfinite(pos):

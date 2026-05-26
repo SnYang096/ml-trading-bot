@@ -47,6 +47,9 @@ function bindControls() {
       if (resetChartRangeIds.has(id)) {
         if (id === "symbolSelect") {
           Shell.setSymbol(document.getElementById("symbolSelect").value);
+          if (typeof clearMainOverlaySeries === "function") {
+            clearMainOverlaySeries();
+          }
         }
         resetOhlcvLoadedRange();
         resetMarkerQueryRange();

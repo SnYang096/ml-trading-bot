@@ -1600,9 +1600,11 @@ class IncrementalFeatureComputer:
                 seed_root=root,
                 symbol=sym,
             )
-            if pos is None:
-                return features
             out = dict(features)
+            if pos is None:
+                # Fail closed: do not keep short-buffer EMA guess; spot prefilter needs NaN.
+                out[col] = float("nan")
+                return out
             out[col] = float(pos)
             return out
         except Exception:

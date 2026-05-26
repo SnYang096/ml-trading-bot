@@ -16,6 +16,9 @@ SOURCE_FEATURE_TF = "2h"
 EMA1200_FETCH_MAX_DAYS = 180
 # Seed parquet older than chart end by this much is treated stale (flat 374 bug).
 STALE_WEEKLY_SEED_LAG = pd.Timedelta(days=21)
+# Reject macro seed when last EMA drifts from Vision spot-daily recompute (stale flat ~412).
+SEED_VS_DAILY_MAX_REL_GAP = 0.10
+SEED_VS_SPOT_MAX_REL_GAP = 0.15
 
 MAIN_OVERLAY_KEYS = frozenset({"ema_1200", "weekly_ema_200"})
 
@@ -134,9 +137,8 @@ def _resample_candles_to_weekly_close(
 ) -> pd.Series:
     """Build a weekly-anchored close series from arbitrary chart candles.
 
-    Returns an empty series when there is no usable input. The resample anchor
-    matches Binance's Mon 00:00 UTC weekly bar so the EMA aligns with macro
-    seed weeks.
+    Returns an empty series when there is no usable input. Anchor is W-SUN
+    (same as Vision spot seed / compute_weekly_ema_table).
     """
     rows: List[tuple[pd.Timestamp, float]] = []
     for c in candles or []:
@@ -155,7 +157,8 @@ def _resample_candles_to_weekly_close(
         return pd.Series(dtype=float)
     idx = pd.DatetimeIndex([r[0] for r in rows])
     series = pd.Series([r[1] for r in rows], index=idx, dtype=float).sort_index()
-    weekly = series.resample("W-MON", label="left", closed="left").last().dropna()
+    # Match spot_weekly_ema_seed.compute_weekly_ema_table (W-SUN) and TradingView weekly.
+    weekly = series.resample("W-SUN", label="right", closed="right").last().dropna()
     return weekly
 
 
@@ -423,12 +426,43 @@ def _align_ma_to_candles(
     return _overlay_points_for_chart(native, candles)
 
 
+def _last_weekly_ema_from_spot_daily(
+    macro_kline_root: Any,
+    symbol: str,
+    candles: List[Dict[str, Any]],
+) -> Optional[float]:
+    """Recompute tail weekly EMA200 from Vision spot 1d (authoritative)."""
+    from src.live_data_stream.spot_weekly_ema_seed import compute_weekly_ema_table
+
+    c_start, c_end = _candle_time_bounds(candles)
+    if c_end is None:
+        return None
+    load_start = (c_start or c_end) - pd.Timedelta(days=200 * 7 + 60)
+    loader = MacroSpotDailyLoader(Path(macro_kline_root))
+    daily = loader.load_symbol_daily(
+        symbol,
+        start_date=load_start.date(),
+        end_date=c_end.date(),
+    )
+    if daily.empty or "close" not in daily.columns:
+        return None
+    weekly = compute_weekly_ema_table(daily["close"], ema_span_weeks=200)
+    if weekly.empty or "weekly_ema_200" not in weekly.columns:
+        return None
+    ema = pd.to_numeric(weekly["weekly_ema_200"], errors="coerce").dropna()
+    if ema.empty:
+        return None
+    return float(ema.iloc[-1])
+
+
 def _seed_ema_plausible(
     seed: pd.DataFrame,
     candles: List[Dict[str, Any]],
     *,
     ema_column: str = "weekly_ema_200",
-    max_rel_gap: float = 0.35,
+    max_rel_gap: float = SEED_VS_SPOT_MAX_REL_GAP,
+    macro_spot_kline_root: Any = None,
+    symbol: str = "",
 ) -> bool:
     """Reject macro seed when EMA is far from spot (stale flat-line bug)."""
     if seed is None or seed.empty or ema_column not in seed.columns or not candles:
@@ -447,7 +481,17 @@ def _seed_ema_plausible(
     ref_ema = float(ema.iloc[-1])
     if ref_close <= 0 or ref_ema <= 0:
         return False
-    return abs(ref_ema - ref_close) / ref_close <= float(max_rel_gap)
+    if abs(ref_ema - ref_close) / ref_close > float(max_rel_gap):
+        return False
+    if macro_spot_kline_root and symbol:
+        daily_ema = _last_weekly_ema_from_spot_daily(
+            macro_spot_kline_root, symbol, candles
+        )
+        if daily_ema is not None and daily_ema > 0:
+            rel = abs(ref_ema - daily_ema) / daily_ema
+            if rel > SEED_VS_DAILY_MAX_REL_GAP:
+                return False
+    return True
 
 
 def _align_weekly_ema_seed_to_candles(
@@ -456,6 +500,7 @@ def _align_weekly_ema_seed_to_candles(
     candles: List[Dict[str, Any]],
     *,
     ema_column: str = "weekly_ema_200",
+    macro_spot_kline_root: Any = None,
 ) -> List[Dict[str, Any]]:
     try:
         from src.live_data_stream.spot_weekly_ema_seed import load_weekly_ema_seed
@@ -466,7 +511,13 @@ def _align_weekly_ema_seed_to_candles(
         return []
     if _seed_is_stale_for_chart(seed, candles):
         return []
-    if not _seed_ema_plausible(seed, candles, ema_column=ema_column):
+    if not _seed_ema_plausible(
+        seed,
+        candles,
+        ema_column=ema_column,
+        macro_spot_kline_root=macro_spot_kline_root,
+        symbol=symbol,
+    ):
         return []
     ema = pd.to_numeric(seed[ema_column], errors="coerce").dropna()
     if ema.empty:
@@ -533,7 +584,8 @@ def load_main_chart_overlays(
                 )
             elif spec.get("use_macro_seed"):
                 chart_tf = str(chart_timeframe or "2h").strip()
-                if macro_spot_kline_root and chart_tf in ("1d", "1w"):
+                # Vision spot 1d is authoritative; seed parquet is a fast path only when consistent.
+                if macro_spot_kline_root:
                     points = _weekly_ema_from_spot_daily(
                         macro_spot_kline_root, symbol, candles
                     )
@@ -545,15 +597,10 @@ def load_main_chart_overlays(
                         symbol,
                         candles,
                         ema_column=str(spec.get("seed_ema_column") or "weekly_ema_200"),
+                        macro_spot_kline_root=macro_spot_kline_root,
                     )
                     if points:
                         entry["source"] = "macro_seed"
-                if not points and macro_spot_kline_root and chart_tf not in ("1d", "1w"):
-                    points = _weekly_ema_from_spot_daily(
-                        macro_spot_kline_root, symbol, candles
-                    )
-                    if points:
-                        entry["source"] = "spot_daily_weekly"
                 if not points:
                     points = _weekly_ema_from_chart_candles(
                         candles,

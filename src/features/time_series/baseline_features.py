@@ -4646,9 +4646,7 @@ def compute_weekly_ema_position_from_ohlc(
     if weekly.empty:
         out = pd.Series(np.nan, index=idx, dtype=float)
         return pd.DataFrame({output_column: out}, index=idx)
-    wk_ema = weekly["close"].ewm(
-        span=span, adjust=False, min_periods=max(2, span // 5)
-    ).mean()
+    wk_ema = weekly["close"].ewm(span=span, adjust=False, min_periods=span).mean()
     try:
         from src.live_data_stream.spot_weekly_ema_seed import weekly_ema_position_series
 

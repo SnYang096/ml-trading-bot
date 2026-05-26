@@ -181,8 +181,8 @@ def test_stale_weekly_seed_uses_spot_daily_not_flat_line(tmp_path) -> None:
     kroot = tmp_path / "klines" / "ETHUSDT" / "monthly" / "1d"
     kroot.mkdir(parents=True)
     rows = []
-    t0 = int(pd.Timestamp("2025-06-01", tz="UTC").timestamp() * 1000)
-    for i in range(400):
+    t0 = int(pd.Timestamp("2018-01-01", tz="UTC").timestamp() * 1000)
+    for i in range(3100):
         t = t0 + i * 86_400_000
         price = 500.0 + i * 0.5
         rows.append([t, price, price + 1, price - 1, price, 1000.0] + [0] * 6)
@@ -190,7 +190,7 @@ def test_stale_weekly_seed_uses_spot_daily_not_flat_line(tmp_path) -> None:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr("k.csv", body)
-    (kroot / "ETHUSDT-1d-2025-06.zip").write_bytes(buf.getvalue())
+    (kroot / "ETHUSDT-1d-2018-01.zip").write_bytes(buf.getvalue())
 
     candles = [
         {
@@ -346,6 +346,54 @@ def test_weekly_ema_chart_fallback_skips_short_window(bus_root) -> None:
         macro_spot_kline_root=None,
     )
     assert not out["weekly_ema_200"]["available"]
+
+
+def test_stale_seed_412_rejected_when_spot_daily_available(tmp_path) -> None:
+    """BNB-like: stale seed ~412 must not win when Vision daily recomputes ~650+."""
+    import io
+    import zipfile
+
+    seed_root = tmp_path / "seed"
+    seed_root.mkdir(parents=True)
+    pd.DataFrame(
+        {
+            "week_ts": [pd.Timestamp("2026-05-18", tz="UTC")],
+            "weekly_ema_200": [412.0],
+        }
+    ).to_parquet(seed_parquet_path(seed_root, "BNBUSDT"), index=False)
+
+    kroot = tmp_path / "klines" / "BNBUSDT" / "monthly" / "1d"
+    kroot.mkdir(parents=True)
+    rows = []
+    t0 = int(pd.Timestamp("2018-01-01", tz="UTC").timestamp() * 1000)
+    for i in range(3100):
+        t = t0 + i * 86_400_000
+        price = 80.0 + i * 0.25
+        rows.append([t, price, price + 1, price - 1, price, 1000.0] + [0] * 6)
+    body = "\n".join(",".join(str(v) for v in r) for r in rows)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("k.csv", body)
+    (kroot / "BNBUSDT-1d-2018-01.zip").write_bytes(buf.getvalue())
+
+    candles = [
+        {
+            "time": int(pd.Timestamp("2026-05-23 02:00", tz="UTC").timestamp()),
+            "close": 658.0,
+        },
+    ]
+    out = load_main_chart_overlays(
+        "BNBUSDT",
+        candles,
+        ["weekly_ema_200"],
+        macro_seed_root=seed_root,
+        macro_spot_kline_root=tmp_path / "klines",
+    )
+    wk = out["weekly_ema_200"]
+    assert wk["available"]
+    assert wk["source"] == "spot_daily_weekly"
+    assert wk["latest"] > 500.0
+    assert wk["latest"] != pytest.approx(412.0, rel=0.02)
 
 
 def test_seed_ema_plausible_rejects_flat_line_far_from_spot(tmp_path) -> None:

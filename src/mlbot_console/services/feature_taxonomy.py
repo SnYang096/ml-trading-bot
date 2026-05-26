@@ -37,7 +37,7 @@ def _live_strategy_taxonomy_entries(
                 "id": str(meta["id"]),
                 "account_layer": layer,
                 "account_layer_title": account_layer_label(layer),
-                "title": str(meta.get("title") or meta["id"]),
+                "title": str(meta["id"]),
                 "stages": {},
             }
         )

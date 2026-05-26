@@ -104,7 +104,11 @@ def test_fetch_regime_ops_includes_live_strategies(
         "mlbot_console.services.regime_ops.get_live_console_strategies",
         lambda: [
             {"id": "tpc", "account_layer": "trend", "title": "TPC"},
-            {"id": "spot_accum_simple", "account_layer": "spot", "title": "Spot"},
+            {
+                "id": "spot_accum_simple",
+                "account_layer": "spot",
+                "title": "spot_accum_simple",
+            },
             {"id": "chop_grid", "account_layer": "multi_leg", "title": "Chop"},
         ],
     )

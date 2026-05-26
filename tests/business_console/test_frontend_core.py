@@ -53,11 +53,11 @@ const prAuto = Core.priceRangeForChartAutoscale(clean, null);
 Core.setFeatureTaxonomy({
   strategies: [
     { id: "tpc", account_layer: "trend", title: "TPC", stages: { prefilter: ["tpc_pullback_depth"], gate: ["tpc_semantic_chop"] } },
-    { id: "spot_accum_simple", account_layer: "spot", title: "Spot", stages: { prefilter: ["weekly_ema_200_position"] } },
+    { id: "spot_accum_simple", account_layer: "spot", title: "spot_accum_simple", stages: { prefilter: ["weekly_ema_200_position"] } },
   ],
   index: {
     "tpc_pullback_depth": [{ column: "tpc_pullback_depth", account_layer: "trend", account_layer_title: "B·Trend", strategy: "tpc", strategy_title: "TPC", stage: "prefilter", stage_title: "Prefilter" }],
-    "weekly_ema_200_position": [{ column: "weekly_ema_200_position", account_layer: "spot", account_layer_title: "A·Spot", strategy: "spot_accum_simple", strategy_title: "Spot", stage: "prefilter", stage_title: "Prefilter" }],
+    "weekly_ema_200_position": [{ column: "weekly_ema_200_position", account_layer: "spot", account_layer_title: "A·Spot", strategy: "spot_accum_simple", strategy_title: "spot_accum_simple", stage: "prefilter", stage_title: "Prefilter" }],
   },
   stage_order: ["prefilter", "gate"],
   stage_labels: { prefilter: "Prefilter", gate: "Gate" },
@@ -105,7 +105,7 @@ Core.setFeatureTaxonomy({
     }},
     { id: "trend_scalp", account_layer: "multi_leg", title: "Trend Scalp", stages: { gate: ["trend_confidence"] }},
     { id: "tpc", account_layer: "trend", title: "TPC", stages: { prefilter: ["tpc_pullback_depth"], gate: ["tpc_semantic_chop"] } },
-    { id: "spot_accum_simple", account_layer: "spot", title: "Spot", stages: { prefilter: ["weekly_ema_200_position"] } },
+    { id: "spot_accum_simple", account_layer: "spot", title: "spot_accum_simple", stages: { prefilter: ["weekly_ema_200_position"] } },
   ],
   index: {
     "bpc_semantic_chop": [{ column: "bpc_semantic_chop", account_layer: "multi_leg", strategy: "chop_grid", stage: "regime" }],

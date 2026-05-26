@@ -18,6 +18,7 @@ from src.live_data_stream.spot_weekly_ema_seed import (
     _parse_kline_zip_bytes,
     compute_weekly_ema_table,
     prepare_spot_weekly_ema_seed,
+    seed_ema_plausible_vs_close,
     weekly_ema_position_from_seed,
 )
 
@@ -81,6 +82,31 @@ def test_context_seed_produces_negative_position(tmp_path: Path) -> None:
     )["weekly_ema_200_position"]
 
     assert float(out.iloc[-1]) < 0.0
+
+
+def test_seed_ema_plausible_rejects_bnb_like_stale_flat_line() -> None:
+    assert not seed_ema_plausible_vs_close(412.0, 658.0)
+    assert seed_ema_plausible_vs_close(570.0, 658.0)
+
+
+def test_weekly_ema_position_from_seed_rejects_implausible_ema(tmp_path: Path) -> None:
+    seed_dir = tmp_path / "seed"
+    seed_dir.mkdir()
+    weekly = pd.DataFrame(
+        {
+            "week_ts": [pd.Timestamp("2026-05-18", tz="UTC")],
+            "weekly_close": [400.0],
+            "weekly_ema_200": [412.0],
+        }
+    )
+    weekly.to_parquet(seed_dir / "BNBUSDT.parquet", index=False)
+    pos = weekly_ema_position_from_seed(
+        close=658.0,
+        bar_ts=pd.Timestamp("2026-05-23", tz="UTC"),
+        seed_root=seed_dir,
+        symbol="BNBUSDT",
+    )
+    assert pos is None
 
 
 def test_weekly_ema_position_from_seed_single_bar(tmp_path: Path) -> None:

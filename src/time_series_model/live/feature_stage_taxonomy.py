@@ -21,7 +21,7 @@ CONSOLE_STRATEGIES: Tuple[Dict[str, str], ...] = (
     {"id": "bpc", "account_layer": "trend", "title": "BPC"},
     {"id": "me", "account_layer": "trend", "title": "ME"},
     {"id": "srb", "account_layer": "trend", "title": "SRB"},
-    {"id": "spot_accum_simple", "account_layer": "spot", "title": "Spot"},
+    {"id": "spot_accum_simple", "account_layer": "spot", "title": "spot_accum_simple"},
     {"id": "chop_grid", "account_layer": "multi_leg", "title": "Chop Grid"},
     {"id": "trend_scalp", "account_layer": "multi_leg", "title": "Trend Scalp"},
 )

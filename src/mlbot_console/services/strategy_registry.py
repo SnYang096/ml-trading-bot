@@ -81,7 +81,10 @@ def get_live_console_strategies() -> List[Dict[str, str]]:
             if not key:
                 continue
             if key in meta_by_id:
-                out.append(dict(meta_by_id[key]))
+                row = dict(meta_by_id[key])
+                # Trade Map / taxonomy: show constitution strategy slug, not friendly aliases.
+                row["title"] = key
+                out.append(row)
             else:
                 out.append(
                     {
