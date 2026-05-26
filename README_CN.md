@@ -1219,9 +1219,11 @@ python scripts/run_spot_accum_live.py
 **两条 warmup 线路互不连通：**
 
 ```text
-tick 线路:  180d ticks/bars → VPIN/订单流/TPC 等 intraday 特征
-macro 线路: spot 1d (Vision) → W-SUN 周线 EMA200 → seed parquet → bus 覆盖 weekly_ema_200_position
+tick 线路:  prepare_warmup_ticks ~6mo futures aggTrades → archive；publisher 计算时再读 ~150d 1m bars → VPIN/订单流/120T 等
+macro 线路: spot 1d (Vision，默认 2017 起) → W-SUN 周线 EMA200 → seed parquet → bus 覆盖 weekly_ema_200_position
 ```
+
+**不要混淆**：6 个月 tick warmup **不够** 200 周 EMA；`weekly_ema_200_position` **必须** 有 macro seed（或回测全历史数据）。没 seed 时该列为 NaN，spot 深熊门控 fail-closed。机制全文见 [`docs/deployment/FEATURE_BUS_DATA_PIPELINE_CN.md`](docs/deployment/FEATURE_BUS_DATA_PIPELINE_CN.md) § `weekly_ema_200_position` 与 `spot_weekly_ema200`。
 
 macro seed **不会**从 live ticks 自动生成；tick 线路也 **不会**回写 macro parquet。因此 macro 用 **oneshot + 每日 timer**，不需要常驻下载进程。
 

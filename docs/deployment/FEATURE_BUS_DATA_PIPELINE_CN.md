@@ -211,9 +211,94 @@ features = self.feature_computer.compute_features_batch(bars_1min=bars_merged, .
 
 未来如果完全改用 archive-only 启动校验，`--warmup-days` 也可以下沉成 `--startup-scan-hours` 之类的语义化参数。
 
+## `weekly_ema_200_position` 与 `spot_weekly_ema200`（与 6 个月 tick warmup **无关**）
+
+**结论（先读）**
+
+- **`prepare_warmup_ticks.sh highcap 6`**（Vision **合约** aggTrades → `live/highcap/data/ticks|bars`）只服务 **日内/120T 特征**（VPIN、订单流、`atr_percentile` 等）。**不会**生成周线 EMA，也**不会**写 `macro/spot_weekly_ema200/`。
+- **`weekly_ema_200_position`**（spot / Trade Map / 任意 merge 进 bus 的策略）在实盘依赖 **第二条 macro 线**：Vision **现货 1d**（默认自 `2017-01-01`）→ 周线 EMA200 seed parquet → publisher **覆盖** bus 列。
+- Publisher 每次特征计算虽从 archive **读约 150 天 1m bars** 进内存，但 **150 天 ≈ 21 根周线，不够 EMA(200)**；没有 seed 时该列应为 **NaN**（fail-closed），**不能**用短窗 resample 当生产值（历史上 `min_periods=span//5` 曾产生 ~400 量级的假 EMA）。
+
+### 两条 warmup / 历史数据线（互不连通）
+
+| 线路 | 数据源 | 落盘路径 | 典型深度 | 谁用 |
+|------|--------|----------|----------|------|
+| **Tick / 1m bars** | Binance Vision **USD-M** aggTrades | `live/highcap/data/ticks/`、`bars/` | `prepare_warmup_ticks.sh` 常下 **~6 个月**；publisher 计算时再读 archive **最近 150 天** | `compute_features_batch` 里绝大部分特征 |
+| **Macro 周线** | Binance Vision **spot 1d** | `macro/spot_klines/` → `macro/spot_weekly_ema200/<SYMBOL>.parquet` | 默认 **`--start-date 2017-01-01`** 至今（≥200 周才出满 EMA200） | `weekly_ema_200_position` 覆盖；Trade Map 主图周线（优先日 K 重算） |
+
+```text
+tick 线路:   6mo~180d futures ticks/bars  →  archive  →  VPIN / ATR / 120T …
+macro 线路:  spot 1d (Vision, 长历史)    →  seed parquet  →  weekly_ema_200_position → feature bus
+```
+
+macro **不会**从 live tick 自动生成；tick 线路也**不会**回写 macro。生产用 **`quant-macro-seed-prepare`**（oneshot + 每日 timer），`quant-feature-bus` 带 **`--skip-macro-warmup`** 时只**读**已有 seed。
+
+### 实盘：从 Vision 日 K 到 spot 策略
+
+```mermaid
+flowchart TB
+    subgraph macro [Macro 线 — 与 tick warmup 独立]
+        V1[Binance Vision spot 1d ZIP] --> KL[macro/spot_klines]
+        KL --> PREP[prepare_spot_weekly_ema_seed<br/>默认 2017-01-01 起]
+        PREP --> SEED[(spot_weekly_ema200/*.parquet)]
+    end
+
+    subgraph bus_lane [Feature Bus — quant-feature-bus]
+        ARCH[(Archive 1m bars<br/>compute 时读 ~150d)] --> COMP[compute_features_batch<br/>120T 等特征]
+        COMP --> BASE[baseline 算 weekly_ema_200_position<br/>短窗 → 应为 NaN]
+        SEED --> OVR[_apply_weekly_ema_seed_override<br/>用 seed EMA + 当前 bar close]
+        BASE --> OVR
+        OVR --> BUS[(shared_feature_bus/features/120T)]
+    end
+
+    subgraph consumers [只读 bus]
+        BUS --> SPOT[quant-spot-accum<br/>prefilter: position &lt; 0]
+        BUS --> TREND[trend / multi_leg merge 列]
+    end
+
+    CMS[Trade Map 周线叠加] -.优先.-> KL
+    CMS -.fallback.-> SEED
+```
+
+**步骤说明**
+
+1. **`scripts/prepare_spot_weekly_ema_seed.py`**（或 `live/scripts/prepare_spot_macro_seed.sh`、`quant-macro-seed-prepare`）  
+   - 下载/缓存 Vision **现货**日 K → `compute_weekly_ema_table`（W-SUN 聚合、`span=200`、`min_periods=200`）→ 写 **`spot_weekly_ema200/<SYMBOL>.parquet`**。  
+2. **`quant-feature-bus` 启动**（可选 `_prepare_macro_weekly_ema_seed`，除非 `--skip-macro-warmup` / `MLBOT_SKIP_MACRO_WARMUP`）。  
+3. **每 ~15 分钟** `OrderFlowListener._compute_15min_features` → `compute_features_batch`：  
+   - 从 **archive** 加载约 **`bar_lookback_days=150`** 的 1m bars（见 `order_flow_listener.py`），与 4h `memory_window` 合并后算全量特征节点。  
+   - 对 `weekly_ema_200_position`：先走短窗 OHLC resample（**不足 200 周 → NaN**），再由 **`IncrementalFeatureComputer._apply_weekly_ema_seed_override`** 用 seed 中「不晚于当前 bar 的最近一周 EMA」与 **当前 120T bar 的 close** 重算  
+     `(close - EMA) / close`（现货 EMA、bar close 多为合约 120T close，通常接近）。  
+   - seed **过期**（最后 `week_ts` 落后 bar >21 天）或 **离谱低价 EMA**（价在 EMA 上方且偏离 >15%）→ override 返回 NaN → **不买**（fail-closed）。  
+4. **`quant-spot-accum`** 经 `ClassicFeatureBusProvider` **只读** bus，不读 macro 目录；门控见 `spot_accum_simple/archetypes/prefilter.yaml`（`weekly_ema_200_position < 0`）。
+
+**环境变量（与路径）**
+
+| 变量 / 参数 | 默认 | 含义 |
+|-------------|------|------|
+| `MLBOT_MACRO_KLINE_ROOT` / `--macro-kline-root` | `live/highcap/data/macro/spot_klines` | Vision spot 1d 缓存 |
+| `MLBOT_WEEKLY_EMA_SEED_ROOT` / `--weekly-ema-seed-root` | `live/highcap/data/macro/spot_weekly_ema200` | 周线 EMA seed 输出 |
+| `MLBOT_MACRO_SEED_START_DATE` / `--macro-seed-start-date` | `2017-01-01` | 日 K 下载起点（须够 200 周） |
+| `MLBOT_SKIP_MACRO_WARMUP` / `--skip-macro-warmup` | bus 上常为开 | 跳过 bus 启动时下载，**仍依赖**已有 seed 文件 |
+
+### 回测 / 研究
+
+- **`scripts/event_backtest.py`**：可用 constitution + 全历史 **parquet 日/分钟**；若配置 `weekly_ema_context_dir` / seed 路径，`compute_weekly_ema_position_from_ohlc` **同样读 macro seed**（与实盘公式一致）。  
+- 回测**不**走 `prepare_warmup_ticks` 的 6 个月合约 tick；周线应靠 **research parquet 全窗** 或 **预先准备的 seed**。
+
+### 与「只加载 6 个月 warmup」的关系（常见误解）
+
+| 说法 | 对错 |
+|------|------|
+| 「warmup 只有 6 个月，周线 EMA200 只能看 6 个月」 | **错**。周线看 **macro spot 1d（2017+）** 的 seed，不看 tick warmup 深度。 |
+| 「feature-bus 算特征只用 150 天 archive」 | **对**，但仅指 **算子输入窗**；`weekly_ema_200_position` 在 live **用 seed 覆盖**，不依赖这 150 天能否 resample 出 200 周。 |
+| 「没跑 macro-seed-prepare 也能从 tick 推出周线」 | **错**。没 seed → 列为 NaN / 门控不通过，需跑 `prepare_spot_weekly_ema_seed` 或 timer。 |
+
+运维与检查：`README_CN.md` § Feature Bus 与周线 EMA200、`scripts/check_live_spot_feature_bus.sh`。
+
 ## 排查路径
 
 1. **Trade Map 看到 K 线断开** → 先看 archive 是否完整（`/app/live/highcap/data/bars/<SYM>/<date>.parquet`）；如果 archive 完整、bus 有洞，跑 `sync_feature_bus_bars_from_archive.py`。
 2. **策略读不到最新 bar** → 检查 publisher `_make_bar_write_callback` 是否 throw、`bus/bars_1min/<SYM>.parquet` 的 mtime 是否在更新。
 3. **特征计算失败** → 看 publisher 日志 `compute_features_batch`；这条路径不依赖 bus，问题多在 archive / memory 端。
-4. **weekly EMA200 异常** → 检查 `live/highcap/data/macro/spot_weekly_ema200/` seed 是否存在。
+4. **weekly EMA200 异常** → 见上文 § `weekly_ema_200_position` 与 `spot_weekly_ema200`：确认 `spot_weekly_ema200/<SYMBOL>.parquet` 存在且新鲜（`quant-macro-seed-prepare`）、`spot_klines` 日 K 到昨日、重启 `quant-feature-bus` 后 bus 列非 NaN；**不要**用 6 个月 tick warmup 推断周线。

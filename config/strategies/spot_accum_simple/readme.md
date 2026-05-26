@@ -62,6 +62,20 @@ daily_sell_fraction = base_daily_sell_fraction * speed_mult
 
 买入门控在 **`prefilter.yaml`**：默认 `weekly_ema_200_position < 0`（周线 EMA200 下方）。
 
+### `weekly_ema_200_position` 数据从哪来（与 tick warmup 无关）
+
+| 问题 | 答案 |
+|------|------|
+| 是否用 `prepare_warmup_ticks.sh` 那 6 个月合约 tick？ | **否**。那是 USD-M 订单流/1m archive，给 VPIN、`atr_percentile` 等。 |
+| 周线 EMA200 用什么？ | **Binance Vision 现货 1d**（默认自 2017-01-01）→ `live/highcap/data/macro/spot_weekly_ema200/<SYMBOL>.parquet`。 |
+| 谁写入 bus？ | **`quant-feature-bus`**：每根 120T 特征算完后，用 seed **覆盖** `weekly_ema_200_position`（公式：当前 bar `close` 对 seed 里 ffilled 的周线 EMA）。 |
+| spot 进程读什么？ | **`quant-spot-accum` 只读 feature bus**，不直接读 macro 目录。 |
+| 没 seed / seed 过期会怎样？ | 列为 **NaN** → prefilter 不通过 → **不 deploy**（fail-closed）。 |
+
+准备 seed：`python scripts/prepare_spot_weekly_ema_seed.py` 或 `bash live/scripts/prepare_spot_macro_seed.sh`；生产 **`quant-macro-seed-prepare.timer`**（每日刷新）。更新 seed 后需 **重启 feature-bus**（或等 ~15min）再 **重启 spot-accum**。
+
+完整机制（150 天 archive 与 macro 两线对比、示意图）：[`docs/deployment/FEATURE_BUS_DATA_PIPELINE_CN.md`](../../docs/deployment/FEATURE_BUS_DATA_PIPELINE_CN.md) § `weekly_ema_200_position` 与 `spot_weekly_ema200`。
+
 **何时下单（实盘 `run_spot_accum_live.py`）**
 
 - 触发：feature-bus **每出一根新 2h bar**（不是固定 UTC 0 点）；bar 时间戳多为 UTC 整点 2h 网格（00:00、02:00…）。

@@ -36,6 +36,8 @@
 
 **入场条件**：`weekly_ema_200_position < 0`（周线收盘在周线 EMA200 下方 = 深熊）
 
+**特征来源（实盘）**：该列由 **feature-bus** 提供；bus 内数值来自 Vision **现货日 K 长历史** 生成的 `macro/spot_weekly_ema200` seed，**不是** `prepare_warmup_ticks` 的 6 个月合约 tick。Publisher 算特征时虽只读 archive **约 150 天** 1m bars，但对本列会用 seed **覆盖**。详见 [`docs/deployment/FEATURE_BUS_DATA_PIPELINE_CN.md`](../deployment/FEATURE_BUS_DATA_PIPELINE_CN.md) § `weekly_ema_200_position` 与 `spot_weekly_ema200`。
+
 **节奏**：
 - 每 symbol 每 UTC 日最多 1 笔 deploy（`max_deploy_legs_per_day: 1`，`min_order_interval_minutes: 1440`）
 - 限价单，`limit_offset_bps: 25`
