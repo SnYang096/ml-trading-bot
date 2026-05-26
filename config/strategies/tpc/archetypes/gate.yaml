@@ -48,35 +48,39 @@ system_safety:
   lock_reason: EVT 左尾风险强度：中高风险拖泥带水区间对趋势策略表现最差
   disabled: true
   disabled_reason: 放开大级别多空回调；需要尾部统计带时再打开并重跑优化
-- id: gate_vol_persistence_vol_persistence
+- id: gate_vol_persistence_vol_persistence_bull_only
   tag: HARD_VOL_PERSISTENCE_VOL_PERSISTENCE
   phase: system_safety
   priority: 12
-  reason: 统计验证规则 (lift=1.24)
+  reason: 统计验证规则 (lift=1.24)；regime-conditional：仅在 ema_1200_position>0.10 强多头时启用，bear 段允许通过以避免误杀
   when:
     all_of:
     - vol_persistence:
         value_gt: 0.0029
     - vol_persistence:
         value_lt: 0.0616
+    - ema_1200_position:
+        value_gt: 0.10
   then:
     action: deny
-  comment: 'merged: (0.0029,0.0299) + stat_fallback (0.0275,0.0616) → full deny zone. MeanRR=-0.60, BadRate=51.8%'
+  comment: 'Variant H: vol gates only active in ema_strong_bull (ema_1200_position>0.10)'
   locked: true
-  lock_reason: 波动率持久性：低波噪声切换/拖泥带水期对趋势策略不利
-- id: gate_tpc_vol_leverage_asymmetry_mid
+  lock_reason: 波动率持久性：低波噪声切换/拖泥带水期对趋势策略不利（仅 bull 段）
+- id: gate_tpc_vol_leverage_asymmetry_mid_bull_only
   tag: HARD_TPC_VOL_LEVERAGE_ASYMMETRY
   phase: system_safety
   priority: 13
-  reason: 与 BPC/ME/SRB 对齐：波动杠杆非对称严重时趋势容易被拖垮
+  reason: 与 BPC/ME/SRB 对齐：波动杠杆非对称严重时趋势容易被拖垮；regime-conditional：仅 bull 段启用
   when:
     all_of:
     - vol_leverage_asymmetry:
         value_gt: 0.0558
     - vol_leverage_asymmetry:
         value_lt: 0.1482
+    - ema_1200_position:
+        value_gt: 0.10
   then:
     action: deny
   locked: true
   promote_never_disable: true
-  lock_reason: 波动杠杆非对称安全门
+  lock_reason: 波动杠杆非对称安全门（仅 bull 段）

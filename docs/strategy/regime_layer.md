@@ -18,9 +18,33 @@ regime → prefilter → direction → gate → entry → evidence → execution
 | `allowed_sides:` | **是** — direction 算出 ±1 之后掩码 long/short |
 | `allowed_regimes:` | **否** — schema 占位；牛熊分桶见 `regime_ablation_report.py` 的 `ema_1200_position` 阈值 |
 
-### TPC（20260522）
+### TPC（20260522 / 20260526 更新）
 
 仅 **EMA1200 宏观死区**：`ema_1200_position >= 0.10` OR `<= -0.10`（等价 `|pos|>0.10`）。chop 在 **`gate.yaml`**（`gate_tpc_semantic_chop_high`）；box 已移除。
+
+#### Gate vol-bull-conditional（variant H，20260526）
+
+`gate.yaml` 中两条 vol gate 改为 **regime-conditional**：仅当 `ema_1200_position > 0.10`（强多头侧）时才 deny。
+
+| 规则 ID | 触发条件 |
+|---------|---------|
+| `gate_vol_persistence_vol_persistence_bull_only` | `vp ∈ (0.0029, 0.0616) AND ema_1200_position > 0.10` |
+| `gate_tpc_vol_leverage_asymmetry_mid_bull_only` | `vla ∈ (0.0558, 0.1482) AND ema_1200_position > 0.10` |
+
+**动机**：cross-regime event_backtest 显示
+
+- 取消两条 vol gate（variant B）：recent 2025-2026 +17R 但 2024 牛市 maxDD 从 -8.64% 恶化到 **-13.52%**；
+- 保留两条 vol gate（baseline A）：2024 牛市 maxDD -8.64%，recent 2025-2026 仅 +43R；
+- **保留 bull 段、放开 bear 段（variant H）**：2024 牛市 maxDD **-7.57%**（比 baseline 还低），recent 2025-2026 +47R（比 baseline 改进，仅次于 B 的 +60R）。
+
+H 是 Pareto 强于 baseline 的稳健折中：bull-DD 保护 + recent 上行均得。
+
+**监控**：每周运行 `scripts/regime_watchdog.py` 检查 `ema_1200_position` 分布与 vol gate 实际触发率是否漂离 `config/monitoring/regime_watchdog_baseline.json`。
+
+#### 实验配置归档
+
+- `config_experiments/B_gate_only_chop_strategies/`（两条 vol gate 全部 disable）— **不上 live**
+- `config_experiments/H_bull_conditional_vol_strategies/`（bull-conditional vol gate）— **已 promote 到 `config/strategies/tpc/archetypes/gate.yaml`**
 
 ### BPC / ME / SRB（研究仓，未改）
 
