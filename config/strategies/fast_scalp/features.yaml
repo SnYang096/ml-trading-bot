@@ -1,5 +1,8 @@
 # fast_scalp features — only columns whose IC peaks at lag ∈ {1,3,5} bars.
 #
+# Validation smoke (2026-05-26): ic-decay on SYNTHETIC parquet had no |IC|>0.02;
+# re-freeze this list after real `mlbot train final` + factor-eval on holdout.
+#
 # Population this list ONLY after running:
 #   mlbot analyze factor-eval --strategy fast_scalp --ic-decay-lags 1,3,5,10,20
 # and keeping features with best_lag ≤ 5 AND |rank_ic| > 0.02 on holdout.

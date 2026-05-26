@@ -53,10 +53,12 @@
 
 | 工具 | 触发频率 | 输入 | 输出 | 改 yaml？ |
 |---|---|---|---|---|
-| `scripts/quick_layer_scan.py` | 假设时 | features_labeled.parquet | markdown 报告（含 `ic-decay`） | ❌ |
+| `scripts/quick_layer_scan.py` | 假设时 | features_labeled.parquet | markdown 报告（含 `ic-decay`、`--bucket-by`） | ❌ |
 | `scripts/event_backtest.py` | 候选确定后 | strategies_root + symbols + 日期；或 `--variant-grid` | trades csv + summary + capital report + EXPERIMENT_INDEX | ❌ |
 | `scripts/regime_watchdog.py` | 周度 cron | recent features parquet + baseline + IC baseline | report.json（含 IC/PSI）+ summary.txt | ❌ |
-| `scripts/_new_decision_doc.py` | promote 前 | EXPERIMENT_INDEX.json | `docs/decisions/<topic>_<date>.md` 骨架 | ❌ |
+| `scripts/_new_decision_doc.py` | promote 前 | EXPERIMENT_INDEX.json | `docs/decisions/<topic>_<date>.md` 骨架（`--topic-template default\|c_semantic_proxy\|tree_slug`） | ❌ |
+| `scripts/rd_loop.py` | 假设→回测→文档 | hypothesis yaml | `results/rd_loop/<topic>/` + state.json | ❌ |
+| `scripts/_build_grid_segment_labels.py` | C 语义代理离线筛 | grid_segments.csv + features parquet | seg_labeled.parquet（`seg_*` KPI 列） | ❌ |
 | `scripts/regime_drift_monitor.py` | 周/月度 cron | recent features parquet | drift report | ❌ |
 | `scripts/deploy_config_to_live.py` | yaml change | config/ + live/highcap/ diff | 同步到 live + 重启 quant-feature-bus | ✅ live only |
 
@@ -289,15 +291,17 @@ PYTHONPATH=src:scripts python scripts/regime_watchdog.py \
 |---|---|---|
 | Hypothesis | 章节 4：因子构造直觉 | `quick_layer_scan` + 人脑 |
 | Backtest | 章节 8：vectorbt walk-forward | `event_backtest`（订单流级，比 ML4T 标准更细） |
-| Cross-validation | 章节 7：Purged K-fold | **缺**：当前是双段对照，**未实现 Combinatorial Purged CV**（roadmap） |
-| Live → Monitoring | 章节 23 | `regime_watchdog` + `regime_drift_monitor`（待加 PSI / IC alert） |
+| Cross-validation | 章节 7：Purged K-fold | **不用 K-fold**：`mlbot train` 用 causal `TimeSeriesSplit`；promote 用 **多窗口 walk-forward 共识**（recent + bull + 可选第三段），见 [Wave 3 §3](../experiments/z实验_001_bpc/wave3/02_meta_findings_on_meta_algo.md) |
+| Live → Monitoring | 章节 23 | `regime_watchdog` + `regime_drift_monitor`（含 PSI / IC drift） |
 
 ## 7. 后续 roadmap
 
 | 优先级 | 项 | 备注 |
 |---|---|---|
-| P1 | Combinatorial Purged CV | ML4T 的硬缺项，crypto 特别需要因为 regime 短 |
-| P2 | quick_layer_scan 加 `--bucket-by`（自动按 ema/calendar 分桶） | 减少手写 filter |
+| P1 | 多窗口 walk-forward 共识（≥3 段） | 替代 Purged/CPCV；crypto regime 短 → 更需要 **因果** 多段，不是 K-fold 平均 |
+| ~~P2~~ | ~~quick_layer_scan `--bucket-by`~~ | ✅ 已落地（`ema` / `calendar` / `feature_quantile`） |
+| ~~P2~~ | ~~`scripts/rd_loop.py` 一键 driver~~ | ✅ scan → variant-grid → decision doc |
 | ~~P2~~ | ~~regime_watchdog 加 PSI / IC drift~~ | ✅ 已落地 |
 | ~~P3~~ | ~~event_backtest 加 `--variant-grid`~~ | ✅ 已落地 |
 | ~~P3~~ | ~~自动生成决策文档骨架~~ | ✅ `_new_decision_doc.py` |
+| — | ~~Combinatorial Purged CV~~ | **永久搁置**（Wave 3 §3：非因果、不适合生产 promote） |

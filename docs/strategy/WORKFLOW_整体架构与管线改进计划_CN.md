@@ -474,7 +474,7 @@ threshold_calibration:
 | ML4T 模块 | 你的现状 | 改进建议 |
 |---|---|---|
 | **Point-in-Time** | ✅ 隐式（parquet 月度切片）| 加 PIT contract checker：`assert df.index.max() < snapshot_ts` 在每个 stage 入口 |
-| **Cross-Validation** | ⚠ 简单 rolling | 升级到 **Combinatorial Purged CV**（ML4T Ch.7 / Lopez de Prado）— 处理时间序列样本重叠 |
+| **Cross-Validation** | ✅ causal `TimeSeriesSplit`（train）+ 多段 event_backtest（promote） | **不用** Purged/CPCV K-fold（[Wave 3 §3](../experiments/z实验_001_bpc/wave3/02_meta_findings_on_meta_algo.md)：非因果）；扩展为 ≥3 段 walk-forward 共识 |
 | **Bet Sizing** | ⚠ 固定 `risk_per_r = 1%` | 加 **Kelly fraction**（capped at 25%）+ vol-target 缩放 |
 | **Portfolio Optimizer** | ⚠ PCM 是"仲裁器"而非"优化器"| 在 PCM 层加 **risk parity / max-sharpe** 选 sub-strategy 配比；当前 ABC 配比是手工设定 |
 | **Performance Attribution** | ⚠ 按策略/symbol 分账，无 regime/feature 归因 | 加 **regime × strategy 二维归因表**（季度复盘看哪类 regime 哪个策略赚钱）|
@@ -488,7 +488,7 @@ threshold_calibration:
 | **Meta-Labeling** | Ch.17 | 在主信号之上加一个二级模型决定"要不要拿"。可作为 entry filter 的小帽子树 | ⭐⭐⭐ |
 | **Sample Weights by Uniqueness** | Ch.4 | 你的 bar 标签会重叠（一个 trade 跨多个 bar），不加 unique weight 会让模型 over-fit 高重叠区间 | ⭐⭐ |
 | **Fractional Differentiation** | Ch.5 | 价格类特征要么 stationary（diff，丢记忆）要么 non-stationary（raw，bad for tree）；frac-diff 兼顾 | ⭐⭐ |
-| **Combinatorial Purged CV** | Ch.7 | 替代当前 rolling，缓解 walk-forward overfit | ⭐⭐ |
+| ~~Combinatorial Purged CV~~ | Ch.7 | **搁置** — 用多窗口 walk-forward + `event_backtest --variant-grid` 共识替代（Wave 3 §3） | — |
 | **Bet Sizing (Kelly)** | Ch.10 | 当前固定 risk_per_r 是"硬上限"，没有按信号置信度缩放 | ⭐⭐ |
 | **Trend-Scanning Labels** | Ch.5 | 用 t-value 自动找 trend 段而不是手工设 horizon | ⭐ |
 | **Hierarchical Risk Parity** | Ch.13 | 当 ABC 子策略数 > 6 时做组合权重 | ⭐ |
@@ -506,7 +506,7 @@ threshold_calibration:
 ### 7.5 一句话总结对照
 
 - **数据 + 特征**：你比 ML4T 标准玩家**强**（订单流 + 衍生品 + 链上 + 微观结构）
-- **建模 + CV**：你比 ML4T **弱**（CV 没 purged，bet sizing 简化）
+- **建模 + CV**：train 侧已有 causal TSCV；promote 侧用多段 walk-forward（非 K-fold）；bet sizing 仍简化
 - **执行 + 多腿**：你**独有**（ML4T 不讲）
 - **风险管理 + 归因**：你比 ML4T **弱**（宪法是 hard caps，没有 portfolio VaR / 归因）
 
