@@ -1,0 +1,14 @@
+# Smoke subset of chop_grid_semantic_proxy_grid.yaml (baseline only, short window).
+experiment_id: chop_grid_semantic_proxy_smoke
+engine: chop_grid
+strategy: chop_grid
+timeframe: "2h"
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+runs:
+  - variant: baseline_smoke
+    config: config/strategies/chop_grid/research/calibrate_roll.default.yaml
+    start_date: "2026-03-01"
+    end_date: "2026-03-15"
+    output_dir: results/chop_grid/experiments/baseline_smoke

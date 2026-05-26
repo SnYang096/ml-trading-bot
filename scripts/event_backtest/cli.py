@@ -49,8 +49,9 @@ def main():
     parser.add_argument(
         "--strategy",
         "-s",
-        required=True,
-        help="策略名, 逗号分隔 (例: bpc / fer / bpc,fer,me-long)",
+        required=False,
+        default=None,
+        help="策略名, 逗号分隔 (例: bpc / fer)；使用 --variant-grid 时可省略",
     )
     parser.add_argument(
         "--symbols",
@@ -240,6 +241,8 @@ def main():
     if args.variant_grid:
         grid_path = Path(args.variant_grid)
         return run_variant_grid(grid_path, extra_argv=extra)
+    if not args.strategy:
+        parser.error("--strategy is required unless --variant-grid is set")
     if extra:
         parser.error(f"unrecognized arguments: {' '.join(extra)}")
 

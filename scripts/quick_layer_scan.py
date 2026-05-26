@@ -366,6 +366,178 @@ def mode_ic_decay(
 
 
 # ---------------------------------------------------------------------------
+# bucket-by (ema / calendar / feature_quantile)
+# ---------------------------------------------------------------------------
+
+
+def _parse_bucket_by(
+    spec: str,
+) -> List[Tuple[str, Callable[[pd.DataFrame], pd.Series]]]:
+    """Parse ``--bucket-by`` into named bucket masks.
+
+    Formats:
+        ema:ema_1200_position@0.10
+            → ``|ema|>=0.10`` vs ``|ema|<0.10``
+        calendar:2024-01-01,2025-01-01;2025-01-01,2026-04-01
+            → one bucket per semicolon-separated window
+        feature_quantile:vol_persistence@4
+            → quartile buckets Q1..Q4 on ``vol_persistence``
+    """
+    if ":" not in spec:
+        raise ValueError(f"bucket-by must be kind:args, got {spec!r}")
+    kind, rest = spec.split(":", 1)
+    kind = kind.strip().lower()
+    if kind == "ema":
+        if "@" not in rest:
+            raise ValueError(
+                "ema bucket needs feature@threshold, e.g. ema_1200_position@0.10"
+            )
+        feat, thr_s = rest.rsplit("@", 1)
+        feat = feat.strip()
+        thr = float(thr_s.strip())
+
+        def _ge(df: pd.DataFrame) -> pd.Series:
+            s = pd.to_numeric(df[feat], errors="coerce").abs()
+            return (s >= thr).fillna(False)
+
+        def _lt(df: pd.DataFrame) -> pd.Series:
+            s = pd.to_numeric(df[feat], errors="coerce").abs()
+            return (s < thr).fillna(False)
+
+        return [
+            (f"|{feat}|>={thr:g}", _ge),
+            (f"|{feat}|<{thr:g}", _lt),
+        ]
+    if kind == "calendar":
+        windows = [w.strip() for w in rest.split(";") if w.strip()]
+        out: List[Tuple[str, Callable[[pd.DataFrame], pd.Series]]] = []
+        for w in windows:
+            if "," not in w:
+                raise ValueError(f"calendar window needs start,end: {w!r}")
+            start_s, end_s = [x.strip() for x in w.split(",", 1)]
+
+            def _cal(
+                df: pd.DataFrame,
+                *,
+                _w: str = w,
+                _start: str = start_s,
+                _end: str = end_s,
+            ) -> pd.Series:
+                return _build_calendar_mask(df, f"{_start},{_end}")
+
+            out.append((w.replace(",", " → "), _cal))
+        return out
+    if kind == "feature_quantile":
+        if "@" not in rest:
+            raise ValueError(
+                "feature_quantile needs feature@n_bins, e.g. vol_persistence@4"
+            )
+        feat, n_s = rest.rsplit("@", 1)
+        feat = feat.strip()
+        n_bins = int(n_s.strip())
+        if n_bins < 2:
+            raise ValueError("feature_quantile n_bins must be >= 2")
+
+        def _q_labels(df: pd.DataFrame) -> pd.Series:
+            s = pd.to_numeric(df[feat], errors="coerce")
+            try:
+                return pd.qcut(s, q=n_bins, duplicates="drop")
+            except ValueError:
+                return pd.Series([pd.NA] * len(df), index=df.index, dtype="object")
+
+        # Build per-interval masks lazily via unique categories on first df pass
+        return [("__quantile__", lambda d, f=feat, nb=n_bins: _q_labels(d))]  # type: ignore
+
+    raise ValueError(
+        f"unknown bucket-by kind {kind!r}; use ema, calendar, or feature_quantile"
+    )
+
+
+def _expand_quantile_buckets(
+    df: pd.DataFrame, feat: str, n_bins: int
+) -> List[Tuple[str, Callable[[pd.DataFrame], pd.Series]]]:
+    s = pd.to_numeric(df[feat], errors="coerce")
+    try:
+        cats = pd.qcut(s, q=n_bins, duplicates="drop")
+    except ValueError:
+        return []
+    buckets: List[Tuple[str, Callable[[pd.DataFrame], pd.Series]]] = []
+    for cat in cats.cat.categories:
+        label = f"{feat} in {cat}"
+
+        def _mask(d: pd.DataFrame, *, _cat=cat, _feat=feat, _nb=n_bins) -> pd.Series:
+            qs = pd.to_numeric(d[_feat], errors="coerce")
+            qc = pd.qcut(qs, q=_nb, duplicates="drop")
+            return qc == _cat
+
+        buckets.append((label, _mask))
+    return buckets
+
+
+def _resolve_bucket_masks(
+    df: pd.DataFrame, spec: str
+) -> List[Tuple[str, Callable[[pd.DataFrame], pd.Series]]]:
+    parsed = _parse_bucket_by(spec)
+    if len(parsed) == 1 and parsed[0][0] == "__quantile__":
+        feat_part = spec.split(":", 1)[1]
+        feat, n_s = feat_part.rsplit("@", 1)
+        return _expand_quantile_buckets(df, feat.strip(), int(n_s.strip()))
+    return parsed
+
+
+def _run_mode_report(
+    args: argparse.Namespace,
+    df: pd.DataFrame,
+    label: pd.Series,
+    base_mask: pd.Series,
+) -> str:
+    if args.mode == "feature-plateau":
+        return mode_feature_plateau(args, df, label, base_mask)
+    if args.mode == "condition-set":
+        return mode_condition_set(args, df, label, base_mask)
+    if args.mode == "pair-scan":
+        return mode_pair_scan(args, df, label, base_mask)
+    if args.mode == "ic-decay":
+        return mode_ic_decay(args, df, base_mask)
+    raise ValueError(f"unknown mode {args.mode}")
+
+
+def _bucketed_report(
+    args: argparse.Namespace,
+    df: pd.DataFrame,
+    label: pd.Series,
+    base_mask: pd.Series,
+    bucket_spec: str,
+) -> str:
+    buckets = _resolve_bucket_masks(df, bucket_spec)
+    sections: List[str] = [
+        f"# {args.mode} scan (bucket-by: `{bucket_spec}`)",
+        "",
+    ]
+    for bname, bfn in buckets:
+        bmask = base_mask & bfn(df)
+        n = int(bmask.sum())
+        sections.append(f"## Bucket: {bname}")
+        sections.append("")
+        sections.append(f"- rows in bucket (after filters): {n}")
+        sections.append("")
+        if n == 0:
+            sections.append("_(empty bucket — skip)_")
+            sections.append("")
+            continue
+        body = _run_mode_report(args, df, label, bmask)
+        # Drop duplicate top-level title from sub-report
+        lines = body.splitlines()
+        if lines and lines[0].startswith("# "):
+            lines = lines[1:]
+            while lines and not lines[0].strip():
+                lines = lines[1:]
+        sections.extend(lines)
+        sections.append("")
+    return "\n".join(sections)
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -388,6 +560,16 @@ def _make_parser() -> argparse.ArgumentParser:
     )
     common.add_argument(
         "--out", default=None, help="Markdown output path; if absent, print to stdout."
+    )
+    common.add_argument(
+        "--bucket-by",
+        default=None,
+        help=(
+            "Repeat scan per bucket: "
+            "ema:FEATURE@THR | "
+            "calendar:start,end;start,end | "
+            "feature_quantile:FEATURE@N"
+        ),
     )
 
     fp = sub.add_parser("feature-plateau", parents=[common])
@@ -456,16 +638,22 @@ def main() -> int:
         base_mask = base_mask & _parse_clause(f)(df)
     base_mask = base_mask & _build_calendar_mask(df, args.calendar_window)
 
-    if args.mode == "feature-plateau":
-        report = mode_feature_plateau(args, df, label, base_mask)
-    elif args.mode == "condition-set":
-        report = mode_condition_set(args, df, label, base_mask)
-    elif args.mode == "pair-scan":
-        report = mode_pair_scan(args, df, label, base_mask)
-    elif args.mode == "ic-decay":
-        report = mode_ic_decay(args, df, base_mask)
-    else:
-        print(f"unknown mode {args.mode}", file=sys.stderr)
+    try:
+        if getattr(args, "bucket_by", None):
+            report = _bucketed_report(args, df, label, base_mask, args.bucket_by)
+        elif args.mode == "feature-plateau":
+            report = mode_feature_plateau(args, df, label, base_mask)
+        elif args.mode == "condition-set":
+            report = mode_condition_set(args, df, label, base_mask)
+        elif args.mode == "pair-scan":
+            report = mode_pair_scan(args, df, label, base_mask)
+        elif args.mode == "ic-decay":
+            report = mode_ic_decay(args, df, base_mask)
+        else:
+            print(f"unknown mode {args.mode}", file=sys.stderr)
+            return 3
+    except (ValueError, KeyError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
         return 3
 
     if args.out:
