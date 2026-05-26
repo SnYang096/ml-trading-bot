@@ -397,8 +397,8 @@ threshold_calibration:
 
 | 检测 | 现状 | 待做 |
 |---|---|---|
-| PSI / feature drift | ❌ 没有 | 加到 `scripts/regime_watchdog.py` 月度模块 |
-| IC@H 时序追踪 | ✅ `mlbot ts-factor-eval` 已有 IC | 加 cron + alert |
+| PSI / feature drift | ✅ `regime_watchdog.py`（PSI vs IC baseline 参考 parquet） | 扩展到 BPC/ME；月度 cron |
+| IC@H 时序追踪 | ✅ `quick_layer_scan ic-decay` + watchdog IC sign-flip alert | 与 `factor_ic_baseline_*.json` 周度 cron |
 | plateau drift | ⚠ 部分 — `prefilter_drift_guard` 在 slow 里 | 抽出做独立 watchdog；改成"alert only"模式 |
 | strategy sharpe drift | ✅ `rolling_dashboard` 有 dashboard | 加 alert 阈值 |
 
@@ -472,7 +472,7 @@ threshold_calibration:
 
 按优先级排，每个 ≤ 1 周工作量：
 
-### M1：改 `calibrate_roll.default.yaml` 为纯验证模式（最高优先级）
+### M1：改 `calibrate_roll.default.yaml` 为纯验证模式（已落地，20260526）
 
 **做什么**：4 个策略（BPC/TPC/ME/SRB）的 `calibrate_roll.default.yaml` 都改成：
 - 所有 layer optimize = false
@@ -536,7 +536,7 @@ python scripts/quick_layer_scan.py \
 
 **预期效果**：R&D 第一步从"跑一次 turbo (1-2h)"变成"扫一次 quick_scan (1-2min)"。
 
-### M4：把 `research_roll.features_on.yaml` 的 SHAP 改成 audit-only
+### M4：把 `research_roll.features_on.yaml` 的 SHAP 改成 audit-only（已落地，20260526）
 
 **做什么**：
 - SHAP 结果只写到 `results/shap_audit/<日期>.md`

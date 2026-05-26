@@ -1,4 +1,5 @@
 {
+  "factor_ic_baseline_ref": "config/monitoring/factor_ic_baseline_tpc_20260526.json",
   "tpc": {
     "bull_share": 0.16911179031212373,
     "trigger_rates": {

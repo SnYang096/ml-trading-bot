@@ -6,10 +6,11 @@
     - 任何"看上去显著"的特征，下一步必须 event_backtest 看 R-multiple；
     - 输出 markdown 报告 + 同时打印一个紧凑摘要，便于在终端快速判断。
 
-支持三种扫描模式（可任意组合）:
+支持四种扫描模式:
     --feature-plateau  : 对单个特征在某 label 上做阈值 plateau 扫描
     --condition-set    : 比较若干 regime 条件（all_of 形式）对 label 的效应
     --pair-scan        : 两两特征 (feature_a, feature_b) 的联合 deny 效应（粗糙双变量）
+    ic-decay           : 特征 × horizon 的 Spearman IC（可选对比 baseline JSON）
 
 CLI 示例:
     # pullback 在 bull 子样本上的最优阈值
@@ -39,6 +40,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -46,6 +48,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+from scipy.stats import spearmanr
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -273,6 +276,96 @@ def mode_pair_scan(
 
 
 # ---------------------------------------------------------------------------
+# ic-decay
+# ---------------------------------------------------------------------------
+
+
+def _resolve_target_col(df: pd.DataFrame, target: str, horizon: int) -> Optional[str]:
+    if horizon <= 1:
+        return target if target in df.columns else None
+    for cand in (f"{target}_{horizon}", f"{target}{horizon}"):
+        if cand in df.columns:
+            return cand
+    return target if target in df.columns else None
+
+
+def _spearman_ic(x: pd.Series, y: pd.Series) -> Tuple[float, float, int]:
+    m = x.notna() & y.notna()
+    n = int(m.sum())
+    if n < 100:
+        return float("nan"), float("nan"), n
+    rho, p = spearmanr(x[m], y[m])
+    return float(rho), float(p), n
+
+
+def mode_ic_decay(
+    args: argparse.Namespace,
+    df: pd.DataFrame,
+    base_mask: pd.Series,
+) -> str:
+    features = [f.strip() for f in args.features.split(",") if f.strip()]
+    horizons = [int(h.strip()) for h in args.horizons.split(",") if h.strip()]
+    target = args.target
+
+    baseline_map: Dict[Tuple[str, str, int], float] = {}
+    if args.baseline_json:
+        bp = Path(args.baseline_json)
+        if not bp.is_absolute():
+            bp = (PROJECT_ROOT / bp).resolve()
+        if bp.exists():
+            blob = json.loads(bp.read_text(encoding="utf-8"))
+            for row in blob.get("rows", []):
+                if row.get("bucket") != "all":
+                    continue
+                feat = str(row.get("feature", ""))
+                baseline_map[(feat, "all", 0)] = float(row.get("rank_ic", 0))
+
+    md = ["# IC decay scan", ""]
+    md.append(f"- target base: `{target}`")
+    md.append(f"- horizons: {horizons}")
+    md.append(f"- n_base (after filters): {int(base_mask.sum())}")
+    md.append("")
+    md.append(
+        "| feature | horizon | target_col | n | rank_ic | p_value | "
+        "baseline_ic | delta | sign_flip |"
+    )
+    md.append("|---:|---:|---|---:|---:|---:|---:|---:|:---:|")
+
+    sub = df.loc[base_mask]
+    for feat in features:
+        if feat not in sub.columns:
+            md.append(f"| {feat} | — | — | 0 | — | — | — | — | — |")
+            continue
+        x = pd.to_numeric(sub[feat], errors="coerce")
+        for h in horizons:
+            tcol = _resolve_target_col(sub, target, h) or target
+            if tcol not in sub.columns:
+                md.append(f"| {feat} | {h} | missing | 0 | — | — | — | — | — |")
+                continue
+            y = pd.to_numeric(sub[tcol], errors="coerce")
+            rho, p, n = _spearman_ic(x, y)
+            base_ic = baseline_map.get((feat, "all", 0))
+            delta_s = ""
+            flip = ""
+            if base_ic is not None and not np.isnan(rho):
+                delta = rho - base_ic
+                delta_s = f"{delta:+.4f}"
+                if base_ic * rho < 0 and abs(rho) > 0.02 and abs(base_ic) > 0.02:
+                    flip = "yes"
+            base_s = f"{base_ic:.4f}" if base_ic is not None else "—"
+            md.append(
+                f"| {feat} | {h} | `{tcol}` | {n} | {rho:.4f} | {p:.2e} | "
+                f"{base_s} | {delta_s} | {flip} |"
+            )
+    md.append("")
+    md.append(
+        "**Reading**: sign_flip=yes with |IC|>0.02 suggests regime drift; "
+        "confirm with event_backtest before yaml changes."
+    )
+    return "\n".join(md)
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -317,6 +410,24 @@ def _make_parser() -> argparse.ArgumentParser:
         help="'feature:op:grid' e.g. 'vol_persistence:>:0.003,0.01,0.03'",
     )
     ps.add_argument("--pair-b", required=True)
+
+    ic = sub.add_parser("ic-decay", parents=[common])
+    ic.add_argument(
+        "--features",
+        required=True,
+        help="Comma-separated feature columns.",
+    )
+    ic.add_argument(
+        "--horizons",
+        default="1",
+        help="Comma-separated horizon labels (uses target or target_H column).",
+    )
+    ic.add_argument("--target", default="forward_rr")
+    ic.add_argument(
+        "--baseline-json",
+        default=None,
+        help="Optional IC baseline JSON (rows with bucket=all).",
+    )
     return p
 
 
@@ -331,10 +442,14 @@ def main() -> int:
         return 3
 
     df = pd.read_parquet(pq)
-    if args.label not in df.columns:
-        print(f"ERROR: label '{args.label}' missing", file=sys.stderr)
-        return 3
-    label = pd.to_numeric(df[args.label], errors="coerce").fillna(0).astype(bool)
+    label: pd.Series
+    if args.mode == "ic-decay":
+        label = pd.Series(True, index=df.index)
+    else:
+        if args.label not in df.columns:
+            print(f"ERROR: label '{args.label}' missing", file=sys.stderr)
+            return 3
+        label = pd.to_numeric(df[args.label], errors="coerce").fillna(0).astype(bool)
 
     base_mask = pd.Series(True, index=df.index)
     for f in args.filter or []:
@@ -347,6 +462,8 @@ def main() -> int:
         report = mode_condition_set(args, df, label, base_mask)
     elif args.mode == "pair-scan":
         report = mode_pair_scan(args, df, label, base_mask)
+    elif args.mode == "ic-decay":
+        report = mode_ic_decay(args, df, base_mask)
     else:
         print(f"unknown mode {args.mode}", file=sys.stderr)
         return 3

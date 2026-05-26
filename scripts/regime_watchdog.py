@@ -42,7 +42,7 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -106,6 +106,114 @@ def _extract_bull_conditional_rules(
                     }
                 )
     return rules
+
+
+def _compute_psi(
+    reference: pd.Series, current: pd.Series, *, n_bins: int = 10
+) -> Optional[float]:
+    """Population Stability Index between reference and current distributions."""
+    ref = (
+        pd.to_numeric(reference, errors="coerce")
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna()
+    )
+    cur = (
+        pd.to_numeric(current, errors="coerce")
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna()
+    )
+    if len(ref) < 100 or len(cur) < 50:
+        return None
+    edges = np.unique(np.quantile(ref, np.linspace(0.0, 1.0, n_bins + 1)))
+    if len(edges) < 3:
+        return None
+    ref_hist, _ = np.histogram(ref, bins=edges)
+    cur_hist, _ = np.histogram(cur, bins=edges)
+    ref_pct = ref_hist / max(ref_hist.sum(), 1)
+    cur_pct = cur_hist / max(cur_hist.sum(), 1)
+    eps = 1e-6
+    psi = float(np.sum((cur_pct - ref_pct) * np.log((cur_pct + eps) / (ref_pct + eps))))
+    return psi
+
+
+def _spearman_ic_pair(x: pd.Series, y: pd.Series) -> Tuple[Optional[float], int]:
+    xs = pd.to_numeric(x, errors="coerce")
+    ys = pd.to_numeric(y, errors="coerce")
+    m = xs.notna() & ys.notna()
+    n = int(m.sum())
+    if n < 100:
+        return None, n
+    rho = float(xs[m].corr(ys[m], method="spearman"))
+    return rho, n
+
+
+def evaluate_factor_health(
+    *,
+    window_df: pd.DataFrame,
+    reference_df: Optional[pd.DataFrame],
+    ic_baseline: Dict[str, Any],
+    psi_features: List[str],
+    psi_tol: float,
+    ic_flip_min_abs: float,
+) -> Dict[str, Any]:
+    """IC drift vs baseline JSON + PSI vs reference parquet."""
+    items: List[Dict[str, Any]] = []
+    alerts: List[str] = []
+    target = str(ic_baseline.get("target", "forward_rr"))
+    baseline_rows = [
+        r
+        for r in (ic_baseline.get("rows") or [])
+        if isinstance(r, dict) and r.get("bucket") == "all"
+    ]
+    ref_df = reference_df if reference_df is not None else window_df
+
+    if target not in window_df.columns:
+        alerts.append(f"MISSING_TARGET: {target}")
+    else:
+        y_win = window_df[target]
+        for row in baseline_rows:
+            feat = str(row.get("feature", ""))
+            if not feat or feat not in window_df.columns:
+                continue
+            base_ic = float(row.get("rank_ic", 0.0))
+            cur_ic, n = _spearman_ic_pair(window_df[feat], y_win)
+            if cur_ic is None:
+                continue
+            delta = cur_ic - base_ic
+            sign_flip = (
+                base_ic * cur_ic < 0
+                and abs(cur_ic) > ic_flip_min_abs
+                and abs(base_ic) > ic_flip_min_abs
+            )
+            items.append(
+                {
+                    "kind": "ic_drift",
+                    "feature": feat,
+                    "baseline_ic": base_ic,
+                    "current_ic": cur_ic,
+                    "delta": delta,
+                    "n": n,
+                    "sign_flip": sign_flip,
+                }
+            )
+            if sign_flip:
+                alerts.append(
+                    f"IC_SIGN_FLIP: {feat} {cur_ic:+.4f} vs baseline {base_ic:+.4f}"
+                )
+
+    for feat in psi_features:
+        if feat not in window_df.columns:
+            items.append(
+                {"kind": "psi", "feature": feat, "skipped": "missing in window"}
+            )
+            continue
+        ref_series = ref_df[feat] if feat in ref_df.columns else window_df[feat]
+        psi = _compute_psi(ref_series, window_df[feat])
+        items.append({"kind": "psi", "feature": feat, "psi": psi})
+        if psi is not None and psi > psi_tol:
+            alerts.append(f"PSI_DRIFT: {feat} psi={psi:.3f} > {psi_tol}")
+
+    return {"items": items, "alerts": alerts, "any_alert": bool(alerts)}
 
 
 def _in_band(series: pd.Series, conds: Dict[str, float]) -> pd.Series:
@@ -266,6 +374,23 @@ def main() -> int:
         "--out-dir",
         default="results/regime_watchdog",
     )
+    p.add_argument(
+        "--ic-baseline-json",
+        default="config/monitoring/factor_ic_baseline_tpc_20260526.json",
+        help="Factor IC baseline JSON; overridden by baseline factor_ic_baseline_ref if set.",
+    )
+    p.add_argument(
+        "--psi-features",
+        default="ema_1200_position,vol_persistence,vol_leverage_asymmetry",
+        help="Comma-separated features for PSI vs reference parquet.",
+    )
+    p.add_argument("--psi-tol", type=float, default=0.25)
+    p.add_argument(
+        "--ic-flip-min-abs",
+        type=float,
+        default=0.02,
+        help="Min |IC| on both sides to flag sign flip.",
+    )
     args = p.parse_args()
 
     pq = Path(args.window_parquet)
@@ -276,6 +401,10 @@ def main() -> int:
         return 3
     window_df = pd.read_parquet(pq)
 
+    ic_baseline: Dict[str, Any] = {}
+    ic_baseline_path: Optional[Path] = None
+    reference_df: Optional[pd.DataFrame] = None
+
     baseline: Dict[str, Any] = {}
     if args.baseline_json:
         bp = Path(args.baseline_json)
@@ -283,6 +412,30 @@ def main() -> int:
             bp = (PROJECT_ROOT / bp).resolve()
         if bp.exists():
             baseline = json.loads(bp.read_text(encoding="utf-8"))
+            ref_rel = baseline.get("factor_ic_baseline_ref")
+            if ref_rel:
+                ic_baseline_path = Path(str(ref_rel))
+
+    if ic_baseline_path is None and args.ic_baseline_json:
+        ic_baseline_path = Path(args.ic_baseline_json)
+
+    if ic_baseline_path is not None:
+        if not ic_baseline_path.is_absolute():
+            ic_baseline_path = (PROJECT_ROOT / ic_baseline_path).resolve()
+        if ic_baseline_path.exists():
+            ic_baseline = json.loads(ic_baseline_path.read_text(encoding="utf-8"))
+            src = ic_baseline.get("source_parquet")
+            if src:
+                sp = Path(str(src))
+                if sp.exists():
+                    ref_cols = [
+                        c.strip() for c in args.psi_features.split(",") if c.strip()
+                    ] + [str(ic_baseline.get("target", "forward_rr"))]
+                    ref_cols = list(dict.fromkeys(ref_cols))
+                    try:
+                        reference_df = pd.read_parquet(sp, columns=ref_cols)
+                    except Exception:
+                        reference_df = pd.read_parquet(sp)
 
     strategies_root = Path(args.strategies_root)
     if not strategies_root.is_absolute():
@@ -321,10 +474,25 @@ def main() -> int:
         reports.append(result)
         any_alert = any_alert or bool(result.get("any_alert"))
 
+    factor_health: Dict[str, Any] = {}
+    if ic_baseline:
+        psi_feats = [x.strip() for x in args.psi_features.split(",") if x.strip()]
+        factor_health = evaluate_factor_health(
+            window_df=window_df,
+            reference_df=reference_df,
+            ic_baseline=ic_baseline,
+            psi_features=psi_feats,
+            psi_tol=args.psi_tol,
+            ic_flip_min_abs=args.ic_flip_min_abs,
+        )
+        any_alert = any_alert or bool(factor_health.get("any_alert"))
+
     out_json = {
         "ts": ts,
         "window_parquet": str(pq),
+        "ic_baseline_json": str(ic_baseline_path) if ic_baseline_path else None,
         "any_alert": any_alert,
+        "factor_health": factor_health,
         "reports": reports,
     }
     (out_dir / "report.json").write_text(
@@ -353,6 +521,18 @@ def main() -> int:
         for rid, tr in r.get("trigger_rates", {}).items():
             lines.append(f"      rule {rid}: actual_trigger={tr:.2%}")
         for a in r.get("alerts") or []:
+            lines.append(f"      ALERT: {a}")
+    if factor_health:
+        lines.append("  [factor_health]")
+        for it in factor_health.get("items") or []:
+            if it.get("kind") == "ic_drift":
+                lines.append(
+                    f"      IC {it['feature']}: {it['current_ic']:+.4f} "
+                    f"(base {it['baseline_ic']:+.4f}, flip={it.get('sign_flip')})"
+                )
+            elif it.get("kind") == "psi" and it.get("psi") is not None:
+                lines.append(f"      PSI {it['feature']}: {it['psi']:.3f}")
+        for a in factor_health.get("alerts") or []:
             lines.append(f"      ALERT: {a}")
     print("\n".join(lines))
 

@@ -119,7 +119,7 @@ python scripts/quick_layer_scan.py condition-set \
 
 - 离线 baseline：`scripts/_factor_ic_baseline_oneshot.py` 或读 `config/monitoring/factor_ic_baseline_tpc_20260526.json`
 - 全量重算（慢、易踩 DAG）：`make ts-factor-eval` / `mlbot analyze factor-eval`（需完整 feature pipeline）
-- 计划：并入 `quick_layer_scan.py --mode ic-decay`（读已有 parquet，与 label scan 同一入口）
+- 已实现：`quick_layer_scan.py ic-decay`（读已有 parquet，与 label scan 同一入口；可选 `--baseline-json`）
 
 ---
 

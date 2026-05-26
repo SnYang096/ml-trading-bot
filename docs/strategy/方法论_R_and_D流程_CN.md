@@ -49,9 +49,10 @@
 
 | 工具 | 触发频率 | 输入 | 输出 | 改 yaml？ |
 |---|---|---|---|---|
-| `scripts/quick_layer_scan.py` | 假设时 | features_labeled.parquet | markdown 报告 | ❌ |
-| `scripts/event_backtest.py` | 候选确定后 | strategies_root + symbols + 日期 | trades csv + summary + capital report | ❌ |
-| `scripts/regime_watchdog.py` | 周度 cron | recent features parquet + baseline json | report.json + summary.txt（exit 1 时 alert） | ❌ |
+| `scripts/quick_layer_scan.py` | 假设时 | features_labeled.parquet | markdown 报告（含 `ic-decay`） | ❌ |
+| `scripts/event_backtest.py` | 候选确定后 | strategies_root + symbols + 日期；或 `--variant-grid` | trades csv + summary + capital report + EXPERIMENT_INDEX | ❌ |
+| `scripts/regime_watchdog.py` | 周度 cron | recent features parquet + baseline + IC baseline | report.json（含 IC/PSI）+ summary.txt | ❌ |
+| `scripts/_new_decision_doc.py` | promote 前 | EXPERIMENT_INDEX.json | `docs/decisions/<topic>_<date>.md` 骨架 | ❌ |
 | `scripts/regime_drift_monitor.py` | 周/月度 cron | recent features parquet | drift report | ❌ |
 | `scripts/deploy_config_to_live.py` | yaml change | config/ + live/highcap/ diff | 同步到 live + 重启 quant-feature-bus | ✅ live only |
 
@@ -231,6 +232,6 @@ PYTHONPATH=src:scripts python scripts/regime_watchdog.py \
 |---|---|---|
 | P1 | Combinatorial Purged CV | ML4T 的硬缺项，crypto 特别需要因为 regime 短 |
 | P2 | quick_layer_scan 加 `--bucket-by`（自动按 ema/calendar 分桶） | 减少手写 filter |
-| P2 | regime_watchdog 加 PSI / IC drift | 现在只有 distribution + trigger rate |
-| P3 | event_backtest 加 `--variant-grid` 一次跑多个 variant | 减少手写 launcher |
-| P3 | 自动生成决策文档骨架（fill-in 模板） | 现在每次手写 |
+| ~~P2~~ | ~~regime_watchdog 加 PSI / IC drift~~ | ✅ 已落地 |
+| ~~P3~~ | ~~event_backtest 加 `--variant-grid`~~ | ✅ 已落地 |
+| ~~P3~~ | ~~自动生成决策文档骨架~~ | ✅ `_new_decision_doc.py` |
