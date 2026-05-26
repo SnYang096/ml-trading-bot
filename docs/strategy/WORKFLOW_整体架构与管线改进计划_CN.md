@@ -135,19 +135,60 @@ threshold_calibration:
 
 ### 2.2 各系统的"哪些层活、哪些层冻"
 
-| 层 | A (spot_accum) | B (BPC/TPC/ME/SRB) | C (chop_grid + trend_scalp) |
-|---|---|---|---|
-| **Regime** | 周 EMA200 死区（10 年一更）| EMA1200 dead zone + chop（季度看）| `semantic_chop` 0.50/0.32 双阈（半年看）|
-| **Prefilter** | n/a（A 没有形态层）| 4 archetype 形态（locked）| 路由：chop → chop_grid，expansion → trend_scalp |
-| **Direction** | 周 EMA200 上/下（粗）| 公式（locked）| regime 强势侧 |
-| **Gate** | n/a | tail veto（chop）| n/a |
-| **Entry** | n/a | OR rules（locked，本轮我们重选）| n/a |
-| **Execution** | 越涨越快卖出 | 紧 SL + 较快兑现 | 网格 spacing / fee-aware TP |
-| **维护频率** | **几乎不动** | **季度审 regime + gate** | **半年审 regime 阈值** |
-| **复杂度来源** | 单参数：卖出 5× 阈值 | 4 策略 × 6 层 | 多腿引擎 |
-| **能否用 ML** | 否（哲学不允许）| Gate / Entry 可用 small tree（"小帽子"，§3.3）| 否（多腿无 ML 可言）|
+| 层 | A1 (spot_accum_simple) | A2 (spot_fattail，规划中) | B (BPC/TPC/ME/SRB) | C (chop_grid + trend_scalp) |
+|---|---|---|---|---|
+| **Regime** | 周 EMA200 死区（10 年一更）| 尾部 / 链上 / OI 复合（Q 级）| EMA1200 dead zone + chop（季度看）| `semantic_chop` 0.50/0.32 双阈（半年看）|
+| **Prefilter** | n/a（A 没有形态层）| 尾部分布 + funding 极端 | 4 archetype 形态（locked）| 路由：chop → chop_grid，expansion → trend_scalp |
+| **Direction** | 周 EMA200 上/下（粗）| 长偏多（fattail）| 公式（locked）| regime 强势侧 |
+| **Gate** | n/a | OI/funding/链上 alert | tail veto（chop）| n/a |
+| **Entry** | n/a | 阶梯加仓触发 | OR rules（locked，本轮我们重选）| n/a |
+| **Execution** | 越涨越快卖出 | 阶梯持有 + 强势卖出 | 紧 SL + 较快兑现 | 网格 spacing / fee-aware TP |
+| **维护频率** | **几乎不动** | **季度审尾部代理** | **季度审 regime + gate** | **半年审 regime 阈值 + 季度审语义代理（§2.2.1）** |
+| **复杂度来源** | 单参数：卖出 5× 阈值 | 多源尾部信号选择 | 4 策略 × 6 层 | 多腿引擎 + 语义代理选择 |
+| **能否用 ML** | 否（哲学不允许）| 否（人审统计代理）| Gate / Entry 可用 small tree（"小帽子"，§3.3）| 否（多腿无 ML 可言），但**有语义代理 R&D**（§2.2.1）|
 
-**关键认知**：A、C **本质上不该有"特征发现"工作流**。只有 B 才需要 R&D 管线，且 R&D 仅作用于 **regime + gate + entry** 三层。
+**关键认知（修订）**：A、C **不走 B 的 monthly SHAP + 方向 label 特征工厂**；但：
+
+- **A1 spot_accum_simple**：完全规则化（周 EMA + 卖出阈值），不需要 R&D 管线。
+- **A2 spot_fattail**（目前仅 `config/strategies/bad-candidates/spot_accum/spot_fattail.md` 规划稿）：若引入 live，**需要** Q 级"尾部代理 R&D"（OI / funding / 链上等），与 §2.2.1 对应思路，**不进入 B 的特征工厂**。
+- **C**：每季度仍要做 **chop / trend_confidence 语义代理候选比较 + 阈值 plateau**，验收以 **多腿回测**（grid / trend_scalp）为准（§2.2.1）。
+
+> 即 "C 不要特征发现管线" 应严格读作 "C 不要 B 那套 monthly SHAP + 方向 label 管线"；C 仍需 Q 级语义代理对照（同 KPI、同回测器），与 §3.1 regime plateau **并列**而非替代。
+
+### 2.2.1 C 系统语义代理 R&D 环（季度，挂在 Q 级，不动 live yaml）
+
+**为什么需要**：`chop_grid.entry_feature` 当前钉在 `bpc_semantic_chop`、`max_semantic_chop_entry/hold` 阈值组也按经验定；README 里 `chop_not_box vs box_prefilter` 的 5/5 vs 4/5 对比是 **ad-hoc 一次性** 的。没有"同 KPI / 同回测器"的季度对照，新的候选（`tpc_semantic_chop`, `hurst_cvd`, `bb_width_normalized_pct`, `*_ts_q`, WPT scene 等）很难被系统化采纳/拒绝。
+
+**与 B 的区别**：
+
+| 维度 | B 的特征工厂 | C 语义代理 R&D |
+|---|---|---|
+| 触发 | monthly（已被 §8 M1 收紧为验证-only）| **quarterly**（Q 级，人审 promote） |
+| 算法 | SHAP / 树模型 + 方向 label | **同 KPI 下的代理对比**：Spearman / 分桶 lift / plateau 宽度 |
+| KPI | `pnl_r`, `forward_rr`, success label | **策略相关**：grid 段内 maker 回合期望、`adverse_break` 率、5/5 period 稳定性；trend_scalp 段级 `total_r / maxDD / 费用占比` |
+| 写回对象 | `gate.yaml` / `entry_filters.yaml` | `chop_grid/archetypes/prefilter.yaml` 的 `entry_feature` / `max_semantic_chop_*`；`trend_scalp` 同类 |
+| 自动化 | 仅验证（doctrine）| 仅离线扫描 + 仿真对照；**禁止 rolling turbo 自动写回** |
+
+**四步流程**：
+
+1. **定义 KPI（策略相关，写进 grid yaml 注释）**
+   - `chop_grid`：段内 maker 回合期望、`adverse_break` 率、5/5 period 稳定性。
+   - `trend_scalp`：段级 `total_r` / `maxDD` / 费用占比；**不是** TPC 的 pullback label。
+2. **代理候选池**（命名语义优先，来自 `features.yaml` / `features_prefilter.yaml`，可扩，要求语义可读）
+   - **Chop**：`bpc_semantic_chop`、`tpc_semantic_chop`、`chop_not_box`、`*_ts_q`、`hurst_cvd`、`bb_width_normalized_pct`、WPT scene。
+   - **Trend**：`trend_confidence`、`ema_1200_position` × `slope`、`volatility_regime`、低 chop 组合。
+3. **离线快筛**（与 §3.1 同工具精神，复用 `scripts/quick_layer_scan.py`）
+   - 对每个候选列 vs 上述 KPI：Spearman / 分桶 lift / plateau 宽度。
+   - 产物：`results/<slug>/semantic_proxy_scan/<date>.md`（top-5 列 + 推荐开/关带）。
+4. **仿真确认（慢，不可省）**
+   - 对 top-2 代理跑 `grid_backtest` 或 `trend_scalp` 全段回测（替换 `entry_feature` + 重扫阈值 plateau）。
+   - 与线上 shadow 至少 **一个季度窗口** 对照；不达 KPI 的候选淘汰。
+5. **人审 promote**
+   - 允许改 `entry_feature` / `max_semantic_chop_*` / 是否加 `chop_not_box` 式派生列。
+   - **执行层（`spacing`、`max_levels`、`fee-aware TP`）**仍按 C 运维心智少动。
+   - 落 `docs/decisions/<slug>_semantic_proxy_<date>.md`（可由 `scripts/_new_decision_doc.py` 起骨架）。
+
+**与 §3.1 的边界**：§3.1 regime plateau 处理"什么 regime 该做"（B/C 共用，慢变量）；§2.2.1 处理"C 在判定 regime 后用哪个语义代理 + 多腿 KPI"。两者按层并列，不互相替代。
 
 ---
 
@@ -248,6 +289,8 @@ threshold_calibration:
 | Gate | 单规则 ablation + t-test top-k | 浅树 score + τ plateau | 人审 → yaml | 季度 |
 | Entry | 子样本 t-test + OR rule | 浅树 score（可选）| 人审 → yaml | 季度 |
 | Execution | — | execution_opt grid（手工触发）| **完全冻结** | 年度 |
+| **C 语义代理**（§2.2.1）| 候选代理 × 策略 KPI 的 Spearman / 分桶 lift / plateau | 多腿回测 shadow 对照 | 人审 → `entry_feature` / `max_semantic_chop_*` | 季度 |
+| **A2 尾部代理**（spot_fattail，规划中）| OI / funding / 链上极端的离线打分 | shadow 持仓回看 | 人审 → A2 yaml（不进 live 前不写） | 季度 |
 
 ---
 

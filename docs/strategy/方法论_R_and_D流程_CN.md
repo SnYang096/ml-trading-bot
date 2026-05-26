@@ -2,7 +2,11 @@
 
 > 这是 [`WORKFLOW_整体架构与管线改进计划_CN.md`](WORKFLOW_整体架构与管线改进计划_CN.md) 的**执行手册**：把"假设 → 实验 → 上线 → 监控"压成一条固定流程，不需要每次现编。
 >
-> 适用范围：B 系统（chop/box/EMA-band 趋势）。A 系统（spot accum）门槛主要在数据完整性，不走 R&D 闭环。C 系统（高频 / Q）不在本文档范围。
+> 适用范围：
+> - **B 系统**（chop/box/EMA-band 趋势）— 本手册的主流程；
+> - **A1 spot_accum_simple** — 规则化，不走 R&D 闭环；
+> - **A2 spot_fattail**（规划中）— 若引入 live，按 [`WORKFLOW_..._CN.md`](WORKFLOW_整体架构与管线改进计划_CN.md) §2.2.1 思路做"尾部代理 R&D"；
+> - **C 系统**（chop_grid / trend_scalp）— **不走** 本手册的 SHAP/方向 label 工厂，但仍要做 [`WORKFLOW_..._CN.md`](WORKFLOW_整体架构与管线改进计划_CN.md) §2.2.1 的 **C 语义代理 R&D** 季度循环（同工具：`quick_layer_scan` + 多腿回测 + `_new_decision_doc.py`）。
 >
 > **Label scan 与 IC 的区别、1pp 含义、为何两者都要看**：见 [`label_scan_vs_IC_说明_CN.md`](label_scan_vs_IC_说明_CN.md)。
 >
