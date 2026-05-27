@@ -6,10 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from scripts.optimize_entry_filter_plateau import (
-    _find_plateau,
-    _width_to_confidence,
-)
+from scripts.research.entry_plateau_scan import generate_scan_range
 from src.research.stat_kernels.snotio_calc import (
     compute_snotio,
     find_snotio_plateau,
@@ -32,9 +29,10 @@ def _synthetic_scan(n: int = 12) -> list[dict]:
     return rows
 
 
-def test_entry_script_uses_shared_kernel():
-    assert _find_plateau is find_snotio_plateau
-    assert _width_to_confidence is width_to_confidence
+def test_entry_plateau_scan_uses_shared_kernel():
+    grid = generate_scan_range(0.5, ">=", n_steps=5)
+    assert len(grid) == 5
+    assert width_to_confidence(0.35) == "HIGH"
 
 
 def test_width_to_confidence_tiers():

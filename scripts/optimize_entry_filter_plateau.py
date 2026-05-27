@@ -71,158 +71,8 @@ from scripts.stat_method_registry import (
 from scripts.locked_entry_filter_utils import load_locked_entry_filters
 from src.research.stat_kernels.snotio_calc import (
     compute_snotio,
-    find_snotio_plateau as _find_plateau,
     width_to_confidence as _width_to_confidence,
 )
-
-# ================================================================
-# 阈值扫描核心逻辑
-# ================================================================
-
-# 可扫描的运算符（连续阈值）
-_SCANNABLE_OPS = {">=", ">", "<=", "<"}
-
-
-def _find_scannable_conditions(
-    filter_def: Dict[str, Any],
-) -> List[Dict[str, Any]]:
-    """找出 filter 中可扫描的连续阈值条件。
-
-    排除 == / != 条件（bool 特征），只保留 >=, >, <=, < 条件。
-    """
-    scannable = []
-    for i, cond in enumerate(filter_def.get("conditions", [])):
-        if cond.get("operator") in _SCANNABLE_OPS:
-            scannable.append({"index": i, **cond})
-    return scannable
-
-
-def _generate_scan_range(
-    current_value: float,
-    operator: str,
-    n_steps: int = 15,
-) -> List[float]:
-    """根据当前阈值和运算符生成扫描范围。
-
-    对于 >= / > : 高阈值更严格
-    对于 <= / < : 低阈值更严格
-    支持负值范围（如 cvd_divergence_score <= -0.776）
-    """
-    # 动态范围: 当前值 ± 0.4，不截断到 [0, 1]
-    margin = 0.4
-    low = current_value - margin
-    high = current_value + margin
-
-    # 对于归一化特征 (0~1 范围)，适当截断
-    if current_value >= 0 and current_value <= 1:
-        low = max(0.0, low)
-        high = min(1.0, high)
-
-    if abs(high - low) < 1e-8:
-        # fallback: 当前值 ± 0.5
-        low = current_value - 0.5
-        high = current_value + 0.5
-
-    step = (high - low) / (n_steps - 1)
-    return [round(low + i * step, 3) for i in range(n_steps)]
-
-
-def _scan_single_threshold(
-    merged: pd.DataFrame,
-    exec_config: Dict[str, Any],
-    filter_def: Dict[str, Any],
-    cond_index: int,
-    scan_values: List[float],
-    entry_filters_cfg: Dict[str, Any],
-    span_years: float,
-) -> List[Dict[str, Any]]:
-    """对单个条件的阈值范围扫描，返回每个阈值的回测结果。"""
-    results = []
-    original_entry = merged["entry_direction"].copy()
-    conditions = filter_def.get("conditions", [])
-    original_value = conditions[cond_index]["value"]
-
-    for val in scan_values:
-        # 恢复原始信号
-        merged["entry_direction"] = original_entry.copy()
-
-        # 临时修改阈值
-        conditions[cond_index]["value"] = val
-
-        # 应用 filter（用修改后的 conditions）
-        mask = pd.Series(True, index=merged.index)
-        for cond in conditions:
-            feat = cond["feature"]
-            op_str = cond["operator"]
-            v = cond["value"]
-            if feat not in merged.columns:
-                continue
-            op_map = {
-                ">": lambda s, v: s > v,
-                ">=": lambda s, v: s >= v,
-                "<": lambda s, v: s < v,
-                "<=": lambda s, v: s <= v,
-                "==": lambda s, v: s == v,
-                "!=": lambda s, v: s != v,
-            }
-            op_fn = op_map.get(op_str)
-            if op_fn:
-                mask = mask & op_fn(merged[feat].astype(float), float(v))
-
-        merged.loc[~mask, "entry_direction"] = 0.0
-        n_entries = int((merged["entry_direction"] != 0).sum())
-
-        if n_entries < 20:
-            results.append(
-                {
-                    "threshold": val,
-                    "trades": n_entries,
-                    "snotio": 0.0,
-                    "sharpe": 0.0,
-                    "win_rate": 0.0,
-                    "mean_r": 0.0,
-                    "too_few": True,
-                }
-            )
-            continue
-
-        exec_returns, _ = simulate_rr_execution(
-            merged, exec_config, atr_col="atr", use_tier_params=False
-        )
-        valid = exec_returns.dropna()
-        if len(valid) < 10:
-            results.append(
-                {
-                    "threshold": val,
-                    "trades": n_entries,
-                    "snotio": 0.0,
-                    "sharpe": 0.0,
-                    "win_rate": 0.0,
-                    "mean_r": 0.0,
-                    "too_few": True,
-                }
-            )
-            continue
-
-        sh = compute_sharpe(valid, annualize=False)
-        snotio_val = compute_snotio(valid)
-        results.append(
-            {
-                "threshold": val,
-                "trades": len(valid),
-                "snotio": snotio_val,
-                "sharpe": float(sh),
-                "win_rate": float((valid > 0).mean()),
-                "mean_r": snotio_val,
-                "too_few": False,
-            }
-        )
-
-    # 恢复原始值
-    conditions[cond_index]["value"] = original_value
-    merged["entry_direction"] = original_entry
-    return results
-
 
 # ================================================================
 # HTML 报告生成
@@ -661,77 +511,28 @@ def main() -> int:
     print(f"   Filters to scan: {len(filters_to_scan)}")
     print()
 
-    all_results = {}
+    from scripts.research.entry_plateau_scan import run_entry_plateau_batch
 
-    for fdef in filters_to_scan:
-        fname = fdef["id"]
-        scannable = _find_scannable_conditions(fdef)
+    try:
+        batch = run_entry_plateau_batch(
+            None,
+            args.strategy,
+            df=merged,
+            filter_id=args.filter,
+            snotio_mode="entry_rr",
+            steps=args.steps,
+            min_trades=20,
+            plateau_window=max(2, int(getattr(args, "plateau_window", 4) or 4)),
+            strategies_root=args.strategies_root,
+            research=args.research,
+            simple_execution=getattr(args, "simple_execution", False),
+            require_gate=True,
+        )
+    except ValueError as exc:
+        print(f"❌ {exc}")
+        return 1
 
-        if not scannable:
-            print(f"   ⚡ {fname}: 无可扫描的连续阈值条件 (全部是 bool)")
-            all_results[fname] = {
-                "description": fdef.get("description", ""),
-                "scanned_conditions": [],
-            }
-            continue
-
-        print(f"   🔍 {fname}: {len(scannable)} 个连续阈值条件")
-
-        cond_results = []
-        for sc in scannable:
-            feature = sc["feature"]
-            operator = sc["operator"]
-            current = sc["value"]
-            idx = sc["index"]
-
-            scan_values = _generate_scan_range(current, operator, n_steps=args.steps)
-            print(
-                f"      {feature} {operator} {current}  →  扫描 [{scan_values[0]}, {scan_values[-1]}]"
-            )
-
-            scan_data = _scan_single_threshold(
-                merged,
-                exec_config,
-                fdef,
-                idx,
-                scan_values,
-                entry_cfg,
-                span_years,
-            )
-
-            plateau = _find_plateau(
-                scan_data,
-                operator=operator,
-                window=max(2, int(getattr(args, "plateau_window", 4) or 4)),
-            )
-
-            status = "✅ 高原" if plateau.get("is_plateau") else "❌ 无高原"
-            if plateau.get("is_plateau"):
-                warn = " ⚠️ Trades CV>0.4" if plateau.get("cv_trades_warning") else ""
-                print(
-                    f"         {status}: [{plateau['start_threshold']:.3f}, {plateau['end_threshold']:.3f}] "
-                    f"width={plateau['plateau_width']:.3f} conf={plateau['confidence']} "
-                    f"mean snotio={plateau['mean_snotio']:.4f} "
-                    f"CV(sn={plateau['cv_snotio']:.3f}, tr={plateau['cv_trades']:.3f}) "
-                    f"推荐={plateau['recommended']:.3f}{warn}"
-                )
-            else:
-                print(f"         {status}: {plateau.get('reason', '')}")
-
-            cond_results.append(
-                {
-                    "feature": feature,
-                    "operator": operator,
-                    "current_value": current,
-                    "scan_results": scan_data,
-                    "plateau": plateau,
-                }
-            )
-
-        all_results[fname] = {
-            "description": fdef.get("description", ""),
-            "scanned_conditions": cond_results,
-        }
+    all_results = batch["all_results"]
 
     # 输出 HTML
     if args.output:

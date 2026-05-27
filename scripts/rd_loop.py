@@ -83,6 +83,67 @@ def _append_common_scan_args(
         cmd += ["--subject", str(scan["subject"])]
 
 
+def _resolve_scan_parquet(scan: Dict[str, Any]) -> Path:
+    pq = Path(str(scan["features_parquet"]))
+    if not pq.is_absolute():
+        pq = (PROJECT_ROOT / pq).resolve()
+    return pq
+
+
+def _resolve_scan_out_dir(
+    scan: Dict[str, Any], output_dir: Path, *, default_name: str
+) -> Path:
+    out_rel = scan.get("out") or default_name
+    out = Path(out_rel)
+    if not out.is_absolute():
+        out = (output_dir / out).resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
+def _run_entry_plateau_scan(
+    scan: Dict[str, Any], output_dir: Path, cfg: Dict[str, Any]
+) -> int:
+    from scripts.research.entry_plateau_scan import run_entry_plateau_batch
+
+    strategy = str(scan.get("strategy") or cfg.get("strategy") or "")
+    if not strategy:
+        print("ERROR: entry-plateau requires strategy", file=sys.stderr)
+        return 3
+    pq = _resolve_scan_parquet(scan)
+    if not pq.is_file():
+        print(f"ERROR: features parquet not found: {pq}", file=sys.stderr)
+        return 3
+    out = _resolve_scan_out_dir(
+        scan, output_dir, default_name="quick_scan/entry_plateau"
+    )
+    filter_id = scan.get("entry_filter")
+    if filter_id is None and isinstance(scan.get("filter"), str):
+        filter_id = scan.get("filter")
+    snotio_mode = str(scan.get("snotio_mode", "entry_rr"))
+    steps = int(scan.get("steps", 15))
+    min_trades = int(scan.get("min_trades", 20))
+    print(f"\n>>> entry-plateau batch strategy={strategy} parquet={pq} out={out}")
+    try:
+        run_entry_plateau_batch(
+            pq,
+            strategy,
+            filter_id=str(filter_id) if filter_id else None,
+            snotio_mode=snotio_mode,
+            steps=steps,
+            min_trades=min_trades,
+            plateau_window=int(scan.get("plateau_window", 4)),
+            research=bool(scan.get("research", False)),
+            simple_execution=bool(scan.get("simple_execution", False)),
+            require_gate=False,
+            out_dir=out,
+        )
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 3
+    return 0
+
+
 def _build_research_scan_cmd(
     scan: Dict[str, Any], output_dir: Path, cfg: Dict[str, Any]
 ) -> List[str]:
@@ -189,8 +250,12 @@ def _step_research_scan(cfg: Dict[str, Any], output_dir: Path) -> int:
     for i, scan in enumerate(scans):
         if not isinstance(scan, dict):
             continue
-        cmd = _build_research_scan_cmd(scan, output_dir, cfg)
-        rc = _run_cmd(cmd, cwd=PROJECT_ROOT)
+        mode = str(scan.get("mode", "condition-set"))
+        if mode == "entry-plateau":
+            rc = _run_entry_plateau_scan(scan, output_dir, cfg)
+        else:
+            cmd = _build_research_scan_cmd(scan, output_dir, cfg)
+            rc = _run_cmd(cmd, cwd=PROJECT_ROOT)
         worst = max(worst, rc)
     return worst
 

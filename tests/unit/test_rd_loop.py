@@ -152,3 +152,44 @@ def test_rd_loop_snotio_plateau_passes_subject(tmp_path: Path) -> None:
     assert "plateau" in joined
     assert "--subject" in joined
     assert "feature:pulse_z" in joined
+
+
+def test_rd_loop_entry_plateau_runs_batch(tmp_path: Path) -> None:
+    import pandas as pd
+
+    pq = tmp_path / "logs.parquet"
+    pd.DataFrame({"x": [1]}).to_parquet(pq)
+    hyp = tmp_path / "hyp.yaml"
+    hyp.write_text(
+        yaml.safe_dump(
+            {
+                "topic": "entry_plateau",
+                "strategy": "srb",
+                "output_dir": str(tmp_path / "out"),
+                "quick_layer_scans": [
+                    {
+                        "mode": "entry-plateau",
+                        "features_parquet": str(pq),
+                        "snotio_mode": "entry_rr",
+                        "steps": 5,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    batch_calls: list[dict] = []
+
+    def fake_batch(*args, **kwargs):  # noqa: ANN002, ANN003
+        batch_calls.append({"args": args, "kwargs": kwargs})
+        return {"summary_path": str(tmp_path / "out" / "summary.json")}
+
+    with patch(
+        "scripts.research.entry_plateau_scan.run_entry_plateau_batch",
+        side_effect=fake_batch,
+    ):
+        rc = run_loop(hyp, output_dir=tmp_path / "out")
+
+    assert rc == 0
+    assert len(batch_calls) == 1
+    assert batch_calls[0]["kwargs"].get("snotio_mode") == "entry_rr"
