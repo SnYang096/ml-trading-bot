@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -68,3 +69,26 @@ def test_find_snotio_plateau_fallback_best_single():
     assert out["is_plateau"] is False
     assert "best_single" in out
     assert out["best_single"]["threshold"] == 0.2
+
+
+def test_scan_snotio_thresholds_and_payload():
+    from src.research.stat_kernels.snotio_calc import (
+        scan_snotio_thresholds,
+        snotio_plateau_payload,
+    )
+
+    rng = np.random.default_rng(1)
+    n = 300
+    feat = rng.normal(size=n)
+    forward_rr = np.where(feat > 0, 0.3, -0.1) + rng.normal(0, 0.05, size=n)
+    df = pd.DataFrame({"pulse_z": feat, "forward_rr": forward_rr})
+    mask = pd.Series(True, index=df.index)
+    grid = [float(x) for x in "0,0.5,1".split(",")]
+    rows = scan_snotio_thresholds(df, "pulse_z", "<=", grid, mask, min_trades=10)
+    assert len(rows) == 3
+    assert any(r["snotio"] > 0 for r in rows if not r["too_few"])
+    payload = snotio_plateau_payload(
+        df, "pulse_z", "<=", grid, mask, min_trades=10, window=2
+    )
+    assert payload["kpi"] == "snotio"
+    assert "rows" in payload

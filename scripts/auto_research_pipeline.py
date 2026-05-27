@@ -8086,9 +8086,11 @@ def _run_pre_deploy_contract_checks_if_configured(
     from scripts.pre_deploy_contract_checks import run_pre_deploy_contract_checks
 
     pred_map: Dict[str, Path] = {}
+    features_map: Dict[str, Path] = {}
     train_final_base = PROJECT_ROOT / "results" / "train_final"
     for strat in strategies:
         found: Optional[Path] = None
+        feat_found: Optional[Path] = None
         for candidate in (
             run_root / strat / "predictions.parquet",
             run_root
@@ -8111,6 +8113,25 @@ def _run_pre_deploy_contract_checks_if_configured(
                     found = runs[-1]
         if found is not None:
             pred_map[strat] = found
+        strat_dir = train_final_base / strat
+        if strat_dir.is_dir():
+            feat_runs = sorted(
+                strat_dir.glob(f"train_final_*/{strat}/features_labeled.parquet"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            if feat_runs:
+                feat_found = feat_runs[0]
+        if feat_found is None:
+            for candidate in (
+                run_root / strat / "features_labeled.parquet",
+                run_root / "features_labeled.parquet",
+            ):
+                if candidate.is_file():
+                    feat_found = candidate
+                    break
+        if feat_found is not None:
+            features_map[strat] = feat_found
 
     summary = run_pre_deploy_contract_checks(
         cfg=cfg,
@@ -8118,6 +8139,7 @@ def _run_pre_deploy_contract_checks_if_configured(
         strategies_root=strategies_root,
         project_root=PROJECT_ROOT,
         predictions_by_strategy=pred_map,
+        features_parquet_by_strategy=features_map,
         results_root=PROJECT_ROOT / "results",
     )
     out_path = run_root / "contract_checks.json"

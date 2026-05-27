@@ -7814,7 +7814,7 @@ def research_compare(args):
 @research.command("robustness", context_settings=_RESEARCH_CTX)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def research_robustness(args):
-    """Temporal fold robustness on label scan."""
+    """Temporal fold or gate robustness score (wraps scripts/research/robustness.py)."""
     _research_forward("robustness", list(args))
 
 

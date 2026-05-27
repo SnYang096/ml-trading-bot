@@ -7,6 +7,8 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+from src.research.expr import OPS
+
 
 def compute_snotio(r_returns: pd.Series) -> float:
     """snotio = mean(R-multiples) per trade."""
@@ -23,6 +25,98 @@ def width_to_confidence(width: float) -> str:
     if width >= 0.15:
         return "MEDIUM"
     return "LOW"
+
+
+def scan_snotio_thresholds(
+    df: pd.DataFrame,
+    feature: str,
+    operator: str,
+    grid: List[float],
+    base_mask: pd.Series,
+    *,
+    r_col: str = "forward_rr",
+    min_trades: int = 20,
+) -> List[Dict[str, Any]]:
+    """Scan threshold grid; snotio = mean(R) on rows passing feature filter."""
+    if feature not in df.columns:
+        raise KeyError(f"Feature missing: {feature}")
+    if r_col not in df.columns:
+        raise KeyError(f"R column missing: {r_col}")
+    op_fn = OPS.get(operator)
+    if op_fn is None:
+        raise ValueError(f"Unsupported operator: {operator!r}")
+
+    s = pd.to_numeric(df[feature], errors="coerce")
+    results: List[Dict[str, Any]] = []
+    for thr in grid:
+        hit = op_fn(s, thr).fillna(False) & base_mask
+        n_hit = int(hit.sum())
+        if n_hit < min_trades:
+            results.append(
+                {
+                    "threshold": float(thr),
+                    "trades": n_hit,
+                    "snotio": 0.0,
+                    "too_few": True,
+                }
+            )
+            continue
+        r = pd.to_numeric(df.loc[hit, r_col], errors="coerce").dropna()
+        if len(r) < min_trades:
+            results.append(
+                {
+                    "threshold": float(thr),
+                    "trades": len(r),
+                    "snotio": 0.0,
+                    "too_few": True,
+                }
+            )
+            continue
+        results.append(
+            {
+                "threshold": float(thr),
+                "trades": int(len(r)),
+                "snotio": compute_snotio(r),
+                "too_few": False,
+            }
+        )
+    return results
+
+
+def snotio_plateau_payload(
+    df: pd.DataFrame,
+    feature: str,
+    operator: str,
+    grid: List[float],
+    base_mask: pd.Series,
+    *,
+    r_col: str = "forward_rr",
+    min_trades: int = 20,
+    window: int = 5,
+) -> Dict[str, Any]:
+    """Run snotio grid scan + find_snotio_plateau; JSON-serializable payload."""
+    rows = scan_snotio_thresholds(
+        df,
+        feature,
+        operator,
+        grid,
+        base_mask,
+        r_col=r_col,
+        min_trades=min_trades,
+    )
+    plateau = find_snotio_plateau(rows, operator=operator, window=window)
+    payload: Dict[str, Any] = {
+        "kpi": "snotio",
+        "feature": feature,
+        "operator": operator,
+        "r_col": r_col,
+        "rows": rows,
+    }
+    payload.update(plateau)
+    if plateau.get("recommended") is not None:
+        payload["mid"] = plateau["recommended"]
+        payload["recommended_threshold"] = plateau["recommended"]
+    return payload
 
 
 def find_snotio_plateau(

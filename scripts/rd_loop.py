@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""R&D loop driver: quick_layer_scan → variant_grid → decision doc skeleton.
+"""R&D loop driver: mlbot research scan → variant_grid → decision doc skeleton.
 
 Reads a hypothesis YAML (see ``config/experiments/rd_loop_example.yaml``) and runs
 steps in order, persisting progress to ``<output_dir>/rd_loop_state.json`` so a
@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -54,37 +55,55 @@ def _run_cmd(cmd: List[str], *, cwd: Path) -> int:
     return int(subprocess.run(cmd, cwd=str(cwd)).returncode)
 
 
-def _step_quick_layer_scan(cfg: Dict[str, Any], output_dir: Path) -> int:
-    scans = cfg.get("quick_layer_scans") or []
-    if not isinstance(scans, list):
-        raise ValueError("quick_layer_scans must be a list")
-    worst = 0
-    for i, scan in enumerate(scans):
-        if not isinstance(scan, dict):
-            continue
-        mode = str(scan.get("mode", "condition-set"))
-        out_rel = scan.get("out") or f"quick_scan/scan_{i:02d}.md"
-        out = Path(out_rel)
-        if not out.is_absolute():
-            out = (output_dir / out).resolve()
-        out.parent.mkdir(parents=True, exist_ok=True)
-        cmd = [
-            sys.executable,
-            str(PROJECT_ROOT / "scripts" / "quick_layer_scan.py"),
-            mode,
-            "--features-parquet",
-            str(scan["features_parquet"]),
-            "--out",
+def _mlbot_cmd() -> List[str]:
+    exe = shutil.which("mlbot")
+    if exe:
+        return [exe]
+    return [sys.executable, "-m", "cli.main"]
+
+
+def _append_common_scan_args(
+    cmd: List[str], scan: Dict[str, Any], cfg: Dict[str, Any]
+) -> None:
+    cmd += ["--features-parquet", str(scan["features_parquet"])]
+    strategy = scan.get("strategy") or cfg.get("strategy")
+    if strategy:
+        cmd += ["--strategy", str(strategy)]
+    if scan.get("layer"):
+        cmd += ["--layer", str(scan["layer"])]
+    if scan.get("label"):
+        cmd += ["--label", str(scan["label"])]
+    for f in scan.get("filter") or []:
+        cmd += ["--filter", str(f)]
+    if scan.get("subset"):
+        cmd += ["--subset", str(scan["subset"])]
+    if scan.get("calendar_window"):
+        cmd += ["--calendar-window", str(scan["calendar_window"])]
+
+
+def _build_research_scan_cmd(
+    scan: Dict[str, Any], output_dir: Path, cfg: Dict[str, Any]
+) -> List[str]:
+    mode = str(scan.get("mode", "condition-set"))
+    out_rel = scan.get("out") or f"quick_scan/scan_{mode.replace('-', '_')}.md"
+    out = Path(out_rel)
+    if not out.is_absolute():
+        out = (output_dir / out).resolve()
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    bucket_by = scan.get("bucket_by")
+    if bucket_by:
+        cmd = _mlbot_cmd() + [
+            "research",
+            "segment",
+            "--bucket-by",
+            str(bucket_by),
+            "--mode",
+            mode if mode in ("condition-set", "feature-plateau") else "condition-set",
+            "--output",
             str(out),
         ]
-        if scan.get("label"):
-            cmd += ["--label", str(scan["label"])]
-        for f in scan.get("filter") or []:
-            cmd += ["--filter", str(f)]
-        if scan.get("calendar_window"):
-            cmd += ["--calendar-window", str(scan["calendar_window"])]
-        if scan.get("bucket_by"):
-            cmd += ["--bucket-by", str(scan["bucket_by"])]
+        _append_common_scan_args(cmd, scan, cfg)
         if mode == "feature-plateau":
             cmd += [
                 "--feature",
@@ -94,20 +113,78 @@ def _step_quick_layer_scan(cfg: Dict[str, Any], output_dir: Path) -> int:
                 "--grid",
                 str(scan["grid"]),
             ]
-        elif mode == "condition-set":
+        else:
             for c in scan.get("condition") or []:
                 cmd += ["--condition", str(c)]
-        elif mode == "ic-decay":
-            cmd += [
-                "--features",
-                str(scan["features"]),
-                "--horizons",
-                str(scan.get("horizons", "1,3,5,10,20")),
-            ]
-            if scan.get("target"):
-                cmd += ["--target", str(scan["target"])]
-            if scan.get("baseline_json"):
-                cmd += ["--baseline-json", str(scan["baseline_json"])]
+        return cmd
+
+    if mode == "ic-decay":
+        cmd = _mlbot_cmd() + ["research", "ic", "--output", str(out)]
+        _append_common_scan_args(cmd, scan, cfg)
+        cmd += [
+            "--features",
+            str(scan["features"]),
+            "--horizons",
+            str(scan.get("horizons", "1,3,5,10,20")),
+        ]
+        if scan.get("target"):
+            cmd += ["--target", str(scan["target"])]
+        if scan.get("baseline_json"):
+            cmd += ["--baseline-json", str(scan["baseline_json"])]
+        return cmd
+
+    if mode == "snotio-plateau":
+        cmd = _mlbot_cmd() + [
+            "research",
+            "plateau",
+            "--kpi",
+            "snotio",
+            "--output",
+            str(out.with_suffix(".json") if out.suffix == ".md" else out),
+        ]
+        _append_common_scan_args(cmd, scan, cfg)
+        cmd += [
+            "--feature",
+            str(scan["feature"]),
+            "--operator",
+            str(scan.get("operator", "<=")),
+            "--grid",
+            str(scan["grid"]),
+        ]
+        if scan.get("r_col"):
+            cmd += ["--r-col", str(scan["r_col"])]
+        return cmd
+
+    verb = "research"
+    cmd = _mlbot_cmd() + [verb, "scan", mode, "--output", str(out)]
+    _append_common_scan_args(cmd, scan, cfg)
+
+    if mode == "feature-plateau":
+        cmd += [
+            "--feature",
+            str(scan["feature"]),
+            "--operator",
+            str(scan.get("operator", "<=")),
+            "--grid",
+            str(scan["grid"]),
+        ]
+    elif mode == "condition-set":
+        for c in scan.get("condition") or []:
+            cmd += ["--condition", str(c)]
+    elif mode == "pair-scan":
+        cmd += ["--pair-a", str(scan["pair_a"]), "--pair-b", str(scan["pair_b"])]
+    return cmd
+
+
+def _step_research_scan(cfg: Dict[str, Any], output_dir: Path) -> int:
+    scans = cfg.get("quick_layer_scans") or cfg.get("research_scans") or []
+    if not isinstance(scans, list):
+        raise ValueError("quick_layer_scans / research_scans must be a list")
+    worst = 0
+    for i, scan in enumerate(scans):
+        if not isinstance(scan, dict):
+            continue
+        cmd = _build_research_scan_cmd(scan, output_dir, cfg)
         rc = _run_cmd(cmd, cwd=PROJECT_ROOT)
         worst = max(worst, rc)
     return worst
@@ -187,7 +264,7 @@ def run_loop(
     completed = set(state.get("completed_steps") or [])
 
     steps = [
-        ("quick_layer_scan", lambda: _step_quick_layer_scan(cfg, out)),
+        ("research_scan", lambda: _step_research_scan(cfg, out)),
         ("variant_grid", lambda: _step_variant_grid(cfg, out)),
         ("decision_doc", lambda: _step_decision_doc(cfg, out)),
     ]
@@ -217,12 +294,12 @@ def run_loop(
 
 def main() -> int:
     p = argparse.ArgumentParser(
-        description="R&D loop driver (scan → grid → decision doc)"
+        description="R&D loop driver (mlbot research scan → grid → decision doc)"
     )
     p.add_argument(
         "--hypothesis-yaml",
         required=True,
-        help="Hypothesis config (quick_layer_scans + variant_grid + decision_doc).",
+        help="Hypothesis config (quick_layer_scans / research_scans + variant_grid).",
     )
     p.add_argument("--output-dir", default=None)
     p.add_argument(

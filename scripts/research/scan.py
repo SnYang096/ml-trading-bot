@@ -17,7 +17,7 @@ from scripts.research._common import (
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
-        description="Research scan (condition-set / feature-plateau)"
+        description="Research scan (condition-set / feature-plateau / pair-scan)"
     )
     sub = p.add_subparsers(dest="mode", required=True)
     common = argparse.ArgumentParser(add_help=False)
@@ -33,6 +33,14 @@ def main(argv: list[str] | None = None) -> int:
     fp.add_argument("--operator", default="<=")
     fp.add_argument("--grid", required=True)
 
+    ps = sub.add_parser("pair-scan", parents=[common])
+    ps.add_argument(
+        "--pair-a",
+        required=True,
+        help="'feature:op:grid' e.g. 'vol_persistence:>:0.003,0.01,0.03'",
+    )
+    ps.add_argument("--pair-b", required=True)
+
     args = p.parse_args(argv)
     layer_writeback_hint(args)
     df = load_research_frame(args)
@@ -46,9 +54,13 @@ def main(argv: list[str] | None = None) -> int:
         operator=getattr(args, "operator", "<="),
         grid=getattr(args, "grid", ""),
         condition=getattr(args, "condition", []),
+        pair_a=getattr(args, "pair_a", None),
+        pair_b=getattr(args, "pair_b", None),
     )
     if args.mode == "condition-set":
         report = quick_layer_scan.mode_condition_set(ns, df, label, base_mask)
+    elif args.mode == "pair-scan":
+        report = quick_layer_scan.mode_pair_scan(ns, df, label, base_mask)
     else:
         report = quick_layer_scan.mode_feature_plateau(ns, df, label, base_mask)
     out = resolve_output_path(args, f"scan_{args.mode}.md")
