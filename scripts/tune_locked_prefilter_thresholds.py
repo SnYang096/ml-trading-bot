@@ -336,6 +336,13 @@ def aggregate_case(
 
 
 def main() -> int:
+    import sys as _sys
+
+    print(
+        "DEPRECATED: locked prefilter parquet tune → use "
+        "mlbot research plateau --layer prefilter and mlbot research calibrate.",
+        file=_sys.stderr,
+    )
     p = argparse.ArgumentParser(description="Tune locked prefilter thresholds")
     p.add_argument(
         "--strategy",

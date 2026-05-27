@@ -1540,6 +1540,13 @@ def _promote_gate_to_archetypes(
 
 
 def main() -> int:
+    import sys as _sys
+
+    print(
+        "DEPRECATED: optimize_gate_unified.py → use "
+        "mlbot research plateau --layer gate and mlbot research calibrate.",
+        file=_sys.stderr,
+    )
     parser = argparse.ArgumentParser(
         description="Unified Gate Optimization - Production Grade Gate Parameter Optimizer"
     )

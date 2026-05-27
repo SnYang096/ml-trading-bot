@@ -30,6 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     ns = argparse.Namespace(
         feature=args.feature, operator=args.operator, grid=args.grid
     )
+    payload = quick_layer_scan.feature_plateau_payload(ns, df, label, base_mask)
     report = quick_layer_scan.mode_feature_plateau(ns, df, label, base_mask)
     out_md = resolve_output_path(args, "plateau.md")
     if out_md:
@@ -37,6 +38,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"wrote {out_md}")
     else:
         print(report)
+
+    json_out = resolve_output_path(args, "plateau.json")
+    if json_out:
+        json_out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        print(f"wrote {json_out}")
     return 0
 
 

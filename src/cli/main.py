@@ -7986,7 +7986,11 @@ def analyze_factor_eval(
     lag_tolerance,
     docker,
 ):
-    """Time-series factor IC / win-rate evaluation (single asset)."""
+    """Time-series factor IC / win-rate evaluation (single asset).
+
+    IC decay kernel also lives in ``mlbot research ic`` (horizon shift fixed in
+    ``src/research/stat_kernels/ic.py``). This entry remains for Pool-B export flows.
+    """
     # If already in Docker, don't add /workspace prefix
     use_workspace_prefix = docker and not _is_in_docker()
     args = [
@@ -8513,6 +8517,11 @@ def diagnose_evidence_quantiles_plateau(
     docker,
 ):
     """Plateau sweep for evidence quantile thresholds."""
+    click.echo(
+        "DEPRECATED (tree gate R&D): prefer mlbot research plateau; "
+        "this diagnose command targets nnmultihead evidence quantiles.",
+        err=True,
+    )
     args = [
         "--feature-store-root",
         feature_store_root,
@@ -8616,6 +8625,11 @@ def diagnose_execution_gate_plateau(
     docker,
 ):
     """Execution-layer plateau sweep (joint gate + execution KPIs)."""
+    click.echo(
+        "DEPRECATED (tree gate R&D): prefer mlbot research plateau; "
+        "this diagnose command targets nnmultihead execution gate KPIs.",
+        err=True,
+    )
     args = [
         "--feature-store-root",
         feature_store_root,
@@ -8685,6 +8699,11 @@ def diagnose_execution_constraints_plateau(
     docker,
 ):
     """Execution constraints plateau (min_order_interval only, proxy KPIs)."""
+    click.echo(
+        "DEPRECATED (tree gate R&D): prefer mlbot research plateau; "
+        "this diagnose command targets nnmultihead execution constraints.",
+        err=True,
+    )
     args = [
         "--logs",
         logs,
@@ -9043,6 +9062,11 @@ def diagnose_threshold_plateau(
 
     Detailed guide: docs/architecture/guides/THRESHOLD_PLATEAU_TUNING_PROTOCOL_CN.md
     """
+    click.echo(
+        "DEPRECATED (tree gate R&D): prefer mlbot research plateau; "
+        "this diagnose command targets nnmultihead rule-router thresholds.",
+        err=True,
+    )
     use_workspace_prefix = docker and not _is_in_docker()
     args = [
         "--preds",

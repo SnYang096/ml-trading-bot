@@ -552,6 +552,13 @@ def _generate_html_report(
 
 
 def main() -> int:
+    import sys as _sys
+
+    print(
+        "DEPRECATED: optimize_entry_filter_plateau.py → use "
+        "mlbot research plateau --layer entry --target snotio and mlbot research calibrate.",
+        file=_sys.stderr,
+    )
     p = argparse.ArgumentParser(description="Entry Filter Threshold Plateau Scan")
     p.add_argument(
         "--logs",

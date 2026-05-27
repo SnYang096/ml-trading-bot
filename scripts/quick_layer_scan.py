@@ -62,9 +62,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 # ---------------------------------------------------------------------------
 
 
-def mode_feature_plateau(
+def feature_plateau_payload(
     args: argparse.Namespace, df: pd.DataFrame, label: pd.Series, base_mask: pd.Series
-) -> str:
+) -> dict:
+    """Scan threshold grid; return JSON-serializable payload for calibrate chain."""
     feature = args.feature
     op = args.operator
     grid = [float(x) for x in args.grid.split(",")]
@@ -75,29 +76,108 @@ def mode_feature_plateau(
     s = s[valid]
     y = label[valid]
 
-    rows = []
+    row_dicts: List[dict] = []
     base_succ = float(y.mean()) if len(y) else float("nan")
     for thr in grid:
         m = _OPS[op](s, thr)
         n_hit = int(m.sum())
         if n_hit == 0:
-            rows.append((thr, n_hit, float("nan"), float("nan"), 0.0))
+            row_dicts.append(
+                {
+                    "threshold": float(thr),
+                    "n_hit": 0,
+                    "succ_hit": None,
+                    "succ_other": None,
+                    "z": 0.0,
+                }
+            )
             continue
         n_oth = int((~m).sum())
         p_hit = float(y[m].mean())
         p_oth = float(y[~m].mean()) if n_oth else float("nan")
         z = _binary_proportions_z(p_hit, n_hit, p_oth, n_oth) if n_oth else 0.0
-        rows.append((thr, n_hit, p_hit, p_oth, z))
+        row_dicts.append(
+            {
+                "threshold": float(thr),
+                "n_hit": n_hit,
+                "succ_hit": p_hit,
+                "succ_other": None if pd.isna(p_oth) else float(p_oth),
+                "z": float(z),
+            }
+        )
+
+    eligible = [r for r in row_dicts if r["n_hit"] > 0 and r["succ_hit"] is not None]
+    best = max(eligible, key=lambda r: abs(r["z"]), default=None) if eligible else None
+    rec = float(best["threshold"]) if best else None
+
+    plateau_start: float | None = None
+    plateau_end: float | None = None
+    if len(eligible) >= 2:
+        sorted_rows = sorted(eligible, key=lambda r: r["threshold"])
+        anchor_succ = sorted_rows[0]["succ_hit"]
+        run_start = sorted_rows[0]["threshold"]
+        run_end = run_start
+        best_width = 0.0
+        best_mid: float | None = None
+        for row in sorted_rows:
+            if anchor_succ is None or row["succ_hit"] is None:
+                continue
+            if abs(row["succ_hit"] - anchor_succ) <= 0.10:
+                run_end = row["threshold"]
+            else:
+                width = run_end - run_start
+                if width > best_width:
+                    best_width = width
+                    plateau_start = run_start
+                    plateau_end = run_end
+                    best_mid = (run_start + run_end) / 2
+                anchor_succ = row["succ_hit"]
+                run_start = row["threshold"]
+                run_end = run_start
+        width = run_end - run_start
+        if width >= best_width and width > 0:
+            plateau_start = run_start
+            plateau_end = run_end
+            best_mid = (run_start + run_end) / 2
+        if best_mid is not None and rec is None:
+            rec = float(best_mid)
+
+    return {
+        "feature": feature,
+        "operator": op,
+        "base_n": int(len(y)),
+        "base_success": base_succ,
+        "recommended": rec,
+        "mid": rec,
+        "plateau_start": plateau_start,
+        "plateau_end": plateau_end,
+        "rows": row_dicts,
+    }
+
+
+def mode_feature_plateau(
+    args: argparse.Namespace, df: pd.DataFrame, label: pd.Series, base_mask: pd.Series
+) -> str:
+    payload = feature_plateau_payload(args, df, label, base_mask)
+    feature = payload["feature"]
+    op = payload["operator"]
+    base_succ = payload["base_success"]
+    base_n = payload["base_n"]
 
     md = [f"# feature_plateau · {feature} {op} ?", ""]
-    md.append(f"- base n = {len(y)}, base_success = {base_succ:.3%}")
+    md.append(f"- base n = {base_n}, base_success = {base_succ:.3%}")
     md.append("")
     md.append("| threshold | n_hit | succ_hit | succ_other | |z| |")
     md.append("|---:|---:|---:|---:|---:|")
-    for thr, n_hit, p_hit, p_oth, z in rows:
-        ph = "nan" if pd.isna(p_hit) else f"{p_hit:.3%}"
-        po = "nan" if pd.isna(p_oth) else f"{p_oth:.3%}"
-        md.append(f"| {thr:.3g} | {n_hit} | {ph} | {po} | {z:.2f} |")
+    for row in payload["rows"]:
+        p_hit = row["succ_hit"]
+        p_oth = row["succ_other"]
+        z = row["z"]
+        ph = "nan" if p_hit is None or pd.isna(p_hit) else f"{p_hit:.3%}"
+        po = "nan" if p_oth is None or pd.isna(p_oth) else f"{p_oth:.3%}"
+        md.append(
+            f"| {row['threshold']:.3g} | {row['n_hit']} | {ph} | {po} | {z:.2f} |"
+        )
     md.append("")
     md.append(
         "**Plateau interpretation**: consecutive thresholds with similar succ_hit and |z|<2.0 → effect is noise; if all thresholds give ~same succ_hit, **feature is not the bottleneck on this subset**."

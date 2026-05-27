@@ -42,12 +42,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.optimize_gate_plateau import (
-    _apply_single_rule_veto,
-    _compute_robustness_score,
-    BucketConfig,
-    OptimizationConfig,
+_LEGACY_PLATEAU_MSG = (
+    "DEPRECATED: scripts/optimize_gate_plateau.py removed. "
+    "Use scripts/optimize_gate_unified.py (tree gate) or "
+    "mlbot research plateau --layer gate."
 )
+
 from src.time_series_model.nnmultihead.strategy_profile import (
     load_execution_archetypes_registry,
 )
@@ -788,6 +788,9 @@ def run_hard_gate_experiment(
 
 
 def main() -> int:
+    print(_LEGACY_PLATEAU_MSG, file=sys.stderr)
+    return 2
+
     parser = argparse.ArgumentParser(
         description="运行Gate优化对比实验",
         formatter_class=argparse.RawDescriptionHelpFormatter,

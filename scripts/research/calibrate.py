@@ -22,7 +22,12 @@ def main(argv: list[str] | None = None) -> int:
     if not src.is_absolute():
         src = PROJECT_ROOT / src
     data = json.loads(src.read_text(encoding="utf-8"))
-    rec = data.get("recommended") or data.get("mid")
+    rec = (
+        data.get("recommended")
+        or data.get("mid")
+        or data.get("recommended_threshold")
+        or data.get("plateau_mid")
+    )
     out = Path(args.output)
     if not out.is_absolute():
         out = PROJECT_ROOT / out

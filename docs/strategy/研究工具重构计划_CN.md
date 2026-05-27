@@ -515,6 +515,28 @@ scripts/                                ← 旧入口，过渡期保留 + DEPREC
 | `pre_deploy_replay.yaml`         | 上线 contract，保留；`plateau_stability` 段当前 deferred，Phase 8 用 `research robustness` 接上 |
 
 
+### 9.5 Phase 落地状态（`feat/research-tools-refactor`，2026-05-27）
+
+| Phase | 状态 | 说明 |
+| ----- | ---- | ---- |
+| P0 feature_store union | ✅ | `config/strategies/_shared/` + `features_tree_core_120T_*`；core-4 prepare-only 共用 layer |
+| P1 最小内核 | ✅ | `src/research/expr|labels|stat_kernels/{z_test,ic}`；ic-decay horizon bug 已修 |
+| P2 抽象层 | ✅ | `subjects/targets/subsets/layer_registry`（dataclass 骨架） |
+| P3 厚内核 | ⚠️ | gate lift/robustness/plateau/stratify/rr_simulate 已抽；`snotio_calc.py` 与 4 处 plateau 全量对拍未做 |
+| P4 research CLI (scan/ic/plateau/segment) | ✅ | TPC smoke 通过；Click passthrough 已修 |
+| P5 research fit | ⚠️ | LightGBM baseline 可跑；SHAP audit 未做 |
+| P6 calibrate/promote/compare/robustness | ⚠️ | verb 骨架可跑；`plateau.json`→`calibrate` 链路已通；compare/robustness 深度有限 |
+| P7 清理 | ⚠️ | `_factor_ic_baseline_oneshot` 已删；legacy 脚本 DEPRECATED；断链 import 已修；`srb_reverse_shadow_report` 未归档 |
+| P8 监控 | ✅ | `scripts/monitoring/*` + systemd timer；dashboard tab 未做 |
+
+**Open Questions 拍板（已落地）**：
+
+- Q1 union yaml → `config/strategies/_shared/features.yaml`（目录 `-c config/strategies/_shared`）
+- Q2 fit 输出 → `results/research/fit/<strategy>/<layer>/<run_id>/`
+- Q3 监控 → 先 timer + heartbeat
+- Q4 DEPRECATED → stderr 一行（无 sleep）
+- Q5 ic-decay bug → P1 已修 + 单测
+
 ---
 
 ## 10. 与现有 doctrine 的一致性

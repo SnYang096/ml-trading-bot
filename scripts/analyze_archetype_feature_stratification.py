@@ -3655,6 +3655,13 @@ def _meta_algorithm_prefilter(
 
 
 def main() -> int:
+    import sys as _sys
+
+    print(
+        "DEPRECATED: analyze_archetype_feature_stratification.py → use "
+        "mlbot research fit --layer prefilter and mlbot research segment.",
+        file=_sys.stderr,
+    )
     parser = argparse.ArgumentParser(
         description="分位数分层分析：验证 archetype 语义特征的预测力"
     )
