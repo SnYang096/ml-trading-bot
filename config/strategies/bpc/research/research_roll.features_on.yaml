@@ -1,3 +1,6 @@
+# ROUTINE_R&D_DEPRECATED — 日常 R&D 勿作入口（bundle：SHAP + 全层 optimize + rolling）。
+# 见 docs/strategy/R&D工具矩阵_CN.md §2；替代：rd_loop → variant-grid。
+# 遗留用途：季度只读 drift 体检（不 adopt optimize 产出）。
 # =============================================================================
 # BPC · slow（slow_realistic）— 目的与节奏
 # -----------------------------------------------------------------------------

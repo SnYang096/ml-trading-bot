@@ -1,3 +1,4 @@
+# 上线 contract + frozen replay — 见 docs/strategy/R&D工具矩阵_CN.md §3、§5。
 # BPC · pre-deploy replay
 #
 # 上线前最后一道闸门：模拟实盘条件，全部参数硬锁，不再做任何 SHAP / 训练 / 阈值优化。

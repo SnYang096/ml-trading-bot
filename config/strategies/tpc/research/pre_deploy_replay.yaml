@@ -1,4 +1,4 @@
-# TPC · pre-deploy replay — 见 bpc/research/pre_deploy_replay.yaml 注释。
+# TPC · pre-deploy replay — 见 docs/strategy/R&D工具矩阵_CN.md §3；详情 bpc/research/pre_deploy_replay.yaml。
 extends: validate_static.constrained.yaml
 
 comparison:

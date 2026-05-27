@@ -1,3 +1,6 @@
+# ROUTINE_R&D_DEPRECATED — 日常 R&D 勿作入口（extends research_roll + deploy_gate）。
+# 见 docs/strategy/R&D工具矩阵_CN.md §2；替代：variant-grid 双段 + 人审 cp yaml。
+# 遗留用途：yaml 改完后的 optional formal deploy_gate 整段评分（勿用于发现特征）。
 # =============================================================================
 # BPC · non_rolling — 目的与节奏
 # -----------------------------------------------------------------------------

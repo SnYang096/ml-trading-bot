@@ -152,7 +152,9 @@ mlbot data download-open-interest \
 | `chop_grid`      | 语义 chop + 盒过滤下的小网格段（**多腿**；`research/calibrate_roll.default.yaml` + archetypes）       | `120T`                     |
 | `dual_add_trend` | 趋势置信 + chop/盒过滤下双腿加仓（**多腿**；`research/calibrate_roll.default.yaml` + archetypes） | `120T`                     |
 
-**常用 pipeline YAML**：研究入口按策略包放在 **`config/strategies/<slug>/research/`**（`calibrate_roll.default.yaml` → `research_roll.features_on.yaml` → `pipeline.yaml` 探测顺序；可通过顶层 `extends:` 指向共享片段）。**`mlbot pipeline`** 省略 `--config` 且带 `--strategy <slug>` 时按上述顺序解析；既无 `--strategy` 也无 `--config` 时默认 **`config/pipelines/pcm_orchestrate_2h.yaml`**（PCM 多策略编排）。仓库级统一模板（显式引用或工具默认）为 **`config/pipelines/research_pipeline.yaml`**。
+**R&D 主流程**（ABC × 规则/树 统一框架）见 **[`docs/strategy/ABC统一研究框架_CN.md`](docs/strategy/ABC统一研究框架_CN.md)** —— 顶层视图；工具单见 **[`docs/strategy/R&D工具矩阵_CN.md`](docs/strategy/R&D工具矩阵_CN.md)**；执行命令见 **[`docs/strategy/方法论_R_and_D流程_CN.md`](docs/strategy/方法论_R_and_D流程_CN.md)**。日常不再以 `research_roll` / `validate_static.*` 为发现入口。
+
+**常用 pipeline YAML**（仅 **运维 / contract**）：`config/strategies/<slug>/research/calibrate_roll.default.yaml`（月 drift）、`pre_deploy_replay.yaml`（上线 contract）。**`mlbot pipeline`** 省略 `--config` 且带 `--strategy <slug>` 时仍按 `calibrate_roll.default.yaml` → … 探测顺序解析；既无 `--strategy` 也无 `--config` 时默认 **`config/pipelines/pcm_orchestrate_2h.yaml`**（PCM 编排）。
 
 > **与 `live/highcap/config/strategies/` 的分工**：实盘镜像里是同名的 **`meta.yaml` / `features.yaml` / `archetypes/` / 根引擎 yaml**（由 `scripts/deploy_config_to_live.py` 同步）；**不会**把 `research/*.yaml` 管线入口拷到 `live/…`——那些文件留在 **`config/strategies/<slug>/research/`** 供研究与脚本引用。
 
@@ -166,22 +168,25 @@ mlbot data download-open-interest \
 
 | YAML                                        | 用途                                           | `rolling.mode`         |
 | ------------------------------------------- | ---------------------------------------------- | ---------------------- |
-| `config/strategies/bpc/research/calibrate_roll.default.yaml` | calibrate_roll：阈值链 + execution 优化（默认探测首项） | `turbo_fixed_features` |
-| `config/strategies/bpc/research/research_roll.features_on.yaml`  | research_roll：季度结构 + 月度快变量                  | `slow_realistic`       |
+| `config/strategies/bpc/research/calibrate_roll.default.yaml` | 月 drift 监控（optimize 全关，不改 yaml） | `turbo_fixed_features` |
+| `config/strategies/bpc/research/pre_deploy_replay.yaml` | 上线前 contract + frozen replay | extends constrained |
+| `config/strategies/bpc/research/research_roll.features_on.yaml` | **ROUTINE_R&D_DEPRECATED** — 见 R&D工具矩阵 | `slow_realistic` |
 
 #### `tpc` — `config/strategies/tpc/`（镜像：`live/highcap/config/strategies/tpc/`）
 
 | YAML                                        | 用途   | `rolling.mode`         |
 | ------------------------------------------- | ------ | ---------------------- |
-| `config/strategies/tpc/research/calibrate_roll.default.yaml` | calibrate_roll  | `turbo_fixed_features` |
-| `config/strategies/tpc/research/research_roll.features_on.yaml`  | research_roll | `slow_realistic`       |
+| `config/strategies/tpc/research/calibrate_roll.default.yaml` | 月 drift 监控 | `turbo_fixed_features` |
+| `config/strategies/tpc/research/pre_deploy_replay.yaml` | 上线 contract | extends constrained |
+| `config/strategies/tpc/research/research_roll.features_on.yaml` | **ROUTINE_R&D_DEPRECATED** | `slow_realistic` |
 
 #### `me` — `config/strategies/me/`（镜像：`live/highcap/config/strategies/me/`）
 
 | YAML                                       | 用途   | `rolling.mode`         |
 | ------------------------------------------ | ------ | ---------------------- |
-| `config/strategies/me/research/calibrate_roll.default.yaml` | calibrate_roll  | `turbo_fixed_features` |
-| `config/strategies/me/research/research_roll.features_on.yaml`  | research_roll | `slow_realistic`       |
+| `config/strategies/me/research/calibrate_roll.default.yaml` | 月 drift 监控 | `turbo_fixed_features` |
+| `config/strategies/me/research/pre_deploy_replay.yaml` | 上线 contract | extends constrained |
+| `config/strategies/me/research/research_roll.features_on.yaml` | **ROUTINE_R&D_DEPRECATED** | `slow_realistic` |
 
 #### `chop_grid` — `config/strategies/chop_grid/`（镜像：`live/highcap/config/strategies/chop_grid/`）
 
@@ -207,8 +212,8 @@ mlbot data download-open-interest \
 | `config/strategies/srb/research/research_roll.features_on.yaml`                       | SRB 慢模式                         | `slow_realistic`       |
 | `config/strategies/bad-candidates/*/research/*.yaml`                            | 其它历史实验（FBF / FER / MSR 等） | （见各文件）           |
 
-> `turbo_fixed_features`：特征集固定，只做阈值链 / execution 优化 / 月度滚动 → **快**。  
-> `slow_realistic`：每季度重做结构快照（prefilter/gate 元算法），月度 rolling_calibration 调阈值 → **稳**。
+> **月监控**：`calibrate_roll.default` + `rolling_sim` — 固定生产 yaml，只产 drift ledger（见 R&D工具矩阵 §5）。  
+> **日常 R&D**：`rd_loop` / `quick_layer_scan` → `event_backtest --variant-grid` → 人审 cp yaml。
 
 ### 0) 质量闸门（推荐）
 
@@ -256,51 +261,52 @@ mlbot feature-store build --no-docker \
 
 > 同一 feature layer（hash 相同）会跨策略复用；新增/改特征代码或 `config/feature_dependencies.yaml` 后需要对相关策略重跑 `feature-store build`。
 
-### 2) 研究管线（calibrate_roll 快路径：只调阈值，不搜特征）
+### 2) R&D 主流程（假设 → 验因果 → 监控）
+
+> **顶层框架（ABC × 规则/树 统一视图）**：**[`docs/strategy/ABC统一研究框架_CN.md`](docs/strategy/ABC统一研究框架_CN.md)**  
+> 完整工具矩阵、各层脚本与 `rd_loop` 对照：**[`docs/strategy/R&D工具矩阵_CN.md`](docs/strategy/R&D工具矩阵_CN.md)**  
+> 执行 checklist：**[`docs/strategy/方法论_R_and_D流程_CN.md`](docs/strategy/方法论_R_and_D流程_CN.md)**
 
 ```bash
-# BPC calibrate_roll（推荐先跑单月验证，再开全 rolling；也可省略 --config 与 --strategy bpc 配对使用）
-mlbot pipeline run --all \
-  --config config/strategies/bpc/research/calibrate_roll.default.yaml \
-  --stage fast_month --month 2024-09 --skip-shap 2>&1 | tee log.bpc.txt
+# ① 假设（不动 yaml）
+PYTHONPATH=src:scripts python scripts/rd_loop.py \
+  --hypothesis-yaml config/experiments/rd_loop_bpc.yaml
 
-# 全量 rolling_sim（从 holdout_start 到 end_date 自动逐月）
-mlbot pipeline run --all \
-  --config config/strategies/bpc/research/calibrate_roll.default.yaml \
-  --stage rolling_sim --skip-shap 2>&1 | tee log.bpc.txt
+# ② 验因果（config_experiments/ 改 1–2 yaml，双段 backtest）
+PYTHONPATH=src:scripts python -m scripts.event_backtest --variant-grid \
+  config/experiments/<your_grid>.yaml
 
-# ME / TPC 同理：换成对应 research/calibrate_roll.default.yaml
-mlbot pipeline run --all \
-  --config config/strategies/me/research/calibrate_roll.default.yaml \
-  --stage rolling_sim --skip-shap
-
-# CRF（bad-candidates）
-mlbot pipeline run --all \
-  --config config/strategies/bad-candidates/crf/research/calibrate_roll.default.yaml \
-  --stage rolling_sim --skip-shap
+# 人审 cp → config/strategies/<slug>/archetypes/*.yaml + docs/decisions/*.md
 ```
 
-**常用 stage**（分层调试）：
-
-```
-prefilter → gate → entry_filter → slow_snapshot → execution_opt → event_backtest
-fast_month   # 仅复盘某个月（默认：前 3 个月调阈值，回测当月）
-rolling_sim  # 按月滚动：结构快照 / 阈值调优 / 当月回测 / 月间仓位续跑
-pcm_joint    # PCM 联合仲裁
-pcm_slot_grid  # Slot 网格（替代手动改 constitution.yaml）
-```
-
-### 3) 研究管线（slow 慢模式：季度结构 + 月度阈值 — 上线前完整验证）
+数据准备（按需）：
 
 ```bash
-mlbot pipeline run --all \
-  --config config/strategies/bpc/research/research_roll.features_on.yaml \
-  --stage rolling_sim 2>&1 | tee log.bpc.slow.txt
+mlbot train final --no-docker --prepare-only -c config/strategies/bpc \
+  --output-dir results/train_final/bpc/<run_id>
+```
 
-# 单月复盘（调试用）
+### 3) 运维管线（月 drift + 上线 contract）
+
+```bash
+# ③ 月 drift：固定生产 yaml，optimize 全关，不改 archetypes
 mlbot pipeline run --all \
-  --config config/strategies/bpc/research/research_roll.features_on.yaml \
-  --stage fast_month --month 2024-09
+  --config config/strategies/bpc/research/calibrate_roll.default.yaml \
+  --stage rolling_sim --skip-shap 2>&1 | tee log.bpc.monthly.txt
+
+# ③ 上线前：frozen replay + locked_features contract
+mlbot pipeline run --all \
+  --config config/strategies/bpc/research/pre_deploy_replay.yaml \
+  --stage rolling_sim --skip-shap 2>&1 | tee log.bpc.predeploy.txt
+```
+
+**`research_roll` / `validate_static.full_study` / `validate_static.constrained`**：标记 **ROUTINE_R&D_DEPRECATED**，日常 R&D 不跑；见 R&D工具矩阵 §2。
+
+**Pipeline stage**（调试 legacy bundle 时用）：
+
+```
+fast_month / rolling_sim / pcm_joint / pcm_slot_grid
+prefilter → gate → entry_filter  # 单层脚本见 R&D工具矩阵 §4，勿与 rd_loop 混为一步
 ```
 
 ### 3.5) Regime 层（A/B/C 共用慢变量）& Pre-deploy Replay（上线前最后闸门）

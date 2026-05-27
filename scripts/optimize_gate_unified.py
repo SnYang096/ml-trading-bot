@@ -18,6 +18,14 @@ Unified Gate Optimization Script - Production Grade Gate Parameter Optimizer
 - fallback 从「最强」升级为「最稳」
 - 引入 Robustness Score 作为最终决策指标
 - 支持区间门控而非单点门控
+
+输入文件支持（路线 B / ABC 统一研究框架 §5）：
+- ``features_labeled.parquet`` —— 推荐用法（`mlbot train final --prepare-only` 即可产生，
+  无需完整 pipeline run）。本脚本不需要模型 score，只需要 features + label/forward_rr。
+  缺失 ``label_col`` 时会自动从 ``forward_rr`` 派生 ``is_good``。
+- ``predictions.parquet`` —— 兼容旧用法，结果完全一致。
+
+详见 docs/strategy/ABC统一研究框架_CN.md §5、docs/strategy/R&D工具矩阵_CN.md §4.1bis。
 """
 
 from __future__ import annotations
@@ -2220,7 +2228,12 @@ def main() -> int:
     parser.add_argument(
         "--logs",
         required=True,
-        help="Trade logs parquet with features and labels",
+        help=(
+            "Input parquet path. 接受两种文件 (路线 B, ABC 统一研究框架 §5): "
+            "(1) features_labeled.parquet (由 `mlbot train final --prepare-only` 产生, 推荐, "
+            "无需完整 pipeline run); (2) predictions.parquet (兼容旧用法). "
+            "需要列: features + (forward_rr OR is_good)."
+        ),
     )
     parser.add_argument(
         "--label-col",
@@ -2378,7 +2391,17 @@ def main() -> int:
         return 1
 
     df = pd.read_parquet(logs_path)
-    print(f"✅ Loaded {len(df)} rows from {logs_path}")
+    # ── Route B (ABC 统一研究框架 §5): 检测输入是 features_labeled 还是 predictions ──
+    # features_labeled.parquet 由 `mlbot train final --prepare-only` 产生，不含模型 score；
+    # 本脚本只需要 features + label/forward_rr，因此两者都可作为输入。
+    _has_pred = any(c in df.columns for c in ("score", "y_pred_proba", "prediction"))
+    _kind = "predictions.parquet" if _has_pred else "features_labeled.parquet"
+    print(f"✅ Loaded {len(df)} rows from {logs_path}  (detected: {_kind})")
+    if not _has_pred:
+        print(
+            "   ℹ️ 输入为 features_labeled.parquet（无模型 score），"
+            "gate plateau/lift/robustness 计算无需 score。"
+        )
 
     # Apply cutoff date (IS only — avoid OOS lookahead)
     if args.cutoff_date:

@@ -1,3 +1,6 @@
+# ROUTINE_R&D_DEPRECATED — 日常 R&D 勿作入口（12m tail gate/entry 重标定 bundle）。
+# 见 docs/strategy/R&D工具矩阵_CN.md §2、§4；替代：variant-grid 或单层 optimize_* 脚本 + 人审。
+# 遗留用途：pre_deploy_replay extends 本文件；历史 adopt 路径仍引用。
 # BPC · low-freedom non_rolling
 #
 # Keep the strategy structure fixed while validating a single 12m tail (no extra OOS split):

@@ -8,13 +8,21 @@ Entry Filter 阈值平坦高原扫描
 snotio = mean(R-multiples) = 平均每笔交易的风险调整收益。
 Entry Filter 主 KPI。不受 trade count 影响，只有 per-trade 质量提升才会改善。
 
+输入文件支持（路线 B / ABC 统一研究框架 §5）:
+- ``features_labeled.parquet`` —— 推荐用法（`mlbot train final --prepare-only` 即可产生，
+  无需完整 pipeline run）。脚本只需要 features + OHLC + atr + forward_rr + direction，
+  全部已在 features_labeled.parquet 中。
+- ``predictions.parquet`` —— 兼容旧用法。多出来的列：``gate_decision`` / ``gate_ok``
+  会被自动用作 entry filter 的预过滤；features_labeled 无此列则跳过预过滤
+  （等价于"无 gate 限制"，对 entry plateau 扫描结果方向无影响）。
+
 用法:
-    # 扫描所有 filter 的所有连续阈值
+    # 推荐: 直接用 prepare-only 出来的 features_labeled.parquet
     python scripts/optimize_entry_filter_plateau.py \
-        --logs results/train_final_*/bpc/predictions.parquet \
+        --logs results/train_final/bpc/<run_id>/features_labeled.parquet \
         --strategy bpc
 
-    # 只扫描指定 filter
+    # 旧用法: predictions.parquet 也兼容
     python scripts/optimize_entry_filter_plateau.py \
         --logs results/train_final_*/bpc/predictions.parquet \
         --strategy bpc \
@@ -22,6 +30,8 @@ Entry Filter 主 KPI。不受 trade count 影响，只有 per-trade 质量提升
 
 输出:
     - HTML 报告（含 snotio vs Threshold 图表）
+
+详见 docs/strategy/ABC统一研究框架_CN.md §5、docs/strategy/R&D工具矩阵_CN.md §4.1bis。
 """
 from __future__ import annotations
 
@@ -543,7 +553,16 @@ def _generate_html_report(
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Entry Filter Threshold Plateau Scan")
-    p.add_argument("--logs", required=True, help="Input logs parquet")
+    p.add_argument(
+        "--logs",
+        required=True,
+        help=(
+            "Input parquet path. 接受两种文件 (路线 B, ABC 统一研究框架 §5): "
+            "(1) features_labeled.parquet (由 `mlbot train final --prepare-only` 产生, 推荐, "
+            "无需完整 pipeline run); (2) predictions.parquet (兼容旧用法, 多出 gate_decision "
+            "时会自动用作预过滤). 需要列: features + OHLC + atr + forward_rr + direction."
+        ),
+    )
     p.add_argument("--strategy", required=True)
     p.add_argument("--strategies-root", default="config/strategies")
     p.add_argument(
@@ -630,6 +649,17 @@ def main() -> int:
         return 1
 
     df = pd.read_parquet(logs_path)
+    # ── Route B (ABC 统一研究框架 §5): 检测输入是 features_labeled 还是 predictions ──
+    _has_pred = any(c in df.columns for c in ("score", "y_pred_proba", "prediction"))
+    _has_gate_decision = ("gate_decision" in df.columns) or ("gate_ok" in df.columns)
+    _kind = "predictions.parquet" if _has_pred else "features_labeled.parquet"
+    print(f"✅ Loaded {len(df)} rows from {logs_path}  (detected: {_kind})")
+    if not _has_gate_decision:
+        print(
+            "   ℹ️ 输入缺少 gate_decision/gate_ok 列 (features_labeled.parquet 正常情况)。"
+            "Entry filter 扫描将不做 gate 预过滤——结果方向不变, 但 plateau 是 "
+            "'pre-gate 分布'而非'post-gate 分布'。若需 post-gate 分布, 请用 predictions.parquet。"
+        )
 
     # Apply cutoff date (IS only — avoid OOS lookahead)
     if args.cutoff_date:
