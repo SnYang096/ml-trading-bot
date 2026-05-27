@@ -9,18 +9,21 @@
 #
 # Below is the starting hypothesis (must be refined by IC table before training).
 
-feature_groups:
-  baseline:
-    - macd_atr
-    - bb_width_normalized_pct
-    - tpc_semantic_chop
-    - cvd_short_normalized
-    - vpin_short
-    - atr_percentile
-    - hurst_short
-    - vol_persistence
-    - vol_leverage_asymmetry
-  regime_context:
-    # Shared with B; the tree sees regime as input but does not gate on it.
-    - ema_1200_position
-    - chop
+name: fast_scalp
+description: |
+  Short-horizon direction tree (lag 1–5). Hypothesis columns mapped to compute nodes;
+  IC freeze still required before training.
+
+feature_pipeline:
+  exclude_columns:
+    - atr
+  requested_features:
+    - macd_atr_f
+    - bb_width_normalized_pct_f
+    - bpc_soft_phase_f
+    - cvd_change_features_f
+    - vpin_scene_semantic_scores_f
+    - atr_percentile_f
+    - hurst_price_f
+    - volatility_regime_f
+    - ema_1200_position_f

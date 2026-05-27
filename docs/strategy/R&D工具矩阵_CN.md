@@ -200,14 +200,16 @@ mlbot train final --no-docker --prepare-only \
 监控（③）       → watchdog + calibrate_roll / 月 event_backtest + pre_deploy contract
 ```
 
-### 4.4 后续可增强 rd_loop 的方向（未实现）
+### 4.4 rd_loop 增强（部分已落地）
 
-| 增强 | 作用 | 对应现有脚本 |
-|------|------|--------------|
-| `rd_loop` step: `gate-plateau` | ①→② 桥接：scan 显著后调 gate optimizer 出 proposal | `optimize_gate_unified.py` |
-| `rd_loop` step: `entry-plateau` | 同上 entry | `optimize_entry_filter_plateau.py` |
-| `rd_loop` step: `locked-prefilter-tune` | locked 数值提案 | `locked_prefilter_parquet_tune.py` |
-| 仍 **不** 纳入 | 全自动 promote / 多层串联 optimize | pipeline bundle |
+| 增强 | 状态 | 说明 |
+|------|------|------|
+| `rd_loop` mode: `entry-plateau` | ✅ | auto-loop `entry_filters.yaml` → `entry_plateau_scan` + `logs_gated.parquet` |
+| `rd_loop` step: `gate-plateau` | ⏳ | ①→② 桥接 gate optimizer | `optimize_gate_unified.py` |
+| `rd_loop` step: `locked-prefilter-tune` | ⏳ | locked 数值提案 | `locked_prefilter_parquet_tune.py` |
+| 仍 **不** 纳入 | — | 全自动 promote / 多层串联 optimize | pipeline bundle |
+
+`entry-plateau` 示例：[`config/experiments/rd_loop_srb_entry_plateau.yaml`](../../config/experiments/rd_loop_srb_entry_plateau.yaml)
 
 ---
 

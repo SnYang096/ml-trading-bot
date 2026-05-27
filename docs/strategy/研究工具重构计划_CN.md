@@ -544,13 +544,24 @@ scripts/                                ← 旧入口，过渡期保留 + DEPREC
 | rd_loop `--subject` | ✅ | snotio-plateau / feature-plateau 透传 scan yaml |
 | CLI e2e 单测 | ✅ | `tests/research/test_cli_plateau_e2e.py` |
 
+**Entry plateau batch（2026-05-27）**：
+
+| 项 | 状态 | 说明 |
+| -- | ---- | ---- |
+| `entry_plateau_scan` 共享模块 | ✅ | auto-loop entry_filters → snotio entry_rr |
+| rd_loop `entry-plateau` | ✅ | 见 `rd_loop_srb_entry_plateau.yaml` |
+| legacy 扫描 thin delegate | ✅ | `optimize_entry_filter_plateau.py` → 共享模块 |
+| compare `snotio_mode` | ✅ | proxy vs entry_rr mismatch 标注 |
+| logs_gated integration smoke | ✅ | `test_entry_plateau_smoke.py`（本地 parquet / skip） |
+| tree `requested_features` 骨架 | ✅ | fast_scalp / short_term_swing（IC 冻结仍待 factor-eval） |
+| plateau baseline 回填工具 | ✅ | `backfill_plateau_baseline.py` + dry-run 默认 |
+
 **仍 Open**：
 
-- P8 dashboard tab
-- `fast_scalp` / `short_term_swing` requested_features（P0 未覆盖）
-- production yaml `last_calibration.plateaus` 多为空 → yaml plateau drift 检查常 skip
-- `research compare` 未显式标注 `snotio_mode: entry_rr`
+- P8 dashboard tab（defer 至新 research 命令验证完成后）
+- production yaml `last_calibration.plateaus` 需人审 `--write` 回填后 pre_deploy drift 才生效
 - deprecated 脚本 6 个月硬删未到期
+- rd_loop `gate-plateau` / `locked-prefilter-tune` 未做
 
 **Open Questions 拍板（已落地）**：
 

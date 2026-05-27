@@ -49,6 +49,19 @@ def test_tree_slug_label_points_at_signed_forward_rr(
     assert gen["params"]["horizon"] == expected_horizon
 
 
+@pytest.mark.parametrize("slug", ["fast_scalp", "short_term_swing"])
+def test_tree_slug_has_requested_features(slug: str) -> None:
+    from src.time_series_model.strategy_config.loader import StrategyConfigLoader
+
+    cfg_dir = _ROOT / "config" / "strategies" / slug
+    loader = StrategyConfigLoader(cfg_dir)
+    features = loader.load().features
+    assert features.requested_features
+    assert "feature_groups" not in (
+        yaml.safe_load((cfg_dir / "features.yaml").read_text(encoding="utf-8")) or {}
+    )
+
+
 @pytest.mark.parametrize(
     "slug, expected_max_hold",
     [("fast_scalp", 6), ("short_term_swing", 40)],
