@@ -3235,14 +3235,15 @@ def rule_optimize_gate_plateau(
     """
     Optimize Gate rule thresholds using plateau search (backup tool).
 
-    Note: Gate parameters typically come from tree model splits.
-    This tool is for manual threshold tuning if needed.
-
-    Example:
-      mlbot rule optimize-gate-plateau \
-        --gated-logs results/logs_gated.parquet \
-        --output results/gate_optimization.json
+    DEPRECATED: scripts/optimize_gate_plateau.py removed.
+    Use: mlbot research plateau ... OR python scripts/optimize_gate_unified.py
     """
+    click.echo(
+        "DEPRECATED: mlbot rule optimize-gate-plateau → use "
+        "'mlbot research plateau' or 'scripts/optimize_gate_unified.py'",
+        err=True,
+    )
+    sys.exit(2)
     use_workspace_prefix = docker and not _is_in_docker()
     script = "scripts/optimize_gate_plateau.py"
 
@@ -7748,6 +7749,94 @@ def docker_build():
 
 
 # =============================================================================
+# Research Commands (layer-agnostic R&D stat kernels)
+# =============================================================================
+
+
+@cli.group()
+def research():
+    """Layer-agnostic research tools (scan / ic / plateau / fit / promote).
+
+    Boundaries:
+      mlbot research      — single-subject stat kernels (B + tree R&D)
+      mlbot multileg research — multi-leg orchestrate
+      mlbot pipeline run  — legacy bundle (ROUTINE_R&D_DEPRECATED for discovery)
+      mlbot train final   — production ModelArtifact training
+    """
+    pass
+
+
+def _research_forward(module: str, argv: list):
+    import importlib
+
+    mod = importlib.import_module(f"scripts.research.{module}")
+    sys.exit(mod.main(argv))
+
+
+@research.command("scan")
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def research_scan(args):
+    """Label / condition scan (wraps scripts/research/scan.py)."""
+    _research_forward("scan", list(args))
+
+
+@research.command("ic")
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def research_ic(args):
+    """IC decay with horizon shift (wraps scripts/research/ic.py)."""
+    _research_forward("ic", list(args))
+
+
+@research.command("plateau")
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def research_plateau(args):
+    """Threshold plateau scan (wraps scripts/research/plateau.py)."""
+    _research_forward("plateau", list(args))
+
+
+@research.command("segment")
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def research_segment(args):
+    """Bucket-by segmented scan (wraps scripts/research/segment.py)."""
+    _research_forward("segment", list(args))
+
+
+@research.command("compare")
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def research_compare(args):
+    """Compare research JSON artifacts."""
+    _research_forward("compare", list(args))
+
+
+@research.command("robustness")
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def research_robustness(args):
+    """Temporal fold robustness on label scan."""
+    _research_forward("robustness", list(args))
+
+
+@research.command("calibrate")
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def research_calibrate(args):
+    """Write draft yaml from plateau json (no auto-promote)."""
+    _research_forward("calibrate", list(args))
+
+
+@research.command("fit")
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def research_fit(args):
+    """Exploratory LightGBM fit (any layer; not train final)."""
+    _research_forward("fit", list(args))
+
+
+@research.command("promote")
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def research_promote(args):
+    """Explicit promote draft yaml to archetypes (--yes required)."""
+    _research_forward("promote", list(args))
+
+
+# =============================================================================
 # Analysis Commands
 # =============================================================================
 
@@ -10284,7 +10373,17 @@ def optimize_gate_plateau(
     execution_archetypes,
     docker,
 ):
-    """Optimize a single gate rule threshold using plateau method."""
+    """Optimize a single gate rule threshold using plateau method.
+
+    DEPRECATED: scripts/optimize_gate_plateau.py removed.
+    Use: mlbot research plateau ... OR python scripts/optimize_gate_unified.py
+    """
+    click.echo(
+        "DEPRECATED: mlbot optimize gate-plateau → use "
+        "'mlbot research plateau' or 'scripts/optimize_gate_unified.py'",
+        err=True,
+    )
+    sys.exit(2)
     args = [
         "--archetype",
         archetype,
@@ -10351,6 +10450,12 @@ def optimize_gate_plateau_all(
     docker,
 ):
     """Optimize all gate rules for all archetypes using plateau method."""
+    click.echo(
+        "DEPRECATED: mlbot optimize gate-plateau-all → use "
+        "'scripts/optimize_gate_unified.py' per strategy",
+        err=True,
+    )
+    sys.exit(2)
     args = [
         "--gated-logs",
         f"/workspace/{gated_logs}" if docker and not _is_in_docker() else gated_logs,
