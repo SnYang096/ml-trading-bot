@@ -20,6 +20,9 @@ _PLATEAU_KEYS = (
     "confidence",
     "mean_snotio",
     "lift_at_mid",
+    "snotio_mode",
+    "kpi",
+    "sim",
 )
 
 
@@ -76,6 +79,11 @@ def _diff_summaries(summaries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         ref = plateau_rows[0]
         for other in plateau_rows[1:]:
             delta: Dict[str, Any] = {"vs": other["path"]}
+            mode_a = ref.get("snotio_mode")
+            mode_b = other.get("snotio_mode")
+            if mode_a and mode_b and mode_a != mode_b:
+                delta["snotio_mode_mismatch"] = True
+                delta["snotio_mode"] = {"a": mode_a, "b": mode_b}
             for key in ("recommended", "recommended_threshold", "plateau_mid"):
                 if key in ref or key in other:
                     a, b = ref.get(key), other.get(key)
