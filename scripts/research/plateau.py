@@ -12,6 +12,7 @@ from scripts.research._common import (
     build_base_mask,
     load_research_frame,
     resolve_output_path,
+    resolve_research_feature_column,
 )
 from src.research.stat_kernels.snotio_calc import snotio_plateau_payload
 
@@ -19,7 +20,8 @@ from src.research.stat_kernels.snotio_calc import snotio_plateau_payload
 def _format_snotio_report(payload: dict) -> str:
     feature = payload["feature"]
     op = payload["operator"]
-    md = [f"# snotio_plateau · {feature} {op} ?", ""]
+    mode = payload.get("snotio_mode", "proxy")
+    md = [f"# snotio_plateau · {feature} {op} ? ({mode})", ""]
     md.append("| threshold | trades | snotio |")
     md.append("|---:|---:|---:|")
     for row in payload.get("rows", []):
@@ -41,33 +43,59 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Research plateau (feature threshold scan)")
     add_common_research_args(p)
     p.add_argument("--label", default="success_no_rr_extreme")
-    p.add_argument("--feature", required=True)
+    p.add_argument("--feature", default=None, help="Feature column (or use --subject)")
+    p.add_argument(
+        "--subject",
+        default=None,
+        help="feature:COL or model.score:PATH|COL (D-003 ModelScore)",
+    )
     p.add_argument("--operator", default="<=")
     p.add_argument("--grid", required=True)
     p.add_argument(
         "--kpi",
         choices=("label", "snotio"),
         default="label",
-        help="label: success-rate proxy (default); snotio: mean(forward_rr) scan",
+        help="label: success-rate proxy (default); snotio: R-multiple scan",
     )
-    p.add_argument("--r-col", default="forward_rr", help="R column when --kpi snotio")
+    p.add_argument(
+        "--snotio-mode",
+        choices=("proxy", "entry_rr"),
+        default="proxy",
+        help="proxy: mean(forward_rr); entry_rr: simulate_rr_execution bar path",
+    )
+    p.add_argument(
+        "--r-col",
+        default="forward_rr",
+        help="R column when --kpi snotio --snotio-mode proxy",
+    )
     p.add_argument("--min-trades", type=int, default=20)
     args = p.parse_args(argv)
 
     df = load_research_frame(args)
+    df, feature_col = resolve_research_feature_column(df, args)
     base_mask = build_base_mask(df, args)
     grid = [float(x) for x in args.grid.split(",") if x.strip()]
 
     if args.kpi == "snotio":
-        payload = snotio_plateau_payload(
-            df,
-            args.feature,
-            args.operator,
-            grid,
-            base_mask,
-            r_col=args.r_col,
-            min_trades=args.min_trades,
-        )
+        if args.snotio_mode == "entry_rr" and not args.strategy:
+            print("ERROR: --snotio-mode entry_rr requires --strategy", file=sys.stderr)
+            return 3
+        try:
+            payload = snotio_plateau_payload(
+                df,
+                feature_col,
+                args.operator,
+                grid,
+                base_mask,
+                r_col=args.r_col,
+                min_trades=args.min_trades,
+                snotio_mode=args.snotio_mode,
+                strategy=args.strategy,
+            )
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 3
+        payload["subject"] = getattr(args, "subject", None) or f"feature:{feature_col}"
         report = _format_snotio_report(payload)
     else:
         if args.label not in df.columns:
@@ -75,9 +103,10 @@ def main(argv: list[str] | None = None) -> int:
             return 3
         label = df[args.label].astype(bool)
         ns = argparse.Namespace(
-            feature=args.feature, operator=args.operator, grid=args.grid
+            feature=feature_col, operator=args.operator, grid=args.grid
         )
         payload = quick_layer_scan.feature_plateau_payload(ns, df, label, base_mask)
+        payload["subject"] = getattr(args, "subject", None) or f"feature:{feature_col}"
         report = quick_layer_scan.mode_feature_plateau(ns, df, label, base_mask)
 
     out_md = resolve_output_path(args, "plateau.md")

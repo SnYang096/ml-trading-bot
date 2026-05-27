@@ -12,6 +12,7 @@ from scripts.research._common import (
     layer_writeback_hint,
     load_research_frame,
     resolve_output_path,
+    resolve_research_feature_column,
 )
 
 
@@ -29,7 +30,12 @@ def main(argv: list[str] | None = None) -> int:
     cs.add_argument("--condition", action="append", required=True)
 
     fp = sub.add_parser("feature-plateau", parents=[common])
-    fp.add_argument("--feature", required=True)
+    fp.add_argument("--feature", default=None)
+    fp.add_argument(
+        "--subject",
+        default=None,
+        help="feature:COL or model.score:PATH|COL",
+    )
     fp.add_argument("--operator", default="<=")
     fp.add_argument("--grid", required=True)
 
@@ -49,20 +55,28 @@ def main(argv: list[str] | None = None) -> int:
         return 3
     label = df[args.label].astype(bool)
     base_mask = build_base_mask(df, args)
-    ns = argparse.Namespace(
-        feature=getattr(args, "feature", None),
-        operator=getattr(args, "operator", "<="),
-        grid=getattr(args, "grid", ""),
-        condition=getattr(args, "condition", []),
-        pair_a=getattr(args, "pair_a", None),
-        pair_b=getattr(args, "pair_b", None),
-    )
-    if args.mode == "condition-set":
-        report = quick_layer_scan.mode_condition_set(ns, df, label, base_mask)
-    elif args.mode == "pair-scan":
-        report = quick_layer_scan.mode_pair_scan(ns, df, label, base_mask)
-    else:
+
+    if args.mode == "feature-plateau":
+        df, feature_col = resolve_research_feature_column(df, args)
+        ns = argparse.Namespace(
+            feature=feature_col,
+            operator=getattr(args, "operator", "<="),
+            grid=getattr(args, "grid", ""),
+        )
         report = quick_layer_scan.mode_feature_plateau(ns, df, label, base_mask)
+    else:
+        ns = argparse.Namespace(
+            feature=getattr(args, "feature", None),
+            operator=getattr(args, "operator", "<="),
+            grid=getattr(args, "grid", ""),
+            condition=getattr(args, "condition", []),
+            pair_a=getattr(args, "pair_a", None),
+            pair_b=getattr(args, "pair_b", None),
+        )
+        if args.mode == "condition-set":
+            report = quick_layer_scan.mode_condition_set(ns, df, label, base_mask)
+        else:
+            report = quick_layer_scan.mode_pair_scan(ns, df, label, base_mask)
     out = resolve_output_path(args, f"scan_{args.mode}.md")
     if out:
         out.parent.mkdir(parents=True, exist_ok=True)

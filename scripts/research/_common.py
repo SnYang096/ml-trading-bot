@@ -103,3 +103,24 @@ def layer_writeback_hint(args: argparse.Namespace) -> None:
         _, wb = resolve_layer_context(args.strategy, args.layer)
         if wb:
             print(f"ℹ️  layer writeback target: {wb}")
+
+
+def resolve_research_feature_column(
+    df: pd.DataFrame, args: argparse.Namespace
+) -> tuple[pd.DataFrame, str]:
+    """Resolve --feature or --subject to a concrete parquet column."""
+    from src.research.subjects.resolve import attach_subject_column, subject_from_args
+
+    try:
+        subject = subject_from_args(
+            subject=getattr(args, "subject", None),
+            feature=getattr(args, "feature", None),
+        )
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(3)
+    try:
+        return attach_subject_column(df, subject)
+    except (KeyError, FileNotFoundError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(3)

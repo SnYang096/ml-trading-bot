@@ -20,6 +20,7 @@ from scripts.research._common import (
     build_base_mask,
     load_research_frame,
     resolve_output_path,
+    resolve_research_feature_column,
 )
 
 _ENTRY_OP_TO_DENY = {
@@ -94,7 +95,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     add_common_research_args(p)
     p.add_argument("--label", default="success_no_rr_extreme")
-    p.add_argument("--feature", required=True)
+    p.add_argument("--feature", default=None)
+    p.add_argument(
+        "--subject",
+        default=None,
+        help="feature:COL or model.score:PATH|COL",
+    )
     p.add_argument("--operator", default="<=")
     p.add_argument("--threshold", type=float, required=True)
     p.add_argument("--folds", type=int, default=5)
@@ -107,6 +113,8 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
 
     df = load_research_frame(args)
+    df, feature_col = resolve_research_feature_column(df, args)
+    args.feature = feature_col
     try:
         if args.kernel == "gate":
             report = _gate_robustness_report(df, args)

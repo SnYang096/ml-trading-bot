@@ -134,11 +134,14 @@ def _build_research_scan_cmd(
         return cmd
 
     if mode == "snotio-plateau":
+        snotio_mode = str(scan.get("snotio_mode", "proxy"))
         cmd = _mlbot_cmd() + [
             "research",
             "plateau",
             "--kpi",
             "snotio",
+            "--snotio-mode",
+            snotio_mode,
             "--output",
             str(out.with_suffix(".json") if out.suffix == ".md" else out),
         ]

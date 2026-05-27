@@ -93,25 +93,55 @@ def snotio_plateau_payload(
     r_col: str = "forward_rr",
     min_trades: int = 20,
     window: int = 5,
+    snotio_mode: str = "proxy",
+    strategy: Optional[str] = None,
+    exec_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Run snotio grid scan + find_snotio_plateau; JSON-serializable payload."""
-    rows = scan_snotio_thresholds(
-        df,
-        feature,
-        operator,
-        grid,
-        base_mask,
-        r_col=r_col,
-        min_trades=min_trades,
-    )
+    if snotio_mode == "entry_rr":
+        if not strategy:
+            raise ValueError("entry_rr snotio_mode requires strategy")
+        from src.research.execution_kernel.entry_rr_scan import (
+            load_strategy_exec_config,
+            prepare_entry_rr_frame,
+            scan_snotio_entry_rr_thresholds,
+        )
+
+        prepared = prepare_entry_rr_frame(df, strategy)
+        cfg = exec_config or load_strategy_exec_config(strategy)
+        mask = base_mask.reindex(prepared.index).fillna(False)
+        rows = scan_snotio_entry_rr_thresholds(
+            prepared,
+            feature,
+            operator,
+            grid,
+            mask,
+            cfg,
+            min_trades=min_trades,
+        )
+        sim = "entry_rr"
+    else:
+        rows = scan_snotio_thresholds(
+            df,
+            feature,
+            operator,
+            grid,
+            base_mask,
+            r_col=r_col,
+            min_trades=min_trades,
+        )
+        sim = "proxy"
+
     plateau = find_snotio_plateau(rows, operator=operator, window=window)
     payload: Dict[str, Any] = {
         "kpi": "snotio",
+        "snotio_mode": sim,
         "feature": feature,
         "operator": operator,
-        "r_col": r_col,
         "rows": rows,
     }
+    if sim == "proxy":
+        payload["r_col"] = r_col
     payload.update(plateau)
     if plateau.get("recommended") is not None:
         payload["mid"] = plateau["recommended"]

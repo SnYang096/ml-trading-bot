@@ -116,6 +116,17 @@ def train_lightgbm_classifier(
     (output_dir / "metrics.json").write_text(
         json.dumps(metrics, indent=2), encoding="utf-8"
     )
+    (output_dir / "model_manifest.json").write_text(
+        json.dumps(
+            {
+                "feature_cols": feature_cols,
+                "label_col": label_col,
+                "model_path": "model.txt",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     _write_feature_importance_audit(
         booster, X_val, feature_cols, output_dir, seed=seed
     )

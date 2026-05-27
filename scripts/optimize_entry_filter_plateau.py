@@ -70,6 +70,7 @@ from scripts.stat_method_registry import (
 )
 from scripts.locked_entry_filter_utils import load_locked_entry_filters
 from src.research.stat_kernels.snotio_calc import (
+    compute_snotio,
     find_snotio_plateau as _find_plateau,
     width_to_confidence as _width_to_confidence,
 )
@@ -204,7 +205,7 @@ def _scan_single_threshold(
             continue
 
         sh = compute_sharpe(valid, annualize=False)
-        snotio_val = float(valid.mean())  # snotio = mean(R-multiples)
+        snotio_val = compute_snotio(valid)
         results.append(
             {
                 "threshold": val,
