@@ -34,6 +34,8 @@ def default_layer_from_config(config_dir: str | Path, *, prefix: str = "features
 
     # --- Extract archetype + timeframe for human-readable prefix ---
     archetype = cfg.name  # directory name = archetype id (me / bpc / fer / lv)
+    if archetype == "_shared":
+        archetype = "tree_core"
 
     timeframe: str | None = None
     meta_path = cfg / "meta.yaml"
