@@ -1,0 +1,12 @@
+[Unit]
+Description=mlbot weekly regime watchdog
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/yin/trading/ml_trading_bot
+Environment=WATCHDOG_PARQUET=
+ExecStart=/bin/bash scripts/monitoring/run_weekly.sh
+
+[Install]
+WantedBy=multi-user.target
