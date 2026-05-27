@@ -41,107 +41,20 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-from scipy.stats import spearmanr
+
+from src.research.expr import OPS as _OPS
+from src.research.expr import build_calendar_mask as _build_calendar_mask
+from src.research.expr import parse_clause as _parse_clause
+from src.research.stat_kernels.ic import ic_decay_rows
+from src.research.stat_kernels.z_test import two_proportion_z as _binary_proportions_z
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-
-# ---------------------------------------------------------------------------
-# 表达式解析（极简：只支持 'feature OP value'、'abs(feature) OP value'，和 AND 链接）
-# ---------------------------------------------------------------------------
-
-_OPS = {
-    "<": lambda a, b: a < b,
-    "<=": lambda a, b: a <= b,
-    "le": lambda a, b: a <= b,
-    ">": lambda a, b: a > b,
-    ">=": lambda a, b: a >= b,
-    "ge": lambda a, b: a >= b,
-    "==": lambda a, b: a == b,
-    "!=": lambda a, b: a != b,
-}
-
-_TOKEN_RE = re.compile(
-    r"^\s*(abs\()?\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)?\s*(<=|>=|<|>|==|!=)\s*([-+0-9eE\.]+)\s*$"
-)
-
-
-def _parse_atom(expr: str) -> Tuple[str, bool, str, float]:
-    m = _TOKEN_RE.match(expr)
-    if not m:
-        raise ValueError(f"Cannot parse atom: {expr!r}")
-    abs_, feature, op, value = m.groups()
-    return feature, bool(abs_), op, float(value)
-
-
-def _eval_atom(
-    df: pd.DataFrame, feature: str, take_abs: bool, op: str, value: float
-) -> pd.Series:
-    if feature not in df.columns:
-        raise KeyError(f"Feature missing: {feature}")
-    s = pd.to_numeric(df[feature], errors="coerce")
-    if take_abs:
-        s = s.abs()
-    return _OPS[op](s, value).fillna(False)
-
-
-def _parse_clause(expr: str) -> Callable[[pd.DataFrame], pd.Series]:
-    parts = [
-        p.strip()
-        for p in re.split(r"\s+AND\s+", expr, flags=re.IGNORECASE)
-        if p.strip()
-    ]
-    atoms = [_parse_atom(p) for p in parts]
-
-    def fn(df: pd.DataFrame) -> pd.Series:
-        masks = [_eval_atom(df, *a) for a in atoms]
-        if not masks:
-            return pd.Series(True, index=df.index)
-        out = masks[0]
-        for m in masks[1:]:
-            out = out & m
-        return out
-
-    return fn
-
-
-def _build_calendar_mask(df: pd.DataFrame, window: Optional[str]) -> pd.Series:
-    if not window:
-        return pd.Series(True, index=df.index)
-    dt_col = None
-    for c in ("datetime", "timestamp", "ts"):
-        if c in df.columns:
-            dt_col = c
-            break
-    if dt_col is None:
-        raise KeyError("No datetime/timestamp column for --calendar-window")
-    dt = pd.to_datetime(df[dt_col], utc=True, errors="coerce")
-    start_s, end_s = [x.strip() for x in window.split(",")]
-    start = pd.to_datetime(start_s, utc=True)
-    end = pd.to_datetime(end_s, utc=True)
-    return ((dt >= start) & (dt < end)).fillna(False)
-
-
-# ---------------------------------------------------------------------------
-# Stat helpers
-# ---------------------------------------------------------------------------
-
-
-def _binary_proportions_z(p_hit: float, n_hit: int, p_oth: float, n_oth: int) -> float:
-    """Two-proportion z-test; returns absolute z (proxy for p-value)."""
-    if n_hit < 5 or n_oth < 5:
-        return 0.0
-    pool = (p_hit * n_hit + p_oth * n_oth) / max(n_hit + n_oth, 1)
-    var = pool * (1 - pool) * (1 / n_hit + 1 / n_oth)
-    if var <= 0:
-        return 0.0
-    return float(abs(p_hit - p_oth) / np.sqrt(var))
 
 
 # ---------------------------------------------------------------------------
@@ -280,24 +193,6 @@ def mode_pair_scan(
 # ---------------------------------------------------------------------------
 
 
-def _resolve_target_col(df: pd.DataFrame, target: str, horizon: int) -> Optional[str]:
-    if horizon <= 1:
-        return target if target in df.columns else None
-    for cand in (f"{target}_{horizon}", f"{target}{horizon}"):
-        if cand in df.columns:
-            return cand
-    return target if target in df.columns else None
-
-
-def _spearman_ic(x: pd.Series, y: pd.Series) -> Tuple[float, float, int]:
-    m = x.notna() & y.notna()
-    n = int(m.sum())
-    if n < 100:
-        return float("nan"), float("nan"), n
-    rho, p = spearmanr(x[m], y[m])
-    return float(rho), float(p), n
-
-
 def mode_ic_decay(
     args: argparse.Namespace,
     df: pd.DataFrame,
@@ -331,32 +226,35 @@ def mode_ic_decay(
     )
     md.append("|---:|---:|---|---:|---:|---:|---:|---:|:---:|")
 
-    sub = df.loc[base_mask]
-    for feat in features:
-        if feat not in sub.columns:
+    rows = ic_decay_rows(df, features, horizons, target, mask=base_mask, min_n=100)
+    for row in rows:
+        feat = row["feature"]
+        h = row["horizon"]
+        if h is None:
             md.append(f"| {feat} | — | — | 0 | — | — | — | — | — |")
             continue
-        x = pd.to_numeric(sub[feat], errors="coerce")
-        for h in horizons:
-            tcol = _resolve_target_col(sub, target, h) or target
-            if tcol not in sub.columns:
-                md.append(f"| {feat} | {h} | missing | 0 | — | — | — | — | — |")
-                continue
-            y = pd.to_numeric(sub[tcol], errors="coerce")
-            rho, p, n = _spearman_ic(x, y)
-            base_ic = baseline_map.get((feat, "all", 0))
-            delta_s = ""
-            flip = ""
-            if base_ic is not None and not np.isnan(rho):
-                delta = rho - base_ic
-                delta_s = f"{delta:+.4f}"
-                if base_ic * rho < 0 and abs(rho) > 0.02 and abs(base_ic) > 0.02:
-                    flip = "yes"
-            base_s = f"{base_ic:.4f}" if base_ic is not None else "—"
-            md.append(
-                f"| {feat} | {h} | `{tcol}` | {n} | {rho:.4f} | {p:.2e} | "
-                f"{base_s} | {delta_s} | {flip} |"
-            )
+        tcol = row["target_col"]
+        n = row["n"]
+        if tcol in (None, "missing") or n == 0:
+            md.append(f"| {feat} | {h} | missing | 0 | — | — | — | — | — |")
+            continue
+        rho = row["rank_ic"]
+        p = row["p_value"]
+        base_ic = baseline_map.get((feat, "all", 0))
+        delta_s = ""
+        flip = ""
+        if base_ic is not None and not np.isnan(rho):
+            delta = rho - base_ic
+            delta_s = f"{delta:+.4f}"
+            if base_ic * rho < 0 and abs(rho) > 0.02 and abs(base_ic) > 0.02:
+                flip = "yes"
+        base_s = f"{base_ic:.4f}" if base_ic is not None else "—"
+        rho_s = f"{rho:.4f}" if not np.isnan(rho) else "—"
+        p_s = f"{p:.2e}" if not np.isnan(p) else "—"
+        md.append(
+            f"| {feat} | {h} | `{tcol}` | {n} | {rho_s} | {p_s} | "
+            f"{base_s} | {delta_s} | {flip} |"
+        )
     md.append("")
     md.append(
         "**Reading**: sign_flip=yes with |IC|>0.02 suggests regime drift; "
@@ -614,6 +512,13 @@ def _make_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    import sys as _sys
+
+    print(
+        "DEPRECATED: use 'mlbot research scan|ic|plateau' instead of "
+        "scripts/quick_layer_scan.py (forwards to same kernels).",
+        file=_sys.stderr,
+    )
     args = _make_parser().parse_args()
 
     pq = Path(args.features_parquet)
