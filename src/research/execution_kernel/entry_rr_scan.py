@@ -23,6 +23,17 @@ _DIRECTION_FALLBACK_COLS = (
 )
 
 
+def _direction_fallback_cols(strategy: str) -> tuple[str, ...]:
+    """Prefer strategy-specific breakout direction before generic fallbacks."""
+    strat = (strategy or "").lower()
+    preferred = f"{strat}_breakout_direction"
+    ordered: list[str] = []
+    for col in (preferred, "entry_direction", "bpc_breakout_direction", "tpc_breakout_direction"):
+        if col not in ordered:
+            ordered.append(col)
+    return tuple(ordered)
+
+
 def entry_rr_requirements(df: pd.DataFrame) -> List[str]:
     """Columns missing for entry RR simulation."""
     missing = [c for c in _OHLC_ATR if c not in df.columns]
@@ -49,7 +60,9 @@ def prepare_entry_rr_frame(
         merged = df.reset_index(drop=True).copy()
 
     if "entry_direction" not in merged.columns:
-        for col in _DIRECTION_FALLBACK_COLS[1:]:
+        for col in _direction_fallback_cols(strategy):
+            if col == "entry_direction":
+                continue
             if col in merged.columns:
                 merged = merged.copy()
                 merged["entry_direction"] = pd.to_numeric(

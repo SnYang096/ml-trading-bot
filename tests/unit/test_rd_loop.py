@@ -117,3 +117,38 @@ def test_rd_loop_pair_scan_cmd(tmp_path: Path) -> None:
     joined = " ".join(calls[0])
     assert "pair-scan" in joined
     assert "--pair-a" in joined
+
+
+def test_rd_loop_snotio_plateau_passes_subject(tmp_path: Path) -> None:
+    hyp = tmp_path / "hyp.yaml"
+    hyp.write_text(
+        yaml.safe_dump(
+            {
+                "topic": "snotio",
+                "output_dir": str(tmp_path / "out"),
+                "quick_layer_scans": [
+                    {
+                        "mode": "snotio-plateau",
+                        "features_parquet": "dummy.parquet",
+                        "feature": "pulse_z",
+                        "grid": "-1,0,1",
+                        "subject": "feature:pulse_z",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, cwd=None):  # noqa: ANN001
+        calls.append(cmd)
+        return type("R", (), {"returncode": 0})()
+
+    with patch("scripts.rd_loop.subprocess.run", side_effect=fake_run):
+        run_loop(hyp, output_dir=tmp_path / "out")
+
+    joined = " ".join(calls[0])
+    assert "plateau" in joined
+    assert "--subject" in joined
+    assert "feature:pulse_z" in joined

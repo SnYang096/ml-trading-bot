@@ -79,6 +79,8 @@ def _append_common_scan_args(
         cmd += ["--subset", str(scan["subset"])]
     if scan.get("calendar_window"):
         cmd += ["--calendar-window", str(scan["calendar_window"])]
+    if scan.get("subject"):
+        cmd += ["--subject", str(scan["subject"])]
 
 
 def _build_research_scan_cmd(

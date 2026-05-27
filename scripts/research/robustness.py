@@ -40,6 +40,8 @@ def _temporal_fold_report(df: pd.DataFrame, args: argparse.Namespace) -> dict:
         df = df.reset_index()
     ts = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
     df = df.assign(_fold=pd.qcut(ts.rank(method="first"), args.folds, labels=False))
+    if args.label not in df.columns:
+        raise ValueError(f"label '{args.label}' missing")
     label = df[args.label].astype(bool)
     zs = []
     for fold in sorted(df["_fold"].dropna().unique()):

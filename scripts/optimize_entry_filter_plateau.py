@@ -413,7 +413,8 @@ def main() -> int:
 
     print(
         "DEPRECATED: optimize_entry_filter_plateau.py → use "
-        "mlbot research plateau --layer entry --target snotio and mlbot research calibrate.",
+        "mlbot research plateau --kpi snotio [--snotio-mode entry_rr|proxy] "
+        "and mlbot research calibrate.",
         file=_sys.stderr,
     )
     p = argparse.ArgumentParser(description="Entry Filter Threshold Plateau Scan")

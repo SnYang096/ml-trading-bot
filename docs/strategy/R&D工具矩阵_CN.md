@@ -141,7 +141,7 @@ mlbot train final --no-docker --prepare-only \
 | | `locked_prefilter_parquet_tune.py` | locked 规则在 parquet 上坐标 plateau | ⚠️ 部分（`feature-plateau` 更简单） | 已定 locked 规则，要在 holdout 上出 **数值写回提案** |
 | | `tune_locked_prefilter_thresholds.py` | 多 case / 多窗 grid + summary.json | ❌ | 批量 locked 阈值网格（constrained yaml 曾包这一层） |
 | **Gate** | `optimize_gate_unified.py` | lift + plateau + robustness；区间 deny | ⚠️ `condition-set` / `pair-scan` 只做 label 效应 | gate **数值区间**已定结构，要在 logs 上精调 τ / deny band。**已支持 `features_labeled.parquet` 输入**（路线 B，无需 pipeline run） |
-| **Entry** | `optimize_entry_filter_plateau.py` | 按 filter 扫 snotio plateau | ⚠️ `feature-plateau` 用 label 代理 | entry OR 规则 **逐条** 扫阈值（比 label scan 贴近 trade R）。**已支持 `features_labeled.parquet` 输入**（路线 B，无需 pipeline run） |
+| **Entry** | `optimize_entry_filter_plateau.py` ⚠️ DEPRECATED | 按 filter 扫 snotio plateau | ⚠️ 推荐 `mlbot research plateau --kpi snotio [--snotio-mode entry_rr]` | entry OR 规则 **逐条** 扫阈值；`entry_rr` 需 OHLC+atr+方向 |
 | **Direction** | `direction_strict_validation.py` | 方向公式 + 可选 compare-features | ❌ | 动 direction.yaml 前 |
 | **跨层** | `posthoc_layer_effectiveness.py` | 各层 rule pass/fail vs success 的 effect/z | ⚠️ 类似 condition-set，但更贴 yaml 规则 | pre_deploy **strict-locked-features**；复盘已锁定规则 |
 | **执行** | `event_backtest` / pipeline_events | 1m 重放、R-multiple | ✅ variant-grid 直接用 | ② 验因果 **必用** |

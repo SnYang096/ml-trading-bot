@@ -529,6 +529,29 @@ scripts/                                ← 旧入口，过渡期保留 + DEPREC
 | P7 清理 | ✅ | legacy DEPRECATED；断链 import 已修；`srb_reverse_shadow_report` → `scripts/archive/` |
 | P8 监控 | ✅ | `scripts/monitoring/*` + systemd timer；dashboard tab 未做 |
 
+**Review 收尾（2026-05-27，同分支）**：
+
+| 项 | 状态 | 说明 |
+| -- | ---- | ---- |
+| pair-scan CLI | ✅ | `mlbot research scan pair-scan` + rd_loop 透传 |
+| snotio entry_rr | ✅ | `plateau --kpi snotio --snotio-mode entry_rr` + `entry_rr_scan` kernel |
+| ModelScore subject | ✅ | `--subject 'model.score:…'` + `model_manifest.json` |
+| pre_deploy gate robustness | ✅ | 默认仅 `gate.yaml`；`plateau_stability.robustness_layers` 可扩 |
+| B1 entry_rr 方向列 | ✅ | `{strategy}_breakout_direction` 优先 |
+| B2 robustness 缺 label | ✅ | `ValueError` + exit 3（非 KeyError） |
+| B4 contract 特征 parquet | ✅ | 仅用当前 `run_root`，不回退 `train_final_*` |
+| entry 脚本 shim | ✅ | `optimize_entry_filter_plateau.py` DEPRECATED → research plateau |
+| rd_loop `--subject` | ✅ | snotio-plateau / feature-plateau 透传 scan yaml |
+| CLI e2e 单测 | ✅ | `tests/research/test_cli_plateau_e2e.py` |
+
+**仍 Open**：
+
+- P8 dashboard tab
+- `fast_scalp` / `short_term_swing` requested_features（P0 未覆盖）
+- production yaml `last_calibration.plateaus` 多为空 → yaml plateau drift 检查常 skip
+- `research compare` 未显式标注 `snotio_mode: entry_rr`
+- deprecated 脚本 6 个月硬删未到期
+
 **Open Questions 拍板（已落地）**：
 
 - Q1 union yaml → `config/strategies/_shared/features.yaml`（目录 `-c config/strategies/_shared`）

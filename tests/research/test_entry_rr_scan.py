@@ -67,3 +67,22 @@ def test_prepare_entry_rr_frame_missing_ohlc_raises():
     df = pd.DataFrame({"entry_direction": [1.0, -1.0], "pulse_z": [0.1, 0.2]})
     with pytest.raises(ValueError, match="missing columns"):
         prepare_entry_rr_frame(df, "srb")
+
+
+def test_prepare_entry_rr_frame_prefers_strategy_breakout_direction():
+    n = 10
+    df = pd.DataFrame(
+        {
+            "high": [101.0] * n,
+            "low": [99.0] * n,
+            "close": [100.0] * n,
+            "atr": [1.0] * n,
+            "bpc_breakout_direction": [1.0] * n,
+            "tpc_breakout_direction": [-1.0] * n,
+            "pulse_z": np.linspace(-1, 1, n),
+        }
+    )
+    prepared_tpc = prepare_entry_rr_frame(df, "tpc", apply_gate=False)
+    assert (prepared_tpc["entry_direction"] == -1.0).all()
+    prepared_bpc = prepare_entry_rr_frame(df, "bpc", apply_gate=False)
+    assert (prepared_bpc["entry_direction"] == 1.0).all()

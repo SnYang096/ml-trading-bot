@@ -8113,23 +8113,14 @@ def _run_pre_deploy_contract_checks_if_configured(
                     found = runs[-1]
         if found is not None:
             pred_map[strat] = found
-        strat_dir = train_final_base / strat
-        if strat_dir.is_dir():
-            feat_runs = sorted(
-                strat_dir.glob(f"train_final_*/{strat}/features_labeled.parquet"),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True,
-            )
-            if feat_runs:
-                feat_found = feat_runs[0]
-        if feat_found is None:
-            for candidate in (
-                run_root / strat / "features_labeled.parquet",
-                run_root / "features_labeled.parquet",
-            ):
-                if candidate.is_file():
-                    feat_found = candidate
-                    break
+        for candidate in (
+            run_root / strat / "features_labeled.parquet",
+            run_root / strat / "logs_gated.parquet",
+            run_root / "features_labeled.parquet",
+        ):
+            if candidate.is_file():
+                feat_found = candidate
+                break
         if feat_found is not None:
             features_map[strat] = feat_found
 

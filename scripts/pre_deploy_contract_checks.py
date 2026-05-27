@@ -13,12 +13,13 @@ import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-_ARCHETYPE_LAYERS = (
-    "regime.yaml",
-    "prefilter.yaml",
-    "gate.yaml",
-    "entry_filters.yaml",
-)
+_LAYER_YAML = {
+    "regime": "regime.yaml",
+    "prefilter": "prefilter.yaml",
+    "gate": "gate.yaml",
+    "entry": "entry_filters.yaml",
+}
+_ARCHETYPE_LAYERS = tuple(_LAYER_YAML.values())
 
 _ENTRY_OP_TO_DENY = {
     "<=": "gt",
@@ -195,8 +196,9 @@ def _check_gate_robustness_on_locked_rules(
     *,
     label_col: str = "success_no_rr_extreme",
     min_overall_score: float = 0.0,
+    layers: Optional[List[str]] = None,
 ) -> Tuple[bool, List[Dict[str, Any]]]:
-    """Run compute_robustness_score on locked rules (gate kernel semantics)."""
+    """Run compute_robustness_score on locked rules (gate deny semantics)."""
     from src.research.stat_kernels.robustness import (
         UnifiedOptimizationConfig,
         compute_robustness_score,
@@ -207,8 +209,10 @@ def _check_gate_robustness_on_locked_rules(
     any_weak = False
     arch = strategies_root / strategy / "archetypes"
     cfg = UnifiedOptimizationConfig()
+    layer_names = layers or ["gate"]
 
-    for fname in ("prefilter.yaml", "gate.yaml", "entry_filters.yaml"):
+    for layer in layer_names:
+        fname = _LAYER_YAML.get(layer, f"{layer}.yaml")
         path = arch / fname
         if not path.is_file():
             continue
@@ -311,6 +315,7 @@ def _check_plateau_stability(
             features_parquet,
             label_col=label_col,
             min_overall_score=min_score,
+            layers=plateau_cfg.get("robustness_layers"),
         )
         meta["robustness_items"] = robust_items
         weak = [i for i in robust_items if i.get("status") == "LOW_ROBUSTNESS"]
