@@ -8,21 +8,27 @@ from datetime import datetime
 from pathlib import Path
 
 from src.research.layer_registry import feature_pool_path, resolve_features_parquet
-from src.research.subjects.feature import FeaturePool
+from src.research.subjects.feature import FeaturePool, resolve_pool_columns
 from src.research.tree_trainer import train_lightgbm_classifier
 
-from scripts.research._common import PROJECT_ROOT, build_base_mask, load_research_frame
+from scripts.research._common import (
+    PROJECT_ROOT,
+    add_common_research_args,
+    build_base_mask,
+    load_research_frame,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Research fit (exploratory LightGBM)")
-    p.add_argument("--strategy", required=True)
-    p.add_argument("--layer", default="prefilter")
-    p.add_argument("--features-parquet", default=None)
+    add_common_research_args(p)
     p.add_argument("--feature-pool", default=None)
-    p.add_argument("--target", default="success_no_rr_extreme")
-    p.add_argument("--output", default=None)
     args = p.parse_args(argv)
+    if not args.strategy:
+        print("ERROR: --strategy required", file=sys.stderr)
+        return 3
+    if args.layer is None:
+        args.layer = "prefilter"
 
     df = load_research_frame(args)
     pool_path = (
@@ -31,7 +37,9 @@ def main(argv: list[str] | None = None) -> int:
         else feature_pool_path(args.strategy, args.layer)
     )
     pool = FeaturePool.from_yaml(pool_path)
-    feature_cols = [c for c in pool.features if c in df.columns]
+    feature_cols = resolve_pool_columns(pool, list(df.columns))
+    if not feature_cols:
+        feature_cols = [c for c in pool.features if c in df.columns]
     if not feature_cols:
         print("ERROR: no feature columns from pool found in parquet", file=sys.stderr)
         return 3

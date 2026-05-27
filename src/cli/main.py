@@ -7773,63 +7773,66 @@ def _research_forward(module: str, argv: list):
     sys.exit(mod.main(argv))
 
 
-@research.command("scan")
+_RESEARCH_CTX = {"ignore_unknown_options": True}
+
+
+@research.command("scan", context_settings=_RESEARCH_CTX)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def research_scan(args):
     """Label / condition scan (wraps scripts/research/scan.py)."""
     _research_forward("scan", list(args))
 
 
-@research.command("ic")
+@research.command("ic", context_settings=_RESEARCH_CTX)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def research_ic(args):
     """IC decay with horizon shift (wraps scripts/research/ic.py)."""
     _research_forward("ic", list(args))
 
 
-@research.command("plateau")
+@research.command("plateau", context_settings=_RESEARCH_CTX)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def research_plateau(args):
     """Threshold plateau scan (wraps scripts/research/plateau.py)."""
     _research_forward("plateau", list(args))
 
 
-@research.command("segment")
+@research.command("segment", context_settings=_RESEARCH_CTX)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def research_segment(args):
     """Bucket-by segmented scan (wraps scripts/research/segment.py)."""
     _research_forward("segment", list(args))
 
 
-@research.command("compare")
+@research.command("compare", context_settings=_RESEARCH_CTX)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def research_compare(args):
     """Compare research JSON artifacts."""
     _research_forward("compare", list(args))
 
 
-@research.command("robustness")
+@research.command("robustness", context_settings=_RESEARCH_CTX)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def research_robustness(args):
     """Temporal fold robustness on label scan."""
     _research_forward("robustness", list(args))
 
 
-@research.command("calibrate")
+@research.command("calibrate", context_settings=_RESEARCH_CTX)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def research_calibrate(args):
     """Write draft yaml from plateau json (no auto-promote)."""
     _research_forward("calibrate", list(args))
 
 
-@research.command("fit")
+@research.command("fit", context_settings=_RESEARCH_CTX)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def research_fit(args):
     """Exploratory LightGBM fit (any layer; not train final)."""
     _research_forward("fit", list(args))
 
 
-@research.command("promote")
+@research.command("promote", context_settings=_RESEARCH_CTX)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def research_promote(args):
     """Explicit promote draft yaml to archetypes (--yes required)."""

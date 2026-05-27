@@ -16,10 +16,10 @@ from scripts.research._common import (
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Research IC decay")
-    add_common_research_args(p)
+    add_common_research_args(p, include_target=False)
     p.add_argument("--features", required=True, help="Comma-separated feature columns")
     p.add_argument("--horizons", default="1,3,5,10,20")
-    p.add_argument("--target", default="forward_rr")
+    p.add_argument("--target", default="forward_rr", help="Column for rank IC target")
     p.add_argument("--baseline-json", default=None)
     args = p.parse_args(argv)
 
@@ -48,8 +48,9 @@ def main(argv: list[str] | None = None) -> int:
         "src.research.stat_kernels.ic", fromlist=["ic_decay_rows"]
     ).ic_decay_rows(df, features, horizons, args.target, mask=base_mask)
     json_out = resolve_output_path(args, "ic_decay.json")
-    if json_out and json_out.suffix == ".json":
+    if json_out:
         json_out.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+        print(f"wrote {json_out}")
     return 0
 
 

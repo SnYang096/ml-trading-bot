@@ -19,7 +19,9 @@ from src.research.layer_registry import (
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
-def add_common_research_args(p: argparse.ArgumentParser) -> None:
+def add_common_research_args(
+    p: argparse.ArgumentParser, *, include_target: bool = True
+) -> None:
     p.add_argument(
         "--strategy", default=None, help="Strategy slug (bpc/tpc/me/srb/...)"
     )
@@ -30,7 +32,8 @@ def add_common_research_args(p: argparse.ArgumentParser) -> None:
         help="Resolve subset mask + writeback yaml (CLI only; kernels stay layer-agnostic)",
     )
     p.add_argument("--features-parquet", default=None)
-    p.add_argument("--target", default="success_no_rr_extreme")
+    if include_target:
+        p.add_argument("--target", default="success_no_rr_extreme")
     p.add_argument(
         "--subset", default=None, help="Extra filter DSL (AND with layer mask)"
     )
@@ -58,12 +61,16 @@ def load_research_frame(args: argparse.Namespace) -> pd.DataFrame:
 
 def build_base_mask(df: pd.DataFrame, args: argparse.Namespace) -> pd.Series:
     mask = pd.Series(True, index=df.index)
-    if args.strategy and args.layer:
-        mask = mask & build_layer_mask(df, args.strategy, args.layer)
-    if args.subset:
-        mask = mask & parse_clause(args.subset)(df)
-    if args.calendar_window:
-        mask = mask & build_calendar_mask(df, args.calendar_window)
+    strategy = getattr(args, "strategy", None)
+    layer = getattr(args, "layer", None)
+    if strategy and layer:
+        mask = mask & build_layer_mask(df, strategy, layer)
+    subset = getattr(args, "subset", None)
+    if subset:
+        mask = mask & parse_clause(subset)(df)
+    calendar_window = getattr(args, "calendar_window", None)
+    if calendar_window:
+        mask = mask & build_calendar_mask(df, calendar_window)
     return mask
 
 
