@@ -27,12 +27,29 @@
 
 | 层 | 首选工具 | 输入 | 产出 | 验收 |
 |----|----------|------|------|------|
-| **Regime** | `quick_layer_scan condition-set` | `features_labeled.parquet` | regime 候选 md | `\|z\|>2` 且 meaningful Δpp |
-| **Prefilter** | `quick_layer_scan feature-plateau` | 同上 | 阈值 plateau md | plateau 存在 / 方向与锁定值一致 |
-| **Gate** | `quick_layer_scan condition-set` / `pair-scan` | 同上 | deny 区效应 md | deny 区 label / IC 与叙事一致 |
-| **Entry** | `quick_layer_scan feature-plateau`（加 regime+prefilter filter） | 同上 | entry 候选 md | 同上 |
-| **跨层 IC** | `quick_layer_scan ic-decay` | 同上 | IC@H md | 符号与层叙事不矛盾 |
-| **编排** | `scripts/rd_loop.py` | `config/experiments/rd_loop_*.yaml` | `results/rd_loop/<topic>/` | 各 scan md 齐全 |
+| **Regime** | `mlbot research scan condition-set` | `features_labeled.parquet` | scan md / json | `\|z\|>2` 且 meaningful Δpp |
+| **Prefilter** | `mlbot research scan feature-plateau` / `mlbot research plateau` | 同上 | plateau md + `plateau.json` | plateau 存在 / 方向与锁定值一致 |
+| **Gate** | `mlbot research scan condition-set` / `mlbot research ic` | 同上 | deny 区效应 / IC decay | deny 区 label / IC 与叙事一致 |
+| **Entry** | `mlbot research plateau`（加 regime+prefilter filter） | 同上 | entry 候选 + calibrate draft | 同上 |
+| **跨层 IC** | `mlbot research ic` | 同上 | IC@H json | 符号与层叙事不矛盾 |
+| **分层** | `mlbot research segment` | 同上 | stratify json | 子群 lift 方向一致 |
+| **编排** | `scripts/rd_loop.py`（内部仍可调 `quick_layer_scan`） | `config/experiments/rd_loop_*.yaml` | `results/rd_loop/<topic>/` | 各 scan md 齐全 |
+
+**`mlbot research` 子命令**（统一入口，替代直接调 `quick_layer_scan` / 单层 optimize 做 ①）：
+
+```bash
+mlbot research scan condition-set --strategy tpc --layer prefilter --parquet ... --condition '...'
+mlbot research scan feature-plateau --strategy tpc --feature pulse_z --operator '<=' --grid '0,1,0.1' ...
+mlbot research ic --strategy tpc --features pulse_z --horizons 1,3,6 ...
+mlbot research plateau --strategy tpc --feature pulse_z --operator '<=' --grid '0,1,0.1' ...
+mlbot research segment --strategy tpc --feature pulse_z --bins 5 ...
+mlbot research fit --strategy tpc --layer prefilter ...        # 树 audit（gain + SHAP）
+mlbot research calibrate --plateau-json results/.../plateau.json ...
+mlbot research compare results/a/plateau.json results/b/plateau.json
+mlbot research robustness --kernel temporal|gate --feature ... --threshold ...
+```
+
+> 旧入口（`quick_layer_scan`、`optimize_*_plateau`）仍可用但会打印 **DEPRECATED**；新假设筛查一律走 `mlbot research *`。
 
 **数据准备**（按需，非每次）：
 

@@ -112,7 +112,7 @@ mlbot research <verb> --strategy <s> --layer <l> --target <t> [--subset ...]
 | 路径                                                                                        | 状态                       | 处理                                                             |
 | ----------------------------------------------------------------------------------------- | ------------------------ | -------------------------------------------------------------- |
 | `scripts/optimize_gate_plateau.py`                                                        | **仓库不存在**                | 移除 3 个脚本 + 2 个 CLI 子命令对它的 import；功能由 `optimize_gate_unified` 接 |
-| `scripts/srb_reverse_shadow_report.py`                                                    | 自标 DEPRECATED            | 留 90 天后删                                                       |
+| `scripts/archive/srb_reverse_shadow_report.py`                                                    | 自标 DEPRECATED            | 留 90 天后删                                                       |
 | `scripts/_factor_ic_baseline_oneshot.py`                                                  | 自标 throwaway             | 合并进 `research ic` 后删                                           |
 | `scripts/optimize_entry_filter_snotio.py`                                                 | 不在任何 pipeline            | 标 DEPRECATED 待删                                                |
 | `mlbot serve-results`                                                                     | hidden + DEPRECATED      | 留                                                              |
@@ -473,7 +473,7 @@ scripts/                                ← 旧入口，过渡期保留 + DEPREC
 | ----------------------------------------- | -------------------- | ---------------------------------------------- |
 | `scripts/optimize_gate_plateau.py`（缺失）    | 移除所有引用（3 脚本 + 2 CLI） | `optimize_gate_unified` / 新 `research plateau` |
 | `scripts/_factor_ic_baseline_oneshot.py`  | 删除                   | `research ic`                                  |
-| `scripts/srb_reverse_shadow_report.py`    | 移到 `archive/`        | —                                              |
+| `scripts/archive/srb_reverse_shadow_report.py`    | 已归档                 | —                                              |
 | `scripts/optimize_entry_filter_snotio.py` | 标 DEPRECATED；6 个月后删  | `research plateau --target snotio`             |
 
 
@@ -522,11 +522,11 @@ scripts/                                ← 旧入口，过渡期保留 + DEPREC
 | P0 feature_store union | ✅ | `config/strategies/_shared/` + `features_tree_core_120T_*`；core-4 prepare-only 共用 layer |
 | P1 最小内核 | ✅ | `src/research/expr|labels|stat_kernels/{z_test,ic}`；ic-decay horizon bug 已修 |
 | P2 抽象层 | ✅ | `subjects/targets/subsets/layer_registry`（dataclass 骨架） |
-| P3 厚内核 | ⚠️ | gate lift/robustness/plateau/stratify/rr_simulate 已抽；`snotio_calc.py` 与 4 处 plateau 全量对拍未做 |
-| P4 research CLI (scan/ic/plateau/segment) | ✅ | TPC smoke 通过；Click passthrough 已修 |
-| P5 research fit | ⚠️ | LightGBM baseline 可跑；SHAP audit 未做 |
-| P6 calibrate/promote/compare/robustness | ⚠️ | verb 骨架可跑；`plateau.json`→`calibrate` 链路已通；compare/robustness 深度有限 |
-| P7 清理 | ⚠️ | `_factor_ic_baseline_oneshot` 已删；legacy 脚本 DEPRECATED；断链 import 已修；`srb_reverse_shadow_report` 未归档 |
+| P3 厚内核 | ✅ | gate lift/robustness/plateau/stratify/rr_simulate + `snotio_calc.py`；entry 脚本已接 kernel |
+| P4 research CLI (scan/ic/plateau/segment) | ✅ | TPC smoke 通过；Click passthrough 已修；scan 对拍单测 |
+| P5 research fit | ✅ | LightGBM + `feature_importance.json`（gain + optional SHAP audit） |
+| P6 calibrate/promote/compare/robustness | ✅ | `plateau.json`→`calibrate` 已通；compare 结构化 diff；robustness `--kernel gate` |
+| P7 清理 | ✅ | legacy DEPRECATED；断链 import 已修；`srb_reverse_shadow_report` → `scripts/archive/` |
 | P8 监控 | ✅ | `scripts/monitoring/*` + systemd timer；dashboard tab 未做 |
 
 **Open Questions 拍板（已落地）**：

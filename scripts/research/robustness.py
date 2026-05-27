@@ -1,16 +1,20 @@
-"""mlbot research robustness — temporal fold stability on label scan."""
+"""mlbot research robustness — temporal fold or gate robustness score."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 
 import numpy as np
 import pandas as pd
 
+from src.research.stat_kernels.robustness import (
+    UnifiedOptimizationConfig,
+    compute_robustness_score,
+)
 from src.research.stat_kernels.z_test import two_proportion_z
 
-from scripts import quick_layer_scan
 from scripts.research._common import (
     add_common_research_args,
     build_base_mask,
@@ -18,23 +22,19 @@ from scripts.research._common import (
     resolve_output_path,
 )
 
+_ENTRY_OP_TO_DENY = {
+    "<=": "gt",
+    "<": "gt",
+    "le": "gt",
+    ">=": "lt",
+    ">": "lt",
+    "ge": "lt",
+}
 
-def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(
-        description="Research robustness (temporal fold label scan)"
-    )
-    add_common_research_args(p)
-    p.add_argument("--label", default="success_no_rr_extreme")
-    p.add_argument("--feature", required=True)
-    p.add_argument("--operator", default="<=")
-    p.add_argument("--threshold", type=float, required=True)
-    p.add_argument("--folds", type=int, default=5)
-    args = p.parse_args(argv)
 
-    df = load_research_frame(args)
+def _temporal_fold_report(df: pd.DataFrame, args: argparse.Namespace) -> dict:
     if "timestamp" not in df.columns and df.index.name != "timestamp":
-        print("ERROR: need timestamp for temporal folds", file=sys.stderr)
-        return 3
+        raise ValueError("need timestamp for temporal folds")
     if "timestamp" not in df.columns:
         df = df.reset_index()
     ts = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
@@ -56,15 +56,68 @@ def main(argv: list[str] | None = None) -> int:
         p_hit = float(y[hit].mean()) if hit.any() else 0.0
         p_oth = float(y[~hit].mean()) if (~hit).any() else 0.0
         zs.append(two_proportion_z(p_hit, int(hit.sum()), p_oth, int((~hit).sum())))
-    report = {
+    return {
+        "kernel": "temporal",
         "fold_z_scores": zs,
         "mean_z": float(np.mean(zs)) if zs else 0.0,
         "std_z": float(np.std(zs)) if zs else 0.0,
     }
-    out = resolve_output_path(args, "robustness.json")
-    import json
+
+
+def _gate_robustness_report(df: pd.DataFrame, args: argparse.Namespace) -> dict:
+    m = build_base_mask(df, args)
+    sub = df.loc[m].copy()
+    if args.label not in sub.columns:
+        raise ValueError(f"label '{args.label}' missing")
+    deny_op = _ENTRY_OP_TO_DENY.get(args.operator)
+    if deny_op is None:
+        raise ValueError(f"unsupported operator for gate kernel: {args.operator}")
+    label_col = args.label
+    if sub[label_col].dtype == bool:
+        sub = sub.assign(_is_good=sub[label_col].astype(int))
+        label_col = "_is_good"
+    cfg = UnifiedOptimizationConfig(temporal_cv_folds=args.folds)
+    score = compute_robustness_score(
+        sub,
+        args.feature,
+        deny_op,
+        args.threshold,
+        label_col=label_col,
+        config=cfg,
+    )
+    return {"kernel": "gate", "robustness": score.to_dict(), "deny_operator": deny_op}
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(
+        description="Research robustness (temporal folds or gate score)"
+    )
+    add_common_research_args(p)
+    p.add_argument("--label", default="success_no_rr_extreme")
+    p.add_argument("--feature", required=True)
+    p.add_argument("--operator", default="<=")
+    p.add_argument("--threshold", type=float, required=True)
+    p.add_argument("--folds", type=int, default=5)
+    p.add_argument(
+        "--kernel",
+        choices=("temporal", "gate"),
+        default="temporal",
+        help="temporal: fold z-tests; gate: compute_robustness_score",
+    )
+    args = p.parse_args(argv)
+
+    df = load_research_frame(args)
+    try:
+        if args.kernel == "gate":
+            report = _gate_robustness_report(df, args)
+        else:
+            report = _temporal_fold_report(df, args)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 3
 
     text = json.dumps(report, indent=2)
+    out = resolve_output_path(args, "robustness.json")
     if out:
         out.write_text(text, encoding="utf-8")
         print(f"wrote {out}")

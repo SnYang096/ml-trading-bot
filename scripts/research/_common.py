@@ -75,9 +75,20 @@ def build_base_mask(df: pd.DataFrame, args: argparse.Namespace) -> pd.Series:
 
 
 def resolve_output_path(args: argparse.Namespace, default_name: str) -> Optional[Path]:
+    """Resolve target output path for a single artifact.
+
+    - ``--output`` (single file): only the *primary* artifact (whose default_name
+      suffix matches ``--output``) is honored; secondary artifacts return None
+      so they don't overwrite the primary file.
+    - ``--out-dir``: each artifact lands at ``<out-dir>/<default_name>``.
+    - neither set: returns None (caller falls back to stdout).
+    """
     if args.output:
         p = Path(args.output)
-        return p if p.is_absolute() else (PROJECT_ROOT / p).resolve()
+        p = p if p.is_absolute() else (PROJECT_ROOT / p).resolve()
+        if p.suffix and Path(default_name).suffix != p.suffix:
+            return None
+        return p
     if args.out_dir:
         d = Path(args.out_dir)
         if not d.is_absolute():
