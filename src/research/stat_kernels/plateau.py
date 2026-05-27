@@ -6,57 +6,9 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
+from src.research.stat_kernels.snotio_calc import find_snotio_plateau
 
-def find_snotio_plateau(
-    results: List[Dict[str, Any]],
-    *,
-    window: int = 4,
-    operator: str = ">=",
-    snotio_cv_max: float = 0.3,
-    trades_cv_max: float = 0.4,
-) -> Dict[str, Any]:
-    """Find snotio plateau from threshold scan results (entry filter KPI)."""
-    valid = [r for r in results if not r.get("too_few")]
-    if len(valid) < window:
-        return {"is_plateau": False, "reason": f"有效点不足 ({len(valid)} < {window})"}
-
-    best: Optional[Dict[str, Any]] = None
-    for i in range(len(valid) - window + 1):
-        w = valid[i : i + window]
-        snotios = [r["snotio"] for r in w]
-        trades_list = [r["trades"] for r in w]
-        mean_sn = float(np.mean(snotios))
-        std_sn = float(np.std(snotios))
-        cv_snotio = std_sn / mean_sn if mean_sn > 1e-8 else 999.0
-        mean_tr = float(np.mean(trades_list))
-        std_tr = float(np.std(trades_list))
-        cv_trades = std_tr / mean_tr if mean_tr > 1e-8 else 999.0
-        if cv_snotio >= snotio_cv_max or cv_trades >= trades_cv_max or mean_sn <= 0:
-            continue
-        start_t = w[0]["threshold"]
-        end_t = w[-1]["threshold"]
-        plateau_width = abs(end_t - start_t)
-        robustness = mean_sn * plateau_width
-        if best is None or robustness > best.get("_robustness", -1.0):
-            bias = 0.2 if plateau_width < 0.25 else 0.1
-            if operator in (">=", ">"):
-                rec_val = start_t + bias * plateau_width
-            else:
-                rec_val = end_t - bias * plateau_width
-            rec_idx = int(np.argmin([abs(r["threshold"] - rec_val) for r in w]))
-            best = {
-                "is_plateau": True,
-                "_robustness": float(robustness),
-                "start_threshold": start_t,
-                "end_threshold": end_t,
-                "plateau_width": float(plateau_width),
-                "mean_snotio": mean_sn,
-                "recommended": float(w[rec_idx]["threshold"]),
-            }
-    if best is None:
-        return {"is_plateau": False, "reason": "no_stable_plateau"}
-    best.pop("_robustness", None)
-    return best
+__all__ = ["find_snotio_plateau", "find_stable_lift_plateau"]
 
 
 def find_stable_lift_plateau(

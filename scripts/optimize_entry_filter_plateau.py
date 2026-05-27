@@ -69,6 +69,10 @@ from scripts.stat_method_registry import (
     get_canonical_methods,
 )
 from scripts.locked_entry_filter_utils import load_locked_entry_filters
+from src.research.stat_kernels.snotio_calc import (
+    find_snotio_plateau as _find_plateau,
+    width_to_confidence as _width_to_confidence,
+)
 
 # ================================================================
 # 阈值扫描核心逻辑
@@ -217,154 +221,6 @@ def _scan_single_threshold(
     conditions[cond_index]["value"] = original_value
     merged["entry_direction"] = original_entry
     return results
-
-
-def _find_plateau(
-    results: List[Dict[str, Any]],
-    window: int = 5,
-    operator: str = ">=",
-    snotio_cv_max: float = 0.3,
-    trades_cv_max: float = 0.4,
-) -> Dict[str, Any]:
-    """分析扫描结果，找到平坦高原区间。
-
-    使用滑动窗口双 CV 判定：
-      - snotio CV < snotio_cv_max（收益稳定性）
-      - Trades CV < trades_cv_max（执行节奏稳定性 — Entry Filter 特有）
-
-    recommended 不取中点，取 plateau 偏宽容侧：
-      - >= / > 条件：低阈值 = 更宽松 → start + bias * width
-      - <= / < 条件：高阈值 = 更宽松 → end - bias * width
-      - bias 动态绑定 width: 窄高原(width<0.25) bias=0.2, 宽高原 bias=0.1
-        直觉：plateau 很宽 → 本来就不敏感 → 不用偏太多
-               plateau 较窄 → 更容易 miss → 偏宽容更重要
-
-    原理：plateau 的存在证明了「严格 ≠ 更好」，
-    Entry Filter 的错误成本是「错过」而非「多等一次确认」。
-    在 snotio 无本质差别的区间内，选更容易触发入场的一侧。
-
-    plateau 排序用 mean_snotio × plateau_width（鲁棒性最大化），
-    而非单纯 mean_snotio 最大化，让宽而稳的高原优先于窄而高的尖峰。
-
-    输出 plateau_width 作为置信度指标（宽度越大 = 越稳定 = 越可部署）。
-    """
-    valid = [r for r in results if not r.get("too_few")]
-    if len(valid) < window:
-        return {
-            "is_plateau": False,
-            "reason": f"有效点不足 ({len(valid)} < {window})",
-        }
-
-    best_plateau = None
-    for i in range(len(valid) - window + 1):
-        w = valid[i : i + window]
-        snotios = [r["snotio"] for r in w]
-        trades_list = [r["trades"] for r in w]
-        mean_sn = np.mean(snotios)
-        std_sn = np.std(snotios)
-        cv_snotio = std_sn / mean_sn if mean_sn > 1e-8 else 999
-        mean_tr = np.mean(trades_list)
-        std_tr = np.std(trades_list)
-        cv_trades = std_tr / mean_tr if mean_tr > 1e-8 else 999
-
-        if cv_snotio < snotio_cv_max and cv_trades < trades_cv_max and mean_sn > 0:
-            start_t = w[0]["threshold"]
-            end_t = w[-1]["threshold"]
-            plateau_width = abs(end_t - start_t)
-            # 排序: mean_snotio × plateau_width（鲁棒性最大化）
-            robustness = mean_sn * plateau_width
-            if best_plateau is None or robustness > best_plateau.get("_robustness", -1):
-                # bias 动态绑定 width: 窄高原偏多，宽高原偏少
-                bias = 0.2 if plateau_width < 0.25 else 0.1
-                if operator in (">=", ">"):
-                    rec_val = start_t + bias * plateau_width
-                else:
-                    rec_val = end_t - bias * plateau_width
-                # snap to nearest scanned point
-                rec_idx = int(np.argmin([abs(r["threshold"] - rec_val) for r in w]))
-                best_plateau = {
-                    "is_plateau": True,
-                    "_robustness": float(robustness),
-                    "start_threshold": start_t,
-                    "end_threshold": end_t,
-                    "plateau_width": float(plateau_width),
-                    "confidence": _width_to_confidence(plateau_width),
-                    "mean_snotio": float(mean_sn),
-                    "cv_snotio": float(cv_snotio),
-                    "cv_trades": float(cv_trades),
-                    "mean_trades": float(mean_tr),
-                    "recommended": float(w[rec_idx]["threshold"]),
-                }
-
-    if best_plateau is None:
-        # 尝试只用 snotio CV（放宽 Trades CV 约束）
-        for i in range(len(valid) - window + 1):
-            w = valid[i : i + window]
-            snotios = [r["snotio"] for r in w]
-            mean_sn = np.mean(snotios)
-            cv_snotio = np.std(snotios) / mean_sn if mean_sn > 1e-8 else 999
-            if cv_snotio < snotio_cv_max and mean_sn > 0:
-                start_t = w[0]["threshold"]
-                end_t = w[-1]["threshold"]
-                pw = abs(end_t - start_t)
-                robustness = mean_sn * pw
-                if best_plateau is None or robustness > best_plateau.get(
-                    "_robustness", -1
-                ):
-                    trades_list = [r["trades"] for r in w]
-                    cv_trades = (
-                        float(np.std(trades_list) / np.mean(trades_list))
-                        if np.mean(trades_list) > 0
-                        else 999
-                    )
-                    bias = 0.2 if pw < 0.25 else 0.1
-                    if operator in (">=", ">"):
-                        rec_val = start_t + bias * pw
-                    else:
-                        rec_val = end_t - bias * pw
-                    rec_idx = int(np.argmin([abs(r["threshold"] - rec_val) for r in w]))
-                    best_plateau = {
-                        "is_plateau": True,
-                        "_robustness": float(robustness),
-                        "start_threshold": w[0]["threshold"],
-                        "end_threshold": w[-1]["threshold"],
-                        "plateau_width": float(pw),
-                        "confidence": _width_to_confidence(pw),
-                        "mean_snotio": float(mean_sn),
-                        "cv_snotio": float(cv_snotio),
-                        "cv_trades": float(cv_trades),
-                        "cv_trades_warning": True,  # Trades CV 超标
-                        "mean_trades": float(np.mean(trades_list)),
-                        "recommended": float(w[rec_idx]["threshold"]),
-                    }
-
-    if best_plateau is None:
-        snotios = [r["snotio"] for r in valid]
-        best_idx = int(np.argmax(snotios))
-        return {
-            "is_plateau": False,
-            "reason": "无 CV<0.3 的稳定窗口",
-            "best_single": {
-                "threshold": valid[best_idx]["threshold"],
-                "snotio": valid[best_idx]["snotio"],
-                "trades": valid[best_idx]["trades"],
-            },
-        }
-
-    return best_plateau
-
-
-def _width_to_confidence(width: float) -> str:
-    """将 plateau 宽度映射为置信度等级。
-
-    宽度越大 = decision boundary 曲率越低 = 越可部署。
-    """
-    if width >= 0.3:
-        return "HIGH"
-    elif width >= 0.15:
-        return "MEDIUM"
-    else:
-        return "LOW"
 
 
 # ================================================================
