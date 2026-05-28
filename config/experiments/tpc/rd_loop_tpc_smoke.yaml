@@ -14,7 +14,7 @@ quick_layer_scans:
     bucket_by: ema:ema_1200_position@0.10
     out: quick_scan/condition_set_bucketed.md
 
-variant_grid: config/experiments/tpc_variant_grid_smoke.yaml
+variant_grid: config/experiments/tpc/tpc_variant_grid_smoke.yaml
 
 decision_doc:
   topic: tpc_rd_loop_smoke

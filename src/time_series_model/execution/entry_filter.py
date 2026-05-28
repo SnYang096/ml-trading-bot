@@ -91,7 +91,7 @@ def get_available_filters(
 ) -> List[str]:
     """返回 entry_filters.yaml 中所有 enabled=true 的 filter id 列表"""
     ids = ["none"]
-    for f in entry_cfg.get("filters", []):
+    for f in entry_cfg.get("filters") or []:
         if f.get("enabled", True):
             ids.append(f["id"])
     return ids
@@ -324,7 +324,7 @@ def check_entry_filters_or_single(
     Returns:
         True = 允许入场, False = 等待
     """
-    filters_list = entry_cfg.get("filters", [])
+    filters_list = entry_cfg.get("filters") or []
     enabled = [f for f in filters_list if f.get("enabled", False)]
 
     if not enabled:
@@ -377,7 +377,7 @@ def apply_entry_filter(
     # 查找 filter 定义
     filter_def = None
     if entry_cfg:
-        for f in entry_cfg.get("filters", []):
+        for f in entry_cfg.get("filters") or []:
             if f.get("id") == filter_name:
                 filter_def = f
                 break
@@ -425,7 +425,7 @@ def apply_entry_filters_or(
     Returns:
         过滤后剩余的入场信号数
     """
-    filters_list = entry_cfg.get("filters", [])
+    filters_list = entry_cfg.get("filters") or []
     enabled = [f for f in filters_list if f.get("enabled", False)]
 
     if not enabled:

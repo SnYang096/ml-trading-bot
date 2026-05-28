@@ -1,6 +1,7 @@
-filters:
-  # ── VPIN / 点火实验（默认关）：与上文同款几何 + 订单流语义；逐项 enabled 对照 event_backtest
-  #    列来自 ME 同源：vpin_scene_semantic_scores_f、dual_ignition_f、vpin_features_f（见 semantic_polarity / gate_me_vpin_ma20_high）
+filters: []
+# ── VPIN / 点火实验（默认关）：与上文同款几何 + 订单流语义；逐项 enabled 对照 event_backtest
+#    列来自 ME 同源：vpin_scene_semantic_scores_f、dual_ignition_f、vpin_features_f
+#    （见 semantic_polarity / gate_me_vpin_ma20_high）
 # Disabled filters do not contribute to live_fc auto-detect; list columns here so
 # VPIN/ignition metrics are still computed while experiments stay off.
 prefetch_columns:

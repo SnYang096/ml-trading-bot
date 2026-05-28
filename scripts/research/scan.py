@@ -55,6 +55,15 @@ def main(argv: list[str] | None = None) -> int:
         return 3
     label = df[args.label].astype(bool)
     base_mask = build_base_mask(df, args)
+    # --filter clauses (AND with base_mask). Equivalent to --subset but accepts
+    # multiple clauses; matches rd_loop yaml ``filter: [...]`` semantics so
+    # scans actually honor it (prior to this fix the flag was parsed but
+    # never applied, silently using the full parquet as base).
+    if getattr(args, "filter", None):
+        from src.research.expr import parse_clause
+
+        for clause in args.filter:
+            base_mask = base_mask & parse_clause(str(clause))(df)
 
     if args.mode == "feature-plateau":
         df, feature_col = resolve_research_feature_column(df, args)
