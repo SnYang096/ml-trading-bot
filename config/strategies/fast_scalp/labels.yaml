@@ -10,7 +10,7 @@ label_generator:
   params:
     horizon: 3
     price_col: close
-    atr_col: atr14
+    atr_col: atr
     rr_floor: 0.30
 
 label_meta:

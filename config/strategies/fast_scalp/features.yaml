@@ -18,6 +18,7 @@ feature_pipeline:
   exclude_columns:
     - atr
   requested_features:
+    - atr_f
     - macd_atr_f
     - bb_width_normalized_pct_f
     - bpc_soft_phase_f

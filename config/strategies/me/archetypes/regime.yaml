@@ -1,6 +1,12 @@
-# ME Regime — 慢变量数据空间约束 + 多空掩码
-# A/B/C 共用慢变量层；与 BPC/TPC/SRB 同源 chop + box 约束。
-# 注：ME 当前多空都做（ME-Short 实验已结束）；未来若拆单向再改 allowed_sides。
+# ME Regime — 慢变量：chop + EMA1200 宏观带（CompressionBreakout 研究口径）
+#
+# 20260527：移除 box_pos_120 / box_breakout_*（holdout event_backtest 上 ~90% 信号被 box 拒掉，
+#   与「压缩→突破」语义冲突；对照见 config/experiments/me/me_regime_no_box_grid.yaml）。
+#
+# 分工（与 BPC 对齐）：
+#   - regime.yaml   ：chop + EMA1200 离开中轴（候选，待 rd_loop / 双段 backtest promote）
+#   - prefilter.yaml：压缩释放 + OI 拥挤（突破前压缩 = archetype 核心）
+#   - direction.yaml：动量级联 + EMA 带通（见 config/experiments/me/rd_loop_me_direction.yaml）
 
 allowed_regimes:
   - bull
@@ -12,35 +18,27 @@ allowed_sides:
   - short
 
 rules:
-  # ── Chop 上限 (从 gate.yaml 迁移；与 BPC/TPC/SRB 同源) ──
   - feature: tpc_semantic_chop
     operator: "<="
     value: 0.40
     locked: true
-    lock_reason: Regime 慢变量 — 高 chop 不做动量扩张（与 BPC/TPC/SRB 同源）
+    lock_reason: Regime 慢变量 — 高 chop 不做压缩突破（与 BPC/TPC/SRB 同源）
 
-  # ── Box 状态 ──
-  # ME 是动量扩张策略；box 中部往返扫单同样恶化（与趋势策略一致结论）。
-  - any_of:
-      - feature: box_pos_120
-        operator: "<="
-        value: 0.15
-      - feature: box_pos_120
-        operator: ">="
-        value: 0.85
-      - feature: box_breakout_up
-        operator: ">="
-        value: 0.5
-      - feature: box_breakout_down
-        operator: ">="
-        value: 0.5
-    rationale: 非箱体中部约束 — 动量扩张不在 box mid 触发
-    locked: true
-    lock_reason: Regime 慢变量 — 只在 box 边缘或已突破时入场
+  # EMA1200 @ 120T ≈ 2h 宏观带 — 候选 promote（与 BPC regime 同阈值 0.10）
+  # 离线验证前保持注释；rd_loop 见 me/rd_loop_me_compression_breakout.yaml regime_ema 扫描
+  # - any_of:
+  #     - feature: ema_1200_position
+  #       operator: ">="
+  #       value: 0.10
+  #     - feature: ema_1200_position
+  #       operator: "<="
+  #       value: -0.10
+  #   rationale: 离开 EMA1200 中轴死区 — 宏观 regime（非 box）
+  #   locked: false
 
 last_calibration:
   timestamp: null
   data_source: null
   plateau_overlap: null
   notes: |
-    初始引入：从历史 gate.yaml 迁移现存阈值；首轮 Tier-0 calibrate 之前保持现值。
+    box 规则已移除；EMA1200 宏观带待 me_regime_no_box_grid + rd_loop promote 后再锁定。

@@ -1,9 +1,15 @@
-# ME 方向 — 与 BPC/TPC/SRB 对齐：候选方向须与 EMA1200 相对位置同号。
-# ME 为 short-only archetype：方向规则正常评估，但最终仅放行空头信号。
-# 本轮上线前对照不使用 VWAP1200 绕行，确保牛熊/趋势 regime 口径一致。
+# ME / CompressionBreakout 方向 — signal_match_position_band（与 BPC 同方法）
+#
+# 多空双向：不设 direction_filter（与 BPC 一致），由 direction_rules 产出 ±1
+# 优化流程（勿手改阈值猜方向）：
+#   1) PYTHONPATH=src:scripts python scripts/rd_loop.py \
+#        --hypothesis-yaml config/experiments/me/rd_loop_me_direction.yaml
+#   2) event_backtest --variant-grid config/experiments/me/me_direction_grid.yaml
+#   3) 人审 → promote direction.yaml
+#
+# 候选变体（见 rd_loop）：tpc_macd_only / bpc_breakout_macd / 当前 me_accel 全栈
 
-description: "ME 方向 — 动量级联与 EMA1200 相对位置同号（signal_match_position_band）"
-direction_filter: short
+description: "CompressionBreakout 方向 — 动量级联与 EMA1200 带通（待 rd_loop promote）"
 
 direction_rules:
   - id: me_accel_cvd_macd_ema1200_align
