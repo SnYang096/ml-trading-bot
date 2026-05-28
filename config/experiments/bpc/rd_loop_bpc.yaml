@@ -1,0 +1,128 @@
+# BPC R&D loop — 验证每一层（regime / prefilter / gate / IC-decay）的合理性。
+#
+# 输入 parquet：results/train_final/bpc/train_final_20260519_123251_rr_extreme/bpc/features_labeled.parquet
+#  - 48049 行，label = success_no_rr_extreme（1: 26659, 0: 21390）
+#  - 注：该 parquet 早于 regime.yaml box_pos_120 规则，box scan 暂跳过；
+#    新跑 `mlbot train final -c config/strategies/bpc --prepare-only ...` 后可补加 box 扫描。
+#
+# 与 BPC 当前 archetypes 锁定值一一对照：
+#  - regime.yaml      : tpc_semantic_chop<=0.40 + |ema_1200_position|>=0.10（20260527 去掉 box）
+#  - prefilter.yaml   : bpc_volume_compression_pct>=0.9295,
+#                       bpc_recent_breakout_strength>=0.40,
+#                       bpc_pullback_depth<=0.55,
+#                       bpc_recovery_strength>=0.50
+#  - gate.yaml        : vol_persistence (0.0029, 0.0616) deny；
+#                       vol_leverage_asymmetry (0.0558, 0.1482) deny；
+#                       vpin_ma20>0.3044 deny（当前 disabled，no_stable_plateau）
+#
+# 不动 yaml；只产 markdown + decision doc skeleton。
+
+topic: bpc_layer_validation
+strategy: bpc
+output_dir: results/rd_loop/bpc
+
+quick_layer_scans:
+  # ─────────────────────────────────────────────────────────
+  # 1) Regime 层：chop 上限 & EMA1200 强趋势条件
+  # ─────────────────────────────────────────────────────────
+  - mode: condition-set
+    features_parquet: results/train_final/bpc/train_final_20260519_123251_rr_extreme/bpc/features_labeled.parquet
+    label: success_no_rr_extreme
+    condition:
+      - "regime_baseline: tpc_semantic_chop<=0.40"
+      - "regime_strict_chop: tpc_semantic_chop<=0.30"
+      - "regime_bull_ema: tpc_semantic_chop<=0.40 AND abs(ema_1200_position)>=0.10"
+      - "regime_strong_trend: tpc_semantic_chop<=0.40 AND abs(ema_1200_position)>=0.15"
+    out: quick_scan/regime_conditions.md
+
+  - mode: condition-set
+    features_parquet: results/train_final/bpc/train_final_20260519_123251_rr_extreme/bpc/features_labeled.parquet
+    label: success_no_rr_extreme
+    filter:
+      - tpc_semantic_chop<=0.40
+    condition:
+      - "ema_bull_only: ema_1200_position>=0.10"
+      - "ema_bear_only: ema_1200_position<=-0.10"
+      - "ema_dead_zone: abs(ema_1200_position)<0.03"
+    bucket_by: ema:ema_1200_position@0.10
+    out: quick_scan/regime_ema_bucketed.md
+
+  # ─────────────────────────────────────────────────────────
+  # 2) Prefilter 层：BPC 四个语义锚的 plateau 验证
+  # ─────────────────────────────────────────────────────────
+  - mode: feature-plateau
+    features_parquet: results/train_final/bpc/train_final_20260519_123251_rr_extreme/bpc/features_labeled.parquet
+    label: success_no_rr_extreme
+    feature: bpc_volume_compression_pct
+    operator: ">="
+    grid: "0.85,0.90,0.9295,0.95,0.97"
+    filter:
+      - tpc_semantic_chop<=0.40
+    out: quick_scan/prefilter_volume_compression.md
+
+  - mode: feature-plateau
+    features_parquet: results/train_final/bpc/train_final_20260519_123251_rr_extreme/bpc/features_labeled.parquet
+    label: success_no_rr_extreme
+    feature: bpc_recent_breakout_strength
+    operator: ">="
+    grid: "0.30,0.40,0.50,0.60,0.70"
+    filter:
+      - tpc_semantic_chop<=0.40
+    out: quick_scan/prefilter_breakout_strength.md
+
+  - mode: feature-plateau
+    features_parquet: results/train_final/bpc/train_final_20260519_123251_rr_extreme/bpc/features_labeled.parquet
+    label: success_no_rr_extreme
+    feature: bpc_pullback_depth
+    operator: "<="
+    grid: "0.40,0.50,0.55,0.65,0.75"
+    filter:
+      - tpc_semantic_chop<=0.40
+    out: quick_scan/prefilter_pullback_depth.md
+
+  - mode: feature-plateau
+    features_parquet: results/train_final/bpc/train_final_20260519_123251_rr_extreme/bpc/features_labeled.parquet
+    label: success_no_rr_extreme
+    feature: bpc_recovery_strength
+    operator: ">="
+    grid: "0.30,0.40,0.50,0.60,0.70"
+    filter:
+      - tpc_semantic_chop<=0.40
+    out: quick_scan/prefilter_recovery_strength.md
+
+  # ─────────────────────────────────────────────────────────
+  # 3) Gate 层：当前 locked 区间 + 历史候选阈值
+  # vol_persistence: deny (0.0029, 0.0616) → 测试是否仍是 plateau
+  # vol_leverage_asymmetry: deny (0.0558, 0.1482)
+  # vpin_ma20: >0.3044 deny (当前 disabled, no_stable_plateau)
+  # ─────────────────────────────────────────────────────────
+  - mode: condition-set
+    features_parquet: results/train_final/bpc/train_final_20260519_123251_rr_extreme/bpc/features_labeled.parquet
+    label: success_no_rr_extreme
+    filter:
+      - tpc_semantic_chop<=0.40
+    condition:
+      - "vp_inside_deny: vol_persistence>0.0029 AND vol_persistence<0.0616"
+      - "vp_outside: vol_persistence<=0.0029"
+      - "vp_high: vol_persistence>=0.0616"
+      - "vla_inside_deny: vol_leverage_asymmetry>0.0558 AND vol_leverage_asymmetry<0.1482"
+      - "vpin_ma20_high_deny: vpin_ma20>0.3044"
+    out: quick_scan/gate_locked_regions.md
+
+  # ─────────────────────────────────────────────────────────
+  # 4) IC-decay：检查 BPC 核心特征在多 horizon 上的 IC
+  # ─────────────────────────────────────────────────────────
+  - mode: ic-decay
+    features_parquet: results/train_final/bpc/train_final_20260519_123251_rr_extreme/bpc/features_labeled.parquet
+    target: forward_rr
+    features: bpc_volume_compression_pct,bpc_recent_breakout_strength,bpc_pullback_depth,bpc_recovery_strength,vol_persistence,vol_leverage_asymmetry,vpin_ma20,ema_1200_position
+    horizons: "1,3,5,10,20"
+    out: quick_scan/ic_decay.md
+
+variant_grid: config/experiments/bpc/bpc_abh_variant_grid.yaml
+
+decision_doc:
+  topic: bpc_layer_validation
+  topic_template: default
+  experiment_index: results/bpc/experiments/EXPERIMENT_INDEX.json
+  out: decision_doc_skeleton.md

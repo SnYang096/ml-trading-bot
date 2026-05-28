@@ -1,0 +1,77 @@
+# C semantic-proxy R&D — chop_grid entry_feature candidate sweep.
+#
+# Each variant points at a different chop_grid YAML where the entry_feature
+# (or max_semantic_chop_* band) has been swapped. Place the variant configs
+# next to this file under config_experiments/<variant>/grid.yaml.
+#
+# Wires:
+#   python -m scripts.event_backtest --variant-grid \
+#     config/experiments/chop_grid_semantic_proxy_grid.yaml
+#
+# All runs share symbols and date range; only the chop_grid config differs.
+# After runs complete, generate decision doc:
+#   python scripts/_new_decision_doc.py \
+#     --experiment-index results/chop_grid/experiments/EXPERIMENT_INDEX.json \
+#     --topic-template c_semantic_proxy \
+#     --topic chop_grid_proxy_sweep
+#
+# Then fill the entry_feature × KPI table using:
+#   python scripts/_build_grid_segment_labels.py \
+#     --segments results/chop_grid/experiments/<variant>/grid_segments.csv \
+#     --features-parquet results/train_final/.../features_labeled.parquet \
+#     --out results/chop_grid/experiments/<variant>/seg_labeled.parquet
+#   python scripts/quick_layer_scan.py condition-set \
+#     --features-parquet results/chop_grid/experiments/<variant>/seg_labeled.parquet \
+#     --label seg_total_r_over_dd \
+#     --condition "in_band: <entry_feature>>=<lo> AND <entry_feature><=<hi>" \
+#     --out results/chop_grid/experiments/<variant>/proxy_scan.md
+
+experiment_id: chop_grid_semantic_proxy_2026Q2
+engine: chop_grid
+strategy: chop_grid
+timeframe: "2h"
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - BNBUSDT
+  - XRPUSDT
+  - ADAUSDT
+
+# Two periods per variant; pick a recent window + a bull window (same as B).
+runs:
+  - variant: baseline_bpc_semantic_chop_recent
+    config: config/strategies/chop_grid/research/calibrate_roll.default.yaml
+    start_date: "2025-04-01"
+    end_date: "2026-04-01"
+    output_dir: results/chop_grid/experiments/baseline_recent
+
+  - variant: baseline_bpc_semantic_chop_bull
+    config: config/strategies/chop_grid/research/calibrate_roll.default.yaml
+    start_date: "2024-01-01"
+    end_date: "2025-01-01"
+    output_dir: results/chop_grid/experiments/baseline_bull
+
+  - variant: proxy_tpc_semantic_chop_recent
+    config: config_experiments/chop_grid_proxy_tpc_semantic_chop/grid.yaml
+    start_date: "2025-04-01"
+    end_date: "2026-04-01"
+    output_dir: results/chop_grid/experiments/proxy_tpc_recent
+
+  - variant: proxy_chop_not_box_recent
+    config: config_experiments/chop_grid_proxy_chop_not_box/grid.yaml
+    start_date: "2025-04-01"
+    end_date: "2026-04-01"
+    output_dir: results/chop_grid/experiments/proxy_chop_not_box_recent
+
+  - variant: proxy_bb_width_normalized_recent
+    config: config_experiments/chop_grid_proxy_bb_width_normalized/grid.yaml
+    start_date: "2025-04-01"
+    end_date: "2026-04-01"
+    output_dir: results/chop_grid/experiments/proxy_bb_width_normalized_recent
+
+  - variant: proxy_hurst_cvd_recent
+    config: config_experiments/chop_grid_proxy_hurst_cvd/grid.yaml
+    start_date: "2025-04-01"
+    end_date: "2026-04-01"
+    output_dir: results/chop_grid/experiments/proxy_hurst_cvd_recent

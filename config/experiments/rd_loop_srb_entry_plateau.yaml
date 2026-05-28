@@ -1,16 +1,1 @@
-# SRB entry layer entry-plateau (auto-loop entry_filters.yaml)
-#
-# Requires logs_gated.parquet (OHLC + atr + gate_decision + direction).
-# Step 1 only — pair with variant_grid / decision_doc as needed.
-
-topic: srb_entry_plateau_smoke
-strategy: srb
-output_dir: results/rd_loop/srb_entry_plateau
-
-quick_layer_scans:
-  - mode: entry-plateau
-    features_parquet: results/train_final/srb/train_final_placeholder/srb/logs_gated.parquet
-    snotio_mode: entry_rr
-    steps: 15
-    min_trades: 20
-    out: quick_scan/entry_plateau/
+srb/rd_loop_srb_entry_plateau.yaml
