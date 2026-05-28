@@ -1,7 +1,8 @@
 # ABC 新流程验证 checklist（含树通道）
 
 > 用途：拿到这条 checklist，**一项一项跑**，每项产物落到磁盘 → 人工对账 → 通过后再做下一项。  
-> 配套：[`方法论_R_and_D流程_CN.md`](方法论_R_and_D流程_CN.md) §3 命令速查；**本轮实测记录**：[`ABC验证操作记录_20260526_CN.md`](ABC验证操作记录_20260526_CN.md)、[`WORKFLOW_..._CN.md`](WORKFLOW_整体架构与管线改进计划_CN.md) §2.2 / §2.2.1、[`短期树独立策略_设计与落地_CN.md`](短期树独立策略_设计与落地_CN.md)。
+> 配套：[`方法论_R_and_D流程_CN.md`](方法论_R_and_D流程_CN.md) §2–§3；**命令口径** [`R&D工具矩阵_CN.md`](R&D工具矩阵_CN.md) §1（`mlbot research`，非 `quick_layer_scan.py`）。  
+> **本轮实测记录**：[`ABC验证操作记录_20260526_CN.md`](ABC验证操作记录_20260526_CN.md)（部分命令为 20260526 对拍遗留）。
 >
 > 通用约定：
 >
@@ -33,7 +34,7 @@ A1 没有 R&D 闭环，只做"环境是否仍然能买"复盘。
 
 | # | 任务 | 命令 | ✅ 通过条件 |
 |---|---|---|---|
-| A1.1 | 周线 EMA200 死区复盘 | `PYTHONPATH=src:scripts python scripts/quick_layer_scan.py condition-set --features-parquet results/<recent>/features.parquet --label dummy --condition "deep_bear: weekly_ema_200_position<0" --out results/spot_accum_simple/quick_scan/<日期>.md` | 报告写入 `results/spot_accum_simple/quick_scan/`；`n_deep_bear` ≥ 100 |
+| A1.1 | 周线 EMA200 死区复盘 | `mlbot research scan condition-set --features-parquet results/<recent>/features.parquet --label dummy --condition "deep_bear: weekly_ema_200_position<0" --output results/spot_accum_simple/quick_scan/<日期>.md` | 报告写入 `results/spot_accum_simple/quick_scan/`；`n_deep_bear` ≥ 100 |
 | A1.2 | 阶梯卖出回测 | `PYTHONPATH=src:scripts python -m mlbot backtest strategy --strategy spot_accum_simple --start 2022-01-01 --end 2026-04-01` | `results/spot_accum_simple/backtest/` 有 `metrics.json`；ret/maxDD 与历史快照一致 |
 
 ---
@@ -42,36 +43,39 @@ A1 没有 R&D 闭环，只做"环境是否仍然能买"复盘。
 
 主线 R&D 流程，每条都按"假设 → 离线扫 → 双段回测 → 决策文档 → live"。
 
-### B.1 假设阶段 — `quick_layer_scan`
+### B.1 假设阶段 — `mlbot research`
 
 ```bash
 PARQ=$(ls -t results/train_final/tpc/train_final_*/tpc/features_labeled.parquet | head -1)
+DATE=$(date +%Y%m%d)
 
 # B.1.a 单 feature plateau 是否存在
-PYTHONPATH=src:scripts python scripts/quick_layer_scan.py feature-plateau \
+mlbot research scan feature-plateau \
+  --strategy tpc --layer prefilter \
   --features-parquet "$PARQ" --label success_no_rr_extreme \
   --feature tpc_pullback_depth --operator "<=" \
   --grid 0.5,0.6,0.7,0.75,0.8,0.85,0.9,0.95 \
-  --filter "tpc_semantic_chop<=0.4" "ema_1200_position>=0.10" \
+  --subset "tpc_semantic_chop<=0.4 AND ema_1200_position>=0.10" \
   --calendar-window 2024-01-01,2025-01-01 \
-  --out results/tpc/quick_scan/pullback_in_bull_$(date +%Y%m%d).md
+  --output results/tpc/quick_scan/pullback_in_bull_${DATE}.md
 
 # B.1.b regime 候选对照（H/F/F'）
-PYTHONPATH=src:scripts python scripts/quick_layer_scan.py condition-set \
+mlbot research scan condition-set \
+  --strategy tpc --layer regime \
   --features-parquet "$PARQ" --label success_no_rr_extreme \
-  --filter "tpc_semantic_chop<=0.4" \
+  --subset "tpc_semantic_chop<=0.4" \
   --condition "H: abs(ema_1200_position)>0.10" \
   --condition "F: abs(ema_1200_position)>0.12" \
   --condition "Fp: abs(ema_1200_position)>0.10 AND abs(ema_1200_slope_10)>0.002" \
-  --out results/tpc/quick_scan/regime_candidates_$(date +%Y%m%d).md
+  --output results/tpc/quick_scan/regime_candidates_${DATE}.md
 
-# B.1.c IC 衰减 + baseline 对照（Phase B 新功能）
-PYTHONPATH=src:scripts python scripts/quick_layer_scan.py ic-decay \
+# B.1.c IC 衰减 + baseline 对照
+mlbot research ic --strategy tpc \
   --features-parquet "$PARQ" \
   --features ema_1200_position,vol_persistence,tpc_pullback_depth \
   --horizons 1,3,5,10,20,50 \
   --baseline-json config/monitoring/factor_ic_baseline_tpc_20260526.json \
-  --out results/tpc/quick_scan/ic_decay_$(date +%Y%m%d).md
+  --output results/tpc/quick_scan/ic_decay_${DATE}.md
 ```
 
 ✅ 通过条件：3 份 md 同时存在；至少一个候选满足 `|z|>2 且 Δpp ≥ +0.5pp`，否则回到假设阶段重选。
@@ -175,16 +179,16 @@ done
 
 ✅ 通过条件：每个 variant 都有 `seg_labeled.parquet`，列含 `seg_total_r_over_dd / seg_adverse_break_rate / seg_maker_return_per_round / seg_period_5_ok`。
 
-### C.4 代理 × C KPI 扫描 — `quick_layer_scan condition-set`
+### C.4 代理 × C KPI 扫描 — `mlbot research scan condition-set`
 
 ```bash
-PYTHONPATH=src:scripts python scripts/quick_layer_scan.py condition-set \
+mlbot research scan condition-set \
   --features-parquet results/chop_grid/experiments/proxy_tpc_recent/seg_labeled.parquet \
   --label seg_total_r_over_dd \
   --condition "bpc_in: bpc_semantic_chop>=0.50" \
   --condition "tpc_in: tpc_semantic_chop>=0.50" \
   --condition "not_box: chop_not_box>0" \
-  --out results/chop_grid/quick_scan/proxy_kpi_$(date +%Y%m%d).md
+  --output results/chop_grid/quick_scan/proxy_kpi_$(date +%Y%m%d).md
 ```
 
 ✅ 通过条件：报告 ≥ 1 个候选 Δ vs base ≥ 5% 且 `|z|>2`。
@@ -215,18 +219,17 @@ ls config/strategies/fast_scalp/ config/strategies/short_term_swing/
 
 ```bash
 PARQ=$(ls -t results/train_final/tpc/train_final_*/tpc/features_labeled.parquet | head -1)
-# 用 quick_layer_scan ic-decay 验候选特征
-PYTHONPATH=src:scripts python scripts/quick_layer_scan.py ic-decay \
+mlbot research ic --strategy fast_scalp \
   --features-parquet "$PARQ" \
   --features macd_atr,bb_width_normalized_pct,tpc_semantic_chop,cvd_short_normalized,vpin_short,atr_percentile,hurst_short \
   --horizons 1,3,5,10,20,50 \
-  --out results/fast_scalp/ic_decay_$(date +%Y%m%d).md
+  --output results/fast_scalp/ic_decay_$(date +%Y%m%d).md
 
-PYTHONPATH=src:scripts python scripts/quick_layer_scan.py ic-decay \
+mlbot research ic --strategy short_term_swing \
   --features-parquet "$PARQ" \
   --features ema_1200_position,ema_1200_slope_10,trend_confidence,hurst_long,bb_width_normalized_pct,macd_atr \
   --horizons 1,3,5,10,20,50 \
-  --out results/short_term_swing/ic_decay_$(date +%Y%m%d).md
+  --output results/short_term_swing/ic_decay_$(date +%Y%m%d).md
 ```
 
 ✅ 通过条件：每个 slug 至少有 5 列满足 |IC|>0.02 且 best_lag 在目标区间（fast: 1–5；swing: 10–20）。然后**手动**把通过的列写到 slug 的 `features.yaml`。

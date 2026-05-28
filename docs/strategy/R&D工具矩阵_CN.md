@@ -111,7 +111,7 @@ mlbot train final --no-docker --prepare-only \
 [设计] 经验 → features.yaml + archetypes（语义锚 locked）
 [数据] train final --prepare-only → features_labeled.parquet
 
-[①] rd_loop / quick_layer_scan
+[①] rd_loop / mlbot research scan|ic|plateau
      例：breakout_strength label 反向 → 假设「去掉该锚」
 
 [②] config_experiments/bpc_no_breakout_strategies/
@@ -130,7 +130,7 @@ mlbot train final --no-docker --prepare-only \
 
 ## 4. 各层 pipeline 脚本 vs rd_loop — 深度对照
 
-> **结论先说**：`rd_loop`  today 只是 **① 的薄编排**（调 `quick_layer_scan` + 可选 variant-grid + decision doc）。  
+> **结论先说**：`rd_loop` today 只是 **① 的薄编排**（调 `mlbot research` + 可选 variant-grid + decision doc）。  
 > **各层 optimize 脚本比 rd_loop 复杂得多**，价值在 **② 的单层精细标定**；不应删掉，也不应无实验设计地塞进 bundle pipeline。
 
 ### 4.1 能力对比表
@@ -186,7 +186,7 @@ mlbot train final --no-docker --prepare-only \
 ### 4.3 推荐分工（当前仓库可落地）
 
 ```
-假设层（①）     → rd_loop / quick_layer_scan  （快、全层扫一遍）
+假设层（①）     → rd_loop / mlbot research scan|ic|plateau  （快、全层扫一遍）
                 → posthoc_layer_effectiveness （贴 yaml 规则核对）
 
 单层精标（②b）  → 在 variant-grid 证明「方向对」之后，按需调用：
@@ -271,6 +271,22 @@ mlbot pipeline run --all \
 ---
 
 ## 8. 与 README / 老文档的关系
+
+### 8.1 `docs/strategy` 文档分工（避免命令口径分裂）
+
+| 文档 | 写什么 | 命令写在哪 |
+|------|--------|------------|
+| **本文** | ①②③ 工具矩阵、pipeline 弃用、`rd_loop` vs 各层 optimize | **§1 子命令全文** + §7 速查 |
+| [`方法论_R_and_D流程_CN.md`](方法论_R_and_D流程_CN.md) | 五步流程、双段 Pareto、promote / watchdog cron | 引用本文 §1；§2 为可 copy 示例 |
+| [`ABC统一研究框架_CN.md`](ABC统一研究框架_CN.md) | ABC、数据三件套、Phase 0–4 | §3.2 与本文对齐 |
+| [`WORKFLOW_整体架构与管线改进计划_CN.md`](WORKFLOW_整体架构与管线改进计划_CN.md) | 架构、层宪法、里程碑 | 历史「待建 quick_layer_scan」段落仅作背景，**执行以本文为准** |
+| [`ABC新流程验证checklist_CN.md`](ABC新流程验证checklist_CN.md) | 验收 checklist | 已改为 `mlbot research`；遗留 `quick_layer_scan` 仅对拍 |
+| [`label_scan_vs_IC_说明_CN.md`](label_scan_vs_IC_说明_CN.md) | Δpp / IC 判读语义 | 统计含义不变；CLI 名见本文 §1 |
+
+**统一规则**：新假设筛查 = `mlbot research *` 或 `rd_loop`；② = `event_backtest --variant-grid`；③ = watchdog / calibrate_roll / pre_deploy。  
+`scripts/quick_layer_scan.py` 仅遗留 / 单测对拍，不在新文档示例里当主入口。
+
+### 8.2 其它引用
 
 - **README §2–§3**：已改为指向本文；老「calibrate_roll 调阈值 / research_roll 季度结构」描述作废。
 - **WORKFLOW §5 里程碑 M1/M4**：turbo 纯验证、SHAP audit-only 与本文一致。

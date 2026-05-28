@@ -12,7 +12,7 @@
 > - B 系统运维心智：[`B系统运维心智梳理.md`](B系统运维心智梳理.md)
 > - 树/ML 方法论：[`树模型方法论演进与短期树重建指南_CN.md`](树模型方法论演进与短期树重建指南_CN.md)
 > - regime 层：[`regime_layer.md`](regime_layer.md)
-> - **R&D 执行手册（quick_layer_scan → event_backtest → watchdog）**：[`方法论_R_and_D流程_CN.md`](方法论_R_and_D流程_CN.md) ← 把本文档的 §4 / §5 压成一条可重复流程；§3 给出 ABC × 层 × 命令速查
+> - **R&D 执行手册（mlbot research / rd_loop → event_backtest → watchdog）**：[`方法论_R_and_D流程_CN.md`](方法论_R_and_D流程_CN.md) ← 流程步骤；**命令全文**见 [`R&D工具矩阵_CN.md`](R&D工具矩阵_CN.md) §1
 > - **短期树独立策略（fast_scalp / short_term_swing）**：[`短期树独立策略_设计与落地_CN.md`](短期树独立策略_设计与落地_CN.md) ← 与 B/C 并列的第四条通道；不接 evidence、不走 prefilter/gate
 
 ---
@@ -35,8 +35,8 @@
                           │                                                  │
                           ▼                                                  │
                   ┌──────────────────────────────────────────────────────────┘
-                  │  上线门禁（任何 yaml change → validate_static.full_study）
-                  │  require_human_confirm → deploy_config_to_live
+                  │  上线门禁（任何 yaml change → pre_deploy_replay）
+                  │  contract_checks 无 BLOCKED → deploy_config_to_live
                   └──────────────────────────────────────────────────────────
 
 
@@ -178,7 +178,7 @@ threshold_calibration:
 2. **代理候选池**（命名语义优先，来自 `features.yaml` / `features_prefilter.yaml`，可扩，要求语义可读）
    - **Chop**：`bpc_semantic_chop`、`tpc_semantic_chop`、`chop_not_box`、`*_ts_q`、`hurst_cvd`、`bb_width_normalized_pct`、WPT scene。
    - **Trend**：`trend_confidence`、`ema_1200_position` × `slope`、`volatility_regime`、低 chop 组合。
-3. **离线快筛**（与 §3.1 同工具精神，复用 `scripts/quick_layer_scan.py`）
+3. **离线快筛**（与 §3.1 同工具精神）— ✅ 已落地：`mlbot research scan condition-set` / `feature-plateau`（见 [`R&D工具矩阵_CN.md`](R&D工具矩阵_CN.md) §1）
    - 对每个候选列 vs 上述 KPI：Spearman / 分桶 lift / plateau 宽度。
    - 产物：`results/<slug>/semantic_proxy_scan/<date>.md`（top-5 列 + 推荐开/关带）。
 4. **仿真确认（慢，不可省）**
@@ -257,7 +257,7 @@ threshold_calibration:
 **输入**：订单流特征（`vpin_*`, `cvd_*`, `wpt_*`, `vp_absorption_score`）+ 结构特征（`box_compression_score`）。
 
 **算法**：
-1. **post-gate 子样本上 t-test 扫描**（`scripts/quick_layer_scan.py`，**下一步要建**）
+1. **post-gate 子样本上 t-test 扫描** — ✅ 已落地：`mlbot research scan feature-plateau` / `condition-set`（`--subset` 加 chop_pass + regime_pass；见工具矩阵 §1）
    - 子样本：pullback ∧ regime ∧ chop_pass（n ≈ 7500 on TPC）
    - 输出每特征的 effect / p / pass_rate / 桶分布
 2. **候选 OR-rule**（少而精）
@@ -309,8 +309,8 @@ threshold_calibration:
 - 用户怀疑某层逻辑
 
 **工具**：
-- `scripts/event_backtest.py --start-date X --end-date Y` 局部窗口
-- `scripts/quick_layer_scan.py`（待建）对该窗口做单层 ablation
+- `python -m scripts.event_backtest --start-date X --end-date Y` 局部窗口
+- ✅ `mlbot research scan` / `segment` 对该窗口做单层 ablation（见工具矩阵 §1）
 - 人工读 `event_trades_*.csv`，按 feature 切片
 
 **不允许的事**：碰主 yaml；动 features.yaml。
@@ -319,7 +319,7 @@ threshold_calibration:
 
 **任务**：regime 阈值监控（唯一定期"看阈值"的口子）
 
-**工具**：`scripts/regime_watchdog.py`（待建）— 每周一次，做：
+**工具**：✅ `scripts/regime_watchdog.py`（已落地，20260526；见 §8 M2）— 每周一次，做：
 1. 拉最新 `features_labeled.parquet`
 2. 对每个慢变量阈值，重做 plateau 扫描
 3. 若 `|new_plateau.mid - current_yaml_value| / current_yaml_value > 5%` → 写 `docs/decisions/regime_drift_<日期>.md` + Slack alert
@@ -361,13 +361,12 @@ threshold_calibration:
 
 **任务**：R&D 假设生成 + 验证
 
-**工具链**：
-1. `scripts/quick_layer_scan.py`（待建）
-   - 输入：strategy + features_labeled.parquet
-   - 输出：每层 top-20 候选 + 桶分布 + plateau 候选阈值
-   - 跑 1-2 分钟，纯离线 t-test
-2. **手工** cp config 到 `config_experiments/<variant>/strategies/`
-3. `scripts/event_backtest.py --strategies-root ...` 跑 1y 验证
+**工具链**（详见 [`方法论_R_and_D流程_CN.md`](方法论_R_and_D流程_CN.md) + 工具矩阵 §1）：
+1. ✅ **① 假设筛查**：`mlbot research scan|ic|plateau` 或 `scripts/rd_loop.py --hypothesis-yaml config/experiments/rd_loop_*.yaml`
+   - 输入：`features_labeled.parquet`（`mlbot train final --prepare-only`）
+   - 输出：scan md + 可选 json；1–2 分钟离线 t-test / IC
+2. **手工** cp config 到 `config_experiments/<variant>_strategies/`
+3. ✅ **② 因果验证**：`python -m scripts.event_backtest --variant-grid ...`（recent + bull 双段）
 4. 比较 totR / win / maxDD / Ret-DD
 5. **人审**赢家 → 写入 `config/strategies/<strat>/archetypes/*.yaml`
 6. → 触发上线门禁层
@@ -380,16 +379,19 @@ threshold_calibration:
 
 **触发**：任何 `config/strategies/*/archetypes/*.yaml` 改动。
 
-**工具**：`config/strategies/<strat>/research/validate_static.full_study.yaml`（已有）
+**工具**：`config/strategies/<strat>/research/pre_deploy_replay.yaml`（已有；例：`config/strategies/me/research/pre_deploy_replay.yaml`）
 
-**产物**：`results/<strat>/validate_static.full_study/<日期>/report.json`
-- 整段历史（2022-01 → now）评分
-- `deploy_gate` 字段：`require_adopt`, `trigger_sharpe_improve`, `trigger_drift_level`
-- `require_human_confirm: true`
+**职责**：frozen replay + contract，**不**做特征筛选或阈值优化（`shap_feature_selection: false`，各层 `optimize: false`）。验证「当前 locked yaml 在实盘条件下是否仍成立」，而非再跑一轮 R&D。
 
-**`scripts/deploy_config_to_live.py` 必须加 hard check**：
-- 上一次 `validate_static` 必须 < 7 天
-- `deploy_gate.adopt == true`
+**产物**：`results/<strat>/pre_deploy_replay/<日期>/`
+- `contract_checks.json`：`locked_features` 缺列 → **BLOCKED**；`plateau_stability` 漂出 plateau → **ALERT**
+- `report.json`（含 `event_backtest` 与可选 `deploy_gate`，仅作参考）
+
+**勿用** `validate_static.full_study.yaml` 作上线门禁：它 `extends: research_roll.features_on`，仍会 SHAP / 全层 optimize，属于 **ROUTINE_R&D_DEPRECATED** 的整段研究入口（见 [`R&D工具矩阵_CN.md`](R&D工具矩阵_CN.md) §2）。
+
+**`scripts/deploy_config_to_live.py` 必须加 hard check**（待实现）：
+- 最近一次 `pre_deploy_replay`（或 `pre_deploy_contract_checks.py`）必须 < 7 天
+- `contract_checks.json` 无 **BLOCKED**
 - 否则拒绝 deploy
 
 ### 4.6 时间常数总表
@@ -399,8 +401,8 @@ threshold_calibration:
 | D | 单笔/异常复盘 | 异常 | event_backtest 局部 | 内部 markdown | ❌ |
 | W | regime 漂移监控 | 周 cron | regime_watchdog | alert + decisions/*.md | ❌ |
 | M | cross-validation | 月 cron | turbo (改为纯验证) | drift report | ❌ |
-| Q | R&D 假设生成+验证 | 季度 / 漂移 | quick_layer_scan + event_backtest | 候选 archetypes | ✅（人审后）|
-| 触发 | 上线门禁 | yaml change | validate_static + deploy | report + live | live deploy |
+| Q | R&D 假设生成+验证 | 季度 / 漂移 | `mlbot research` / `rd_loop` + `event_backtest --variant-grid` | 候选 archetypes | ✅（人审后）|
+| 触发 | 上线门禁 | yaml change | pre_deploy_replay + deploy | contract_checks + live | live deploy |
 
 ---
 
@@ -410,9 +412,10 @@ threshold_calibration:
 |---|---|---|---|
 | `calibrate_roll.default.yaml` (turbo) | 月度全层 optimize | **纯 cross-validation**：不 optimize 任何层；只产 monthly drift report | doctrine 要求 locked rules 不动 |
 | `research_roll.features_on.yaml` (slow) | 季度 SHAP + 全层 retrain | **季度"特征体检"**：SHAP 仅写到 `results/shap_audit/<日期>.md`，**不 auto-promote** | SHAP importance ≠ causal contribution |
-| `validate_static.full_study.yaml` (non_rolling) | 全周期评分 + deploy_gate | **保留不变** — 这是上线门禁，已经是正确职责 | 唯一应"严守"的管线 |
-| **新增** `regime_watchdog.py` | — | 周度 regime 阈值监控；只产 alert，不改 yaml | doctrine: regime 定期检查 |
-| **新增** `quick_layer_scan.py` | — | R&D 第一步：1-2 分钟离线扫所有层 top-k 候选 | 加速 R&D 迭代 |
+| `pre_deploy_replay.yaml` | 上线前 frozen replay + contract | **严守** — yaml change 后唯一上线门禁入口 | 全层 optimize/SHAP 关；`contract_checks` 无 BLOCKED |
+| `validate_static.full_study.yaml` (non_rolling) | 整段 holdout + SHAP + deploy_gate JSON | **ROUTINE_R&D_DEPRECATED** — 勿作上线门禁 | 遗留 adopt/对比；新流程用 pre_deploy_replay |
+| `regime_watchdog.py` | ✅ 已落地（20260526） | 周度 regime / IC / PSI 监控；只产 alert，不改 yaml | 见 §8 M2 |
+| `mlbot research` + `rd_loop` | ✅ 已落地（替代 `quick_layer_scan`） | R&D ①：1–2 分钟离线扫；编排见 `rd_loop_*.yaml` | 见 [`R&D工具矩阵_CN.md`](R&D工具矩阵_CN.md) §1、§4 |
 
 **禁止做的事**：
 
@@ -437,13 +440,13 @@ threshold_calibration:
 | 配置 | plateau drift | 现有阈值与新 plateau 中心距离 | rel diff > 5% | regime alert (写 decisions/*.md) |
 | 业绩 | strategy sharpe drift | 滚动 3-month sharpe vs 12-month | drop > 0.5 σ | 触发 R&D 季度复盘 |
 
-### 6.2 已有的 / 待建的检测
+### 6.2 漂移检测落地状态
 
-| 检测 | 现状 | 待做 |
+| 检测 | 现状 | 后续（非阻塞） |
 |---|---|---|
 | PSI / feature drift | ✅ `regime_watchdog.py`（PSI vs IC baseline 参考 parquet） | 扩展到 BPC/ME；月度 cron |
-| IC@H 时序追踪 | ✅ `quick_layer_scan ic-decay` + watchdog IC sign-flip alert | 与 `factor_ic_baseline_*.json` 周度 cron |
-| plateau drift | ⚠ 部分 — `prefilter_drift_guard` 在 slow 里 | 抽出做独立 watchdog；改成"alert only"模式 |
+| IC@H 时序追踪 | ✅ `mlbot research ic` + watchdog IC sign-flip alert | 与 `factor_ic_baseline_*.json` 周度 cron（命令见工具矩阵 §1） |
+| plateau drift | ✅ `regime_drift_monitor.py` + calibrate_roll dry_run | slow 内 `prefilter_drift_guard` 仍偏宽，见附录 A #6 |
 | strategy sharpe drift | ✅ `rolling_dashboard` 有 dashboard | 加 alert 阈值 |
 
 ### 6.3 不要做的检测
@@ -514,7 +517,7 @@ threshold_calibration:
 
 ## 8. 落地路线图（5 个里程碑）
 
-按优先级排，每个 ≤ 1 周工作量：
+按优先级排，每个 ≤ 1 周工作量。**M1–M4 已落地**；日常命令以 [`R&D工具矩阵_CN.md`](R&D工具矩阵_CN.md) 为准，流程步骤见 [`方法论_R_and_D流程_CN.md`](方法论_R_and_D流程_CN.md)。
 
 ### M1：改 `calibrate_roll.default.yaml` 为纯验证模式（已落地，20260526）
 
@@ -564,35 +567,35 @@ python scripts/regime_watchdog.py \
 
 **预期效果**：唯一定期"看阈值"的口子；其他层全部冻结。
 
-### M3：建 `scripts/quick_layer_scan.py`
+### M3：`mlbot research` + `rd_loop`（已落地，20260526）
 
-**做什么**：封装本次 TPC 实验用的 label scan + 桶诊断：
+**已实现**：① 假设筛查统一为 `mlbot research scan|ic|plateau|segment`；`scripts/rd_loop.py` 读 `config/experiments/rd_loop_*.yaml` 批量编排。底层统计与旧 `quick_layer_scan.py` 对拍；**新实验走 `mlbot research`**（遗留脚本打印 DEPRECATED）。
+
+**示例**（单条 scan；全文见工具矩阵 §1）：
 
 ```bash
-python scripts/quick_layer_scan.py \
-  --strategy tpc \
-  --labels success_no_rr_extreme \
-  --layers regime,prefilter,gate,entry \
-  --output results/<strat>/quick_scan/<日期>.md
+mlbot research scan condition-set --strategy tpc --layer gate \
+  --features-parquet results/<train_final>/tpc/features_labeled.parquet \
+  --label success_no_rr_extreme \
+  --condition "H: abs(ema_1200_position)>0.10" \
+  --output results/tpc/quick_scan/regime_<日期>.md
 ```
 
-输出每层 top-20 候选特征的 effect / p / pass_rate / 桶分布 + plateau 候选阈值。**markdown 报告，不写 yaml**。
-
-**预期效果**：R&D 第一步从"跑一次 turbo (1-2h)"变成"扫一次 quick_scan (1-2min)"。
+**预期效果**（已达成）：R&D 第一步从"跑一次 turbo (1–2h)"变成"扫一次 research scan (1–2min)"。
 
 ### M4：把 `research_roll.features_on.yaml` 的 SHAP 改成 audit-only（已落地，20260526）
 
 **做什么**：
 - SHAP 结果只写到 `results/shap_audit/<日期>.md`
 - 不再自动 promote 进 `features.yaml`
-- 季度跑，与 quick_layer_scan 对照看
+- 季度跑，与 `mlbot research scan` / `ic` 对照看
 
 **预期效果**：features.yaml 稳定，特征发现回到人审节奏。
 
 ### M5：实施一个"小帽子树" pilot（TPC gate 或 entry，二选一）
 
 **做什么**：按 `树模型方法论演进*.md` §2 路径：
-1. 固定特征池（用 quick_layer_scan top-20）
+1. 固定特征池（用 `mlbot research scan` / `ic` top 候选）
 2. 训 LightGBM depth ≤ 3 输出 `gate_score`
 3. 在 holdout 上对 score 做单维 plateau → 得 τ
 4. shadow 期与现有规则并行
@@ -602,15 +605,15 @@ python scripts/quick_layer_scan.py \
 ### 顺序与依赖
 
 ```
-M1 (改 turbo 验证模式) ──► M2 (regime_watchdog)
+M1 ✅ (turbo 纯验证) ──► M2 ✅ (regime_watchdog)
        │                          │
-       ├─► M3 (quick_layer_scan) ─┤
+       ├─► M3 ✅ (mlbot research / rd_loop) ─┤
        │                          ▼
-       ▼                    M5 (小帽子树 pilot)
-   M4 (SHAP audit)
+       ▼                    M5 ⏳ (小帽子树 pilot)
+   M4 ✅ (SHAP audit-only)
 ```
 
-**M1 + M3 是最关键的两件事**：能直接让你 R&D 速度提 10×、运维稳定性提一档。
+**M1 + M3 已落地**；当前优先级：**M5 pilot**、附录 A #7 deploy hard-check、#8–#10 组合风险/归因。
 
 ---
 
@@ -624,7 +627,7 @@ M1 (改 turbo 验证模式) ──► M2 (regime_watchdog)
 | 4 | `pipeline/multileg_feature_selection.py` (929 行) | 多层级联 SHAP+plateau | 层间过拟合到同一段噪声 | 分层独立 holdout，不共享 |
 | 5 | `regime_threshold_calibrate.py --dry-run` | 已存在但默认行为是 commit | 默认就该是 dry | 改默认值 |
 | 6 | `prefilter_drift_guard` (in slow yaml) | 漂移阈值 0.20 warn / 0.35 max | 太宽 | 改 0.05 warn / 0.10 max + alert |
-| 7 | `validate_static.full_study.yaml deploy_gate` | `require_human_confirm: true` 已对，但没有强制 | `deploy_config_to_live.py` 应 hard-check | 加 7-day 时效 + adopt=true 双门 |
+| 7 | `pre_deploy_replay.yaml` `contract_checks` | 配置已对（全 optimize/SHAP 关），但 `deploy_config_to_live.py` 未强制 | 应 hard-check 最近 `pre_deploy_replay` + 无 BLOCKED | 7-day 时效 + `contract_checks.json`；勿用 `full_study` deploy_gate |
 | 8 | 缺失 | 没有 portfolio-level VaR/ES | 单笔有 evt_var_99，组合层无 | 加 portfolio risk module |
 | 9 | 缺失 | 没有 regime × strategy 归因表 | 季度复盘没有数据基础 | 加 attribution dashboard stage |
 | 10 | 缺失 | 没有 meta-labeling 框架 | entry filter 是手工 OR rules，没有"在主信号上加二级判断"的入口 | M5 pilot |
@@ -671,5 +674,5 @@ M1 (改 turbo 验证模式) ──► M2 (regime_watchdog)
 **doctrine → 时间常数 → 算法分工 → 管线职责 → drift 检测 → ML4T 缺口**
 这条链子的目的：让"维护 4 策略 × 6 层"这件事，从"每月跑一遍管线、不知道哪里又飘了"变成"每周自动看 1 个数、每季度做 1 次手工 R&D、每年看 1 次结构"。
 
-最关键的一句：**管线只做验证，不做研究**。研究是人脑 + 离线 scan 在 Q-级做的事。把这两件事强行融在一起，是过去两年最大的运维负担。
+最关键的一句：**管线只做验证，不做研究**。研究是人脑 + `mlbot research` / `rd_loop` 在 Q-级做的事（见工具矩阵 §1）。把这两件事强行融在一起，是过去两年最大的运维负担。
 

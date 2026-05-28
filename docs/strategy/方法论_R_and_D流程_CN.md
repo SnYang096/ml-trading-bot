@@ -1,15 +1,25 @@
-# R&D 流程方法论（quick_layer_scan → event_backtest → watchdog）
+# R&D 流程方法论（mlbot research / rd_loop → event_backtest → watchdog）
 
 > 这是 [`WORKFLOW_整体架构与管线改进计划_CN.md`](WORKFLOW_整体架构与管线改进计划_CN.md) 的**执行手册**：把"假设 → 实验 → 上线 → 监控"压成一条固定流程，不需要每次现编。
 >
-> **顶层框架（ABC × 规则/树 统一视图）**：[`ABC统一研究框架_CN.md`](ABC统一研究框架_CN.md) —— 本文是它的"命令手册"。  
-> **工具矩阵与 pipeline yaml 弃用口径**：[`R&D工具矩阵_CN.md`](R&D工具矩阵_CN.md)（各层脚本 vs `rd_loop` 见 §4）。
+> **命令口径（以本文 + 工具矩阵为准，勿混用旧脚本名）**  
+> | 层级 | 文档 | 角色 |
+> |------|------|------|
+> | ① 假设筛查 | **[`R&D工具矩阵_CN.md`](R&D工具矩阵_CN.md) §1** | `mlbot research scan\|ic\|plateau\|segment` 子命令全文 |
+> | 流程步骤 | **本文** | 五步图 + 双段 backtest + promote / watchdog |
+> | ABC / 数据三件套 | [`ABC统一研究框架_CN.md`](ABC统一研究框架_CN.md) | Phase 0–4 与 `features_labeled.parquet` |
+> | 编排（多 scan 一键） | `config/experiments/rd_loop_*.yaml` + `scripts/rd_loop.py` | 内部调 `mlbot research`，见工具矩阵 §4 |
+> | 遗留 | `scripts/quick_layer_scan.py` | 仍可用，打印 DEPRECATED；与 `mlbot research *` 对拍一致 |
+>
+> **顶层框架（ABC × 规则/树 统一视图）**：[`ABC统一研究框架_CN.md`](ABC统一研究框架_CN.md) —— 本文是它的"流程手册"（命令细节见上表）。  
+> **工具矩阵与 pipeline yaml 弃用口径**：[`R&D工具矩阵_CN.md`](R&D工具矩阵_CN.md)（各层脚本 vs `rd_loop` 见 §4）。  
+> **滚动 optimize 为何禁止、月监控 vs 季 R&D**：[`为何不做滚动调阈值_与研究节奏_CN.md`](为何不做滚动调阈值_与研究节奏_CN.md)。
 >
 > 适用范围：
 > - **B 系统**（chop/box/EMA-band 趋势）— 本手册的主流程；
 > - **A1 spot_accum_simple** — 规则化，不走 R&D 闭环；
 > - **A2 spot_fattail**（规划中）— 若引入 live，按 [`WORKFLOW_..._CN.md`](WORKFLOW_整体架构与管线改进计划_CN.md) §2.2.1 思路做"尾部代理 R&D"；
-> - **C 系统**（chop_grid / trend_scalp）— **不走** 本手册的 SHAP/方向 label 工厂，但仍要做 [`WORKFLOW_..._CN.md`](WORKFLOW_整体架构与管线改进计划_CN.md) §2.2.1 的 **C 语义代理 R&D** 季度循环（同工具：`quick_layer_scan` + 多腿回测 + `_new_decision_doc.py`）。
+> - **C 系统**（chop_grid / trend_scalp）— **不走** 本手册的 SHAP/方向 label 工厂，但仍要做 [`WORKFLOW_..._CN.md`](WORKFLOW_整体架构与管线改进计划_CN.md) §2.2.1 的 **C 语义代理 R&D** 季度循环（同工具：`mlbot research scan` + 多腿回测 + `_new_decision_doc.py`）。
 >
 > **Label scan 与 IC 的区别、1pp 含义、为何两者都要看**：见 [`label_scan_vs_IC_说明_CN.md`](label_scan_vs_IC_说明_CN.md)。
 >
@@ -26,7 +36,7 @@
 假设 (人脑/直觉/盘后复盘)
    │
    ▼
-[1] quick_layer_scan.py      ← 1-2 分钟，离线 label/桶诊断
+[1] mlbot research / rd_loop   ← 1-2 分钟，离线 label/桶诊断（或 hypothesis yaml 批量扫）
    │                           过滤显著: |z|>2 且 Δsucc>+0.5pp
    │
    ▼
@@ -34,7 +44,7 @@
    │                            改 1-2 个 yaml
    │
    ▼
-[3] event_backtest 两段        ← 2024 bull + 2025-2026 recent, ~30 min/段
+[3] event_backtest 两段        ← `python -m scripts.event_backtest --variant-grid`；2024 bull + recent
    │                            必看: trades, totR, win, maxDD, by-side breakdown
    │
    ▼
@@ -56,11 +66,12 @@
 
 | 工具 | 触发频率 | 输入 | 输出 | 改 yaml？ |
 |---|---|---|---|---|
-| `scripts/quick_layer_scan.py` | 假设时 | features_labeled.parquet | markdown 报告（含 `ic-decay`、`--bucket-by`） | ❌ |
-| `scripts/event_backtest.py` | 候选确定后 | strategies_root + symbols + 日期；或 `--variant-grid` | trades csv + summary + capital report + EXPERIMENT_INDEX | ❌ |
+| **`mlbot research`** `scan` / `ic` / `plateau` / `segment` | 假设时 | `features_labeled.parquet`（`--prepare-only` 或 `--features-parquet`） | markdown + 可选 json | ❌ |
+| `scripts/rd_loop.py` | 多步假设编排 | `config/experiments/rd_loop_*.yaml` | `results/rd_loop/<topic>/` + 各 scan md | ❌ |
+| `python -m scripts.event_backtest` | 候选确定后 | `--variant-grid` 或 strategies_root + 日期窗 | trades csv + summary + EXPERIMENT_INDEX | ❌ |
 | `scripts/regime_watchdog.py` | 周度 cron | recent features parquet + baseline + IC baseline | report.json（含 IC/PSI）+ summary.txt | ❌ |
-| `scripts/_new_decision_doc.py` | promote 前 | EXPERIMENT_INDEX.json | `docs/decisions/<topic>_<date>.md` 骨架（`--topic-template default\|c_semantic_proxy\|tree_slug`） | ❌ |
-| `scripts/rd_loop.py` | 假设→回测→文档 | hypothesis yaml | `results/rd_loop/<topic>/` + state.json | ❌ |
+| `scripts/_new_decision_doc.py` | promote 前 | EXPERIMENT_INDEX.json | `docs/decisions/<topic>_<date>.md` 骨架 | ❌ |
+| `scripts/quick_layer_scan.py` | 遗留 | 同上 | 同上（DEPRECATED，对拍用） | ❌ |
 | `scripts/_build_grid_segment_labels.py` | C 语义代理离线筛 | grid_segments.csv + features parquet | seg_labeled.parquet（`seg_*` KPI 列） | ❌ |
 | `scripts/regime_drift_monitor.py` | 周/月度 cron | recent features parquet | drift report | ❌ |
 | `scripts/deploy_config_to_live.py` | yaml change | config/ + live/highcap/ diff | 同步到 live + 重启 quant-feature-bus | ✅ live only |
@@ -69,20 +80,32 @@
 
 ## 2. 阶段细节
 
-### 2.1 阶段 [1] quick_layer_scan：把"我猜某层某特征该调"变成 1 分钟扫描
+### 2.1 阶段 [1] 假设筛查：`mlbot research` 或 `rd_loop`
 
-三种模式：
+**首选**：单条命令走 `mlbot research`（子命令与旧 `quick_layer_scan` 模式一一对应，见 [`R&D工具矩阵_CN.md`](R&D工具矩阵_CN.md) §1）。  
+**批量**：同一 topic 多条 scan + 可选 variant-grid → `config/experiments/rd_loop_<topic>.yaml` + `scripts/rd_loop.py`（例：`config/experiments/me/rd_loop_me_direction.yaml`）。
+
+**数据准备**（按需一次）：
+```bash
+mlbot train final --no-docker --prepare-only \
+  -c config/strategies/tpc \
+  --output-dir results/train_final/tpc/<run_id>
+# → features_labeled.parquet
+```
+
+三种 scan 模式：
 
 **A. feature-plateau** — 单特征阈值扫描，看 plateau 是否真的存在
 ```bash
-PYTHONPATH=src:scripts python scripts/quick_layer_scan.py feature-plateau \
+mlbot research scan feature-plateau \
+  --strategy tpc --layer prefilter \
   --features-parquet results/<train_final>/tpc/features_labeled.parquet \
   --label success_no_rr_extreme \
   --feature tpc_pullback_depth --operator "<=" \
   --grid 0.5,0.6,0.7,0.75,0.8,0.85,0.9,0.95 \
-  --filter "tpc_semantic_chop<=0.4" "ema_1200_position>=0.10" \
+  --subset "tpc_semantic_chop<=0.4 AND ema_1200_position>=0.10" \
   --calendar-window 2024-01-01,2025-01-01 \
-  --out results/tpc/quick_scan/<topic>_<日期>.md
+  --output results/tpc/quick_scan/<topic>_<日期>.md
 ```
 
 **判读**：
@@ -92,13 +115,14 @@ PYTHONPATH=src:scripts python scripts/quick_layer_scan.py feature-plateau \
 
 **B. condition-set** — 比较若干 regime 条件
 ```bash
-PYTHONPATH=src:scripts python scripts/quick_layer_scan.py condition-set \
+mlbot research scan condition-set \
+  --strategy tpc --layer regime \
   --features-parquet results/<train_final>/tpc/features_labeled.parquet \
   --label success_no_rr_extreme \
-  --filter "tpc_semantic_chop<=0.4" \
+  --subset "tpc_semantic_chop<=0.4" \
   --condition "H: abs(ema_1200_position)>0.10" \
-  --condition "F': abs(ema_1200_position)>0.10 AND abs(ema_1200_slope_10)>0.002" \
-  --out results/tpc/quick_scan/regime_candidates_<日期>.md
+  --condition "F_prime: abs(ema_1200_position)>0.10 AND abs(ema_1200_slope_10)>0.002" \
+  --output results/tpc/quick_scan/regime_candidates_<日期>.md
 ```
 
 **判读**：
@@ -107,6 +131,30 @@ PYTHONPATH=src:scripts python scripts/quick_layer_scan.py condition-set \
 - `|z|>2` + Δpp ≥ +0.5pp → 拉 event_backtest 验证 R-multiple
 
 **C. pair-scan** — 二维 deny 表（如 vp × vla 联合 deny）
+```bash
+mlbot research scan pair-scan --strategy tpc --layer gate \
+  --features-parquet results/.../features_labeled.parquet \
+  --pair-a 'vol_persistence:>:0.003,0.01,0.03' \
+  --pair-b 'vpin:<=:0.5,0.7' \
+  --output results/tpc/quick_scan/pair_<日期>.md
+```
+
+**D. IC decay**（树通道 / 方向特征对齐 H）
+```bash
+mlbot research ic --strategy tpc \
+  --features-parquet results/.../features_labeled.parquet \
+  --features pulse_z,macd_atr --horizons 1,3,5,10,20,50 \
+  --target forward_rr --subset "tpc_semantic_chop<=0.4" \
+  --output results/tpc/quick_scan/ic_<日期>.md
+```
+
+**E. rd_loop 编排**（多 scan + 双段 grid + decision doc 骨架）
+```bash
+PYTHONPATH=src:scripts python scripts/rd_loop.py \
+  --hypothesis-yaml config/experiments/me/rd_loop_me_direction.yaml
+```
+
+> 遗留：`PYTHONPATH=src:scripts python scripts/quick_layer_scan.py <mode> ...` 与上面对拍；新实验不要从它写起。
 
 ### 2.2 阶段 [2] 准备 variant
 
@@ -129,7 +177,13 @@ cp -r config_experiments/<base>_strategies config_experiments/<new>_strategies
 - bull (2024-01 → 2025-01)：calendar bull market
 
 ```bash
-PYTHONPATH=src:scripts python scripts/event_backtest.py \
+# 推荐：variant-grid 一次跑多 variant × 多日期窗（见 config/experiments/<grid>.yaml）
+PYTHONPATH=src:scripts python -m scripts.event_backtest \
+  --variant-grid config/experiments/<your_grid>.yaml \
+  --quiet-signal-logs
+
+# 单 variant 单窗（调试）
+PYTHONPATH=src:scripts python -m scripts.event_backtest \
   --strategy tpc \
   --strategies-root config_experiments/<new>_strategies \
   --symbols BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT \
@@ -140,7 +194,7 @@ PYTHONPATH=src:scripts python scripts/event_backtest.py \
   --quiet-signal-logs
 ```
 
-约 30 分钟/段 × 6 symbols。可两段并行（占 ~2 core）。
+约 30 分钟/段 × 6 symbols。可两段并行（占 ~2 core）。grid yaml 里写 recent + bull 两段，避免手抄日期。
 
 **必查指标**：
 | 维度 | 看什么 |
@@ -228,11 +282,11 @@ PYTHONPATH=src:scripts python scripts/regime_watchdog.py \
 
 | 层 | 现状 | 触发 | 命令（可直接 copy-paste） | 产物 | 改 yaml？ |
 |---|---|---|---|---|---|
-| Regime | EMA1200 dead zone + chop（季度） | Q / drift | `PYTHONPATH=src:scripts python scripts/quick_layer_scan.py condition-set --features-parquet results/.../features_labeled.parquet --label success_no_rr_extreme --condition "H: abs(ema_1200_position)>0.10" --out results/<策略>/quick_scan/regime_<日期>.md` | regime_<日期>.md | 否 |
-| Prefilter | 4 archetype 形态（locked） | 半年 / drift | `PYTHONPATH=src:scripts python scripts/quick_layer_scan.py feature-plateau --features-parquet ... --feature tpc_pullback_depth --operator "<=" --grid 0.5,0.6,...,0.95 --out ...` | plateau 报告 | 否（仅复核） |
+| Regime | EMA1200 dead zone + chop（季度） | Q / drift | `mlbot research scan condition-set --strategy <slug> --layer regime --features-parquet ... --condition "H: abs(ema_1200_position)>0.10" --output results/<策略>/quick_scan/regime_<日期>.md` | regime_<日期>.md | 否 |
+| Prefilter | 4 archetype 形态（locked） | 半年 / drift | `mlbot research scan feature-plateau --strategy tpc --layer prefilter --feature tpc_pullback_depth --operator "<=" --grid 0.5,0.6,...,0.95 --output ...` | plateau 报告 | 否（仅复核） |
 | Direction | 公式（locked） | 年度 | — | — | 否 |
-| Gate | tail veto（小帽子树 / 单 τ）| Q | 先 `quick_layer_scan condition-set` 排候选，再 `event_backtest --variant-grid config/experiments/<grid>.yaml` 双段验 | EXPERIMENT_INDEX.json + `_new_decision_doc.py` | 是（人审 → archetypes/gate.yaml）|
-| Entry | OR rules（locked）| Q | 子样本 `quick_layer_scan feature-plateau`（filter 加 chop_pass + regime_pass）| top-3 候选报告 | 是（人审 → entry_filters.yaml）|
+| Gate | tail veto（小帽子树 / 单 τ）| Q | 先 `mlbot research scan condition-set`（或 `rd_loop`），再 `event_backtest --variant-grid` 双段验 | EXPERIMENT_INDEX.json + `_new_decision_doc.py` | 是（人审 → archetypes/gate.yaml）|
+| Entry | OR rules（locked）| Q | `mlbot research plateau` 或 `rd_loop` mode `entry-plateau`（子样本加 regime+prefilter subset）| top-3 候选报告 | 是（人审 → entry_filters.yaml）|
 | Execution | 紧 SL + 较快兑现 | 年度 | `execution_opt grid`（不自动 promote）| — | 否（默认）|
 | **监控** | bull_share / trigger_rate / IC / PSI | W cron | `PYTHONPATH=src:scripts python scripts/regime_watchdog.py --window-parquet ... --baseline-json config/monitoring/regime_watchdog_baseline.json` | report.json + exit=1 alert | 否 |
 | 漂移触发 | plateau drift / IC sign-flip | W cron | `PYTHONPATH=src:scripts python scripts/regime_drift_monitor.py --strategies tpc,bpc,me,srb --window-parquet ...` | drift report | 否 |
@@ -243,8 +297,8 @@ PYTHONPATH=src:scripts python scripts/regime_watchdog.py \
 
 | 层 | 现状 | 触发 | 命令 | 产物 | 改 yaml？ |
 |---|---|---|---|---|---|
-| Regime（`semantic_chop` 0.50/0.32 双阈）| 半年看 | 半年 / drift | `quick_layer_scan feature-plateau --feature bpc_semantic_chop --operator ">="` | plateau 报告 | 否（仅复核） |
-| **语义代理选择**（§2.2.1）| 季度 R&D | Q | `quick_layer_scan condition-set --label <grid KPI 列>` + `event_backtest --variant-grid config/experiments/chop_grid_proxy_<日期>.yaml` | `results/<slug>/semantic_proxy_scan/<日期>.md` + 多腿回测 | 是（人审 → `entry_feature` / `max_semantic_chop_*`）|
+| Regime（`semantic_chop` 0.50/0.32 双阈）| 半年看 | 半年 / drift | `mlbot research scan feature-plateau --feature bpc_semantic_chop --operator ">="` | plateau 报告 | 否（仅复核） |
+| **语义代理选择**（§2.2.1）| 季度 R&D | Q | `mlbot research scan condition-set --label <grid KPI 列>` + `event_backtest --variant-grid config/experiments/chop_grid_proxy_<日期>.yaml` | `results/<slug>/semantic_proxy_scan/<日期>.md` + 多腿回测 | 是（人审 → `entry_feature` / `max_semantic_chop_*`）|
 | Prefilter（路由）| locked | 半年 | 同 B Prefilter（仅复核） | — | 否 |
 | Execution（grid spacing / fee-aware TP）| 年度 | 触发 | 多腿回测 grid | — | 否（默认）|
 
@@ -265,9 +319,9 @@ PYTHONPATH=src:scripts python scripts/regime_watchdog.py \
 |---|---|---|
 | A1 | 几乎不动 | — |
 | A2（未上 live） | Q | 占位（尾部代理） |
-| B | **Q：gate / entry / regime**；W：watchdog | `quick_layer_scan` → `event_backtest --variant-grid` |
+| B | **Q：gate / entry / regime**；W：watchdog | `mlbot research` / `rd_loop` → `event_backtest --variant-grid` |
 | C | **Q：语义代理 + 阈值**；半年：regime 复核 | 同 B，但 KPI 换多腿指标 |
-| Tree | **Q：IC 对齐 → 训树 → τ plateau**；不与 B 合并仓位 | `factor-eval` → `mlbot train final` → 回测验证 |
+| Tree | **Q：IC 对齐 → 训树 → τ plateau**；不与 B 合并仓位 | `mlbot research ic` / `factor-eval` → `mlbot train final` → 回测验证 |
 
 ---
 
@@ -275,7 +329,8 @@ PYTHONPATH=src:scripts python scripts/regime_watchdog.py \
 
 | 反模式 | 为什么 | 应该 |
 |---|---|---|
-| 跳过 quick_layer_scan，直接跑 backtest | 假设可能压根不成立，浪费 30min | 先 1-2 分钟扫 label |
+| 跳过 ① 假设筛查，直接跑 backtest | 假设可能压根不成立，浪费 30min | 先 `mlbot research scan`（1-2 分钟）|
+| 新实验仍从 `quick_layer_scan.py` 写起 | 与工具矩阵口径分裂 | `mlbot research *` 或 `rd_loop` |
 | 单段 walk-forward 决策 | 时段相关，B/H 案例已证 | 强制双段 |
 | 看 label success rate 等于看 R-multiple | label 高 ≠ 总 R 高（vol gate 案例） | 两者都看 |
 | 自动 promote（含 SHAP / optimizer 提议） | 人审才能抓住 cross-regime bug | 人审 + 决策文档 |
@@ -286,13 +341,13 @@ PYTHONPATH=src:scripts python scripts/regime_watchdog.py \
 
 | 案例 | 入口文档 | 触发的工具链 |
 |---|---|---|
-| TPC vol gate ABH 实验 | [`docs/decisions/tpc_gate_vol_ABH_experiment_20260526.md`](../decisions/tpc_gate_vol_ABH_experiment_20260526.md) | quick_layer_scan + 7 variants × 2 periods event_backtest + regime_watchdog |
+| TPC vol gate ABH 实验 | [`docs/decisions/tpc_gate_vol_ABH_experiment_20260526.md`](../decisions/tpc_gate_vol_ABH_experiment_20260526.md) | research scan + 7 variants × 2 periods event_backtest + regime_watchdog |
 
 ## 6. 与 ML4T 工作流对应
 
 | 阶段 | ML4T 标准 | 我们的实现 |
 |---|---|---|
-| Hypothesis | 章节 4：因子构造直觉 | `quick_layer_scan` + 人脑 |
+| Hypothesis | 章节 4：因子构造直觉 | `mlbot research` / `rd_loop` + 人脑 |
 | Backtest | 章节 8：vectorbt walk-forward | `event_backtest`（订单流级，比 ML4T 标准更细） |
 | Cross-validation | 章节 7：Purged K-fold | **不用 K-fold**：`mlbot train` 用 causal `TimeSeriesSplit`；promote 用 **多窗口 walk-forward 共识**（recent + bull + 可选第三段），见 [Wave 3 §3](../experiments/z实验_001_bpc/wave3/02_meta_findings_on_meta_algo.md) |
 | Live → Monitoring | 章节 23 | `regime_watchdog` + `regime_drift_monitor`（含 PSI / IC drift） |
@@ -303,7 +358,7 @@ PYTHONPATH=src:scripts python scripts/regime_watchdog.py \
 |---|---|---|
 | P1 | 多窗口 walk-forward 共识（≥3 段） | 替代 Purged/CPCV；crypto regime 短 → 更需要 **因果** 多段，不是 K-fold 平均 |
 | ~~P2~~ | ~~quick_layer_scan `--bucket-by`~~ | ✅ 已落地（`ema` / `calendar` / `feature_quantile`） |
-| ~~P2~~ | ~~`scripts/rd_loop.py` 一键 driver~~ | ✅ scan → variant-grid → decision doc |
+| ~~P2~~ | ~~`scripts/rd_loop.py` 一键 driver~~ | ✅ `mlbot research` scan → variant-grid → decision doc |
 | ~~P2~~ | ~~regime_watchdog 加 PSI / IC drift~~ | ✅ 已落地 |
 | ~~P3~~ | ~~event_backtest 加 `--variant-grid`~~ | ✅ 已落地 |
 | ~~P3~~ | ~~自动生成决策文档骨架~~ | ✅ `_new_decision_doc.py` |
