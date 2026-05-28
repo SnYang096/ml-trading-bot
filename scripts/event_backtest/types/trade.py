@@ -14,7 +14,7 @@ class ClosedTrade:
     exit_time: datetime
     atr_at_entry: float
     pnl_r: float  # PnL in R-multiples
-    pnl_usd: float  # notional PnL (per-unit)
+    pnl_usd: float  # realized USDT PnL (same as pnl_usd_realized when economics known)
     exit_reason: str
     pnl_usd_realized: float = 0.0  # realized PnL in USDT (qty/notional aware)
     notional_usdt: float = 0.0  # entry quote notional

@@ -1,11 +1,26 @@
+# CompressionBreakout Entry Filter
+#
+# 层职责（与 gate 分工）:
+#   - gate:        deny 坏区段 / 系统安全（含结构类 anti：深负 accel、异常 vol 等）
+#   - entry_filter: 订单流「何时扳机」— 仅 OR 正向 trigger；无显著正向则保持 filters: []
+#
+# 候选特征池见 features_entry_filter.yaml（VPIN/CVD/footprint/cluster/funding-OI）。
+# 筛查: config/experiments/me/rd_loop_me_entry_filter_orderflow.yaml
+# Anti 候选走 gate: config/experiments/me/rd_loop_me_gate_anti.yaml
+
 filters: []
-# ── VPIN / 点火实验（默认关）：与上文同款几何 + 订单流语义；逐项 enabled 对照 event_backtest
-#    列来自 ME 同源：vpin_scene_semantic_scores_f、dual_ignition_f、vpin_features_f
-#    （见 semantic_polarity / gate_me_vpin_ma20_high）
-# Disabled filters do not contribute to live_fc auto-detect; list columns here so
-# VPIN/ignition metrics are still computed while experiments stay off.
-prefetch_columns:
-  - vpin_quantile_rank_20
-  - vpin_ignition_score
-  - dual_ignition_score
+
 combination_mode: or
+
+# 实验关时仍预取列，供 live_fc / gate / rd_loop 扫描
+prefetch_columns:
+  - vpin_ignition_score
+  - vpin_quantile_rank_20
+  - ofci_pct
+  - shd_pct
+  - fp_max_imbalance_ratio
+  - cvd_change_5_normalized
+  - me_cvd_alignment
+  - trade_cluster_max_buy_run_zscore_50
+  - trade_cluster_max_sell_run_zscore_50
+  - volume_ratio_pct

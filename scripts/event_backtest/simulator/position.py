@@ -316,6 +316,66 @@ class PositionSimulator:
             "pnl_usd_realized": float(realized),
         }
 
+    def _risk_budget_usdt(self, pos: Dict[str, Any]) -> float:
+        rb = float(self._risk_per_slot_usdt or 0.0)
+        sm = float(pos.get("_size_multiplier", 1.0) or 1.0)
+        if rb <= 0.0 or sm <= 0.0:
+            return 0.0
+        return rb * sm
+
+    def _price_path_pnl_r(
+        self,
+        *,
+        pos: Dict[str, Any],
+        entry_price: float,
+        exit_price: float,
+        qty: Optional[float] = None,
+    ) -> float:
+        risk = (
+            float(pos.get("initial_risk_distance", 0.0) or 0.0)
+            or float(pos.get("atr_at_entry", 0.0) or 0.0)
+            or 0.0
+        )
+        if risk <= 0.0:
+            return 0.0
+        is_long = pos.get("side") in {"LONG", "BUY"}
+        if qty is not None and float(qty) > 0.0:
+            q = float(qty)
+            pnl_usd = (
+                (exit_price - entry_price) * q
+                if is_long
+                else (entry_price - exit_price) * q
+            )
+        else:
+            pnl_usd = (
+                (exit_price - entry_price) if is_long else (entry_price - exit_price)
+            )
+        raw_r = pnl_usd / risk
+        if self.fee_rate > 0:
+            fee_r = (entry_price + exit_price) * float(self.fee_rate) / risk
+            raw_r -= fee_r
+        return raw_r * float(pos.get("_size_multiplier", 1.0) or 1.0)
+
+    def _pnl_r_from_economics(
+        self,
+        *,
+        pos: Dict[str, Any],
+        econ: Dict[str, float],
+        entry_price: float,
+        exit_price: float,
+        qty_override: Optional[float] = None,
+    ) -> float:
+        realized = float(econ.get("pnl_usd_realized", 0.0) or 0.0)
+        budget = self._risk_budget_usdt(pos)
+        if budget > 0.0:
+            return realized / budget
+        return self._price_path_pnl_r(
+            pos=pos,
+            entry_price=entry_price,
+            exit_price=exit_price,
+            qty=qty_override,
+        )
+
     def open_position(
         self,
         intent: Any,
@@ -803,18 +863,14 @@ class PositionSimulator:
                         qty_override=float(sell_qty),
                     )
                     entry_price_p = float(pos.get("entry_price", 0.0) or 0.0)
-                    risk_p = (
-                        float(pos.get("initial_risk_distance", 0.0) or 0.0)
-                        or float(pos.get("atr_at_entry", 0.0) or 0.0)
-                        or 0.0
+                    pnl_r_p = self._pnl_r_from_economics(
+                        pos=pos,
+                        econ=econ_part,
+                        entry_price=entry_price_p,
+                        exit_price=float(bar_close),
+                        qty_override=float(sell_qty),
                     )
-                    is_long_p = pos.get("side") in {"LONG", "BUY"}
-                    pnl_usd_p = (
-                        (float(bar_close) - entry_price_p) * float(sell_qty)
-                        if is_long_p
-                        else (entry_price_p - float(bar_close)) * float(sell_qty)
-                    )
-                    _raw_r_p = pnl_usd_p / risk_p if risk_p > 0 else 0.0
+                    realized_p = float(econ_part.get("pnl_usd_realized", 0.0) or 0.0)
                     trade_p = ClosedTrade(
                         symbol=pos.get("symbol", ""),
                         side=pos["side"],
@@ -823,12 +879,10 @@ class PositionSimulator:
                         entry_time=pos["entry_time"],
                         exit_time=now,
                         atr_at_entry=pos.get("atr_at_entry", 0),
-                        pnl_r=_raw_r_p * float(pos.get("_size_multiplier", 1.0) or 1.0),
-                        pnl_usd=pnl_usd_p,
+                        pnl_r=pnl_r_p,
+                        pnl_usd=realized_p,
                         exit_reason=part_reason,
-                        pnl_usd_realized=float(
-                            econ_part.get("pnl_usd_realized", 0.0) or 0.0
-                        ),
+                        pnl_usd_realized=realized_p,
                         notional_usdt=float(econ_part.get("notional_usdt", 0.0) or 0.0),
                         qty_base=float(sell_qty),
                         entry_fee_usdt=float(
@@ -877,26 +931,6 @@ class PositionSimulator:
 
             if close_reason:
                 entry_price = pos["entry_price"]
-                # 用 initial_risk_distance (= initial_r × ATR) 归一化 R-multiple
-                # 与研究回测 (backtest_execution_layer.py) 保持一致
-                risk = (
-                    pos.get("initial_risk_distance") or pos.get("atr_at_entry", 0) or 0
-                )
-                is_long = pos["side"] in {"LONG", "BUY"}
-                pnl_usd = (
-                    (exit_price - entry_price)
-                    if is_long
-                    else (entry_price - exit_price)
-                )
-                _raw_r = pnl_usd / risk if risk > 0 else 0.0
-                # 扣除双边手续费 (开仓+平仓)
-                # fee_r = (entry_price + exit_price) × fee_rate / risk
-                if self.fee_rate > 0 and risk > 0:
-                    fee_r = (entry_price + exit_price) * self.fee_rate / risk
-                    _raw_r -= fee_r
-                # 应用 position scale — 与向量回测 exec_returns *= _position_scale 对齐
-                pnl_r = _raw_r * pos.get("_size_multiplier", 1.0)
-
                 # 归一化 exit_reason: 与向量回测对齐命名
                 normalized_reason = close_reason
                 if close_reason == "stop_loss":
@@ -911,6 +945,13 @@ class PositionSimulator:
                     pos=pos,
                     exit_price=float(exit_price),
                 )
+                realized = float(econ.get("pnl_usd_realized", 0.0) or 0.0)
+                pnl_r = self._pnl_r_from_economics(
+                    pos=pos,
+                    econ=econ,
+                    entry_price=float(entry_price),
+                    exit_price=float(exit_price),
+                )
 
                 trade = ClosedTrade(
                     symbol=pos.get("symbol", ""),
@@ -921,9 +962,9 @@ class PositionSimulator:
                     exit_time=now,
                     atr_at_entry=pos.get("atr_at_entry", 0),
                     pnl_r=pnl_r,
-                    pnl_usd=pnl_usd,
+                    pnl_usd=realized,
                     exit_reason=normalized_reason,
-                    pnl_usd_realized=float(econ.get("pnl_usd_realized", 0.0)),
+                    pnl_usd_realized=realized,
                     notional_usdt=float(econ.get("notional_usdt", 0.0)),
                     qty_base=float(econ.get("qty_base", 0.0)),
                     entry_fee_usdt=float(econ.get("entry_fee_usdt", 0.0)),
@@ -998,26 +1039,17 @@ class PositionSimulator:
                 if not meta:
                     continue
                 entry_price = float(pos.get("entry_price", 0.0) or 0.0)
-                risk = (
-                    float(pos.get("initial_risk_distance", 0.0) or 0.0)
-                    or float(pos.get("atr_at_entry", 0.0) or 0.0)
-                    or 0.0
-                )
-                is_long = pos.get("side") in {"LONG", "BUY"}
                 forced_exit = float(meta.get("exit_price", bar_close) or bar_close)
-                pnl_usd = (
-                    (forced_exit - entry_price)
-                    if is_long
-                    else (entry_price - forced_exit)
-                )
-                _raw_r = pnl_usd / risk if risk > 0 else 0.0
-                if self.fee_rate > 0 and risk > 0:
-                    fee_r = (entry_price + forced_exit) * self.fee_rate / risk
-                    _raw_r -= fee_r
-                pnl_r = _raw_r * float(pos.get("_size_multiplier", 1.0) or 1.0)
                 econ = self._build_close_economics(
                     pos=pos,
                     exit_price=float(forced_exit),
+                )
+                realized = float(econ.get("pnl_usd_realized", 0.0) or 0.0)
+                pnl_r = self._pnl_r_from_economics(
+                    pos=pos,
+                    econ=econ,
+                    entry_price=entry_price,
+                    exit_price=forced_exit,
                 )
                 trade = ClosedTrade(
                     symbol=pos.get("symbol", ""),
@@ -1028,9 +1060,9 @@ class PositionSimulator:
                     exit_time=now,
                     atr_at_entry=pos.get("atr_at_entry", 0),
                     pnl_r=pnl_r,
-                    pnl_usd=pnl_usd,
+                    pnl_usd=realized,
                     exit_reason=str(meta.get("normalized_reason", "sl")),
-                    pnl_usd_realized=float(econ.get("pnl_usd_realized", 0.0)),
+                    pnl_usd_realized=realized,
                     notional_usdt=float(econ.get("notional_usdt", 0.0)),
                     qty_base=float(econ.get("qty_base", 0.0)),
                     entry_fee_usdt=float(econ.get("entry_fee_usdt", 0.0)),
@@ -1071,17 +1103,16 @@ class PositionSimulator:
         """回测结束时关闭所有持仓"""
         closed = []
         for pid, pos in list(self._positions.items()):
-            is_long = pos["side"] in {"LONG", "BUY"}
             entry_price = pos["entry_price"]
-            risk = pos.get("initial_risk_distance") or pos.get("atr_at_entry", 0) or 0
-            pnl_usd = (price - entry_price) if is_long else (entry_price - price)
-            _raw_r = pnl_usd / risk if risk > 0 else 0.0
-            if self.fee_rate > 0 and risk > 0:
-                fee_r = (entry_price + price) * self.fee_rate / risk
-                _raw_r -= fee_r
-            pnl_r = _raw_r * pos.get("_size_multiplier", 1.0)
             econ = self._build_close_economics(
                 pos=pos,
+                exit_price=float(price),
+            )
+            realized = float(econ.get("pnl_usd_realized", 0.0) or 0.0)
+            pnl_r = self._pnl_r_from_economics(
+                pos=pos,
+                econ=econ,
+                entry_price=float(entry_price),
                 exit_price=float(price),
             )
             trade = ClosedTrade(
@@ -1093,9 +1124,9 @@ class PositionSimulator:
                 exit_time=now,
                 atr_at_entry=pos.get("atr_at_entry", 0),
                 pnl_r=pnl_r,
-                pnl_usd=pnl_usd,
+                pnl_usd=realized,
                 exit_reason="end_of_backtest",
-                pnl_usd_realized=float(econ.get("pnl_usd_realized", 0.0)),
+                pnl_usd_realized=realized,
                 notional_usdt=float(econ.get("notional_usdt", 0.0)),
                 qty_base=float(econ.get("qty_base", 0.0)),
                 entry_fee_usdt=float(econ.get("entry_fee_usdt", 0.0)),
@@ -1144,19 +1175,16 @@ class PositionSimulator:
         for pid, pos in self._positions.items():
             if pos.get("archetype", "").lower() != archetype.lower():
                 continue
-            is_long = pos["side"] in {"LONG", "BUY"}
             entry_price = pos["entry_price"]
-            risk = pos.get("initial_risk_distance") or pos.get("atr_at_entry", 0) or 0
-            pnl_usd = (
-                (close_price - entry_price) if is_long else (entry_price - close_price)
-            )
-            _raw_r = pnl_usd / risk if risk > 0 else 0.0
-            if self.fee_rate > 0 and risk > 0:
-                fee_r = (entry_price + close_price) * self.fee_rate / risk
-                _raw_r -= fee_r
-            pnl_r = _raw_r * pos.get("_size_multiplier", 1.0)
             econ = self._build_close_economics(
                 pos=pos,
+                exit_price=float(close_price),
+            )
+            realized = float(econ.get("pnl_usd_realized", 0.0) or 0.0)
+            pnl_r = self._pnl_r_from_economics(
+                pos=pos,
+                econ=econ,
+                entry_price=float(entry_price),
                 exit_price=float(close_price),
             )
             trade = ClosedTrade(
@@ -1168,9 +1196,9 @@ class PositionSimulator:
                 exit_time=close_time,
                 atr_at_entry=pos.get("atr_at_entry", 0),
                 pnl_r=pnl_r,
-                pnl_usd=pnl_usd,
+                pnl_usd=realized,
                 exit_reason="evicted",
-                pnl_usd_realized=float(econ.get("pnl_usd_realized", 0.0)),
+                pnl_usd_realized=realized,
                 notional_usdt=float(econ.get("notional_usdt", 0.0)),
                 qty_base=float(econ.get("qty_base", 0.0)),
                 entry_fee_usdt=float(econ.get("entry_fee_usdt", 0.0)),
@@ -1535,6 +1563,23 @@ class PositionSimulator:
             pos["trailing_activated"] = False
         # 加仓继承父仓的 regime scale，但风险预算按 add_size_multipliers 缩小
         pos["_size_multiplier"] = parent_mult * add_mult
+        _add_entry = float(entry_bar.get("close", 0) or 0)
+        if _add_notional_usd > 0.0:
+            pos["_entry_notional_usdt"] = float(_add_notional_usd)
+            pos["_qty_base"] = (
+                float(_add_notional_usd / _add_entry) if _add_entry > 0.0 else 0.0
+            )
+            pos["_entry_fee_usdt"] = float(_add_notional_usd) * max(
+                0.0, float(self.fee_rate or 0.0)
+            )
+        for _inherit_key in (
+            "initial_risk_distance",
+            "atr_stop_pct",
+            "effective_stop_pct",
+            "sizing_stop_source",
+        ):
+            if parent_pos.get(_inherit_key) is not None:
+                pos[_inherit_key] = parent_pos[_inherit_key]
         self._positions[pid] = pos
         self.last_add_reject_reason = ""
         return pid

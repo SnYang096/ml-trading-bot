@@ -24,7 +24,12 @@ def main(argv: list[str] | None = None) -> int:
     common = argparse.ArgumentParser(add_help=False)
     add_common_research_args(common)
     common.add_argument("--label", default="success_no_rr_extreme")
-    common.add_argument("--filter", nargs="*", default=[])
+    common.add_argument(
+        "--filter",
+        action="append",
+        default=[],
+        help="Subset DSL clause (repeatable; ANDed). rd_loop yaml emits one --filter per rule.",
+    )
 
     cs = sub.add_parser("condition-set", parents=[common])
     cs.add_argument("--condition", action="append", required=True)

@@ -329,6 +329,27 @@ def main() -> int:
         "未指定时自动查找 config/strategies/{strategy}/features_entry_filter.yaml",
     )
     p.add_argument(
+        "--apply-regime",
+        action="store_true",
+        help="direction 之后按 archetypes/regime.yaml 过滤 (与 backtest 漏斗一致)",
+    )
+    p.add_argument(
+        "--apply-prefilter",
+        action="store_true",
+        help="regime 之后按 archetypes/prefilter.yaml 过滤 (与 backtest 漏斗一致)",
+    )
+    p.add_argument(
+        "--recompute-gate",
+        action="store_true",
+        help="从 gate.yaml 重算 gate_decision，而非使用 parquet 中旧 gate 列 "
+        "(direction/prefilter 变更后必须用此选项，否则 distribution mismatch)",
+    )
+    p.add_argument(
+        "--skip-gate",
+        action="store_true",
+        help="跳过 gate 过滤 (仅 regime+prefilter+direction 基线; 样本过少时用)",
+    )
+    p.add_argument(
         "--scoring-method",
         default=None,
         choices=get_canonical_methods(),
@@ -391,34 +412,57 @@ def main() -> int:
     if "_symbol" in df.columns and "symbol" not in df.columns:
         df["symbol"] = df["_symbol"]
 
-    if "bpc_breakout_direction" in df.columns:
-        df["entry_direction"] = df["bpc_breakout_direction"].astype(float).copy()
-    else:
-        # 使用 direction.yaml 确定方向
-        from scripts.backtest_execution_layer import (
-            load_direction_config,
-            apply_direction_rules,
-        )
+    from scripts.backtest_execution_layer import (
+        load_direction_config,
+        apply_direction_rules,
+        _apply_regime_vectorized,
+        _apply_prefilter_vectorized,
+        _apply_gate_from_yaml_vectorized,
+    )
 
-        dir_cfg = load_direction_config(args.strategy, args.strategies_root)
-        if dir_cfg:
-            applied = apply_direction_rules(df, args.strategy, dir_cfg)
-            if applied:
-                print(f"   Direction: {applied} (from direction.yaml)")
-            else:
-                # direction.yaml 规则无一命中
-                if "entry_direction" in df.columns:
-                    print(f"   Direction: entry_direction (原始列)")
-                else:
-                    print(f"❌ direction.yaml 规则无一命中，且无 entry_direction 列")
-                    return 1
-        elif "entry_direction" in df.columns:
-            print(f"   Direction: entry_direction (原始列, 无 direction.yaml)")
+    # direction.yaml 优先 (与 optimize_entry_filter_snotio / backtest 一致);
+    # bpc_breakout_direction 仅作 BPC 等无 direction_rules 时的 fallback
+    dir_cfg = load_direction_config(args.strategy, args.strategies_root)
+    if dir_cfg and dir_cfg.get("direction_rules"):
+        applied = apply_direction_rules(df, args.strategy, dir_cfg)
+        if applied:
+            print(f"   Direction: {applied} (from direction.yaml)")
         else:
+            if "entry_direction" in df.columns:
+                print("   Direction: entry_direction (direction.yaml 无命中, 用原始列)")
+            else:
+                print("❌ direction.yaml 规则无一命中，且无 entry_direction 列")
+                return 1
+    elif "bpc_breakout_direction" in df.columns:
+        df["entry_direction"] = df["bpc_breakout_direction"].astype(float).copy()
+        print("   Direction: bpc_breakout_direction (fallback, 无 direction_rules)")
+    elif "entry_direction" in df.columns:
+        print("   Direction: entry_direction (原始列, 无 direction.yaml)")
+    else:
+        print(
+            "❌ 无法确定方向: 无 direction.yaml / bpc_breakout_direction / entry_direction"
+        )
+        return 1
+
+    if getattr(args, "apply_regime", False):
+        _n_before = int((df["entry_direction"] != 0).sum())
+        _apply_regime_vectorized(df, args.strategy, args.strategies_root)
+        _n_after = int((df["entry_direction"] != 0).sum())
+        if _n_before > _n_after:
             print(
-                f"❌ 无法确定方向: 无 bpc_breakout_direction / direction.yaml / entry_direction"
+                f"   🌐 Regime (--apply-regime): {_n_before} → {_n_after} "
+                f"(rejected {_n_before - _n_after})"
             )
-            return 1
+
+    if getattr(args, "apply_prefilter", False):
+        _n_before = int((df["entry_direction"] != 0).sum())
+        _apply_prefilter_vectorized(df, args.strategy, args.strategies_root)
+        _n_after = int((df["entry_direction"] != 0).sum())
+        if _n_before > _n_after:
+            print(
+                f"   🛡️  Prefilter (--apply-prefilter): {_n_before} → {_n_after} "
+                f"(rejected {_n_before - _n_after})"
+            )
 
     # 直接使用 logs 中的 OHLC（需要 high, low, close, atr）
     has_ohlc = all(c in df.columns for c in ["high", "low", "close", "atr"])
@@ -431,19 +475,29 @@ def main() -> int:
     # Gate 过滤: entry filter 阈值必须在 gate 过滤后的分布上优化,
     # 否则会和 backtest/execution 产生 distribution mismatch
     # (backtest 先过 gate_decision 再应用 entry filter)
-    if "gate_decision" in merged.columns:
+    if getattr(args, "skip_gate", False):
+        print("   ⏭️  Gate skipped (--skip-gate)")
+    elif getattr(args, "recompute_gate", False):
+        _apply_gate_from_yaml_vectorized(merged, args.strategy, args.strategies_root)
         veto_mask = merged["gate_decision"] != "allow"
         n_allowed = int((~veto_mask).sum())
         merged.loc[veto_mask, "entry_direction"] = 0.0
         print(
-            f"   \U0001f6aa Gate filter (auto): {n_allowed} allow / {len(merged)} total"
+            f"   \U0001f6aa Gate (--recompute-gate): {n_allowed} allow / {len(merged)} total"
+        )
+    elif "gate_decision" in merged.columns:
+        veto_mask = merged["gate_decision"] != "allow"
+        n_allowed = int((~veto_mask).sum())
+        merged.loc[veto_mask, "entry_direction"] = 0.0
+        print(
+            f"   \U0001f6aa Gate filter (parquet): {n_allowed} allow / {len(merged)} total"
         )
     elif "gate_ok" in merged.columns:
         veto_mask = merged["gate_ok"] != True  # noqa: E712
         n_allowed = int((~veto_mask).sum())
         merged.loc[veto_mask, "entry_direction"] = 0.0
         print(
-            f"   \U0001f6aa Gate filter (auto): {n_allowed} allow / {len(merged)} total"
+            f"   \U0001f6aa Gate filter (parquet): {n_allowed} allow / {len(merged)} total"
         )
     else:
         print(

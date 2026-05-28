@@ -1,22 +1,21 @@
-# CompressionBreakout（原 ME-Short）Prefilter — 突破前压缩语义锚
+# CompressionBreakout Prefilter — v3（2026-05-28 promote）
 #
-# 职责: archetype 成立的前置条件 — 不满足的样本不参与 Gate 训练
-# 与 regime 分工：regime = chop（+ 候选 EMA1200）；prefilter = 压缩释放 + 波动带 + OI
-#
-# 数据源: features_labeled.parquet（2026-03-13 元算法，112361 行）
+# 职责: archetype 前置 — 压缩释放 + 波动带 + OI 低位（与 regime chop 分工）
+# 来源: config_experiments/me_prefilter_fix_v3_atr_loose_strategies
+# 诊断: 移除 compression_duration（与 atr>=0.65 互斥）；oi 反向改为 <=0.10
 
 rules:
   - feature: atr_percentile
     operator: ">="
-    value: 0.65
+    value: 0.55
     locked: true
-    lock_reason: "压缩突破：中高波扩张区，避免低波噪声"
+    lock_reason: "压缩突破：中高波扩张区（v3 放宽下界）"
 
   - feature: atr_percentile
     operator: "<="
-    value: 0.92
+    value: 0.95
     locked: true
-    lock_reason: "压缩突破：避免极端尾段过热后追空"
+    lock_reason: "压缩突破：避免极端尾段过热"
 
   - feature: recent_compression_decay
     operator: ">="
@@ -30,24 +29,13 @@ rules:
     locked: true
     lock_reason: "压缩突破：限制在释放早段，避免中后段衰竭"
 
-  - feature: compression_duration
-    operator: ">="
-    value: 0.05
-    locked: true
-    lock_reason: "压缩突破：要求更充分压缩蓄势再扩张"
-
   - feature: oi_compression_score
-    operator: ">="
-    value: 0.45
+    operator: "<="
+    value: 0.10
     locked: true
-    lock_reason: "压缩突破：OI 压缩/拥挤门槛，降低无效触发"
+    lock_reason: "OI 压缩低位带（prod oi>=0.45 已证反向）"
 
 last_evaluation:
-  timestamp: "2026-03-13"
-  data_source: "features_labeled.parquet"
-  n_rows: 112361
-  baseline_bad_rate: 0.0000
-  baseline_median_rr: +0.0276
-  positive_signals: []
-  anti_signals: []
-  absence_signals: []
+  timestamp: "2026-05-28"
+  data_source: "results/train_final/me/train_final_20260519_133835_rr_extreme/me/features_labeled.parquet"
+  notes: "v3 promote; v4 event_backtest + v6 direction holdout Mean R +0.25 (49 trades)"

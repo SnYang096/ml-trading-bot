@@ -1,0 +1,74 @@
+# ME entry_filter — 订单流特征专项（features_entry_filter.yaml 池）
+#
+# 仅在 v3 prefilter pass 上扫；|z|>2 且 Δpp>0 才写入 entry_filters.yaml。
+# 无候选达标 → 保持 filters: []（与 BPC 订单流 OR trigger 同思路）。
+#
+# 跑法:
+#   PYTHONPATH=src:scripts python scripts/rd_loop.py \
+#     --hypothesis-yaml config/experiments/me/rd_loop_me_entry_filter_orderflow.yaml
+
+topic: me_entry_filter_orderflow
+strategy: me
+output_dir: results/rd_loop/me_entry_filter_orderflow
+
+parquet: &me_pq results/train_final/me/train_final_20260519_133835_rr_extreme/me/features_labeled.parquet
+prefilter_v3_filter: &v3_filter
+  - tpc_semantic_chop<=0.40
+  - atr_percentile>=0.55
+  - atr_percentile<=0.95
+  - recent_compression_decay>=0.02
+  - recent_compression_decay<=0.20
+  - oi_compression_score<=0.10
+
+quick_layer_scans:
+  - mode: condition-set
+    features_parquet: *me_pq
+    label: success_no_rr_extreme
+    filter: *v3_filter
+    condition:
+      # VPIN / footprint
+      - "OF1_vpin_q50: vpin_ignition_score>=0.055"
+      - "OF2_vpin_q90: vpin_ignition_score>=0.185"
+      - "OF3_vpin_rank_high: vpin_quantile_rank_20>=0.75"
+      - "OF4_ofci_high: ofci_pct>=0.75"
+      - "OF5_shd_high: shd_pct>=0.75"
+      - "OF6_fp_imbalance: fp_max_imbalance_ratio>=1.0"
+      # CVD / cluster
+      - "OF7_cvd_chg_pos: cvd_change_5_normalized>=0.02"
+      - "OF8_cvd_chg_neg: cvd_change_5_normalized<=-0.02"
+      - "OF9_cluster_buy_run: trade_cluster_max_buy_run_zscore_50>=1.0"
+      - "OF10_cluster_sell_run: trade_cluster_max_sell_run_zscore_50>=1.0"
+      - "OF11_bpc_cvd_absorb: bpc_cvd_absorption>=1.0"
+      - "OF12_bpc_recovery: bpc_recovery_strength>=0.5"
+    out: quick_scan/orderflow_condition_set_success.md
+
+  - mode: feature-plateau
+    features_parquet: *me_pq
+    label: success_no_rr_extreme
+    feature: ofci_pct
+    operator: ">="
+    grid: "0.50,0.60,0.70,0.80,0.90"
+    filter: *v3_filter
+    out: quick_scan/plateau_ofci.md
+
+  - mode: feature-plateau
+    features_parquet: *me_pq
+    label: success_no_rr_extreme
+    feature: fp_max_imbalance_ratio
+    operator: ">="
+    grid: "0.5,1.0,1.5,2.0"
+    filter: *v3_filter
+    out: quick_scan/plateau_fp_imbalance.md
+
+  - mode: ic-decay
+    features_parquet: *me_pq
+    target: forward_rr
+    features: vpin_ignition_score,vpin_quantile_rank_20,ofci_pct,shd_pct,fp_max_imbalance_ratio,cvd_change_5_normalized,trade_cluster_max_buy_run_zscore_50,trade_cluster_max_sell_run_zscore_50,bpc_cvd_absorption,bpc_recovery_strength
+    horizons: "1,3,5,10,20"
+    subset: tpc_semantic_chop<=0.40 AND atr_percentile>=0.55 AND atr_percentile<=0.95 AND recent_compression_decay>=0.02 AND recent_compression_decay<=0.20 AND oi_compression_score<=0.10
+    out: quick_scan/ic_orderflow_v3base.md
+
+decision_doc:
+  topic: me_entry_filter_orderflow
+  topic_template: default
+  out: decision_doc_skeleton.md

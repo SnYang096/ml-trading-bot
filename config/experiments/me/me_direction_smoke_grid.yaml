@@ -1,0 +1,39 @@
+# ME direction SMOKE — BTC+ETH × 2024H2，对比 v4 baseline 与 3 个 direction 变体
+#
+# 目的：验证 DIAGNOSIS 强证据 (macd_atr IC -0.092 / reversed_bull combo +17.74Δpp)
+#       下哪种 direction.yaml 能把 Mean R 从 v4 的 -0.78 翻成正。
+#
+# 跑法：
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/me/me_direction_smoke_grid.yaml --quiet-signal-logs
+
+experiment_id: me_direction_smoke_20260528
+strategy: me
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+
+runs:
+  - variant: v4_baseline_short_only
+    strategies_root: config_experiments/me_prefilter_fix_v4_no_safety_gates_strategies
+    start_date: "2024-07-01"
+    end_date: "2025-01-01"
+    output_dir: results/me/experiments/direction_smoke/v4_baseline
+
+  - variant: v5_macd_reversed
+    strategies_root: config_experiments/me_direction_v5_macd_reversed_strategies
+    start_date: "2024-07-01"
+    end_date: "2025-01-01"
+    output_dir: results/me/experiments/direction_smoke/v5_macd_reversed
+
+  - variant: v6_ema_only
+    strategies_root: config_experiments/me_direction_v6_ema_only_strategies
+    start_date: "2024-07-01"
+    end_date: "2025-01-01"
+    output_dir: results/me/experiments/direction_smoke/v6_ema_only
+
+  - variant: v7_reversed_bull
+    strategies_root: config_experiments/me_direction_v7_reversed_bull_strategies
+    start_date: "2024-07-01"
+    end_date: "2025-01-01"
+    output_dir: results/me/experiments/direction_smoke/v7_reversed_bull

@@ -1,9 +1,9 @@
-name: me-short
-description: 'ME-Short entry filter: first-expansion timing only.
+name: me
+description: |
+  CompressionBreakout entry filter 特征池 — 仅订单流 / 微观结构择时。
+  无 |z|>2 正向 trigger 时 entry_filters.yaml 保持 filters: []。
+  结构类 anti（me_accel 深负、volume 异常）走 gate.yaml，不在此层。
 
-  聚焦扩张状态、压缩释放记忆与订单流确认，过滤掉中后段噪声触发。
-
-  '
 feature_pipeline:
   exclude_columns:
     - atr
