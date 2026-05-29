@@ -393,23 +393,62 @@ class BinanceWebSocketClient:
             async with bsm.futures_multiplex_socket(
                 streams=streams, futures_type=FuturesType.USD_M
             ) as socket:
-                while not stop_event.is_set():
-                    try:
-                        message = await asyncio.wait_for(socket.recv(), timeout=1.0)
-                    except asyncio.TimeoutError:
-                        elapsed = time.monotonic() - last_message_monotonic
-                        if elapsed > self.connection_monitor.heartbeat_timeout:
-                            raise TimeoutError(
-                                "No aggTrade messages received for "
-                                f"{elapsed:.1f}s; restarting websocket session"
-                            )
-                        continue
+                inbound: asyncio.Queue[Optional[Dict[str, Any]]] = asyncio.Queue(
+                    maxsize=max(
+                        512,
+                        int(os.getenv("MLBOT_BINANCE_WS_INBOUND_QUEUE", "4096")),
+                    )
+                )
+                recv_errors: List[BaseException] = []
 
-                    tick = _parse_message(message)
-                    if tick is None:
-                        continue
-                    _dispatch_tick(tick)
-                    yield tick
+                async def _recv_loop() -> None:
+                    try:
+                        while not stop_event.is_set():
+                            try:
+                                message = await asyncio.wait_for(
+                                    socket.recv(), timeout=1.0
+                                )
+                            except asyncio.TimeoutError:
+                                continue
+                            await inbound.put(message)
+                    except Exception as exc:
+                        recv_errors.append(exc)
+                    finally:
+                        await inbound.put(None)
+
+                recv_task = asyncio.create_task(
+                    _recv_loop(), name="binance-aggTrade-recv"
+                )
+                try:
+                    while not stop_event.is_set():
+                        if recv_errors:
+                            raise recv_errors[0]
+                        try:
+                            message = await asyncio.wait_for(inbound.get(), timeout=1.0)
+                        except asyncio.TimeoutError:
+                            elapsed = time.monotonic() - last_message_monotonic
+                            if elapsed > self.connection_monitor.heartbeat_timeout:
+                                raise TimeoutError(
+                                    "No aggTrade messages received for "
+                                    f"{elapsed:.1f}s; restarting websocket session"
+                                )
+                            continue
+                        if message is None:
+                            if recv_errors:
+                                raise recv_errors[0]
+                            break
+
+                        tick = _parse_message(message)
+                        if tick is None:
+                            continue
+                        _dispatch_tick(tick)
+                        yield tick
+                finally:
+                    recv_task.cancel()
+                    try:
+                        await recv_task
+                    except asyncio.CancelledError:
+                        pass
 
         finally:
             if self._binance_client is not None:

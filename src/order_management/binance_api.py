@@ -24,13 +24,76 @@ _BINANCE_READ_LOCK = threading.Lock()
 _BINANCE_READ_LAST_AT = 0.0
 
 
-def _is_cancel_target_gone(exc: BaseException) -> bool:
-    """True when cancel target is already filled/canceled (Binance -2011, etc.)."""
+# Binance error codes that mean "this order/algo does not (or no longer) exists".
+_ORDER_MISS_CODES = (-2011, -2013, -2039)
+
+
+def _binance_http_error_payload(exc: BaseException) -> Optional[Dict[str, Any]]:
+    """Return {code, msg} parsed from a requests.HTTPError body, if available."""
+    if not isinstance(exc, requests.HTTPError) or exc.response is None:
+        return None
+    try:
+        body = (exc.response.text or "").strip()
+    except Exception:
+        body = ""
+    if not body:
+        return {"status": exc.response.status_code, "code": None, "msg": ""}
+    try:
+        data = exc.response.json()
+    except Exception:
+        return {"status": exc.response.status_code, "code": None, "msg": body}
+    if not isinstance(data, dict):
+        return {"status": exc.response.status_code, "code": None, "msg": body}
+    return {
+        "status": exc.response.status_code,
+        "code": data.get("code"),
+        "msg": str(data.get("msg", "")),
+    }
+
+
+def _is_order_lookup_miss(exc: BaseException) -> bool:
+    """True when an order/algo lookup target does not exist on the exchange.
+
+    Conservative on HTTP 400: only treated as a miss when the body carries a
+    known not-found code/message, or when it is a bare 400 with no structured
+    error payload (Binance's algo GET returns this for unknown clientAlgoId).
+    A 400 with any *other* explicit error code (e.g. -1021/-1022 clock/signature)
+    is NOT a miss and propagates, so systemic failures stay loud.
+    """
+    payload = _binance_http_error_payload(exc)
+    if payload is not None:
+        status = payload["status"]
+        code = payload["code"]
+        msg = str(payload["msg"]).lower()
+        if status == 404:
+            return True
+        if status == 400:
+            if code in _ORDER_MISS_CODES:
+                return True
+            if any(
+                token in msg
+                for token in ("not found", "unknown order", "does not exist")
+            ):
+                return True
+            # Bare 400 with no structured error => unknown order (algo GET).
+            return code is None and not msg
+        return False
     name = type(exc).__name__.lower()
     if "ordernotfound" in name or "order not found" in name:
         return True
-    msg = str(exc).lower()
-    return "unknown order" in msg or "-2011" in msg or "order does not exist" in msg
+    text = str(exc)
+    msg = text.lower()
+    return (
+        "not found" in msg
+        or any(str(c) in text for c in _ORDER_MISS_CODES)
+        or "unknown order" in msg
+        or "order does not exist" in msg
+    )
+
+
+def _is_cancel_target_gone(exc: BaseException) -> bool:
+    """True when cancel target is already filled/canceled (Binance -2011, etc.)."""
+    return _is_order_lookup_miss(exc)
 
 
 def _is_binance_rate_limit_detail(text: str) -> bool:
@@ -1233,8 +1296,7 @@ class BinanceAPI:
                 {"symbol": mid, "clientAlgoId": cid},
             )
         except Exception as e:
-            err = str(e).lower()
-            if "not found" in err or "-2013" in str(e) or "-2011" in str(e):
+            if _is_order_lookup_miss(e):
                 return None
             logger.error("查询 algo 订单失败 client_order_id=%s: %s", cid, e)
             raise

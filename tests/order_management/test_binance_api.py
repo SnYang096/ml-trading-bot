@@ -511,6 +511,53 @@ def test_open_algo_order_maps_trigger_price_to_stop_price(binance_api):
     assert row["info"]["closePosition"] is True
 
 
+def test_get_algo_order_by_client_id_returns_none_on_http_400(binance_api):
+    import requests
+
+    resp = Mock()
+    resp.status_code = 400
+    resp.text = '{"code":-2013,"msg":"Order does not exist."}'
+    resp.json.return_value = {"code": -2013, "msg": "Order does not exist."}
+    http_err = requests.HTTPError("400 Client Error", response=resp)
+
+    with patch.object(binance_api, "_fapi_signed_get", side_effect=http_err):
+        assert (
+            binance_api.get_algo_order_by_client_id("cg_07567cadd697", "BNBUSDT")
+            is None
+        )
+
+
+def test_get_algo_order_by_client_id_returns_none_on_bare_http_400(binance_api):
+    import requests
+
+    resp = Mock()
+    resp.status_code = 400
+    resp.text = ""
+    resp.json.side_effect = ValueError("no json")
+    http_err = requests.HTTPError("400 Client Error", response=resp)
+
+    with patch.object(binance_api, "_fapi_signed_get", side_effect=http_err):
+        assert binance_api.get_algo_order_by_client_id("cg_missing", "BNBUSDT") is None
+
+
+def test_get_algo_order_by_client_id_reraises_signature_error(binance_api):
+    """A 400 caused by signature/clock issues must stay loud, not be swallowed."""
+    import requests
+
+    resp = Mock()
+    resp.status_code = 400
+    resp.text = '{"code":-1022,"msg":"Signature for this request is not valid."}'
+    resp.json.return_value = {
+        "code": -1022,
+        "msg": "Signature for this request is not valid.",
+    }
+    http_err = requests.HTTPError("400 Client Error", response=resp)
+
+    with patch.object(binance_api, "_fapi_signed_get", side_effect=http_err):
+        with pytest.raises(requests.HTTPError):
+            binance_api.get_algo_order_by_client_id("cg_x", "BNBUSDT")
+
+
 def test_place_stop_order_no_stop_price(binance_api):
     """测试下止损单未指定止损价格"""
     with pytest.raises(ValueError, match="止损单需要指定止损价格"):

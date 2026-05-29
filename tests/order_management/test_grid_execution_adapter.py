@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 
@@ -327,6 +327,44 @@ def test_place_protection_skips_reduce_only_rejected() -> None:
     assert result.status == "skipped_no_position"
     assert result.symbol == "BNBUSDT"
     assert (result.raw or {}).get("error", "").find("-2022") >= 0
+
+
+def test_place_protection_continues_when_lookup_raises_http_400() -> None:
+    import requests
+
+    api = _api()
+    resp = Mock()
+    resp.status_code = 400
+    resp.text = ""
+    resp.json.side_effect = ValueError("no json")
+    api.get_order_by_client_id.side_effect = requests.HTTPError(
+        "400 Client Error", response=resp
+    )
+    api.place_order.return_value = {
+        "order_id": "ex_new",
+        "client_order_id": "cg_new",
+        "symbol": "BNBUSDT",
+        "status": "open",
+    }
+    adapter = MultiLegExecutionAdapter(api)
+
+    result = adapter.execute_action(
+        {
+            "action": "place_protection",
+            "symbol": "BNBUSDT",
+            "side": "LONG",
+            "quantity": 0.31,
+            "price": 643.55,
+            "trigger_price": 643.55,
+            "order_type": "limit",
+            "protection_type": "take_profit",
+            "order_id": "BNBUSDT_grid_L1_tp",
+        }
+    )
+
+    api.place_order.assert_called_once()
+    assert result.status == "open"
+    assert result.order_id == "ex_new"
 
 
 def test_duplicate_protection_algo_stop_reuses_live_order() -> None:
