@@ -1,0 +1,39 @@
+# TPC prod 分段基线 — 对齐 config/market_segment.yaml（smoke: BTC+ETH）
+#
+# 跑法:
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/cross/tpc_segment_retest_smoke.yaml \
+#     --quiet-signal-logs
+
+experiment_id: tpc_segment_retest_smoke_20260529
+strategy: tpc
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+
+runs:
+  - variant: prod_bear_2022
+    strategies_root: config/strategies
+    start_date: "2022-01-01"
+    end_date: "2023-01-01"
+    output_dir: results/tpc/experiments/segment_retest/bear_2022
+
+  - variant: prod_bull_2023_2024
+    strategies_root: config/strategies
+    start_date: "2023-01-01"
+    end_date: "2025-01-01"
+    output_dir: results/tpc/experiments/segment_retest/bull_2023_2024
+    trading_map: true
+
+  - variant: prod_bear_2025H1
+    strategies_root: config/strategies
+    start_date: "2025-01-01"
+    end_date: "2025-07-01"
+    output_dir: results/tpc/experiments/segment_retest/bear_2025H1
+
+  - variant: prod_recent
+    strategies_root: config/strategies
+    start_date: "2025-04-01"
+    end_date: "2026-04-01"
+    output_dir: results/tpc/experiments/segment_retest/recent
+    trading_map: true

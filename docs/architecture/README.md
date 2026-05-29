@@ -12,6 +12,7 @@
 | 文档 | 说明 |
 |------|------|
 | [../ARCHITECTURE.md](../ARCHITECTURE.md) | 分层、BPC 管线、配置入口、Pipeline TODO（权威入口） |
+| [RD控制台_研发监控管理对账_设计_CN.md](RD控制台_研发监控管理对账_设计_CN.md) | RD 控制台设计：替代老 rolling_dashboard，研发/监控/管理/对账一体化（对标 qlib，设计稿） |
 | [backtest_vs_live_execution.md](backtest_vs_live_execution.md) | 回测与实盘执行差异 |
 | [path2.5_math_features.md](path2.5_math_features.md) | 数学特征分层 |
 | [仓位管理办法.md](仓位管理办法.md) | 仓位与 PCM 相关长篇说明 |

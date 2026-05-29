@@ -97,15 +97,25 @@ mlbot research promote --from results/.../gate_draft.yaml \
 **数据准备**（按需，非每次）：
 
 ```bash
+# 真实数据（推荐）：特征 + 标签，不训模型
+RUN_ID=train_final_$(date +%Y%m%d_%H%M%S)
 mlbot train final --no-docker --prepare-only \
-  -c config/strategies/bpc \
-  --output-dir results/train_final/bpc/<run_id>
-# → features_labeled.parquet
+  -c config/strategies/tpc \
+  -t 120T \
+  --symbol BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT \
+  --start-date 2024-01-01 --end-date 2026-04-01 \
+  --output-root results/train_final/tpc/${RUN_ID}
+# → results/train_final/tpc/${RUN_ID}/tpc/features_labeled.parquet
+
+# 取最近一次产物（省略 RUN_ID 时）
+PARQ=$(ls -t results/train_final/tpc/train_final_*/tpc/features_labeled.parquet 2>/dev/null | head -1)
 
 # smoke 链路学习（合成 parquet，数字无实盘意义）：
 PYTHONPATH=src:scripts python scripts/_validation_smoke_assets.py
 # → results/validation_smoke/tpc/features_labeled.parquet
 ```
+
+> 其它策略把 `-c` / `-t` / `--output-root` 换成对应目录即可（如 `bpc`、`-t 240T`）。`--prepare-only` 只跑特征管线 + 打标签，**跳过** LightGBM 训练。
 
 #### 三通道端到端示例（TPC · 树 · chop grid）
 
@@ -122,7 +132,16 @@ PYTHONPATH=src:scripts python scripts/_validation_smoke_assets.py
 **TPC（B）— 条件筛查 → gate lift → calibrate → variant-grid → promote**
 
 ```bash
-PARQ=results/validation_smoke/tpc/features_labeled.parquet   # 真实跑换 train_final 路径
+# 数据：smoke 或 train_final（二选一）
+# PYTHONPATH=src:scripts python scripts/_validation_smoke_assets.py
+# PARQ=results/validation_smoke/tpc/features_labeled.parquet
+RUN_ID=train_final_$(date +%Y%m%d_%H%M%S)
+mlbot train final --no-docker --prepare-only \
+  -c config/strategies/tpc -t 120T \
+  --symbol BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT \
+  --start-date 2024-01-01 --end-date 2026-04-01 \
+  --output-root results/train_final/tpc/${RUN_ID}
+PARQ=results/train_final/tpc/${RUN_ID}/tpc/features_labeled.parquet
 
 # ①A 条件假设（不动 yaml）
 mlbot research scan condition-set --strategy tpc --layer gate \
