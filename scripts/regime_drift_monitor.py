@@ -125,6 +125,11 @@ def main() -> int:
         default="results/regime_drift_monitor",
     )
     p.add_argument("--drift-quantile", type=float, default=0.5)
+    p.add_argument(
+        "--emit-rd-loop-suggestions",
+        action="store_true",
+        help="On ALERT, write rd_loop yaml snippets under results/drift_suggestions/",
+    )
     args = p.parse_args()
 
     pq = Path(args.window_parquet)
@@ -188,6 +193,19 @@ def main() -> int:
     for r in report:
         flag = "ALERT" if r["any_alert"] else "OK"
         print(f"  {r['strategy']:>5}: {flag} ({len(r['items'])} feature(s))")
+
+    if args.emit_rd_loop_suggestions and any_alert:
+        from scripts.research.drift_suggestions import write_drift_suggestions
+
+        sug_dir = (PROJECT_ROOT / "results/drift_suggestions" / ts).resolve()
+        written = write_drift_suggestions(
+            report,
+            features_parquet=str(pq),
+            out_dir=sug_dir,
+        )
+        for pth in written:
+            print(f"  suggestion: {pth}")
+
     return 2 if any_alert else 0
 
 

@@ -149,10 +149,20 @@ mlbot research ic --strategy tpc \
 ```
 
 **E. rd_loop 编排**（多 scan + 双段 grid + decision doc 骨架）
+
+**TPC Gate lift 精调**（`gate-plateau` 模式，替代 `optimize_gate_unified`）：
+```bash
+python scripts/rd_loop.py \
+  --hypothesis-yaml config/experiments/tpc/rd_loop_tpc_gate_plateau.yaml
+```
+
+**ME Entry / Direction**：
 ```bash
 PYTHONPATH=src:scripts python scripts/rd_loop.py \
   --hypothesis-yaml config/experiments/me/rd_loop_me_direction.yaml
 ```
+
+> **阈值约定**：rd_loop 里 condition-set 的 q50/q90 是 **探测假设**，不是生产 τ；生产阈值来自 `research plateau`（snotio/lift）→ `calibrate` → 人审 → `promote`。详见 [`研究工具重构计划_CN.md`](研究工具重构计划_CN.md) §14.3。
 
 > 遗留：`PYTHONPATH=src:scripts python scripts/quick_layer_scan.py <mode> ...` 与上面对拍；新实验不要从它写起。
 

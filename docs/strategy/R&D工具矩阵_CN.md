@@ -29,11 +29,12 @@
 |----|----------|------|------|------|
 | **Regime** | `mlbot research scan condition-set` | `features_labeled.parquet` | scan md / json | `\|z\|>2` 且 meaningful Δpp |
 | **Prefilter** | `mlbot research scan feature-plateau` / `mlbot research plateau` | 同上 | plateau md + `plateau.json` | plateau 存在 / 方向与锁定值一致 |
-| **Gate** | `mlbot research scan condition-set` / `pair-scan` / `mlbot research ic` | 同上 | deny 区效应 / IC decay | deny 区 label / IC 与叙事一致 |
+| **Gate** | `mlbot research plateau --kpi lift` / `rd_loop gate-plateau` | 同上 | lift plateau json + gate_draft + **`.skips.json`** | parity vs legacy optional |
 | **Entry** | `mlbot research plateau`（加 regime+prefilter filter） | 同上 | entry 候选 + calibrate draft | 同上 |
-| **跨层 IC** | `mlbot research ic` | 同上 | IC@H json | 符号与层叙事不矛盾 |
+| **跨层 IC** | `mlbot research ic` / `mlbot analyze factor-eval` | 同上 | IC@H json | 符号与层叙事不矛盾 |
 | **分层** | `mlbot research segment` | 同上 | stratify json | 子群 lift 方向一致 |
-| **编排** | `scripts/rd_loop.py`（内部仍可调 `quick_layer_scan`） | `config/experiments/rd_loop_*.yaml` | `results/rd_loop/<topic>/` | 各 scan md 齐全 |
+| **编排** | `scripts/rd_loop.py` | `config/experiments/rd_loop_*.yaml` | `results/rd_loop/<topic>/` | 各 scan md 齐全 |
+| **人审写回** | `mlbot research calibrate` → `mlbot research promote` | plateau / batch json | draft yaml + skip manifest | promote 保留 `locked`；必 `--yes` 或 `--dry-run` |
 
 **`mlbot research` 子命令**（统一入口，替代直接调 `quick_layer_scan` / 单层 optimize 做 ①）：
 
@@ -42,17 +43,56 @@ mlbot research scan condition-set --strategy tpc --layer prefilter --parquet ...
 mlbot research scan feature-plateau --strategy tpc --feature pulse_z --operator '<=' --grid '0,1,0.1' ...
 mlbot research ic --strategy tpc --features pulse_z --horizons 1,3,6 ...
 mlbot research scan pair-scan --strategy tpc --pair-a 'vol_persistence:>:0.003,0.01' --pair-b 'vpin:<=:0.5,0.7' ...
-mlbot research plateau --kpi snotio --snotio-mode proxy --feature tpc_pullback_depth ...   # mean(forward_rr)
+mlbot research plateau --kpi lift --strategy tpc --layer gate --feature tpc_semantic_chop --operator '>' --grid '0.2,0.3,0.4,0.5' ...
 mlbot research plateau --kpi snotio --snotio-mode entry_rr --strategy srb --subject 'feature:vol_persistence' ...  # full RR sim (needs OHLC+atr logs_gated)
 mlbot research plateau --subject 'model.score:results/research/fit/tpc/prefilter/<run_id>' --grid '0.3,0.4,0.5' ...
 mlbot research segment --strategy tpc --feature pulse_z --bins 5 ...
 mlbot research fit --strategy tpc --layer prefilter ...        # 树 audit（gain + SHAP）
-mlbot research calibrate --plateau-json results/.../plateau.json ...
+mlbot research calibrate --from-plateau results/.../gate_plateau_batch.json \
+  --output results/.../gate_draft.yaml --strategy tpc
+mlbot research promote --from results/.../gate_draft.yaml \
+  --to config/strategies/tpc/archetypes/gate.yaml --layer gate --dry-run --yes
 mlbot research compare results/a/plateau.json results/b/plateau.json
 mlbot research robustness --kernel temporal|gate --feature ... --threshold ...
 ```
 
 > 旧入口（`quick_layer_scan`、`optimize_*_plateau`）仍可用但会打印 **DEPRECATED**；新假设筛查一律走 `mlbot research *`。
+
+#### calibrate skip 清单（gate batch）
+
+`mlbot research calibrate` 在 **gate batch**（`kpi: lift` + `rules: {...}`）模式下，对无法安全写回的规则 **保持生产 yaml 不变**，并输出 skip 清单：
+
+| 产出 | 路径 | 内容 |
+|------|------|------|
+| draft yaml | `--output` | 可写回规则的 threshold 更新；头部注释 `# calibrate skips (N): ...` |
+| skip manifest | `<output>.skips.json`（默认）或 `--skips-output` | `{ "skip_count", "skips": [{ "rule_id", "reason", "detail" }] }` |
+
+常见 `reason`：
+
+| reason | 含义 |
+|--------|------|
+| `optimizer_skipped_locked` / `optimizer_frozen` | batch 阶段已跳过 locked/frozen 规则 |
+| `optimizer_status_not_applicable` | 优化未产出可写回状态（如 `no_valid_threshold`） |
+| `unsafe_any_of` | `when: any_of` 不能单点改写（会 OR→AND） |
+| `unsafe_band_no_interval` | 双边界 band 规则缺 `threshold_interval`，单点会丢上/下界 |
+| `missing_optimization_fields` / `missing_recommended_threshold` | batch json 字段不全 |
+
+**人审时**：先看 `.skips.json` 和 `gate_plateau_summary.md`，再决定是否手工改 band / any_of 规则或重跑 batch（加 `write_back_intervals: true`）。
+
+#### promote（显式写生产，无 auto-promote）
+
+```bash
+# 预览 diff，不写盘（推荐第一步）
+mlbot research promote --from results/.../gate_draft.yaml \
+  --to config/strategies/tpc/archetypes/gate.yaml --layer gate --dry-run --yes
+
+# 确认后写盘（自动 timestamp backup + locked merge）
+mlbot research promote --from results/.../gate_draft.yaml \
+  --to config/strategies/tpc/archetypes/gate.yaml --layer gate --yes
+```
+
+- `locked` / `frozen` / `promote_never_disable` 规则 **始终保留生产侧**。
+- 无 `--yes` 且非 `--dry-run` 时 **拒绝执行**（exit 2）。
 
 **数据准备**（按需，非每次）：
 
@@ -61,7 +101,118 @@ mlbot train final --no-docker --prepare-only \
   -c config/strategies/bpc \
   --output-dir results/train_final/bpc/<run_id>
 # → features_labeled.parquet
+
+# smoke 链路学习（合成 parquet，数字无实盘意义）：
+PYTHONPATH=src:scripts python scripts/_validation_smoke_assets.py
+# → results/validation_smoke/tpc/features_labeled.parquet
 ```
+
+#### 三通道端到端示例（TPC · 树 · chop grid）
+
+> 本文是 **工具单**；三条通道 **数据形态与写回对象不同**，不要混用同一套「只扫 features_labeled label」流程。
+
+| | **TPC（B 规则层）** | **树（fast_scalp / short_term_swing）** | **chop grid（C 段级 KPI）** |
+|--|---------------------|------------------------------------------|----------------------------|
+| 数据 | `features_labeled.parquet` | 同上 | `grid_segments.csv` + features → `seg_labeled.parquet` |
+| ① 主工具 | `scan` / `plateau --kpi lift` / `rd_loop gate-plateau` | `factor-eval` / `research ic` + `fit` + `plateau --kpi snotio` | `event_backtest` → `_build_grid_segment_labels` → `scan condition-set` on seg KPI |
+| ② 验证 | `event_backtest --variant-grid`（recent + bull） | 同上 | `chop_grid_semantic_proxy_grid.yaml` |
+| 写回 yaml | `archetypes/gate.yaml` 等 | 树 `features` / `model` / `backtest` | `chop_grid` prefilter / grid config |
+| 示例 yaml | [`rd_loop_tpc_gate_plateau.yaml`](../../config/experiments/tpc/rd_loop_tpc_gate_plateau.yaml) | [`rd_loop_fast_scalp_ic_plateau.yaml`](../../config/experiments/fast_scalp/rd_loop_fast_scalp_ic_plateau.yaml) | [`chop_grid_semantic_proxy_grid.yaml`](../../config/experiments/chop_grid/chop_grid_semantic_proxy_grid.yaml) |
+
+**TPC（B）— 条件筛查 → gate lift → calibrate → variant-grid → promote**
+
+```bash
+PARQ=results/validation_smoke/tpc/features_labeled.parquet   # 真实跑换 train_final 路径
+
+# ①A 条件假设（不动 yaml）
+mlbot research scan condition-set --strategy tpc --layer gate \
+  --parquet "$PARQ" --label success_no_rr_extreme \
+  --filter 'tpc_semantic_chop<=0.4' \
+  --condition 'H: abs(ema_1200_position)>0.10'
+
+# ①B Gate lift 单特征 / batch（rd_loop 编排见 rd_loop_tpc_gate_plateau.yaml）
+mlbot research plateau --kpi lift --strategy tpc --layer gate \
+  --parquet "$PARQ" --feature tpc_semantic_chop --operator gt \
+  --grid '0.2,0.3,0.4,0.5'
+
+PYTHONPATH=src:scripts python scripts/rd_loop.py \
+  --hypothesis-yaml config/experiments/tpc/rd_loop_tpc_gate_plateau.yaml
+
+mlbot research calibrate \
+  --from-plateau results/rd_loop/tpc_gate_plateau/quick_scan/gate_plateau/gate_plateau_batch.json \
+  --output results/rd_loop/tpc_gate_plateau/gate_draft.yaml --strategy tpc
+
+# ② 因果验证（必做）
+PYTHONPATH=src:scripts python -m scripts.event_backtest \
+  --variant-grid config/experiments/tpc/tpc_variant_grid_smoke.yaml
+
+# 人审后 promote（TPC 生产 gate 多为 locked；batch 默认 skip_locked）
+mlbot research promote --from results/rd_loop/tpc_gate_plateau/gate_draft.yaml \
+  --to config/strategies/tpc/archetypes/gate.yaml --layer gate --dry-run --yes
+```
+
+**树通道（fast_scalp / short_term_swing）— IC → fit → τ plateau → variant-grid**
+
+> 树通道 **不走** B 的 prefilter/gate/entry 分层 yaml；① 以 IC + 树 audit + entry τ 为主。详见 [`短期树独立策略_设计与落地_CN.md`](短期树独立策略_设计与落地_CN.md)。
+
+```bash
+PARQ=results/train_final/fast_scalp/<run_id>/fast_scalp/features_labeled.parquet
+
+# ①A 因子 IC（树通道首选之一）
+mlbot analyze factor-eval --strategy fast_scalp \
+  --features-yaml config/strategies/fast_scalp/features.yaml \
+  --parquet "$PARQ" --ic-decay-lags 1,3,5,10,20
+
+mlbot research ic --strategy fast_scalp --parquet "$PARQ" \
+  --features pulse_z,macd_atr,bb_width_normalized_pct \
+  --horizons 1,3,5,10,20 --target forward_rr
+
+# ①B 树 audit + entry τ（proxy 或 entry_rr）
+mlbot research fit --strategy fast_scalp --layer prefilter --parquet "$PARQ"
+
+mlbot research plateau --kpi snotio --snotio-mode proxy \
+  --strategy fast_scalp --layer entry --parquet "$PARQ" \
+  --feature pulse_z --operator '<=' --grid '0,1,0.1'
+
+PYTHONPATH=src:scripts python scripts/rd_loop.py \
+  --hypothesis-yaml config/experiments/fast_scalp/rd_loop_fast_scalp_ic_plateau.yaml
+
+# ② variant-grid（short_term_swing 换对应 grid yaml）
+PYTHONPATH=src:scripts python -m scripts.event_backtest \
+  --variant-grid config/experiments/fast_scalp/fast_scalp_direction_grid.yaml
+```
+
+**chop grid（C）— grid 回测 → segment KPI 桥 → 条件扫描 → 变体 grid**
+
+> chop grid 的 ① **不是** 直接在 `features_labeled` 上扫 `success_no_rr_extreme`；核心是 **段内 KPI**（`seg_total_r_over_dd` 等）。
+
+```bash
+# ② 先跑变体（engine=chop_grid）
+PYTHONPATH=src:scripts python -m scripts.event_backtest \
+  --variant-grid config/experiments/chop_grid/chop_grid_semantic_proxy_grid.yaml
+# → results/chop_grid/experiments/<variant>/grid_segments.csv
+
+# ① segment label 桥
+PYTHONPATH=src:scripts python scripts/_build_grid_segment_labels.py \
+  --segments results/chop_grid/experiments/baseline_recent/grid_segments.csv \
+  --features-parquet results/validation_smoke/chop_grid/features_labeled.parquet \
+  --out results/chop_grid/experiments/baseline_recent/seg_labeled.parquet
+
+# ① 段 KPI 条件扫描
+mlbot research scan condition-set --strategy chop_grid \
+  --parquet results/chop_grid/experiments/baseline_recent/seg_labeled.parquet \
+  --label seg_total_r_over_dd \
+  --condition 'high_chop: bpc_semantic_chop>=0.50' \
+  --condition 'low_chop: bpc_semantic_chop<0.50'
+
+# 决策留痕（C 专用 template）
+PYTHONPATH=src:scripts python scripts/_new_decision_doc.py \
+  --experiment-index results/chop_grid/experiments/EXPERIMENT_INDEX.json \
+  --topic chop_grid_proxy_sweep --topic-template c_semantic_proxy \
+  --out docs/decisions/chop_grid_proxy_20260526.md
+```
+
+操作记录与 smoke 判读：[`ABC验证操作记录_20260526_CN.md`](ABC验证操作记录_20260526_CN.md)。
 
 ---
 
@@ -72,7 +223,7 @@ mlbot train final --no-docker --prepare-only \
 | 改 1–2 条规则 / 阈值 | `cp -r config/strategies → config_experiments/<variant>_strategies` | variant 策略树 | diff 仅 1–2 个 yaml |
 | 双段 R-multiple | `event_backtest --variant-grid` | `EXPERIMENT_INDEX.json` + trades | **recent + bull** 两段 Pareto |
 | 决策留痕 | `_new_decision_doc.py` | `docs/decisions/*.md` | 变体表 + 双段结果 + by-side |
-| 写生产 | 人工 `cp` | `config/strategies/*/archetypes/*.yaml` | 与 decision doc 一致 |
+| 写生产 | `mlbot research promote`（或人工 `cp`） | `config/strategies/*/archetypes/*.yaml` | 与 decision doc 一致；locked 保留 |
 
 **树通道（fast_scalp / short_term_swing）**：① 用 `factor-eval` / ic-decay 定 H → `mlbot train final` → τ plateau；② 仍走 variant-grid 双段。
 
@@ -205,11 +356,12 @@ mlbot train final --no-docker --prepare-only \
 | 增强 | 状态 | 说明 |
 |------|------|------|
 | `rd_loop` mode: `entry-plateau` | ✅ | auto-loop `entry_filters.yaml` → `entry_plateau_scan` + `logs_gated.parquet` |
-| `rd_loop` step: `gate-plateau` | ⏳ | ①→② 桥接 gate optimizer | `optimize_gate_unified.py` |
-| `rd_loop` step: `locked-prefilter-tune` | ⏳ | locked 数值提案 | `locked_prefilter_parquet_tune.py` |
+| `rd_loop` step: `gate-plateau` | ✅ | batch/single lift；内核 `src/research/stat_kernels/gate_optimize.py` |
+| `rd_loop` step: `locked-prefilter-tune` | ✅ | locked 数值提案 | `locked_prefilter_parquet_tune.py` |
 | 仍 **不** 纳入 | — | 全自动 promote / 多层串联 optimize | pipeline bundle |
 
-`entry-plateau` 示例：[`config/experiments/rd_loop_srb_entry_plateau.yaml`](../../config/experiments/rd_loop_srb_entry_plateau.yaml)
+`entry-plateau` 示例：[`config/experiments/srb/rd_loop_srb_entry_plateau.yaml`](../../config/experiments/srb/rd_loop_srb_entry_plateau.yaml)  
+`gate-plateau` 示例：[`config/experiments/tpc/rd_loop_tpc_gate_plateau.yaml`](../../config/experiments/tpc/rd_loop_tpc_gate_plateau.yaml)
 
 ---
 
@@ -243,9 +395,40 @@ mlbot train final --no-docker --prepare-only \
 ## 7. 命令速查
 
 ```bash
-# ① 假设
+# ① 假设（BPC 通用）
 PYTHONPATH=src:scripts python scripts/rd_loop.py \
-  --hypothesis-yaml config/experiments/rd_loop_bpc.yaml
+  --hypothesis-yaml config/experiments/bpc/rd_loop_bpc.yaml
+
+# ① TPC gate-plateau → calibrate（含 skip 清单）
+PYTHONPATH=src:scripts python scripts/rd_loop.py \
+  --hypothesis-yaml config/experiments/tpc/rd_loop_tpc_gate_plateau.yaml
+mlbot research calibrate \
+  --from-plateau results/rd_loop/tpc_gate_plateau/quick_scan/gate_plateau/gate_plateau_batch.json \
+  --output results/rd_loop/tpc_gate_plateau/gate_draft.yaml --strategy tpc
+# → gate_draft.yaml + gate_draft.yaml.skips.json（若有 skip）
+
+# ① 树通道（fast_scalp）
+PYTHONPATH=src:scripts python scripts/rd_loop.py \
+  --hypothesis-yaml config/experiments/fast_scalp/rd_loop_fast_scalp_ic_plateau.yaml
+mlbot analyze factor-eval --strategy fast_scalp \
+  --features-yaml config/strategies/fast_scalp/features.yaml \
+  --parquet results/train_final/fast_scalp/.../features_labeled.parquet \
+  --ic-decay-lags 1,3,5,10,20
+
+# ① chop grid（段 KPI 桥 + 扫描）
+PYTHONPATH=src:scripts python scripts/_build_grid_segment_labels.py \
+  --segments results/chop_grid/experiments/<variant>/grid_segments.csv \
+  --features-parquet results/validation_smoke/chop_grid/features_labeled.parquet \
+  --out results/chop_grid/experiments/<variant>/seg_labeled.parquet
+mlbot research scan condition-set --strategy chop_grid \
+  --parquet results/chop_grid/experiments/<variant>/seg_labeled.parquet \
+  --label seg_total_r_over_dd --condition 'high_chop: bpc_semantic_chop>=0.50'
+
+# 人审写回（preview → 确认）
+mlbot research promote --from results/.../gate_draft.yaml \
+  --to config/strategies/tpc/archetypes/gate.yaml --layer gate --dry-run --yes
+mlbot research promote --from results/.../gate_draft.yaml \
+  --to config/strategies/tpc/archetypes/gate.yaml --layer gate --yes
 
 # ② 验因果
 PYTHONPATH=src:scripts python -m scripts.event_backtest --variant-grid \
@@ -256,6 +439,10 @@ PYTHONPATH=src:scripts python scripts/regime_watchdog.py \
   --strategies bpc,tpc,me,srb \
   --window-parquet results/<recent>/features_labeled.parquet \
   --baseline-json config/monitoring/regime_watchdog_baseline.json
+
+PYTHONPATH=src:scripts python scripts/regime_drift_monitor.py \
+  --strategy tpc --emit-rd-loop-suggestions \
+  ...   # ALERT 时写 rd_loop 建议 snippet
 
 # ③ 月监控
 mlbot pipeline run --all \

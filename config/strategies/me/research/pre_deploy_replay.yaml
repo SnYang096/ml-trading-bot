@@ -35,6 +35,11 @@ contract_checks:
   plateau_stability:
     enabled: true
     on_drift_outside_plateau: ALERT
+    robustness_layers: [gate, prefilter, entry]
+  cross_regime_evidence:
+    enabled: true
+    required_windows: [recent, bull]
+    on_missing: BLOCKED
 
 event_backtest:
   enabled: true

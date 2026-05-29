@@ -193,3 +193,106 @@ def test_rd_loop_entry_plateau_runs_batch(tmp_path: Path) -> None:
     assert rc == 0
     assert len(batch_calls) == 1
     assert batch_calls[0]["kwargs"].get("snotio_mode") == "entry_rr"
+
+
+def test_rd_loop_gate_plateau_batch(tmp_path: Path) -> None:
+    import pandas as pd
+
+    pq = tmp_path / "features.parquet"
+    pd.DataFrame({"x": [1.0, 2.0]}).to_parquet(pq)
+    hyp = tmp_path / "hyp.yaml"
+    hyp.write_text(
+        yaml.safe_dump(
+            {
+                "topic": "gate_plateau",
+                "strategy": "tpc",
+                "output_dir": str(tmp_path / "out"),
+                "quick_layer_scans": [
+                    {
+                        "mode": "gate-plateau",
+                        "features_parquet": str(pq),
+                        "skip_locked": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    batch_calls: list[dict] = []
+
+    def fake_batch(*args, **kwargs):  # noqa: ANN002, ANN003
+        batch_calls.append({"args": args, "kwargs": kwargs})
+        return {"kpi": "lift", "strategy": "tpc", "rules": {}}
+
+    with patch(
+        "scripts.research.gate_plateau_scan.run_gate_plateau_batch",
+        side_effect=fake_batch,
+    ):
+        rc = run_loop(hyp, output_dir=tmp_path / "out")
+
+    assert rc == 0
+    assert len(batch_calls) == 1
+    assert batch_calls[0]["args"][1] == "tpc"
+
+
+def test_rd_loop_gate_plateau_single_feature_cmd(tmp_path: Path) -> None:
+    hyp = tmp_path / "hyp.yaml"
+    hyp.write_text(
+        yaml.safe_dump(
+            {
+                "topic": "gate_lift",
+                "strategy": "tpc",
+                "output_dir": str(tmp_path / "out"),
+                "quick_layer_scans": [
+                    {
+                        "mode": "gate-plateau",
+                        "features_parquet": "dummy.parquet",
+                        "feature": "tpc_semantic_chop",
+                        "operator": "gt",
+                        "grid": "0.2,0.4,0.6",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, cwd=None):  # noqa: ANN001
+        calls.append(cmd)
+        return type("R", (), {"returncode": 0})()
+
+    with patch("scripts.rd_loop.subprocess.run", side_effect=fake_run):
+        run_loop(hyp, output_dir=tmp_path / "out")
+
+    joined = " ".join(calls[0])
+    assert "plateau" in joined
+    assert "--kpi" in joined and "lift" in joined
+    assert "--operator" in joined and "gt" in joined
+
+
+def test_rd_loop_locked_prefilter_tune(tmp_path: Path) -> None:
+    import pandas as pd
+
+    pq = tmp_path / "features.parquet"
+    pd.DataFrame({"success_no_rr_extreme": [0, 1, 0, 1]}).to_parquet(pq)
+    hyp = tmp_path / "hyp.yaml"
+    hyp.write_text(
+        yaml.safe_dump(
+            {
+                "topic": "pf_tune",
+                "strategy": "tpc",
+                "output_dir": str(tmp_path / "out"),
+                "quick_layer_scans": [
+                    {
+                        "mode": "locked-prefilter-tune",
+                        "features_parquet": str(pq),
+                        "prefilter_path": str(tmp_path / "missing_prefilter.yaml"),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    rc = run_loop(hyp, output_dir=tmp_path / "out")
+    assert rc == 3

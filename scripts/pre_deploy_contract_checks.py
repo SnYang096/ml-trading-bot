@@ -334,6 +334,68 @@ def _check_plateau_stability(
     return ok, "; ".join(detail_parts), meta
 
 
+def _check_cross_regime_evidence(
+    strategy: str,
+    cross_cfg: Dict[str, Any],
+    *,
+    project_root: Path,
+) -> Tuple[bool, str, Dict[str, Any]]:
+    """Require variant-grid evidence for recent + bull (or explicit windows)."""
+    index_path = cross_cfg.get("experiment_index")
+    if index_path:
+        idx = Path(str(index_path))
+        if not idx.is_absolute():
+            idx = (project_root / idx).resolve()
+    else:
+        idx = (
+            project_root
+            / "results"
+            / strategy
+            / "experiments"
+            / "EXPERIMENT_INDEX.json"
+        )
+    required_windows = cross_cfg.get("required_windows") or ["recent", "bull"]
+    meta: Dict[str, Any] = {"index": str(idx), "required_windows": required_windows}
+
+    if not idx.is_file():
+        return False, f"missing experiment index: {idx}", meta
+
+    import json
+
+    raw = json.loads(idx.read_text(encoding="utf-8"))
+    experiments = (
+        raw
+        if isinstance(raw, list)
+        else raw.get("experiments") or raw.get("runs") or []
+    )
+    if not isinstance(experiments, list):
+        return False, "experiment index has no experiments list", meta
+
+    found: Dict[str, bool] = {w: False for w in required_windows}
+    for exp in experiments:
+        if not isinstance(exp, dict):
+            continue
+        tags = exp.get("tags") or exp.get("windows") or []
+        name = str(exp.get("name") or exp.get("run_id") or "")
+        for w in required_windows:
+            w_l = str(w).lower()
+            if w_l in name.lower() or w_l in [str(t).lower() for t in tags]:
+                found[w] = True
+            win = exp.get("window") or exp.get("calendar_window") or ""
+            if w_l in str(win).lower():
+                found[w] = True
+
+    missing = [w for w, ok in found.items() if not ok]
+    meta["found"] = found
+    if missing:
+        return (
+            False,
+            f"missing cross-regime variant-grid evidence for: {', '.join(missing)}",
+            meta,
+        )
+    return True, f"cross-regime evidence OK ({', '.join(required_windows)})", meta
+
+
 def run_pre_deploy_contract_checks(
     *,
     cfg: Dict[str, Any],
@@ -424,6 +486,27 @@ def run_pre_deploy_contract_checks(
             if not ok:
                 msg = f"{strat}: plateau_stability — {detail}"
                 if on_drift == "BLOCKED":
+                    st["status"] = "BLOCKED"
+                    blocked.append(msg)
+                else:
+                    if st["status"] == "PASS":
+                        st["status"] = "ALERT"
+                    alerts.append(msg)
+
+        cross_cfg = contract.get("cross_regime_evidence") or {}
+        if isinstance(cross_cfg, dict) and cross_cfg.get("enabled"):
+            ok, detail, meta = _check_cross_regime_evidence(
+                strat, cross_cfg, project_root=root
+            )
+            st["checks"]["cross_regime_evidence"] = {
+                "ok": ok,
+                "detail": detail,
+                **meta,
+            }
+            on_missing = str(cross_cfg.get("on_missing", "BLOCKED")).upper()
+            if not ok:
+                msg = f"{strat}: cross_regime_evidence — {detail}"
+                if on_missing == "BLOCKED":
                     st["status"] = "BLOCKED"
                     blocked.append(msg)
                 else:

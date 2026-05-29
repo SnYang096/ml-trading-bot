@@ -67,6 +67,45 @@ def test_plateau_snotio_entry_rr_cli(tmp_path: Path) -> None:
     assert len(payload.get("rows", [])) == 3
 
 
+def test_plateau_lift_cli(tmp_path: Path) -> None:
+    from scripts.research import plateau as plateau_mod
+
+    rng = __import__("numpy").random.default_rng(0)
+    n = 200
+    feat = rng.uniform(0, 1, n)
+    df = __import__("pandas").DataFrame(
+        {
+            "tpc_semantic_chop": feat,
+            "is_good": (feat < 0.4).astype(int),
+        }
+    )
+    pq = tmp_path / "features.parquet"
+    df.to_parquet(pq)
+    out_json = tmp_path / "lift.json"
+    rc = plateau_mod.main(
+        [
+            "--features-parquet",
+            str(pq),
+            "--kpi",
+            "lift",
+            "--feature",
+            "tpc_semantic_chop",
+            "--operator",
+            "gt",
+            "--grid",
+            "0.2,0.3,0.4,0.5,0.6",
+            "--label",
+            "is_good",
+            "--output",
+            str(out_json),
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(out_json.read_text(encoding="utf-8"))
+    assert payload.get("kpi") == "lift"
+    assert payload.get("deny_operator") == "gt"
+
+
 def test_plateau_model_score_subject_cli(tmp_path: Path) -> None:
     rng = np.random.default_rng(0)
     n = 300

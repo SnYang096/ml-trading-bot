@@ -1,4 +1,11 @@
-"""Parity tests: src.research kernels vs optimize_gate_unified re-exports."""
+"""Kernel correctness + legacy-CLI delegation tests for gate optimization.
+
+After the gate-optimization logic was extracted into
+``src.research.stat_kernels``, the legacy ``optimize_gate_unified`` CLI no
+longer owns any of this math; it delegates to the canonical kernel. These
+tests assert (a) the kernels are numerically correct on their own and
+(b) the legacy CLI delegates to the same kernel object (no forked code path).
+"""
 
 from __future__ import annotations
 
@@ -7,6 +14,7 @@ import pandas as pd
 import pytest
 
 from scripts import optimize_gate_unified as legacy
+from src.research.stat_kernels import gate_optimize
 from src.research.stat_kernels.gate_lift import (
     compute_lift_for_threshold,
     scan_thresholds_for_lift,
@@ -36,46 +44,42 @@ def _synthetic_gate_df(n: int = 400, seed: int = 7) -> pd.DataFrame:
     )
 
 
-def test_lift_parity_with_legacy_module():
+def test_legacy_cli_delegates_to_canonical_kernel():
+    # The legacy CLI must not fork the optimization math; it imports the
+    # canonical kernel object directly.
+    assert legacy.optimize_gate_rule_unified is gate_optimize.optimize_gate_rule_unified
+
+
+def test_lift_kernel_values_are_sane():
     df = _synthetic_gate_df()
     for op, th in [("lt", 0.0), ("gt", 0.5), ("le", -0.2)]:
-        new = compute_lift_for_threshold(df, "pulse_z", op, th)
-        old = legacy.compute_lift_for_threshold(df, "pulse_z", op, th)
-        for key in ("lift", "pass_rate_good", "pass_rate_bad", "pass_rate_all"):
-            if np.isnan(new[key]) and np.isnan(old[key]):
+        res = compute_lift_for_threshold(df, "pulse_z", op, th)
+        for key in ("pass_rate_good", "pass_rate_bad", "pass_rate_all"):
+            if np.isnan(res[key]):
                 continue
-            assert new[key] == pytest.approx(old[key], rel=1e-9, abs=1e-9)
+            assert 0.0 <= res[key] <= 1.0
 
 
-def test_scan_thresholds_midpoint_parity():
+def test_scan_thresholds_and_plateau():
     df = _synthetic_gate_df(n=500)
     cfg = UnifiedOptimizationConfig(
         min_samples_good=20, min_samples_bad=20, min_lift=0.5
     )
     scan = scan_thresholds_for_lift(df, "pulse_z", "lt", (0.0, 1.0), 0.1)
-    legacy_scan = legacy.scan_thresholds_for_lift(df, "pulse_z", "lt", (0.0, 1.0), 0.1)
-    assert len(scan) == len(legacy_scan)
-    new_plateau = find_stable_lift_plateau(scan, cfg, actual_step=0.1)
-    old_plateau = legacy.find_stable_lift_plateau(legacy_scan, cfg, actual_step=0.1)
-    if new_plateau is None:
-        assert old_plateau is None
-    else:
-        assert old_plateau is not None
-        assert new_plateau["recommended_threshold"] == pytest.approx(
-            old_plateau["recommended_threshold"], rel=1e-9
-        )
-        assert new_plateau["plateau_mid"] == pytest.approx(
-            old_plateau["plateau_mid"], rel=1e-9
+    assert len(scan) > 0
+    plateau = find_stable_lift_plateau(scan, cfg, actual_step=0.1)
+    if plateau is not None:
+        assert (
+            plateau["plateau_start"] <= plateau["plateau_mid"] <= plateau["plateau_end"]
         )
 
 
-def test_robustness_parity():
+def test_robustness_score_bounds():
     df = _synthetic_gate_df(n=600)
     cfg = UnifiedOptimizationConfig(min_samples_good=20, min_samples_bad=20)
-    new = compute_robustness_score(df, "pulse_z", "lt", 0.0, config=cfg)
-    old = legacy.compute_robustness_score(df, "pulse_z", "lt", 0.0, config=cfg)
-    assert new.overall_score == pytest.approx(old.overall_score, rel=1e-9)
-    assert new.param_stability == pytest.approx(old.param_stability, rel=1e-9)
+    score = compute_robustness_score(df, "pulse_z", "lt", 0.0, config=cfg)
+    assert 0.0 <= score.overall_score <= 1.0
+    assert 0.0 <= score.param_stability <= 1.0
 
 
 def test_stratification_kernel():

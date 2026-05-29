@@ -14,6 +14,11 @@ from scripts.research._common import (
     resolve_output_path,
     resolve_research_feature_column,
 )
+from scripts.research.gate_lift_scan import (
+    format_gate_lift_report,
+    gate_lift_plateau_payload,
+)
+from src.research.stat_kernels.robustness import UnifiedOptimizationConfig
 from src.research.stat_kernels.snotio_calc import snotio_plateau_payload
 
 
@@ -53,10 +58,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--grid", required=True)
     p.add_argument(
         "--kpi",
-        choices=("label", "snotio"),
+        choices=("label", "snotio", "lift"),
         default="label",
-        help="label: success-rate proxy (default); snotio: R-multiple scan",
+        help="label: success-rate proxy; snotio: R-multiple; lift: gate deny lift plateau",
     )
+    p.add_argument(
+        "--write-back-intervals",
+        action="store_true",
+        help="Include threshold_interval in lift json (plateau bounds)",
+    )
+    p.add_argument("--min-lift", type=float, default=0.10)
     p.add_argument(
         "--snotio-mode",
         choices=("proxy", "entry_rr"),
@@ -76,7 +87,31 @@ def main(argv: list[str] | None = None) -> int:
     base_mask = build_base_mask(df, args)
     grid = [float(x) for x in args.grid.split(",") if x.strip()]
 
-    if args.kpi == "snotio":
+    if args.kpi == "lift":
+        cfg = UnifiedOptimizationConfig(min_lift=float(args.min_lift))
+        try:
+            payload = gate_lift_plateau_payload(
+                df,
+                feature_col,
+                args.operator,
+                base_mask=base_mask,
+                label_col=args.label,
+                grid=grid if grid else None,
+                config=cfg,
+                strategy=args.strategy,
+            )
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 3
+        if args.write_back_intervals and payload.get("is_plateau"):
+            payload["threshold_interval"] = {
+                "start": payload.get("start_threshold"),
+                "end": payload.get("end_threshold"),
+                "method": "plateau_bounds",
+            }
+        payload["subject"] = getattr(args, "subject", None) or f"feature:{feature_col}"
+        report = format_gate_lift_report(payload)
+    elif args.kpi == "snotio":
         if args.snotio_mode == "entry_rr" and not args.strategy:
             print("ERROR: --snotio-mode entry_rr requires --strategy", file=sys.stderr)
             return 3

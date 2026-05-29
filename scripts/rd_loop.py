@@ -144,6 +144,96 @@ def _run_entry_plateau_scan(
     return 0
 
 
+def _run_gate_plateau_scan(
+    scan: Dict[str, Any], output_dir: Path, cfg: Dict[str, Any]
+) -> int:
+    from scripts.research.gate_plateau_scan import run_gate_plateau_batch
+
+    strategy = str(scan.get("strategy") or cfg.get("strategy") or "")
+    if not strategy:
+        print("ERROR: gate-plateau requires strategy", file=sys.stderr)
+        return 3
+    pq = _resolve_scan_parquet(scan)
+    if not pq.is_file():
+        print(f"ERROR: features parquet not found: {pq}", file=sys.stderr)
+        return 3
+    out = _resolve_scan_out_dir(
+        scan, output_dir, default_name="quick_scan/gate_plateau"
+    )
+    print(f"\n>>> gate-plateau batch strategy={strategy} parquet={pq} out={out}")
+    try:
+        run_gate_plateau_batch(
+            pq,
+            strategy,
+            out_dir=out,
+            label_col=str(scan.get("label_col", "is_good")),
+            step=float(scan.get("step", 0.05)),
+            rule_id=str(scan["rule_id"]) if scan.get("rule_id") else None,
+            gate_path=str(scan["gate_path"]) if scan.get("gate_path") else None,
+            write_back_intervals=bool(scan.get("write_back_intervals", False)),
+            min_lift=float(scan.get("min_lift", 0.10)),
+            skip_locked=bool(scan.get("skip_locked", True)),
+        )
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 3
+    return 0
+
+
+def _run_locked_prefilter_tune(
+    scan: Dict[str, Any], output_dir: Path, cfg: Dict[str, Any]
+) -> int:
+    from scripts.locked_prefilter_parquet_tune import (
+        suggest_locked_prefilter_params_parquet,
+    )
+
+    strategy = str(scan.get("strategy") or cfg.get("strategy") or "")
+    if not strategy:
+        print("ERROR: locked-prefilter-tune requires strategy", file=sys.stderr)
+        return 3
+    pq = _resolve_scan_parquet(scan)
+    if not pq.is_file():
+        print(f"ERROR: features parquet not found: {pq}", file=sys.stderr)
+        return 3
+    prefilter_rel = (
+        scan.get("prefilter_path")
+        or f"config/strategies/{strategy}/archetypes/prefilter.yaml"
+    )
+    prefilter_path = Path(str(prefilter_rel))
+    if not prefilter_path.is_absolute():
+        prefilter_path = (PROJECT_ROOT / prefilter_path).resolve()
+    out = _resolve_scan_out_dir(
+        scan, output_dir, default_name="quick_scan/locked_prefilter_tune"
+    )
+    tcfg = scan.get("locked_threshold_tuning") or {}
+    prefilter_gates = scan.get("prefilter_gates") or {}
+    print(f"\n>>> locked-prefilter-tune strategy={strategy} parquet={pq} out={out}")
+    try:
+        params, meta = suggest_locked_prefilter_params_parquet(
+            prod_prefilter_path=prefilter_path,
+            labeled_parquet_path=pq,
+            template=str(scan.get("template", "bindings")),
+            tcfg=tcfg,
+            prefilter_gates=prefilter_gates,
+        )
+    except (ValueError, FileNotFoundError, OSError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 3
+    payload = {
+        "strategy": strategy,
+        "params": params,
+        "meta": meta,
+        "kpi": "prefilter_bindings",
+    }
+    out_json = out / "locked_prefilter_proposal.json"
+    out_json.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    print(f"wrote {out_json}")
+    return 0
+
+
 def _build_research_scan_cmd(
     scan: Dict[str, Any], output_dir: Path, cfg: Dict[str, Any]
 ) -> List[str]:
@@ -221,6 +311,33 @@ def _build_research_scan_cmd(
             cmd += ["--r-col", str(scan["r_col"])]
         return cmd
 
+    if mode == "gate-plateau":
+        cmd = _mlbot_cmd() + [
+            "research",
+            "plateau",
+            "--kpi",
+            "lift",
+            "--layer",
+            "gate",
+            "--output",
+            str(out.with_suffix(".json") if out.suffix == ".md" else out),
+        ]
+        _append_common_scan_args(cmd, scan, cfg)
+        if scan.get("feature"):
+            cmd += [
+                "--feature",
+                str(scan["feature"]),
+                "--operator",
+                str(scan.get("operator", ">")),
+                "--grid",
+                str(scan.get("grid", "0,1,0.05")),
+            ]
+        if scan.get("write_back_intervals"):
+            cmd += ["--write-back-intervals"]
+        if scan.get("min_lift") is not None:
+            cmd += ["--min-lift", str(scan["min_lift"])]
+        return cmd
+
     verb = "research"
     cmd = _mlbot_cmd() + [verb, "scan", mode, "--output", str(out)]
     _append_common_scan_args(cmd, scan, cfg)
@@ -253,6 +370,14 @@ def _step_research_scan(cfg: Dict[str, Any], output_dir: Path) -> int:
         mode = str(scan.get("mode", "condition-set"))
         if mode == "entry-plateau":
             rc = _run_entry_plateau_scan(scan, output_dir, cfg)
+        elif mode == "gate-plateau":
+            if scan.get("feature"):
+                cmd = _build_research_scan_cmd(scan, output_dir, cfg)
+                rc = _run_cmd(cmd, cwd=PROJECT_ROOT)
+            else:
+                rc = _run_gate_plateau_scan(scan, output_dir, cfg)
+        elif mode == "locked-prefilter-tune":
+            rc = _run_locked_prefilter_tune(scan, output_dir, cfg)
         else:
             cmd = _build_research_scan_cmd(scan, output_dir, cfg)
             rc = _run_cmd(cmd, cwd=PROJECT_ROOT)

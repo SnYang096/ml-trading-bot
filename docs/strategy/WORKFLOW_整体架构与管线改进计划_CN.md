@@ -362,7 +362,7 @@ threshold_calibration:
 **任务**：R&D 假设生成 + 验证
 
 **工具链**（详见 [`方法论_R_and_D流程_CN.md`](方法论_R_and_D流程_CN.md) + 工具矩阵 §1）：
-1. ✅ **① 假设筛查**：`mlbot research scan|ic|plateau` 或 `scripts/rd_loop.py --hypothesis-yaml config/experiments/rd_loop_*.yaml`
+1. ✅ **① 假设筛查**：`mlbot research scan|ic|plateau|lift` 或 `scripts/rd_loop.py --hypothesis-yaml config/experiments/rd_loop_*.yaml`（Gate：`rd_loop_tpc_gate_plateau.yaml`）
    - 输入：`features_labeled.parquet`（`mlbot train final --prepare-only`）
    - 输出：scan md + 可选 json；1–2 分钟离线 t-test / IC
 2. **手工** cp config 到 `config_experiments/<variant>_strategies/`
@@ -402,6 +402,7 @@ threshold_calibration:
 | W | regime 漂移监控 | 周 cron | regime_watchdog | alert + decisions/*.md | ❌ |
 | M | cross-validation | 月 cron | turbo (改为纯验证) | drift report | ❌ |
 | Q | R&D 假设生成+验证 | 季度 / 漂移 | `mlbot research` / `rd_loop` + `event_backtest --variant-grid` | 候选 archetypes | ✅（人审后）|
+| Tree | fast_scalp / short_term_swing IC→τ | 季度 | `rd_loop_*_ic_plateau.yaml` + variant-grid | 独立树 yaml | ✅ |
 | 触发 | 上线门禁 | yaml change | pre_deploy_replay + deploy | contract_checks + live | live deploy |
 
 ---

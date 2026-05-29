@@ -367,4 +367,9 @@ A：起步先**两棵独立**，原因：训练样本可以各自挑 IC-aligned 
 | [`树模型方法论演进与短期树重建指南_CN.md`](树模型方法论演进与短期树重建指南_CN.md) | 本文是其 §4.2.5「阶段 5 短期树重建」与 §1.2 决策层 ML 的**落地手册** |
 | [`WORKFLOW_整体架构与管线改进计划_CN.md`](WORKFLOW_整体架构与管线改进计划_CN.md) | ABC 系统职责矩阵，本文把「树通道」与 A/B/C 并列入 §3 算法分工 |
 | [`方法论_R_and_D流程_CN.md`](方法论_R_and_D流程_CN.md) §3.4 | 命令速查表（与本文 §5 对齐） |
+| [`研究工具重构计划_CN.md`](研究工具重构计划_CN.md) §14 | Phase 9+ 新命令族默认路径 + tree rd_loop 示例 |
+
+**树通道 R&D playbook（rd_loop）**：
+- `config/experiments/fast_scalp/rd_loop_fast_scalp_ic_plateau.yaml` — IC decay → snotio plateau → variant-grid
+- `config/experiments/short_term_swing/rd_loop_short_term_swing_ic_plateau.yaml` — 同上
 | [`B 系统运维心智梳理.md`](B系统运维心智梳理.md) / `README_CN.md` §9.2 | 树**不**做 B 的持续优化、不接 evidence 的口径 |
