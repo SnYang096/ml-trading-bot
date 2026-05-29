@@ -1,10 +1,16 @@
-# TPC 方向: MACD sign；EMA1200 宏观死区在 archetypes/regime.yaml（|ema_1200_position|>0.10）
-# 与 BPC 区别: 无 Donchian 突破信号源
+# TPC 方向 — MACD sign 须与 EMA1200 同侧（|pos|>inner 死区），与 execution structural_exit ema1200 对齐。
+# 2026-05-29 promote：消除「regime 允许、direction 逆势、structural 秒平」冲突（见 direction_align_retest）。
 
-description: "TPC 方向 — MACD sign（宏观带由 regime 承担）"
+description: "TPC 方向 — MACD sign + EMA1200 position band 同侧对齐"
 
 direction_rules:
-  - id: tpc_macd_sign
-    feature: macd_atr
-    transform: sign
-    description: "MACD sign；regime 已过滤 EMA1200 中轴死区"
+  - id: tpc_macd_ema1200_align
+    method: signal_match_position_band
+    description: "MACD sign；long 仅 pos>=0.10，short 仅 pos<=-0.10（与 regime 阈值一致）"
+    signal_rules:
+      - feature: macd_atr
+        transform: sign
+    position_band:
+      feature: ema_1200_position
+      inner_abs: 0.10
+      outer_abs: 1
