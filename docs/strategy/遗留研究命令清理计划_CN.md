@@ -1,7 +1,17 @@
 # 遗留研究命令清理计划
 
 > **状态**：待新命令（`mlbot research` / `rd_loop` / calibrate / promote）在真实 parquet 上验收后再执行。  
-> **关联**：[`R&D工具矩阵_CN.md`](R&D工具矩阵_CN.md) · [`迁移_旧meta到新rd_loop_CN.md`](迁移_旧meta到新rd_loop_CN.md) · [`研究工具重构计划_CN.md`](研究工具重构计划_CN.md)
+> **关联**：[`R&D工具矩阵_CN.md`](R&D工具矩阵_CN.md) · [`迁移_旧meta到新rd_loop_CN.md`](迁移_旧meta到新rd_loop_CN.md) · [`研究工具重构计划_CN.md`](研究工具重构计划_CN.md) · [`完整命令速查表.md`](../完整命令速查表.md)（废弃命令一览）
+
+---
+
+## 0. 文档分工
+
+| 文档 | 内容 |
+|------|------|
+| [`完整命令速查表.md`](../完整命令速查表.md) | 全仓库 CLI + **过时标记表**（§⚠️）+ `mlbot research` 子命令示例 |
+| [`R&D工具矩阵_CN.md`](R&D工具矩阵_CN.md) | ABC 三阶段、TPC/树/chop grid 端到端、calibrate skip / promote |
+| **本文** | 代码层依赖、删除顺序、Phase checklist、待删文件清单 |
 
 ---
 
@@ -148,3 +158,117 @@ Phase 5 — Bundle 瘦身
 | Gate batch | `scripts/research/gate_plateau_scan.py` |
 
 Legacy CLI 应逐步变为 **零数学、仅报告/兼容壳**；数学只存在于 `src/research/`。
+
+---
+
+## 7. 老命令 → 新命令对照表（清理验收用）
+
+> 与 [`完整命令速查表.md` §⚠️](../完整命令速查表.md#-过时命令标记) 同步。验收通过后可按 Phase 删「老入口」列。
+
+### 7.1 假设筛查（①）
+
+| 老入口 | 新入口 | 可删时机 |
+|--------|--------|----------|
+| `python scripts/quick_layer_scan.py condition-set ...` | `mlbot research scan condition-set ...` | Phase 2（内联 scan 内核后） |
+| `quick_layer_scan.py feature-plateau` | `mlbot research scan feature-plateau` 或 `plateau --kpi label` | Phase 2 |
+| `quick_layer_scan.py pair-scan` | `mlbot research scan pair-scan` | Phase 2 |
+| `quick_layer_scan.py ic-decay` | `mlbot research ic` 或 `mlbot analyze factor-eval` | Phase 2 |
+| `mlbot pipeline run` + `research_roll.features_on.yaml`（discovery） | `scripts/rd_loop.py` + `mlbot research *` | Phase 1（yaml 标记）→ Phase 5（删 stage） |
+| `analyze_archetype_feature_stratification.py --promote` | `mlbot research fit` + 人审 + variant-grid | Phase 4 |
+
+### 7.2 Gate / Entry 精标（②b）
+
+| 老入口 | 新入口 | 可删时机 |
+|--------|--------|----------|
+| `python scripts/optimize_gate_unified.py --strategy tpc ...` | `mlbot research plateau --kpi lift` / `rd_loop gate-plateau` | Phase 3 |
+| `mlbot optimize gate-plateau` / `gate-plateau-all` | 同上（B 系统）；nnmh 链路或归档 | Phase 3 或单独归档 nnmh |
+| `python scripts/optimize_entry_filter_plateau.py ...` | `mlbot research plateau --kpi snotio` / `rd_loop entry-plateau` | Phase 3 |
+| `optimize_entry_filter_snotio.py` | `research plateau --kpi snotio` | Phase 3 |
+| `locked_prefilter_parquet_tune.py` | `rd_loop locked-prefilter-tune` | Phase 3（库函数可保留） |
+| `tune_locked_prefilter_thresholds.py` | `research plateau --layer prefilter` + calibrate | Phase 3–4 |
+| `--promote` / pipeline adopt 写生产 | `mlbot research calibrate` + `promote --yes` | Phase 1 起禁用 adopt |
+
+### 7.3 因果验证（②a）
+
+| 老入口 | 新入口 | 可删时机 |
+|--------|--------|----------|
+| `validate_static.full_study.yaml` 整段 | `event_backtest --variant-grid` + decision doc | Phase 1 yaml → Phase 5 |
+| `validate_static.constrained.yaml` | variant-grid + 单层 research 精标 | 同上 |
+| 手工 cp draft yaml 无 backup | `mlbot research promote`（locked merge + backup） | 已可用，无需等 Phase |
+
+### 7.4 监控（③ — 不删）
+
+| 入口 | 说明 |
+|------|------|
+| `calibrate_roll.default.yaml` | 月 replay；**保留** |
+| `pre_deploy_replay.yaml` + `pre_deploy_contract_checks.py` | 上线 contract；**保留** |
+| `regime_watchdog.py` / `regime_drift_monitor.py` | 周监控；**保留**（drift 可 emit rd_loop suggestions） |
+
+---
+
+## 8. 待删文件清单（按 Phase）
+
+### Phase 2 目标
+
+- [ ] `scripts/quick_layer_scan.py`（逻辑迁入 `src/research/` 或 `scripts/research/`）
+- [ ] 更新 `scripts/research/scan.py`、`ic.py`、`plateau.py` 的 import
+- [ ] 修 `tests/research/test_scan_parity.py`、`tests/unit/test_quick_layer_scan_modes.py`
+
+### Phase 3 目标
+
+- [ ] `scripts/optimize_gate_unified.py`（或仅保留 HTML 报告子模块）
+- [ ] `scripts/optimize_entry_filter_plateau.py`
+- [ ] `scripts/optimize_all_archetypes_plateau.py`
+- [ ] `scripts/optimize_entry_filter_snotio.py`
+- [ ] `scripts/run_gate_optimization_experiments.py`、`experiment_gate_plateau_optimization.py`
+- [ ] `auto_research_pipeline.py` 内 gate/entry optimize subprocess 分支
+
+### Phase 4 目标
+
+- [ ] `scripts/meta_algorithm_unified.py`（或移 `bad-candidates/`）
+- [ ] `analyze_archetype_feature_stratification.py` 内 meta 自动 promote 路径
+- [ ] 各策略 `research_roll.features_on.yaml` 中 `meta_algorithm: true` → false 或归档
+
+### Phase 5 目标
+
+- [ ] `auto_research_pipeline.py` discovery stages（validate_static、research_roll discovery）
+- [ ] `config/strategies/*/research/validate_static.*.yaml`（归档，不物理删亦可）
+- [ ] `src/cli/main.py` 中 `mlbot optimize gate-plateau*` DEPRECATED 别名
+
+### 清理前必修测试
+
+- [ ] `tests/unit/test_compute_lift_for_threshold.py` → import `src.research.stat_kernels.gate_lift.compute_lift_for_threshold`
+- [ ] `tests/research/stat_kernels/test_gate_kernels_parity.py` 保持「legacy 委托同一 kernel」断言
+
+---
+
+## 9. 新命令 canonical 清单（删老代码后的目标面）
+
+```
+mlbot research scan|ic|plateau|segment|fit|compare|robustness|calibrate|promote
+scripts/rd_loop.py
+scripts/research/gate_plateau_scan.py
+scripts/research/entry_plateau_scan.py
+scripts/research/drift_suggestions.py
+python -m scripts.event_backtest --variant-grid
+scripts/regime_watchdog.py
+scripts/regime_drift_monitor.py
+scripts/pre_deploy_contract_checks.py
+mlbot pipeline run + calibrate_roll.default.yaml | pre_deploy_replay.yaml
+src/research/stat_kernels/*
+src/research/gate_when.py
+```
+
+**不在目标面（非 R&D discovery）**：`mlbot train final`、`mlbot pipeline run` 生产训练、`deploy_config_to_live.py`、live 运维脚本。
+
+---
+
+## 10. 验收 gate（启动 Phase 2 前）
+
+与 §5 硬指标一致，另加：
+
+- [ ] [`完整命令速查表.md`](../完整命令速查表.md) 与本文对照表无矛盾
+- [ ] TPC + ME（或 SRB）真实 `features_labeled.parquet` 跑通 §R&D工具矩阵 端到端示例
+- [ ] 团队默认不再新开 `research_roll` / `quick_layer_scan` 实验（仅 legacy 对拍）
+
+验收负责人签字 / 日期：________________ （待填）
