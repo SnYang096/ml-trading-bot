@@ -98,7 +98,16 @@ def _find_protection_order_by_client_id(
         return None
     fetch = getattr(binance_api, "get_order_by_client_id", None)
     if callable(fetch):
-        order = fetch(cid, symbol)
+        try:
+            order = fetch(cid, symbol)
+        except Exception as exc:
+            logger.warning(
+                "protection lookup failed client_order_id=%s symbol=%s: %s",
+                cid,
+                symbol,
+                exc,
+            )
+            order = None
         if order and _is_live_order_status(order.get("status")):
             return order
     scan = getattr(binance_api, "get_open_orders_for_sl_cleanup", None)
