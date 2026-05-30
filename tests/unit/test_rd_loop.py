@@ -24,7 +24,7 @@ def test_rd_loop_runs_three_steps(tmp_path: Path) -> None:
                         "condition": ["H: x>0"],
                     }
                 ],
-                "variant_grid": "config/experiments/tpc/tpc_variant_grid_smoke.yaml",
+                "variant_grid": "config/experiments/_smoke/tpc_variant_grid_smoke.yaml",
                 "decision_doc": {
                     "topic": "test_loop",
                     "topic_template": "default",

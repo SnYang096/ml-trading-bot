@@ -1,0 +1,56 @@
+# TPC 深回撤+吸收 ablation（Phase 3）— E0–E5 × bull + recent
+#
+# 先 smoke：仅 E0/E4/E5 × BTC+ETH × 2 windows（6 runs）
+# 全量：6 币 × bull_2023_2024 + recent × E0–E5（12 runs）
+#
+# 跑法:
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260530_tpc_deep_pullback/tpc_deep_pullback_ablation_grid.yaml \
+#     --quiet-signal-logs
+#
+# config_experiments 变体树（Phase 2 建好后替换 strategies_root）:
+#   E0 prod          → config/strategies
+#   E1 deep prefilter → config_experiments/tpc_deep_prefilter_strategies
+#   E2 deep entry    → config_experiments/tpc_deep_entry_strategies
+#   E3 anti cont gate → config_experiments/tpc_anti_cont_gate_strategies
+#   E4 full          → config_experiments/tpc_deep_pullback_full_strategies
+#   E5 tight stop    → config_experiments/tpc_deep_tight_stop_strategies
+
+experiment_id: tpc_deep_pullback_ablation_20260530
+strategy: tpc
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+trading_map: true
+
+runs:
+  # --- smoke: E0 prod ---
+  - variant: E0_bull_smoke
+    strategies_root: config/strategies
+    start_date: "2023-01-01"
+    end_date: "2025-01-01"
+    output_dir: results/tpc/experiments/deep_pullback_ablation/E0_bull_smoke
+
+  - variant: E0_recent_smoke
+    strategies_root: config/strategies
+    start_date: "2025-04-01"
+    end_date: "2026-04-01"
+    output_dir: results/tpc/experiments/deep_pullback_ablation/E0_recent_smoke
+
+  # --- smoke: E4 full（树建好后再启用）---
+  # - variant: E4_bull_smoke
+  #   strategies_root: config_experiments/tpc_deep_pullback_full_strategies
+  #   start_date: "2023-01-01"
+  #   end_date: "2025-01-01"
+  #   output_dir: results/tpc/experiments/deep_pullback_ablation/E4_bull_smoke
+  #
+  # - variant: E4_recent_smoke
+  #   strategies_root: config_experiments/tpc_deep_pullback_full_strategies
+  #   start_date: "2025-04-01"
+  #   end_date: "2026-04-01"
+  #   output_dir: results/tpc/experiments/deep_pullback_ablation/E4_recent_smoke
+
+  # --- smoke: E5 tight stop ---
+  # - variant: E5_bull_smoke
+  #   strategies_root: config_experiments/tpc_deep_tight_stop_strategies
+  #   ...

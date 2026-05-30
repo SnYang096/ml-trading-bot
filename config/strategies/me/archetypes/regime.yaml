@@ -1,12 +1,12 @@
 # ME Regime — 慢变量：chop + EMA1200 宏观带（CompressionBreakout 研究口径）
 #
 # 20260527：移除 box_pos_120 / box_breakout_*（holdout event_backtest 上 ~90% 信号被 box 拒掉，
-#   与「压缩→突破」语义冲突；对照见 config/experiments/me/me_regime_no_box_grid.yaml）。
+#   与「压缩→突破」语义冲突；对照见 config/experiments/20260528_me_compression_breakout/me_regime_no_box_grid.yaml）。
 #
 # 分工（与 BPC 对齐）：
 #   - regime.yaml   ：chop + EMA1200 离开中轴（候选，待 rd_loop / 双段 backtest promote）
 #   - prefilter.yaml：压缩释放 + OI 拥挤（突破前压缩 = archetype 核心）
-#   - direction.yaml：动量级联 + EMA 带通（见 config/experiments/me/rd_loop_me_direction.yaml）
+#   - direction.yaml：动量级联 + EMA 带通（见 config/experiments/20260528_me_direction/rd_loop_me_direction.yaml）
 
 allowed_regimes:
   - bull

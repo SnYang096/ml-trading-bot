@@ -1,0 +1,70 @@
+# TPC direction-EMA 对齐 + trailing 微调 smoke（BTC+ETH）
+#
+# Variants:
+#   prod_*        — config/strategies（MACD sign only）
+#   align_*       — direction signal_match_position_band（inner_abs=0.10）
+#   trail_mid_*   — align + trailing 4.5/8.0
+#   trail_wide_*  — align + trailing 5.0/10.0
+#
+# Windows: bull_2023_2024 + recent（见 config/market_segment.yaml）
+#
+# 跑法:
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260529_tpc_direction_ema_align/tpc_direction_align_smoke.yaml \
+#     --quiet-signal-logs
+
+experiment_id: tpc_direction_align_smoke_20260529
+strategy: tpc
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+trading_map: true
+
+runs:
+  - variant: prod_bull_2023_2024
+    strategies_root: config/strategies
+    start_date: "2023-01-01"
+    end_date: "2025-01-01"
+    output_dir: results/tpc/experiments/direction_align_retest/prod_bull_2023_2024
+
+  - variant: prod_recent
+    strategies_root: config/strategies
+    start_date: "2025-04-01"
+    end_date: "2026-04-01"
+    output_dir: results/tpc/experiments/direction_align_retest/prod_recent
+
+  - variant: align_bull_2023_2024
+    strategies_root: config_experiments/tpc_direction_ema1200_align_strategies
+    start_date: "2023-01-01"
+    end_date: "2025-01-01"
+    output_dir: results/tpc/experiments/direction_align_retest/align_bull_2023_2024
+
+  - variant: align_recent
+    strategies_root: config_experiments/tpc_direction_ema1200_align_strategies
+    start_date: "2025-04-01"
+    end_date: "2026-04-01"
+    output_dir: results/tpc/experiments/direction_align_retest/align_recent
+
+  - variant: trail_mid_bull_2023_2024
+    strategies_root: config_experiments/tpc_trail_mid_strategies
+    start_date: "2023-01-01"
+    end_date: "2025-01-01"
+    output_dir: results/tpc/experiments/direction_align_retest/trail_mid_bull_2023_2024
+
+  - variant: trail_mid_recent
+    strategies_root: config_experiments/tpc_trail_mid_strategies
+    start_date: "2025-04-01"
+    end_date: "2026-04-01"
+    output_dir: results/tpc/experiments/direction_align_retest/trail_mid_recent
+
+  - variant: trail_wide_bull_2023_2024
+    strategies_root: config_experiments/tpc_trail_wide_strategies
+    start_date: "2023-01-01"
+    end_date: "2025-01-01"
+    output_dir: results/tpc/experiments/direction_align_retest/trail_wide_bull_2023_2024
+
+  - variant: trail_wide_recent
+    strategies_root: config_experiments/tpc_trail_wide_strategies
+    start_date: "2025-04-01"
+    end_date: "2026-04-01"
+    output_dir: results/tpc/experiments/direction_align_retest/trail_wide_recent

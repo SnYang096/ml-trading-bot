@@ -1,0 +1,55 @@
+# BPC regime 对照：box_legacy vs ema_only（生产）vs ema+slope
+#
+#   box_legacy   → config_experiments/bpc_regime_box_legacy_strategies
+#   ema_only     → config/strategies（chop + |ema_1200_position|>=0.10）
+#   ema_slope    → config_experiments/bpc_ema_plus_slope_strategies
+#
+# PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#   --variant-grid config/experiments/20260527_bpc_regime_ema/bpc_regime_ema_grid.yaml --quiet-signal-logs
+
+experiment_id: bpc_regime_ema_20260527
+strategy: bpc
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - BNBUSDT
+  - XRPUSDT
+  - ADAUSDT
+
+runs:
+  - variant: box_legacy_bull_2024
+    strategies_root: config_experiments/bpc_regime_box_legacy_strategies
+    start_date: "2024-01-01"
+    end_date: "2025-01-01"
+    output_dir: results/bpc/experiments/box_legacy_bull_2024
+
+  - variant: ema_only_bull_2024
+    strategies_root: config/strategies
+    start_date: "2024-01-01"
+    end_date: "2025-01-01"
+    output_dir: results/bpc/experiments/ema_only_bull_2024
+
+  - variant: ema_slope_bull_2024
+    strategies_root: config_experiments/bpc_ema_plus_slope_strategies
+    start_date: "2024-01-01"
+    end_date: "2025-01-01"
+    output_dir: results/bpc/experiments/ema_slope_bull_2024
+
+  - variant: box_legacy_recent
+    strategies_root: config_experiments/bpc_regime_box_legacy_strategies
+    start_date: "2025-04-01"
+    end_date: "2026-04-01"
+    output_dir: results/bpc/experiments/box_legacy_recent
+
+  - variant: ema_only_recent
+    strategies_root: config/strategies
+    start_date: "2025-04-01"
+    end_date: "2026-04-01"
+    output_dir: results/bpc/experiments/ema_only_recent
+
+  - variant: ema_slope_recent
+    strategies_root: config_experiments/bpc_ema_plus_slope_strategies
+    start_date: "2025-04-01"
+    end_date: "2026-04-01"
+    output_dir: results/bpc/experiments/ema_slope_recent

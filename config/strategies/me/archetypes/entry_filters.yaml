@@ -5,8 +5,8 @@
 #   - entry_filter: 订单流「何时扳机」— 仅 OR 正向 trigger；无显著正向则保持 filters: []
 #
 # 候选特征池见 features_entry_filter.yaml（VPIN/CVD/footprint/cluster/funding-OI）。
-# 筛查: config/experiments/me/rd_loop_me_entry_filter_orderflow.yaml
-# Anti 候选走 gate: config/experiments/me/rd_loop_me_gate_anti.yaml
+# 筛查: config/experiments/20260528_me_entry_filter/rd_loop_me_entry_filter_orderflow.yaml
+# Anti 候选走 gate: config/experiments/20260528_me_gate_anti/rd_loop_me_gate_anti.yaml
 
 filters: []
 

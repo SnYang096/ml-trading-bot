@@ -1,0 +1,31 @@
+# TPC gate-plateau rd_loop example (lift KPI → calibrate draft → variant-grid)
+topic: tpc_gate_plateau
+strategy: tpc
+output_dir: results/rd_loop/tpc_gate_plateau
+
+research_scans:
+  - mode: gate-plateau
+    strategy: tpc
+    layer: gate
+    features_parquet: results/validation_smoke/tpc/features_labeled.parquet
+    label_col: is_good
+    step: 0.05
+    skip_locked: true
+    write_back_intervals: true
+    out: quick_scan/gate_plateau
+
+  # Single-feature lift probe (optional; quantiles in condition-set are PROBES only)
+  - mode: gate-plateau
+    strategy: tpc
+    layer: gate
+    features_parquet: results/validation_smoke/tpc/features_labeled.parquet
+    feature: tpc_semantic_chop
+    operator: "gt"
+    grid: "0.2,0.3,0.4,0.5,0.6"
+    out: quick_scan/gate_lift_tpc_semantic_chop.json
+
+variant_grid: config/experiments/20260529_tpc_gate_plateau/tpc_gate_refinement_grid.yaml
+
+decision_doc:
+  topic: tpc_gate_plateau
+  experiment_index: results/tpc/experiments/EXPERIMENT_INDEX.json

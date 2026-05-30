@@ -1,24 +1,57 @@
-# config/experiments — 按策略分子目录
+# config/experiments — 按实验计划归档
 
-避免根目录堆满 `rd_loop_*` / `*_grid.yaml`，新实验一律放进对应 slug 子目录。
+每个**完整实验**一个目录：`config/experiments/<YYYYMMDD>_<strategy>_<topic>/`
 
-| 目录 | 策略 / 用途 |
-|------|-------------|
-| `bpc/` | BPC layer validation、regime EMA、entry v2、ABH gate |
-| `tpc/` | TPC regime slope、smoke grid |
-| `me/` | CompressionBreakout（slug `me`）：regime 去 box、direction、prefilter |
-| `srb/` | SRB entry-plateau rd_loop |
-| `chop_grid/` | C 层 chop_grid 语义代理 grid |
-| `smoke/` | 跨策略 CI / 文档 smoke |
+| 内容 | 说明 |
+|------|------|
+| `README.md` | 人类可读：假设、物料、跑法、结果路径、结论（TODO） |
+| `rd_loop_*.yaml` | offline 扫描编排（mlbot research + 可选 variant_grid） |
+| `*_grid.yaml` | event_backtest 变体网格 |
 
-**跑法示例**
+**不在此目录：** 整棵策略变体树 → 仓库根 [`config_experiments/`](../config_experiments/)（与 `config/strategies` 对照）。
+
+**历史路径：** `config/experiments/<strategy>/` 已迁移（2026-05-30）；`docs/decisions/`、`docs/strategy/` 中的旧路径保留为历史记录。
+
+## 跑法
 
 ```bash
+# 完整 R&D loop（扫描 → 可选 grid → decision doc）
 PYTHONPATH=src:scripts python scripts/rd_loop.py \
-  --hypothesis-yaml config/experiments/me/rd_loop_me_compression_breakout.yaml
+  --hypothesis-yaml config/experiments/<dir>/rd_loop_*.yaml
 
+# 仅因果 backtest
 PYTHONPATH=src:scripts python -m scripts.event_backtest \
-  --variant-grid config/experiments/me/me_regime_no_box_grid.yaml --quiet-signal-logs
+  --variant-grid config/experiments/<dir>/*_grid.yaml --quiet-signal-logs
 ```
 
-**config_experiments/**（仓库根下）放 **整棵 strategies 实验树**（`{topic}_strategies/`），与生产 `config/strategies` 对照；新 ME 树建议 `config_experiments/me/<topic>_strategies/`。
+## 实验索引
+
+| 目录 | 策略 | 主题 |
+|------|------|------|
+| [`20260526_chop_grid_semantic_proxy/`](20260526_chop_grid_semantic_proxy/) | chop_grid | 语义代理 baseline |
+| [`20260527_bpc_layer_validation/`](20260527_bpc_layer_validation/) | bpc | 分层验证 + ABH gate |
+| [`20260527_bpc_entry_v2/`](20260527_bpc_entry_v2/) | bpc | entry v2 |
+| [`20260527_bpc_regime_ema/`](20260527_bpc_regime_ema/) | bpc | regime EMA grid |
+| [`20260527_srb_entry_plateau/`](20260527_srb_entry_plateau/) | srb | entry plateau scan |
+| [`20260527_tpc_regime_slope_signed/`](20260527_tpc_regime_slope_signed/) | tpc | regime slope 分符号 |
+| [`20260528_me_compression_breakout/`](20260528_me_compression_breakout/) | me | 压缩突破分层 + no_box |
+| [`20260528_me_direction/`](20260528_me_direction/) | me | direction 优化 |
+| [`20260528_me_entry_filter/`](20260528_me_entry_filter/) | me | entry_filter / orderflow |
+| [`20260528_me_gate_anti/`](20260528_me_gate_anti/) | me | gate anti |
+| [`20260528_me_prefilter_v4/`](20260528_me_prefilter_v4/) | me | prefilter v4 漏斗 |
+| [`20260528_me_prod_holdout/`](20260528_me_prod_holdout/) | me | prod holdout |
+| [`20260528_tpc_me_trading_map/`](20260528_tpc_me_trading_map/) | tpc, me | 交易地图 bull/bear |
+| [`20260529_fast_scalp/`](20260529_fast_scalp/) | fast_scalp | IC plateau + grid |
+| [`20260529_short_term_swing_ic_plateau/`](20260529_short_term_swing_ic_plateau/) | short_term_swing | IC plateau |
+| [`20260529_tpc_direction_ema_align/`](20260529_tpc_direction_ema_align/) | tpc | direction EMA1200 对齐 + trail |
+| [`20260529_tpc_gate_plateau/`](20260529_tpc_gate_plateau/) | tpc | gate plateau |
+| [`20260530_tpc_deep_pullback/`](20260530_tpc_deep_pullback/) | tpc | 深回撤 + 吸收（H1–H4） |
+| [`_smoke/`](_smoke/) | tpc | CI / 工具 smoke（非正式实验） |
+
+## 新建实验 checklist
+
+1. `mkdir config/experiments/<YYYYMMDD>_<strategy>_<topic>/`
+2. 放入 `rd_loop_*.yaml` / `*_grid.yaml`；`variant_grid:` 用**项目根相对路径**
+3. 写 `README.md`（假设、物料、跑法、`results/`、结论 TODO）
+4. 变体策略树仍在 `config_experiments/<topic>_strategies/`
+5. 在本表追加一行索引
