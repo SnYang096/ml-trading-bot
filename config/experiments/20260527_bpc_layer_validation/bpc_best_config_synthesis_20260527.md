@@ -7,14 +7,14 @@
 | 层 | 推荐 | 依据 |
 |---|---|---|
 | **Regime** | `chop<=0.40` + `\|ema_1200_position\|>=0.10`（生产）；slope **暂不** | grid：ema_only recent +5.89 vs box -1.22；ema_slope recent +6.89 边际 |
-| **Entry** | 生产 orderflow；**不用** v2 | [`bpc_entry_v2_experiment_20260527.md`](bpc_entry_v2_experiment_20260527.md)：v2 两段 totR 更差 |
+| **Entry** | 生产 orderflow；**不用** v2 | [`../20260527_bpc_entry_v2/bpc_entry_v2_experiment_20260527.md`](../20260527_bpc_entry_v2/bpc_entry_v2_experiment_20260527.md)：v2 两段 totR 更差 |
 | **Prefilter** | 保留四锚；**不删** `bpc_recent_breakout_strength` | ABH no_breakout ≡ A on recent |
 | **Prefilter 微调** | `bpc_volume_compression_pct` 0.9295 → **0.95**（可选 P1） | plateau scan \|z\|=2.33 @0.95 |
 | **Gate** | 生产 baseline（vol 全开）；**不**用 B/H | ABH：H recent -5.59R；B recent -4.18 |
 | **Direction** | 不动 | 未做变体 |
 | **Execution** | 不动 | 未做变体 |
 
-## 1. Regime（`bpc_regime_ema_grid.yaml` — ✅ 见 [`bpc_regime_ema_experiment_20260527.md`](bpc_regime_ema_experiment_20260527.md)）
+## 1. Regime（`bpc_regime_ema_grid.yaml` — ✅ 见 [`../20260527_bpc_regime_ema/bpc_regime_ema_experiment_20260527.md`](../20260527_bpc_regime_ema/bpc_regime_ema_experiment_20260527.md)）
 
 | 变体 | 说明 |
 |---|---|

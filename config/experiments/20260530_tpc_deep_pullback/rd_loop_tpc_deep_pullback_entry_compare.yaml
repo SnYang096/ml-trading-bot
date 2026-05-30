@@ -1,0 +1,39 @@
+# TPC 深回撤 + 吸收 — Pass 2：H3 condition-set（阈值来自 Pass 1 plateau，禁止手拍）
+#
+# 跑前：读 results/rd_loop/tpc_deep_pullback/quick_scan/
+#   depth_plateau.md → 改 tau_deep
+#   pe_plateau.md → 改 tau_pe
+#   cvd_absorption_plateau.md → 改 tau_cvd
+#   vol_pullback_confirm_plateau.md → 改 tau_vol
+# 然后只改下面 deep_absorb 那一行里的四个数字，再跑本文件。
+#
+#   PYTHONPATH=src:scripts python scripts/rd_loop.py \
+#     --hypothesis-yaml config/experiments/20260530_tpc_deep_pullback/rd_loop_tpc_deep_pullback_entry_compare.yaml
+
+topic: tpc_deep_pullback_pass2_entry_compare
+strategy: tpc
+output_dir: results/rd_loop/tpc_deep_pullback
+
+features_parquet: &parquet results/train_final/tpc/train_final_20260523_122438_rr_extreme/tpc/features_labeled.parquet
+
+bull_filter: &bull_filter
+  - ema_1200_position>=0.10
+  - tpc_semantic_chop<=0.40
+
+# 记录 Pass 1 选定值（rd_loop 不读此块，仅供人审 / decision doc）
+thresholds_from_pass1:
+  tau_deep: null   # e.g. 0.35
+  tau_pe: null     # e.g. 0.55
+  tau_cvd: null    # e.g. 0.85
+  tau_vol: null    # e.g. 0.50
+
+quick_layer_scans:
+  - mode: condition-set
+    features_parquet: *parquet
+    label: success_no_rr_extreme
+    filter: *bull_filter
+    condition:
+      # ↓ 四个阈值必须与 thresholds_from_pass1 一致（占位值跑 Pass 2 前必改）
+      - "deep_absorb: tpc_pullback_depth>=0.35 AND tpc_cvd_absorption>=0.85 AND tpc_vol_pullback_confirm>=0.5 AND path_efficiency_pct<=0.55"
+      - "prod_entry: tpc_cvd_absorption>=0.629 AND tpc_recovery_strength>=0.039"
+    out: quick_scan/entry_compare.md

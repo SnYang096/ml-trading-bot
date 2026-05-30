@@ -112,7 +112,7 @@ vla_inside_deny            2968   54.89%    54.92%    -0.03   0.03
 vpin_ma20_high_deny        4281   55.59%    54.47%    +0.68   1.16
 ```
 
-- **`vol_persistence` deny 区**：label 看反了（拒掉的反而是 +2.24pp 高成功区）。这是 [`tpc_gate_vol_ABH_experiment_20260526.md`](tpc_gate_vol_ABH_experiment_20260526.md) §3-§4 的同款张力 — **label success ≠ R-multiple**。TPC promote H 的逻辑是 bull 段 DD 保护；BPC 没做过同样实验。
+- **`vol_persistence` deny 区**：label 看反了（拒掉的反而是 +2.24pp 高成功区）。这是 [`../_smoke/tpc_gate_vol_ABH_experiment_20260526.md`](../_smoke/tpc_gate_vol_ABH_experiment_20260526.md) §3-§4 的同款张力 — **label success ≠ R-multiple**。TPC promote H 的逻辑是 bull 段 DD 保护；BPC 没做过同样实验。
   - **行动**：复用 TPC ABH 范式做 BPC 的 ABH：A=全开 vol gates、B=全关、H=bull-conditional vol。
 - **`vol_leverage_asymmetry`**：label 上**完全没差异**。规则可能在卡极端波动姿态而非平均 label。先保留，与 vol_persistence 一起进 ABH 测试。
 - **`vpin_ma20>0.3044`**：维持 disabled。

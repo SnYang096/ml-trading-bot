@@ -1,25 +1,19 @@
-# TPC「深回撤 + 吸收」离线证明（Phase 1）
+# TPC「深回撤 + 吸收」离线证明 — Pass 1：只扫阈值（不定 deep_absorb 组合）
 #
-# Phase 0 parquet（6 币 2023-01-01 → 2026-04-01）跑完后，把下方 PARQUET 换成新 RUN_ID 路径。
-# 默认沿用最近 train_final（与 bull 段重叠；holdout recent 另跑 calendar_window 时可加 scan）。
+# Pass 1 产出 depth_plateau.md / pe_plateau.md / … → 人读 plateau 定 τ_deep、τ_pe、τ_cvd、τ_vol
+# Pass 2 再把 τ 填进 rd_loop_tpc_deep_pullback_entry_compare.yaml 跑 H3 condition-set
 #
-# 跑法:
 #   PYTHONPATH=src:scripts python scripts/rd_loop.py \
 #     --hypothesis-yaml config/experiments/20260530_tpc_deep_pullback/rd_loop_tpc_deep_pullback.yaml
 #
-# Phase 0 示例:
-#   RUN_ID=train_final_tpc_deep_$(date +%Y%m%d_%H%M%S)
-#   mlbot train final --no-docker --prepare-only \
-#     -c config/strategies/tpc -t 120T \
-#     --symbol BTCUSDT,ETHUSDT,BNBUSDT,ADAUSDT,SOLUSDT,XRPUSDT \
-#     --start-date 2023-01-01 --end-date 2026-04-01 \
-#     --output-root results/train_final/tpc/${RUN_ID}
+#   # plateau 看完后再跑：
+#   PYTHONPATH=src:scripts python scripts/rd_loop.py \
+#     --hypothesis-yaml config/experiments/20260530_tpc_deep_pullback/rd_loop_tpc_deep_pullback_entry_compare.yaml
 
-topic: tpc_deep_pullback
+topic: tpc_deep_pullback_pass1
 strategy: tpc
 output_dir: results/rd_loop/tpc_deep_pullback
 
-# 替换为 Phase 0 产出；当前为占位（可先做 smoke scan）
 features_parquet: &parquet results/train_final/tpc/train_final_20260523_122438_rr_extreme/tpc/features_labeled.parquet
 
 bull_filter: &bull_filter
@@ -27,38 +21,88 @@ bull_filter: &bull_filter
   - tpc_semantic_chop<=0.40
 
 quick_layer_scans:
-  # H1：深回踩 plateau（bull long 诊断）
+  # H1：深回踩 τ_deep（禁止手拍；从本 scan 选 |z|>2 且 good-rate Δpp>0 的格点）
   - mode: feature-plateau
     features_parquet: *parquet
     label: success_no_rr_extreme
     layer: prefilter
     feature: tpc_pullback_depth
     operator: ">="
-    grid: "0.15,0.25,0.35,0.45,0.55,0.65"
+    grid: "0.15,0.25,0.35,0.45,0.55,0.65,0.75,0.85,0.95"
     filter: *bull_filter
     out: quick_scan/depth_plateau.md
 
-  # H2：反延续（划界 BPC）
+  # H2：反延续 τ_pe
   - mode: feature-plateau
     features_parquet: *parquet
     label: success_no_rr_extreme
     feature: path_efficiency_pct
     operator: "<="
-    grid: "0.35,0.45,0.55,0.65,0.75"
+    grid: "0.15,0.25,0.35,0.45,0.55,0.65,0.75,0.85,0.95"
     filter: *bull_filter
     out: quick_scan/pe_plateau.md
 
-  # H3：深吸收 vs prod entry
+  # H3 分量：吸收 / 缩量 — entry 层用 snotio(entry_rr) 真实入场 R 质量，而非 success 标签
+  #   # entry_rr 用 OHLC+atr+方向跑入场模拟；组合阈值在 Pass 2 再拼。
+  #   怎么读：
+
+  # snotio 更好、success 一般 → 适合当 entry 扳机（赚 R），Pass 2 的 τ_cvd 优先跟 snotio plateau。
+  # success 更好、snotio 平或变差 → 可能只是「少亏」，不一定值得 promote entry。
+  # 两边 plateau 方向一致 → 信心更高，可以填 Pass 2。
+  # 明显打架 → 以 snotio + 后续 E4 回测 Mean R 为准，success 当辅助。
+  - mode: snotio-plateau
+    features_parquet: *parquet
+    strategy: tpc
+    layer: entry
+    feature: tpc_cvd_absorption
+    operator: ">="
+    grid: "0.5,0.65,0.75,0.85,0.9,0.95"
+    snotio_mode: entry_rr
+    filter: *bull_filter
+    out: quick_scan/cvd_absorption_snotio.json
+
+  - mode: snotio-plateau
+    features_parquet: *parquet
+    strategy: tpc
+    layer: entry
+    feature: tpc_vol_pullback_confirm
+    operator: ">="
+    grid: "0.15,0.25,0.35,0.45,0.55,0.65,0.75,0.85,0.95"
+    snotio_mode: entry_rr
+    filter: *bull_filter
+    out: quick_scan/vol_pullback_confirm_snotio.json
+
+  # entry 特征的 success 交叉核对（少踩坑视角，与 snotio R 质量互补）
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: success_no_rr_extreme
+    layer: entry
+    feature: tpc_cvd_absorption
+    operator: ">="
+    grid: "0.5,0.65,0.75,0.85,0.9,0.95"
+    filter: *bull_filter
+    out: quick_scan/cvd_absorption_success.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: success_no_rr_extreme
+    layer: entry
+    feature: tpc_vol_pullback_confirm
+    operator: ">="
+    grid: "0.15,0.25,0.35,0.45,0.55,0.65,0.75,0.85,0.95"
+    filter: *bull_filter
+    out: quick_scan/vol_pullback_confirm_success.md
+
+  # prod entry 锚（来自现网 yaml，不是搜索产物；仅作 Pass 2 对照基线）
   - mode: condition-set
     features_parquet: *parquet
     label: success_no_rr_extreme
     filter: *bull_filter
     condition:
-      - "deep_absorb: tpc_pullback_depth>=0.35 AND tpc_cvd_absorption>=0.85 AND tpc_vol_pullback_confirm>=0.5 AND path_efficiency_pct<=0.55"
       - "prod_entry: tpc_cvd_absorption>=0.629 AND tpc_recovery_strength>=0.039"
-    out: quick_scan/entry_compare.md
+    out: quick_scan/prod_entry_baseline.md
 
-  # H1/H2/H3 符号一致性
+  # IC（符号一致性，与阈值无关）
   - mode: ic-decay
     features_parquet: *parquet
     label: success_no_rr_extreme
@@ -70,7 +114,7 @@ quick_layer_scans:
     filter: *bull_filter
     out: quick_scan/ic_decay.md
 
-  # short 对称（bear side）
+  # short 对称 depth
   - mode: feature-plateau
     features_parquet: *parquet
     label: success_no_rr_extreme
@@ -83,11 +127,9 @@ quick_layer_scans:
       - tpc_semantic_chop<=0.40
     out: quick_scan/depth_plateau_short.md
 
-# Phase 3 建好 E0–E5 树后再取消注释
-# variant_grid: config/experiments/20260530_tpc_deep_pullback/tpc_deep_pullback_ablation_grid.yaml
-
 decision_doc:
   topic: tpc_deep_pullback
   topic_template: default
   experiment_index: results/tpc/experiments/EXPERIMENT_INDEX.json
-  out: decision_doc_skeleton.md
+  # 相对 output_dir；也可手填 DECISION.md
+  out: ../../../config/experiments/20260530_tpc_deep_pullback/DECISION_rd_loop_skeleton.md

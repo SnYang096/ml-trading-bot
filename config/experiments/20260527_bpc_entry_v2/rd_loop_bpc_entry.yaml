@@ -2,7 +2,7 @@
 #
 # Step 1: 本文件 quick_layer_scan
 # Step 2: event_backtest --variant-grid config/experiments/20260527_bpc_entry_v2/bpc_entry_v2_grid.yaml
-# Step 3: 人审 promote 前写 docs/decisions/bpc_entry_v2_*.md
+# Step 3: 人审 promote 前更新本目录 bpc_entry_v2_experiment_20260527.md
 #
 # Parquet: results/train_final/bpc/train_final_20260519_123251_rr_extreme/bpc/features_labeled.parquet
 

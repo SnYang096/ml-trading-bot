@@ -4,13 +4,16 @@
 
 | 内容 | 说明 |
 |------|------|
-| `README.md` | 人类可读：假设、物料、跑法、结果路径、结论（TODO） |
+| `README.md` | **实验卡片**：物料清单、跑法、`results/` 路径、链到决策文档（不写长表） |
+| `DECISION.md` / `*_experiment_*.md` | **决策全文**：假设表、变体/回测结果、promote 结论（原 `docs/decisions/` 已迁入） |
 | `rd_loop_*.yaml` | offline 扫描编排（mlbot research + 可选 variant_grid） |
 | `*_grid.yaml` | event_backtest 变体网格 |
 
 **不在此目录：** 整棵策略变体树 → 仓库根 [`config_experiments/`](../config_experiments/)（与 `config/strategies` 对照）。
 
-**历史路径：** `config/experiments/<strategy>/` 已迁移（2026-05-30）；`docs/decisions/`、`docs/strategy/` 中的旧路径保留为历史记录。
+**跨实验校准：** [`_cross/regime_thresholds/`](_cross/regime_thresholds/)（regime τ 季度标定日志）。
+
+**历史链接：** [`docs/decisions/README.md`](../docs/decisions/README.md) 为迁移索引；`docs/strategy/` 内旧 URL 不批量改。
 
 ## 跑法
 

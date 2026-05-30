@@ -6,15 +6,16 @@
 | 日期 | 2026-05-30 |
 | 策略 | tpc |
 
-## 假设
+## 假设（摘要）
 
-牛市深回踩 + 订单流吸收确认后入场；deny 高 path_efficiency 延续区（留给 BPC）；可选更紧止损（E5）。
+牛市深回踩 + 订单流吸收确认后入场；deny 高 path_efficiency 延续区（留给 BPC）。  
+**完整假设表 / promote checklist → [`DECISION.md`](DECISION.md)**
 
 ## 物料
 
-- `rd_loop_tpc_deep_pullback.yaml` — Phase 1 离线 scan
+- `rd_loop_tpc_deep_pullback.yaml` — Pass 1：plateau + IC（**不定** deep_absorb 组合阈值）
+- `rd_loop_tpc_deep_pullback_entry_compare.yaml` — Pass 2：读完 plateau 后填 τ，再跑 H3 vs prod
 - `tpc_deep_pullback_ablation_grid.yaml` — Phase 3 E0–E5 ablation（smoke 先 E0）
-- `docs/decisions/tpc_deep_pullback_hypothesis_2026.md` — 假设表与 promote checklist
 
 ## 跑法
 
@@ -38,7 +39,11 @@ PYTHONPATH=src:scripts python -m scripts.event_backtest \
 
 ## 结论
 
-TODO
+见 [`DECISION.md`](DECISION.md) 文末（跑完 Pass 1/2/3 后填写）。
+
+## 决策文档
+
+- [`DECISION.md`](DECISION.md) — 假设 H1–H4、Pass 1/2 口径、promote checklist
 
 ## 关联
 

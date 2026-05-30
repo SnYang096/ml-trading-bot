@@ -33,7 +33,25 @@ mlbot train final --no-docker --prepare-only \
 - **① 扫描 / bull：** 2023-01-01 → 2025-01-01，`ema_1200_position>=0.10`
 - **② holdout recent：** 2025-04-01 → 2026-04-01
 
-## Phase 1 — 离线通过标准（①）
+## Phase 1 — 两轮 rd_loop（①）
+
+1. **Pass 1** `rd_loop_tpc_deep_pullback.yaml`：depth / PE / cvd / vol 分量 plateau + prod 基线 + IC（**不在此步写死 deep_absorb 组合**）。
+2. **Pass 2** `rd_loop_tpc_deep_pullback_entry_compare.yaml`：把 plateau 选定的 τ 写入 `deep_absorb` 行，再与 `prod_entry` 做 condition-set。
+
+`rd_loop` **不会**自动把 plateau 结果写回 condition；Pass 2 阈值必须来自 Pass 1 产出，禁止与 plateau 无关的手拍。
+
+**label / KPI 口径（按层）：**
+
+| 层 | 特征 | KPI |
+|----|------|-----|
+| prefilter | `tpc_pullback_depth` | `success_no_rr_extreme`（少踩坑） |
+| gate 语义 | `path_efficiency_pct` | `success_no_rr_extreme` |
+| entry 候选 | `tpc_cvd_absorption` / `tpc_vol_pullback_confirm` | 各跑 **`snotio-plateau` + `entry_rr`** 与 **`success_no_rr_extreme`** 双 KPI 交叉核对 |
+| 符号一致性 | 全部 | `ic-decay` + `forward_rr` |
+
+Entry 阈值 promote 前必须看 snotio 或 E4 回测的 Mean R，不能只凭 success 率。
+
+## 离线通过标准（①）
 
 - [ ] 存在 τ_deep ∈ [0.30, 0.50]，bull 段 \|z\|>2 且 good-rate Δpp > 0
 - [ ] path_efficiency ≤ τ_pe（初值 0.55）优于当前入场分布
