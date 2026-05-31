@@ -1,0 +1,185 @@
+# TPC gate 验证 — Phase 1 only（label scan，不挂 variant_grid）
+#
+#   PYTHONPATH=src:scripts python scripts/rd_loop.py \
+#     --hypothesis-yaml config/experiments/20260531_tpc_gate_validate/rd_loop_tpc_gate_validate.yaml
+
+topic: tpc_gate_validate_20260531
+strategy: tpc
+output_dir: results/rd_loop/tpc_gate_validate
+
+features_parquet: &parquet results/train_final/tpc/train_final_20260523_122438_rr_extreme/tpc/features_labeled.parquet
+label: &label success_no_rr_extreme
+
+# 与 0530 Pass1 bull 一致（gate 在 direction 之后，仍用同一诊断子集）
+bull_filter: &bull_filter
+  - ema_1200_position>=0.10
+  - tpc_semantic_chop<=0.40
+
+bear_filter: &bear_filter
+  - ema_1200_position<=-0.10
+  - tpc_semantic_chop<=0.40
+
+quick_layer_scans:
+  # ── G1 chop（现网 deny: semantic_chop > 0.4）→ 通过侧 plateau 用 <= ──
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    feature: tpc_semantic_chop
+    operator: "<="
+    grid: "0.20,0.30,0.35,0.40,0.45,0.50,0.55,0.60"
+    filter: *bull_filter
+    out: quick_scan/chop_plateau_bull.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    feature: tpc_semantic_chop
+    operator: "<="
+    grid: "0.20,0.30,0.35,0.40,0.45,0.50,0.55,0.60"
+    out: quick_scan/chop_plateau_all.md
+
+  - mode: condition-set
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    filter: *bull_filter
+    condition:
+      - "prod_deny_chop: tpc_semantic_chop>0.4"
+    out: quick_scan/cond_prod_deny_chop_bull.md
+
+  # ── G2 vol_persistence bull（现网 deny 带 0.0029–0.0616，仅 ema>0.10 生效）──
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    feature: vol_persistence
+    operator: ">"
+    grid: "0.001,0.003,0.006,0.01,0.02,0.04,0.062,0.08"
+    filter: *bull_filter
+    out: quick_scan/vol_persistence_gt_bull.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    feature: vol_persistence
+    operator: "<"
+    grid: "0.04,0.05,0.062,0.07,0.08,0.10,0.12"
+    filter: *bull_filter
+    out: quick_scan/vol_persistence_lt_bull.md
+
+  - mode: condition-set
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    filter: *bull_filter
+    condition:
+      - "prod_deny_vol_persist_bull: vol_persistence>0.0029 AND vol_persistence<0.0616 AND ema_1200_position>0.10"
+    out: quick_scan/cond_prod_deny_vol_persist_bull.md
+
+  - mode: gate-plateau
+    features_parquet: *parquet
+    strategy: tpc
+    label: *label
+    label_col: *label
+    feature: vol_persistence
+    operator: "gt"
+    grid: "0.001,0.003,0.006,0.01,0.02,0.04,0.062"
+    filter: *bull_filter
+    min_lift: 0.05
+    out: quick_scan/gate_lift_vol_persistence_bull.json
+
+  # ── G3 vol_leverage_asymmetry bull（现网 deny 带 0.0558–0.1482）──
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    feature: vol_leverage_asymmetry
+    operator: ">"
+    grid: "0.03,0.04,0.056,0.07,0.10,0.12,0.15,0.18"
+    filter: *bull_filter
+    out: quick_scan/vol_leverage_gt_bull.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    feature: vol_leverage_asymmetry
+    operator: "<"
+    grid: "0.10,0.12,0.15,0.18,0.20,0.25"
+    filter: *bull_filter
+    out: quick_scan/vol_leverage_lt_bull.md
+
+  - mode: condition-set
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    filter: *bull_filter
+    condition:
+      - "prod_deny_vol_lev_bull: vol_leverage_asymmetry>0.0558 AND vol_leverage_asymmetry<0.1482 AND ema_1200_position>0.10"
+    out: quick_scan/cond_prod_deny_vol_lev_bull.md
+
+  - mode: gate-plateau
+    features_parquet: *parquet
+    strategy: tpc
+    label: *label
+    label_col: *label
+    feature: vol_leverage_asymmetry
+    operator: "gt"
+    grid: "0.03,0.056,0.08,0.12,0.15"
+    filter: *bull_filter
+    min_lift: 0.05
+    out: quick_scan/gate_lift_vol_leverage_bull.json
+
+  # ── G4 path_efficiency（0530 H2 对照；gate deny 高 PE）──
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    feature: path_efficiency_pct
+    operator: "<="
+    grid: "0.15,0.25,0.35,0.45,0.55,0.65,0.75,0.85,0.95"
+    filter: *bull_filter
+    out: quick_scan/pe_plateau_bull.md
+
+  - mode: condition-set
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    filter: *bull_filter
+    condition:
+      - "prod_deny_pe_high: path_efficiency_pct>0.15"
+    out: quick_scan/cond_prod_deny_pe_bull.md
+
+  # ── 整表 gate 规则 batch（success_no_rr_extreme，含 locked）──
+  - mode: gate-plateau
+    features_parquet: *parquet
+    strategy: tpc
+    label_col: *label
+    step: 0.05
+    skip_locked: false
+    write_back_intervals: true
+    min_lift: 0.05
+    out: quick_scan/gate_plateau_all_rules
+
+  # ── bear 对称：vol bull 规则在 bear 段应不触发，看 vol 特征是否仍有信号 ──
+  - mode: condition-set
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    filter: *bear_filter
+    condition:
+      - "prod_deny_vol_persist_bull: vol_persistence>0.0029 AND vol_persistence<0.0616 AND ema_1200_position>0.10"
+    out: quick_scan/cond_prod_deny_vol_persist_on_bear.md
+
+decision_doc:
+  topic: tpc_gate_validate_20260531
+  experiment_index: results/tpc/experiments/EXPERIMENT_INDEX.json
+  out: ../../../config/experiments/20260531_tpc_gate_validate/DECISION.md
+
+quick_scan_html:
+  enabled: true
+  scan_dir: quick_scan
+  out: quick_scan/report.html

@@ -1,0 +1,33 @@
+# Phase 2 — 仅在 Phase 1 DECISION 明确假设后运行（固定 E2_or + prod prefilter）
+#
+# 实验树：复用 config_experiments/tpc_gate_ablate_*（本机 cp 自 tpc_deep_entry_or_strategies）
+#
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260531_tpc_gate_validate/tpc_gate_validate_phase2_grid.yaml \
+#     --quiet-signal-logs
+
+experiment_id: tpc_gate_validate_phase2_20260531
+strategy: tpc
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+trading_map: false
+
+runs:
+  - variant: G0_gate_prod
+    strategies_root: config_experiments/tpc_gate_ablate_G0_prod_strategies
+    start_date: "2023-01-01"
+    end_date: "2025-01-01"
+    output_dir: results/tpc/experiments/gate_validate/G0_gate_prod
+
+  - variant: G1_no_bull_vol_gates
+    strategies_root: config_experiments/tpc_gate_ablate_G1_no_bull_vol_strategies
+    start_date: "2023-01-01"
+    end_date: "2025-01-01"
+    output_dir: results/tpc/experiments/gate_validate/G1_no_bull_vol_gates
+
+  - variant: G2_no_chop_gate
+    strategies_root: config_experiments/tpc_gate_ablate_G2_no_chop_strategies
+    start_date: "2023-01-01"
+    end_date: "2025-01-01"
+    output_dir: results/tpc/experiments/gate_validate/G2_no_chop_gate
