@@ -2,47 +2,45 @@
 # Full table: results/rd_loop/fast_scalp_ic_plateau/ic_prune_h5/ic_prune_holdout.md
 
 name: fast_scalp
-description: |
-  Top-35 IC-pruned nodes @ holdout 2025-10→2026-04 (best_lag≤5, |IC|≥0.02).
-  atr_f required for label generation (excluded from model via exclude_columns).
+description: 'IC-pruned @ holdout best_lag<=5, |IC|>=0.02, target=label.
 
+  '
 feature_pipeline:
   exclude_columns:
-    - atr
+  - atr
   requested_features:
-    - atr_f
-    - evt_features_f
-    - box_structure_f
-    - macro_tp_vwap_1200_position_f
-    - atr_percentile_f
-    - fer_failure_signals_f
-    - shd_pct_f
-    - me_failure_f
-    - session_features_f
-    - vol_trend_features_f
-    - vol_mom_features_f
-    - spectrum_features_f
-    - me_soft_phase_f
-    - vwap_position_f
-    - recent_compression_decay_f
-    - hilbert_phase_f
-    - cvd_divergence_v2_f
-    - wpt_volume_energy_f
-    - footprint_basic_f
-    - volume_profile_volatility_features_f
-    - me_accel_5k_split_f
-    - spectrum_features_sr_breakout_f
-    - roc_10_f
-    - trend_confidence_f
-    - rsi_f
-    - price_momentum_divergence_f
-    - roc_5_f
-    - wpt_cvd_fluctuation_f
-    - path_efficiency_pct_f
-    - price_dir_consistency_pct_f
-    - jump_risk_pct_f
-    - liquidity_void_f
-    - bpc_soft_phase_f
-    - compression_duration_f
-    - path_length_pct_f
-    - bb_width_f
+  - atr_f
+  - atr_percentile_f
+  - bb_width_f
+  - box_structure_f
+  - bpc_soft_phase_f
+  - compression_duration_f
+  - cvd_divergence_v2_f
+  - evt_features_f
+  - fer_failure_signals_f
+  - footprint_basic_f
+  - hilbert_phase_f
+  - jump_risk_pct_f
+  - liquidity_void_f
+  - macro_tp_vwap_1200_position_f
+  - me_accel_5k_split_f
+  - me_failure_f
+  - me_soft_phase_f
+  - path_efficiency_pct_f
+  - path_length_pct_f
+  - price_dir_consistency_pct_f
+  - price_momentum_divergence_f
+  - recent_compression_decay_f
+  - roc_10_f
+  - roc_5_f
+  - rsi_f
+  - session_features_f
+  - shd_pct_f
+  - spectrum_features_f
+  - spectrum_features_sr_breakout_f
+  - trend_confidence_f
+  - vol_mom_features_f
+  - vol_trend_features_f
+  - volume_profile_volatility_features_f
+  - vwap_position_f
+  - wpt_cvd_fluctuation_f

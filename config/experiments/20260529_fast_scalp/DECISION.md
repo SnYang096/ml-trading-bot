@@ -45,3 +45,18 @@
 | `results/train_final/fast_scalp/train_final_20260530_141451_ic_top35/` | **pooled promote artifact** |
 | `results/rd_loop/fast_scalp_ic_plateau/holdout_rr_top35/` | 6 币 τ 扫描 |
 | `config/strategies/tree_strategies/fast_scalp/features.yaml` | top-35 IC 特征 |
+
+## 验收（2026-05-31，`mlbot research ic-prune` + forward_rr 内核）
+
+**Parquet：** `prepare_20260530_140243/features_labeled.parquet`  
+**注意：** fast_scalp labeled parquet 的 target 列是 **`label`**（非 `forward_rr`），IC 剪枝需 `--target label`。
+
+| 步骤 | 结果 |
+|------|------|
+| ic-prune vs Phase1 top-35 | **34/35 相同**；仅移除 `wpt_volume_energy_f` |
+| 重训 artifact | `results/train_final/fast_scalp/train_ic_prune_validate_20260531/` |
+| Holdout Pearson | **+0.019**（Phase1 +0.025，略弱） |
+| τ scan @ q=0.10 pooled Sharpe | **0.23**（Phase1 @ q=0.05 **0.45**） |
+| per-coin | SOL 仍强（Sharpe 2.0）；ADA/XRP 弱于 Phase1；BTC/ETH 仍负 |
+
+**结论：** 新命令 + `label` target 下特征池**高度稳定**；holdout τ **未优于** Phase1 ATR-forward 剪枝模型，**不推翻** Phase1「6 币一体 reject / 拆分 alts+majors」决策。产物见 `results/rd_loop/fast_scalp_ic_plateau/ic_prune_forward_rr/`、`holdout_rr_ic_prune_validate/`。
