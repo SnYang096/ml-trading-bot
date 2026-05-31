@@ -10,6 +10,18 @@ def test_shift_target_by_horizon():
     assert pd.isna(y.iloc[-1])
 
 
+def test_shift_target_by_horizon_underscore_symbol():
+    df = pd.DataFrame(
+        {
+            "_symbol": ["A", "A", "A", "B", "B", "B"],
+            "forward_rr": [1.0, 2.0, 3.0, 10.0, 20.0, 30.0],
+        }
+    )
+    y = shift_target_by_horizon(df["forward_rr"], 2, df)
+    assert y.iloc[0] == 3.0
+    assert y.iloc[3] == 30.0
+
+
 def test_ic_decay_rows_with_shift():
     df = pd.DataFrame(
         {

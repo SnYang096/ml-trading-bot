@@ -59,6 +59,16 @@ def load_research_frame(args: argparse.Namespace) -> pd.DataFrame:
     return pd.read_parquet(pq)
 
 
+def add_filter_args(p: argparse.ArgumentParser) -> None:
+    """Repeatable subset DSL clauses (ANDed); matches rd_loop yaml ``filter: [...]``."""
+    p.add_argument(
+        "--filter",
+        action="append",
+        default=[],
+        help="Subset DSL clause (repeatable; ANDed with layer/subset mask).",
+    )
+
+
 def build_base_mask(df: pd.DataFrame, args: argparse.Namespace) -> pd.Series:
     mask = pd.Series(True, index=df.index)
     strategy = getattr(args, "strategy", None)
@@ -68,6 +78,8 @@ def build_base_mask(df: pd.DataFrame, args: argparse.Namespace) -> pd.Series:
     subset = getattr(args, "subset", None)
     if subset:
         mask = mask & parse_clause(subset)(df)
+    for clause in getattr(args, "filter", None) or []:
+        mask = mask & parse_clause(str(clause))(df)
     calendar_window = getattr(args, "calendar_window", None)
     if calendar_window:
         mask = mask & build_calendar_mask(df, calendar_window)

@@ -1,28 +1,73 @@
-# fast_scalp tree channel: IC → fit/plateau → variant-grid (see 短期树 doc §3-4)
+# fast_scalp Phase 1: IC prune → pooled train → holdout τ (tree channel)
+#
+#   PYTHONPATH=src:scripts python scripts/rd_loop.py \
+#     --hypothesis-yaml config/experiments/20260529_fast_scalp/rd_loop_fast_scalp_ic_plateau.yaml
+
 topic: fast_scalp_ic_plateau
 strategy: fast_scalp
 output_dir: results/rd_loop/fast_scalp_ic_plateau
+timeframe: "120T"
+feature_store_layer: features_tree_core_120T_c005db49f7
+data_path: data/parquet_data
+
+holdout: &holdout
+  start: "2025-10-01"
+  end: "2026-04-01"
+
+symbols_6: &symbols_6 BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+train_dates: &train_dates
+  start_date: "2024-01-01"
+  end_date: "2026-04-01"
+  holdout_start_date: "2025-10-01"
+  holdout_end_date: "2026-04-01"
+
+# Relative to output_dir unless absolute
+prepare_root: &prepare_root results/train_final/fast_scalp/prepare_rd_loop
+train_root: &train_root results/train_final/fast_scalp/train_rd_loop
+
+tree_steps:
+  - mode: prepare-only
+    config: config/strategies/tree_strategies/fast_scalp
+    symbols: *symbols_6
+    <<: *train_dates
+    output_root: *prepare_root
+
+  - mode: ic-prune
+    features_parquet: results/train_final/fast_scalp/prepare_rd_loop/fast_scalp/features_labeled.parquet
+    out: ic_prune_h5
+    <<: *holdout
+    horizons: "1,2,3,4,5"
+    max_lag: 5
+    min_ic: 0.02
+    top_n_nodes: 35
+    intersect_features_yaml: config/strategies/tree_strategies/fast_scalp/features.yaml
+    always_include: atr_f
+    write_features_yaml: config/strategies/tree_strategies/fast_scalp/features.yaml
+
+  - mode: train
+    config: config/strategies/tree_strategies/fast_scalp
+    symbols: *symbols_6
+    <<: *train_dates
+    output_root: *train_root
+
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp
+    predictions: results/train_final/fast_scalp/train_rd_loop/fast_scalp/predictions.parquet
+    out: holdout_rr_top35
+    segment_label: recent_holdout
+    quantile_grid: "0.05,0.08,0.10,0.15,0.20,0.25,0.30"
+    filter_split: holdout
 
 research_scans:
   - mode: ic-decay
     strategy: fast_scalp
-    features_parquet: results/train_final/fast_scalp/train_final_latest/fast_scalp/features_labeled.parquet
-    features: macd_atr,bb_width_normalized_pct,bpc_semantic_chop,cvd_change,vpin_zscore
-    horizons: "1,3,5,10,20"
+    features_parquet: results/train_final/fast_scalp/prepare_rd_loop/fast_scalp/features_labeled.parquet
+    horizons: "1,2,3,4,5"
     target: forward_rr
     out: quick_scan/ic_decay.md
-
-  - mode: snotio-plateau
-    strategy: fast_scalp
-    layer: entry
-    features_parquet: results/train_final/fast_scalp/train_final_latest/fast_scalp/features_labeled.parquet
-    feature: macd_atr
-    operator: "<="
-    grid: "0,1,0.1"
-    snotio_mode: proxy
-    out: quick_scan/entry_tau_plateau.json
 
 variant_grid: config/experiments/20260529_fast_scalp/fast_scalp_direction_grid.yaml
 
 decision_doc:
   topic: fast_scalp_ic_plateau
+  out: config/experiments/20260529_fast_scalp/DECISION.md

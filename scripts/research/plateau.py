@@ -9,6 +9,7 @@ import sys
 from scripts import quick_layer_scan
 from scripts.research._common import (
     add_common_research_args,
+    add_filter_args,
     build_base_mask,
     load_research_frame,
     resolve_output_path,
@@ -47,6 +48,7 @@ def _format_snotio_report(payload: dict) -> str:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Research plateau (feature threshold scan)")
     add_common_research_args(p)
+    add_filter_args(p)
     p.add_argument("--label", default="success_no_rr_extreme")
     p.add_argument("--feature", default=None, help="Feature column (or use --subject)")
     p.add_argument(

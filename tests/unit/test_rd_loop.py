@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -51,7 +52,49 @@ def test_rd_loop_runs_three_steps(tmp_path: Path) -> None:
     assert "_new_decision_doc.py" in " ".join(calls[2])
     state = (tmp_path / "out" / "rd_loop_state.json").read_text(encoding="utf-8")
     assert "research_scan" in state
+    assert "quick_scan_html" in state
+    assert "tree_pipeline" in state
     assert "decision_doc" in state
+
+
+def test_rd_loop_quick_scan_html_writes_report(tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    scan = out / "quick_scan"
+    scan.mkdir(parents=True)
+    (scan / "depth_plateau.md").write_text(
+        "# feature_plateau · depth >= ?\n\n| threshold | n_hit |\n|---:|---:|\n| 0.5 | 10 |\n",
+        encoding="utf-8",
+    )
+    hyp = tmp_path / "hyp.yaml"
+    hyp.write_text(
+        yaml.safe_dump(
+            {
+                "topic": "html_loop",
+                "output_dir": str(out),
+                "quick_layer_scans": [
+                    {
+                        "mode": "condition-set",
+                        "features_parquet": "dummy.parquet",
+                        "condition": ["H: x>0"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_run(cmd, cwd=None):  # noqa: ANN001
+        return type("R", (), {"returncode": 0})()
+
+    with patch("scripts.rd_loop.subprocess.run", side_effect=fake_run):
+        rc = run_loop(hyp, output_dir=out)
+
+    assert rc == 0
+    report = scan / "report.html"
+    assert report.is_file()
+    text = report.read_text(encoding="utf-8")
+    assert "feature_plateau" in text
+    assert "depth_plateau.md" in text
 
 
 def test_rd_loop_resume_skips_completed(tmp_path: Path) -> None:
@@ -296,3 +339,78 @@ def test_rd_loop_locked_prefilter_tune(tmp_path: Path) -> None:
     )
     rc = run_loop(hyp, output_dir=tmp_path / "out")
     assert rc == 3
+
+
+def test_rd_loop_tree_pipeline_steps(tmp_path: Path) -> None:
+    import pandas as pd
+
+    pq = tmp_path / "features.parquet"
+    pred = tmp_path / "preds.parquet"
+    pd.DataFrame({"label": [0.1, 0.2], "close": [1.0, 1.1]}).to_parquet(pq)
+    pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2025-10-01", periods=2, freq="120min"),
+            "_symbol": ["BTCUSDT", "BTCUSDT"],
+            "pred": [0.2, 0.3],
+            "close": [1.0, 1.1],
+            "high": [1.1, 1.2],
+            "low": [0.9, 1.0],
+        }
+    ).to_parquet(pred)
+
+    hyp = tmp_path / "hyp.yaml"
+    hyp.write_text(
+        yaml.safe_dump(
+            {
+                "topic": "tree_test",
+                "strategy": "fast_scalp",
+                "output_dir": str(tmp_path / "out"),
+                "tree_steps": [
+                    {
+                        "mode": "ic-prune",
+                        "features_parquet": str(pq),
+                        "out": "ic_out",
+                        "write_features_yaml": False,
+                    },
+                    {
+                        "mode": "filter-predictions",
+                        "predictions": str(pred),
+                        "symbols": "BTCUSDT",
+                        "out": "filtered/preds.parquet",
+                    },
+                    {
+                        "mode": "tau-scan",
+                        "config": "config/strategies/tree_strategies/fast_scalp",
+                        "predictions": "filtered/preds.parquet",
+                        "out": "tau_out",
+                        "segment_label": "test_holdout",
+                        "filter_split": None,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, cwd=None):  # noqa: ANN001
+        calls.append(cmd)
+        return type("R", (), {"returncode": 0})()
+
+    with patch("scripts.rd_loop.subprocess.run", side_effect=fake_run):
+        with patch(
+            "scripts.research.tree_holdout_tau_rr_scan.run_tau_scan"
+        ) as mock_tau:
+            mock_tau.return_value = {"json": tmp_path / "tau.json"}
+            rc = run_loop(hyp, output_dir=tmp_path / "out")
+
+    assert rc == 0
+    assert mock_tau.call_count == 1
+    ic_cmds = [c for c in calls if "ic-prune" in c]
+    assert len(ic_cmds) == 1
+    assert "research" in ic_cmds[0]
+    assert "ic-prune" in ic_cmds[0]
+    filtered = tmp_path / "out" / "filtered" / "preds.parquet"
+    assert filtered.is_file()
+    state = json.loads((tmp_path / "out" / "rd_loop_state.json").read_text())
+    assert state.get("tree_pipeline_completed") == [0, 1, 2]

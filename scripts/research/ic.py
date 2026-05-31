@@ -8,6 +8,7 @@ import sys
 
 from scripts.research._common import (
     add_common_research_args,
+    add_filter_args,
     build_base_mask,
     load_research_frame,
     resolve_output_path,
@@ -17,6 +18,12 @@ from scripts.research._common import (
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Research IC decay")
     add_common_research_args(p, include_target=False)
+    add_filter_args(p)
+    p.add_argument(
+        "--label",
+        default=None,
+        help="Ignored; rd_loop yaml compatibility only.",
+    )
     p.add_argument("--features", required=True, help="Comma-separated feature columns")
     p.add_argument("--horizons", default="1,3,5,10,20")
     p.add_argument("--target", default="forward_rr", help="Column for rank IC target")

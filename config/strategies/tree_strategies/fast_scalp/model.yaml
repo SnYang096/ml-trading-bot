@@ -1,7 +1,6 @@
-# Shallow LightGBM regressor — target is signed forward RR (continuous).
-# Score → direction (sign) + size scaling via τ plateau (NOT evidence).
+# Shallow LightGBM regressor — BTC/ETH-only majors slug.
 
-name: fast_scalp
+name: fast_scalp_majors
 
 trainer:
   module: src.time_series_model.strategies.models.strategy_trainer
@@ -11,7 +10,7 @@ trainer:
     task_type: regression
     target_col: label
     n_splits: 5
-    tscv_gap: 6           # ≈ 2× horizon
+    tscv_gap: 6
     use_gpu: false
     model_params:
       objective: regression_l1

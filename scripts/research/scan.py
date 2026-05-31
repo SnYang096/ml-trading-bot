@@ -5,9 +5,12 @@ from __future__ import annotations
 import argparse
 import sys
 
+import pandas as pd
+
 from scripts import quick_layer_scan
 from scripts.research._common import (
     add_common_research_args,
+    add_filter_args,
     build_base_mask,
     layer_writeback_hint,
     load_research_frame,
@@ -23,13 +26,8 @@ def main(argv: list[str] | None = None) -> int:
     sub = p.add_subparsers(dest="mode", required=True)
     common = argparse.ArgumentParser(add_help=False)
     add_common_research_args(common)
+    add_filter_args(common)
     common.add_argument("--label", default="success_no_rr_extreme")
-    common.add_argument(
-        "--filter",
-        action="append",
-        default=[],
-        help="Subset DSL clause (repeatable; ANDed). rd_loop yaml emits one --filter per rule.",
-    )
 
     cs = sub.add_parser("condition-set", parents=[common])
     cs.add_argument("--condition", action="append", required=True)
@@ -44,6 +42,17 @@ def main(argv: list[str] | None = None) -> int:
     fp.add_argument("--operator", default="<=")
     fp.add_argument("--grid", required=True)
 
+    ftm = sub.add_parser("feature-threshold-mean", parents=[common])
+    ftm.add_argument("--feature", default=None)
+    ftm.add_argument(
+        "--subject",
+        default=None,
+        help="feature:COL or model.score:PATH|COL",
+    )
+    ftm.add_argument("--operator", default="<=")
+    ftm.add_argument("--grid", required=True)
+    # --target from common (default success_no_rr_extreme); pass --target forward_rr for mean scan.
+
     ps = sub.add_parser("pair-scan", parents=[common])
     ps.add_argument(
         "--pair-a",
@@ -55,22 +64,27 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
     layer_writeback_hint(args)
     df = load_research_frame(args)
-    if args.label not in df.columns:
-        print(f"ERROR: label '{args.label}' missing", file=sys.stderr)
-        return 3
-    label = df[args.label].astype(bool)
     base_mask = build_base_mask(df, args)
-    # --filter clauses (AND with base_mask). Equivalent to --subset but accepts
-    # multiple clauses; matches rd_loop yaml ``filter: [...]`` semantics so
-    # scans actually honor it (prior to this fix the flag was parsed but
-    # never applied, silently using the full parquet as base).
-    if getattr(args, "filter", None):
-        from src.research.expr import parse_clause
 
-        for clause in args.filter:
-            base_mask = base_mask & parse_clause(str(clause))(df)
-
-    if args.mode == "feature-plateau":
+    if args.mode == "feature-threshold-mean":
+        target_col = getattr(args, "target", "forward_rr")
+        if target_col not in df.columns:
+            print(f"ERROR: target '{target_col}' missing", file=sys.stderr)
+            return 3
+        target = pd.to_numeric(df[target_col], errors="coerce")
+        df, feature_col = resolve_research_feature_column(df, args)
+        ns = argparse.Namespace(
+            feature=feature_col,
+            operator=getattr(args, "operator", "<="),
+            grid=getattr(args, "grid", ""),
+            target_col=target_col,
+        )
+        report = quick_layer_scan.mode_feature_threshold_mean(ns, df, target, base_mask)
+    elif args.mode == "feature-plateau":
+        if args.label not in df.columns:
+            print(f"ERROR: label '{args.label}' missing", file=sys.stderr)
+            return 3
+        label = df[args.label].astype(bool)
         df, feature_col = resolve_research_feature_column(df, args)
         ns = argparse.Namespace(
             feature=feature_col,
@@ -79,6 +93,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         report = quick_layer_scan.mode_feature_plateau(ns, df, label, base_mask)
     else:
+        if args.label not in df.columns:
+            print(f"ERROR: label '{args.label}' missing", file=sys.stderr)
+            return 3
+        label = df[args.label].astype(bool)
         ns = argparse.Namespace(
             feature=getattr(args, "feature", None),
             operator=getattr(args, "operator", "<="),

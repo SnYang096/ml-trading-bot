@@ -31,11 +31,16 @@ def shift_target_by_horizon(
     horizon: int,
     df: pd.DataFrame,
 ) -> pd.Series:
-    """Shift target forward by ``horizon`` bars (per symbol if ``symbol`` column exists)."""
+    """Shift target forward by ``horizon`` bars (per symbol if grouped column exists)."""
     if horizon <= 1:
         return series
+    sym_col = None
     if "symbol" in df.columns:
-        return series.groupby(df["symbol"]).shift(-horizon)
+        sym_col = "symbol"
+    elif "_symbol" in df.columns:
+        sym_col = "_symbol"
+    if sym_col is not None:
+        return series.groupby(df[sym_col]).shift(-horizon)
     return series.shift(-horizon)
 
 

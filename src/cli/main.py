@@ -7790,6 +7790,13 @@ def research_ic(args):
     _research_forward("ic", list(args))
 
 
+@research.command("ic-prune", context_settings=_RESEARCH_CTX)
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def research_ic_prune(args):
+    """Holdout IC prune for tree strategies (writeback requested_features)."""
+    _research_forward("ic_prune", list(args))
+
+
 @research.command("plateau", context_settings=_RESEARCH_CTX)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def research_plateau(args):

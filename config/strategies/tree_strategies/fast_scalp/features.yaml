@@ -1,118 +1,48 @@
-# fast_scalp R&D wide candidate pool — IC prune in-place before production train.
-#
-# Sources merged (deduped by *_f node name):
-#   - config/strategies/_shared/features.yaml (B: bpc/tpc/me/srb union)
-#   - config/strategies/chop_grid/features.yaml + trend_scalp/features.yaml (C)
-#   - config/strategies/tree_strategies/trend_following/features_suggested_20260128.yaml (legacy nodes only)
-#
-# After factor-eval / research ic, keep columns with best_lag ∈ {1,3,5} AND |rank_ic| > 0.02.
+# fast_scalp: holdout IC prune (lag≤5, |IC|≥0.02) → top-35 store-friendly nodes.
+# Full table: results/rd_loop/fast_scalp_ic_plateau/ic_prune_h5/ic_prune_holdout.md
 
 name: fast_scalp
 description: |
-  Short-horizon direction tree (H=3, lag 1–5). Wide candidate pool for IC screening;
-  prune requested_features to ≤30 columns after holdout IC table.
+  Top-35 IC-pruned nodes @ holdout 2025-10→2026-04 (best_lag≤5, |IC|≥0.02).
+  atr_f required for label generation (excluded from model via exclude_columns).
 
 feature_pipeline:
   exclude_columns:
     - atr
   requested_features:
     - atr_f
-    - atr_percentile_f
-    - bars_since_extreme_f
-    - bb_width_f
-    - bb_width_normalized_pct_f
-    - bpc_compression_state_f
-    - bpc_dir_consistency_multi_f
-    - bpc_dir_flip_count_f
-    - bpc_impulse_return_atr_f
-    - bpc_pullback_delta_absorption_f
-    - bpc_pullback_depth_pct_f
-    - bpc_pullback_duration_f
-    - bpc_pullback_speed_f
-    - bpc_soft_phase_f
-    - bpc_volume_compression_pct_f
-    - box_structure_f
-    - compression_duration_f
-    - cvd_change_features_f
-    - cvd_divergence_v2_f
-    - dual_compression_f
-    - dual_exhaustion_f
-    - dual_ignition_f
-    - ema_1200_position_f
-    - ema_1200_slope_f
     - evt_features_f
-    - exhaustion_at_liquidity_void_f
+    - box_structure_f
+    - macro_tp_vwap_1200_position_f
+    - atr_percentile_f
     - fer_failure_signals_f
-    - footprint_basic_f
-    - fp_imbalance_scene_semantic_scores_f
-    - funding_oi_crowding_f
-    - funding_rate_features_f
-    - funding_scene_semantic_scores_f
+    - shd_pct_f
+    - me_failure_f
+    - session_features_f
+    - vol_trend_features_f
+    - vol_mom_features_f
+    - spectrum_features_f
+    - me_soft_phase_f
+    - vwap_position_f
+    - recent_compression_decay_f
     - hilbert_phase_f
-    - hurst_cvd_f
-    - hurst_price_f
+    - cvd_divergence_v2_f
+    - wpt_volume_energy_f
+    - footprint_basic_f
+    - volume_profile_volatility_features_f
+    - me_accel_5k_split_f
+    - spectrum_features_sr_breakout_f
+    - roc_10_f
+    - trend_confidence_f
+    - rsi_f
+    - price_momentum_divergence_f
+    - roc_5_f
+    - wpt_cvd_fluctuation_f
+    - path_efficiency_pct_f
+    - price_dir_consistency_pct_f
     - jump_risk_pct_f
     - liquidity_void_f
-    - liquidity_void_scene_semantic_scores_f
-    - liquidity_void_x_wpt_risk_rank_f
-    - macd_atr_f
-    - macro_tp_vwap_1200_position_f
-    - market_cap_normalized_orderflow_f
-    - me_accel_5k_split_f
-    - me_context_f
-    - me_failure_f
-    - me_soft_phase_f
-    - me_vwap_structure_bypass_f
-    - ofci_pct_f
-    - oi_features_f
-    - oi_scene_semantic_scores_f
-    - path_efficiency_pct_f
+    - bpc_soft_phase_f
+    - compression_duration_f
     - path_length_pct_f
-    - price_dir_consistency_pct_f
-    - price_momentum_divergence_f
-    - recent_compression_decay_f
-    - roc_10_f
-    - roc_20_f
-    - roc_5_f
-    - rsi_f
-    - session_features_f
-    - shd_pct_f
-    - sma_200_f
-    - sma_200_slope_f
-    - spectrum_features_f
-    - spectrum_features_sr_breakout_f
-    - sr_strength_max_f
-    - srb_l3_breakout_window_f
-    - srb_sr_success_breakout_f
-    - terminal_risk_score_f
-    - tpc_soft_phase_f
-    - trade_cluster_entropy_zscore_features_f
-    - trade_cluster_imbalance_zscore_features_f
-    - trade_cluster_max_buy_run_zscore_features_f
-    - trade_cluster_max_sell_run_zscore_features_f
-    - trade_cluster_net_runs_zscore_features_f
-    - trade_cluster_scene_semantic_scores_f
-    - trend_confidence_f
-    - trend_r2_20_f
-    - volatility_regime_f
-    - vol_mom_features_f
-    - vol_regime_features_f
-    - vol_trend_features_f
-    - volume_participation_score_f
-    - volume_profile_scene_semantic_scores_f
-    - volume_profile_volatility_features_f
-    - volume_ratio_f
-    - volume_ratio_pct_f
-    - vpin_features_f
-    - vpin_scene_semantic_scores_f
-    - vpin_x_trade_cluster_entropy_rank_f
-    - vpin_zscore_x_trade_cluster_max_buy_run_rank_f
-    - vwap_position_f
-    - wide_sr_swing_f
-    - wick_ratios_f
-    - wick_scene_semantic_scores_f
-    - wpt_cvd_fluctuation_f
-    - wpt_price_fluctuation_f
-    - wpt_price_reconstructed_f
-    - wpt_scene_semantic_scores_f
-    - wpt_volume_energy_f
+    - bb_width_f

@@ -54,7 +54,15 @@ def compute_signed_forward_rr_label(
 
     close = pd.to_numeric(df[price_col], errors="coerce")
     atr = pd.to_numeric(df[atr_col], errors="coerce").where(lambda s: s > _EPS)
-    fwd = close.shift(-horizon)
+    sym_col = (
+        "_symbol"
+        if "_symbol" in df.columns
+        else ("symbol" if "symbol" in df.columns else None)
+    )
+    if sym_col is not None:
+        fwd = close.groupby(df[sym_col]).shift(-horizon)
+    else:
+        fwd = close.shift(-horizon)
     label = (fwd - close) / atr
 
     if drop_inf:

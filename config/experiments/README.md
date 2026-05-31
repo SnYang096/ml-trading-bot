@@ -6,8 +6,20 @@
 |------|------|
 | `README.md` | **实验卡片**：物料清单、跑法、`results/` 路径、链到决策文档（不写长表） |
 | `DECISION.md` / `*_experiment_*.md` | **决策全文**：假设表、变体/回测结果、promote 结论（原 `docs/decisions/` 已迁入） |
-| `rd_loop_*.yaml` | offline 扫描编排（mlbot research + 可选 variant_grid） |
+| `rd_loop_*.yaml` | offline 扫描编排（mlbot research + 可选 variant_grid + **`tree_steps`** 树通道） |
 | `*_grid.yaml` | event_backtest 变体网格 |
+
+### `tree_steps`（树通道 fast_scalp 等）
+
+| mode | 说明 |
+|------|------|
+| `prepare-only` | `train_strategy_pipeline.py --prepare-only` → features_labeled.parquet |
+| `ic-prune` | `mlbot research ic-prune`（内核 [`src/research/stat_kernels/ic_prune.py`](../../src/research/stat_kernels/ic_prune.py)） |
+| `train` | 浅树训练（同 mlbot train final） |
+| `tau-scan` | `scripts/research/tree_holdout_tau_rr_scan.py` |
+| `filter-predictions` | 按 symbol/split 切 predictions.parquet |
+
+示例：`20260529_fast_scalp/rd_loop_fast_scalp_ic_plateau.yaml`（Phase 1）、`20260530_fast_scalp_alts_majors/rd_loop_fast_scalp_alts_majors.yaml`（Phase 2）。
 
 **不在此目录：** 整棵策略变体树 → 仓库根 [`config_experiments/`](../config_experiments/)（与 `config/strategies` 对照）。
 
@@ -44,7 +56,8 @@ PYTHONPATH=src:scripts python -m scripts.event_backtest \
 | [`20260528_me_prefilter_v4/`](20260528_me_prefilter_v4/) | me | prefilter v4 漏斗 |
 | [`20260528_me_prod_holdout/`](20260528_me_prod_holdout/) | me | prod holdout |
 | [`20260528_tpc_me_trading_map/`](20260528_tpc_me_trading_map/) | tpc, me | 交易地图 bull/bear |
-| [`20260529_fast_scalp/`](20260529_fast_scalp/) | fast_scalp | IC plateau + grid |
+| [`20260529_fast_scalp/`](20260529_fast_scalp/) | fast_scalp | IC 剪枝 + pooled 训练（Phase 1） |
+| [`20260530_fast_scalp_alts_majors/`](20260530_fast_scalp_alts_majors/) | fast_scalp_alts, fast_scalp_majors | alt/majors 拆分部署（Phase 2） |
 | [`20260529_short_term_swing_ic_plateau/`](20260529_short_term_swing_ic_plateau/) | short_term_swing | IC plateau |
 | [`20260529_tpc_direction_ema_align/`](20260529_tpc_direction_ema_align/) | tpc | direction EMA1200 对齐 + trail |
 | [`20260529_tpc_gate_plateau/`](20260529_tpc_gate_plateau/) | tpc | gate plateau |

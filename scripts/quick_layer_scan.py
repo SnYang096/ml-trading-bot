@@ -185,6 +185,97 @@ def mode_feature_plateau(
     return "\n".join(md)
 
 
+def feature_threshold_mean_payload(
+    args: argparse.Namespace,
+    df: pd.DataFrame,
+    target: pd.Series,
+    base_mask: pd.Series,
+) -> dict:
+    """Per-threshold mean of a continuous target (e.g. forward_rr) in hit vs other."""
+    feature = args.feature
+    op = args.operator
+    grid = [float(x) for x in args.grid.split(",")]
+    if feature not in df.columns:
+        raise KeyError(f"Feature missing: {feature}")
+    s = pd.to_numeric(df[feature], errors="coerce")
+    y = pd.to_numeric(target, errors="coerce")
+    valid = s.notna() & y.notna() & base_mask
+    s = s[valid]
+    y = y[valid]
+    base_mean = float(y.mean()) if len(y) else float("nan")
+    row_dicts: List[dict] = []
+    for thr in grid:
+        m = _OPS[op](s, thr)
+        n_hit = int(m.sum())
+        if n_hit == 0:
+            row_dicts.append(
+                {
+                    "threshold": float(thr),
+                    "n_hit": 0,
+                    "mean_hit": None,
+                    "mean_other": None,
+                    "delta_vs_base": None,
+                }
+            )
+            continue
+        mean_hit = float(y[m].mean())
+        mean_oth = float(y[~m].mean()) if int((~m).sum()) else float("nan")
+        delta = mean_hit - base_mean if not pd.isna(base_mean) else None
+        row_dicts.append(
+            {
+                "threshold": float(thr),
+                "n_hit": n_hit,
+                "mean_hit": mean_hit,
+                "mean_other": None if pd.isna(mean_oth) else float(mean_oth),
+                "delta_vs_base": (
+                    None if delta is None or pd.isna(delta) else float(delta)
+                ),
+            }
+        )
+    return {
+        "feature": feature,
+        "operator": op,
+        "target": getattr(args, "target_col", "forward_rr"),
+        "base_n": int(len(y)),
+        "base_mean": base_mean,
+        "rows": row_dicts,
+    }
+
+
+def mode_feature_threshold_mean(
+    args: argparse.Namespace,
+    df: pd.DataFrame,
+    target: pd.Series,
+    base_mask: pd.Series,
+) -> str:
+    payload = feature_threshold_mean_payload(args, df, target, base_mask)
+    feature = payload["feature"]
+    op = payload["operator"]
+    tgt = payload["target"]
+    base_mean = payload["base_mean"]
+    base_n = payload["base_n"]
+
+    md = [f"# feature_threshold_mean · {feature} {op} ? → `{tgt}`", ""]
+    md.append(f"- base n = {base_n}, base_mean_{tgt} = {base_mean:.4f}")
+    md.append("")
+    md.append("| threshold | n_hit | mean_hit | mean_other | Δ vs base |")
+    md.append("|---:|---:|---:|---:|---:|")
+    for row in payload["rows"]:
+        mh = row["mean_hit"]
+        mo = row["mean_other"]
+        d = row["delta_vs_base"]
+        mhs = "nan" if mh is None or pd.isna(mh) else f"{mh:.4f}"
+        mos = "nan" if mo is None or pd.isna(mo) else f"{mo:.4f}"
+        ds = "nan" if d is None or pd.isna(d) else f"{d:+.4f}"
+        md.append(f"| {row['threshold']:.3g} | {row['n_hit']} | {mhs} | {mos} | {ds} |")
+    md.append("")
+    md.append(
+        "**Reading**: rising mean_hit with τ → deeper/stricter filter associates with higher "
+        f"`{tgt}`; flat curve → feature weak on this subset for continuous R (compare IC decay)."
+    )
+    return "\n".join(md)
+
+
 def mode_condition_set(
     args: argparse.Namespace, df: pd.DataFrame, label: pd.Series, base_mask: pd.Series
 ) -> str:

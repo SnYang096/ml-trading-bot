@@ -665,6 +665,28 @@ mlbot analyze factor-eval --no-docker \
 
 **产出**：`features_pool_b.yaml`（节点列表）+ IC 衰减报告；**不再默认跑 A/B/C FGS**。
 
+**fast_scalp / pooled holdout 剪枝（树主路径，2026-05 起）**：
+
+```bash
+PARQ=results/train_final/fast_scalp/<run_id>/features_labeled.parquet
+
+mlbot research ic-prune --no-docker \
+  --strategy fast_scalp \
+  --features-parquet "$PARQ" \
+  --out-dir results/rd_loop/fast_scalp_ic_plateau/ic_prune_h5 \
+  --holdout-start 2025-10-01 --holdout-end 2026-04-01 \
+  --horizons 1,2,3,4,5 --max-lag 5 --min-ic 0.02 \
+  --top-n-nodes 35 --always-include atr_f \
+  --write-features-yaml config/strategies/tree_strategies/fast_scalp/features.yaml
+```
+
+- target 固定为 parquet 的 **`forward_rr`**（与训练 label 一致）
+- **负 IC 因子可直接进树**，无需 `invert_features`（纯树下 invert 是 no-op）
+- 可选 `--emit-monotone-constraints` 产出单调约束 review 文件
+- 或 `rd_loop tree_steps: ic-prune` 编排（见 `config/experiments/20260529_fast_scalp/`）
+
+**单币 HTML 探针**仍用上方 `make ts-factor-eval` / `factor-eval`（不等于 holdout ic-prune）。
+
 ### 2.2.2 Step 1：冻结特征池（人工 + 阈值）
 
 - 从 Pool-B 取 **best_lag ∈ [H±2]** 且 **IR > 0.5** 的列/节点，目标 **30–50 个**（避免 500 列进树）。  
