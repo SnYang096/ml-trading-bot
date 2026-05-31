@@ -1,0 +1,51 @@
+# ME prefilter 修复 A/B grid — 双段窗口
+#
+# 背景 (2026-05-28 me_regime_no_box_grid 后诊断)：
+#   prod prefilter 0 笔交易；根因是
+#     (1) compression_duration >= 0.05 与 atr_percentile >= 0.65 在 parquet 上 0 交集（语义互斥）
+#     (2) oi_compression_score 反向预测 ME 成功（高 oi succ=35.7% / mean_fr=-3.45R）
+#
+# 四个变体（同样使用 config/strategies/me/regime.yaml 的 no-box 配置）：
+#   v0_prod         : 现 config/strategies/me （0 笔 baseline；可与 me_regime_no_box_grid 互证）
+#   v1_no_compdur   : 删除 compression_duration，oi>=0.45 不变
+#   v2_oi_reversed  : v1 + oi<=0.10 反向
+#   v3_atr_loose    : v2 + atr_percentile 放宽到 [0.55, 0.95]
+#
+# 跑法:
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260528_me_prefilter_v4/me_prefilter_fix_grid.yaml --quiet-signal-logs
+
+experiment_id: me_prefilter_fix_20260528
+strategy: me
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - BNBUSDT
+  - XRPUSDT
+  - ADAUSDT
+
+runs:
+  - variant: v0_prod_holdout
+    strategies_root: config/strategies
+    start_date: "2024-03-01"
+    end_date: "2026-05-01"
+    output_dir: results/me/experiments/prefilter_fix/v0_prod_holdout
+
+  - variant: v1_no_compdur_holdout
+    strategies_root: config_experiments/me_prefilter_fix_v1_no_compdur_strategies
+    start_date: "2024-03-01"
+    end_date: "2026-05-01"
+    output_dir: results/me/experiments/prefilter_fix/v1_no_compdur_holdout
+
+  - variant: v2_oi_reversed_holdout
+    strategies_root: config_experiments/me_prefilter_fix_v2_oi_reversed_strategies
+    start_date: "2024-03-01"
+    end_date: "2026-05-01"
+    output_dir: results/me/experiments/prefilter_fix/v2_oi_reversed_holdout
+
+  - variant: v3_atr_loose_holdout
+    strategies_root: config_experiments/me_prefilter_fix_v3_atr_loose_strategies
+    start_date: "2024-03-01"
+    end_date: "2026-05-01"
+    output_dir: results/me/experiments/prefilter_fix/v3_atr_loose_holdout

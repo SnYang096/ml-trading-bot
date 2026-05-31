@@ -1,0 +1,55 @@
+# ME gate — 结构类 anti-condition 候选（不进 entry_filter）
+#
+# 离线证据（v3 prefilter base, n=746）:
+#   me_accel_5k<=-0.2 (|accel| q75)  → Δpp -6.28, |z|=2.20
+#   volume_ratio_pct>=0.75            → Δpp -5.52, |z|=1.90
+#
+# 层职责: gate = deny 坏区；entry = 订单流正向 OR trigger（见 rd_loop_me_entry_filter_orderflow.yaml）
+# 达标后再写入 gate.yaml guardrails 并 event_backtest 验证。
+#
+# 跑法:
+#   PYTHONPATH=src:scripts python scripts/rd_loop.py \
+#     --hypothesis-yaml config/experiments/20260528_me_gate_anti/rd_loop_me_gate_anti.yaml
+
+topic: me_gate_anti
+strategy: me
+output_dir: results/rd_loop/me_gate_anti
+
+parquet: &me_pq results/train_final/me/train_final_20260519_133835_rr_extreme/me/features_labeled.parquet
+prefilter_v3_filter: &v3_filter
+  - tpc_semantic_chop<=0.40
+  - atr_percentile>=0.55
+  - atr_percentile<=0.95
+  - recent_compression_decay>=0.02
+  - recent_compression_decay<=0.20
+  - oi_compression_score<=0.10
+
+quick_layer_scans:
+  - mode: condition-set
+    features_parquet: *me_pq
+    label: success_no_rr_extreme
+    filter: *v3_filter
+    condition:
+      - "GA1_accel_deep_neg: me_accel_5k<=-0.2"
+      - "GA2_accel_deep_pos: me_accel_5k>=0.2"
+      - "GA3_vol_q75: volume_ratio_pct>=0.75"
+      - "GA4_vol_q90: volume_ratio_pct>=0.90"
+      - "GA5_jump_high: jump_risk_pct>=0.70"
+      - "GA6_jump_low: jump_risk_pct<=0.30"
+      - "GA7_macd_extreme_pos: macd_atr>=1.5"
+      - "GA8_macd_extreme_neg: macd_atr<=-1.5"
+    out: quick_scan/gate_anti_condition_set.md
+
+  - mode: condition-set
+    features_parquet: *me_pq
+    label: forward_rr
+    filter: *v3_filter
+    condition:
+      - "GA1_accel_deep_neg: me_accel_5k<=-0.2"
+      - "GA3_vol_q75: volume_ratio_pct>=0.75"
+    out: quick_scan/gate_anti_forward_rr.md
+
+decision_doc:
+  topic: me_gate_anti
+  topic_template: default
+  out: decision_doc_skeleton.md

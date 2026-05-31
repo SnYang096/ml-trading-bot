@@ -1,0 +1,14 @@
+# Promoted from majors-only model holdout q=0.08.
+
+description: "fast_scalp_majors — BTC/ETH dedicated model score + τ"
+
+source:
+  model: model.yaml
+  score_column: score
+
+thresholds:
+  long_entry: 0.3536
+  long_exit: 0.28
+  short_entry: 0.0672
+  short_exit: 0.10
+  dead_zone: true

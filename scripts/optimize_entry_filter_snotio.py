@@ -1029,6 +1029,13 @@ new Chart(document.getElementById('rateChart'), {{
 
 
 def main():
+    import sys as _sys
+
+    print(
+        "DEPRECATED: optimize_entry_filter_snotio.py → use "
+        "mlbot research plateau --target snotio or optimize_entry_filter_plateau.py",
+        file=_sys.stderr,
+    )
     parser = argparse.ArgumentParser(
         description="Entry Filter 组合搜索 — snotio KPI (2^N-1 子集穷举)"
     )

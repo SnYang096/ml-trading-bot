@@ -1,5 +1,8 @@
 """Offline locked-prefilter threshold suggestion from features_labeled.parquet.
 
+DEPRECATED entry path: prefer ``mlbot research plateau --layer prefilter`` +
+``mlbot research calibrate`` (library API retained for ``tune_locked_prefilter_thresholds``).
+
 对齐「meta 阶段常用的踩坑率叙事」：在标注表上对 PASS 掩码最大化
 baseline_bad_rate − pass_bad_rate（默认标签列 ``success_no_rr_extreme``）。
 

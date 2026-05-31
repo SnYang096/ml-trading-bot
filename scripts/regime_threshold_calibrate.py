@@ -206,7 +206,7 @@ def main() -> int:
     )
     p.add_argument(
         "--decisions-root",
-        default="docs/decisions/regime_thresholds",
+        default="config/experiments/_cross/regime_thresholds",
         help="markdown decision log destination",
     )
     p.add_argument(

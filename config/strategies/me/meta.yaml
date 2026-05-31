@@ -1,12 +1,14 @@
-# ME（MomentumExpansion）策略元信息 — 配置目录 config/strategies/me
+# ME / CompressionBreakout — 配置目录 config/strategies/me
+# 对外 slug 仍为 `me`；语义：压缩蓄势 → 波动扩张突破（见 prefilter 压缩锚 + direction 动量级联）
 
 strategy:
   name: me
   description: |
-    MomentumExpansion：流动性加速 + 波动扩张；双向由 direction 规则决定。
+    CompressionBreakout（MomentumExpansion）：突破前压缩释放 + 波动扩张；
+    regime=chop（+ 候选 EMA1200@120T）；prefilter=压缩/OI 锚；direction=多空（signal_match_position_band）。
 
   owner: quant_team
-  archetype: MomentumExpansion
+  archetype: CompressionBreakout
 
   # 默认时间粒度（研发 + 实盘统一）
   timeframe: "120T"

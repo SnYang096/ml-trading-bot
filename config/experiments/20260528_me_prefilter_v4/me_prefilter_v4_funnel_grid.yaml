@@ -1,0 +1,22 @@
+# ME prefilter v4 — funnel check: v3 + 关闭两个 enabled system_safety gates
+#
+# 目的：验证 prefilter_fix_v3 通过的 ~769 信号在没有 vol_persistence /
+# vol_leverage_asymmetry 拦截下能否落地成交，给出第一份 ME trade CSV。
+# 同时输出 macd-only / accel-only direction 切片是 grid 后续的事，此处仅跑 v4 单段。
+
+experiment_id: me_prefilter_v4_20260528
+strategy: me
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - BNBUSDT
+  - XRPUSDT
+  - ADAUSDT
+
+runs:
+  - variant: v4_no_safety_gates_holdout
+    strategies_root: config_experiments/me_prefilter_fix_v4_no_safety_gates_strategies
+    start_date: "2024-03-01"
+    end_date: "2026-05-01"
+    output_dir: results/me/experiments/prefilter_fix/v4_no_safety_gates_holdout

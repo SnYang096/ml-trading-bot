@@ -1,0 +1,51 @@
+# Machine-readable deploy map — fast_scalp alt/majors split (2026-05-30)
+experiment_id: fast_scalp_alts_majors_split
+holdout:
+  start: "2025-10-01"
+  end: "2026-04-01"
+
+slugs:
+  - slug: fast_scalp_alts
+    live: conditional_promote
+    symbols:
+      - SOLUSDT
+      - BNBUSDT
+      - XRPUSDT
+      - ADAUSDT
+    config: config/strategies/tree_strategies/fast_scalp_alts
+    inference_artifact: results/train_final/fast_scalp/train_final_20260530_141451_ic_top35/fast_scalp
+    inference_note: pooled 6-coin model; NOT alt-only retrain artifact
+    tau:
+      top_quantile: 0.05
+      bottom_quantile: 0.05
+      long_entry: 0.3701
+      short_entry: -0.0074
+    holdout_backtest:
+      mean_sharpe: 1.31
+      mean_return_pct: 29.62
+      result_dir: results/rd_loop/fast_scalp_ic_plateau/alts_holdout_rr_from_6coin
+
+  - slug: fast_scalp_majors
+    live: conditional_promote
+    symbols:
+      - BTCUSDT
+      - ETHUSDT
+    config: config/strategies/tree_strategies/fast_scalp_majors
+    inference_artifact: results/train_final/fast_scalp_majors/train_final_latest/fast_scalp_majors
+    inference_note: dedicated BTC/ETH retrain
+    tau:
+      top_quantile: 0.08
+      bottom_quantile: 0.08
+      long_entry: 0.3536
+      short_entry: 0.0672
+    holdout_backtest:
+      mean_sharpe: 0.89
+      mean_return_pct: 10.95
+      result_dir: results/rd_loop/fast_scalp_ic_plateau/majors_holdout_rr
+
+retired:
+  - slug: fast_scalp
+    live: reject
+    reason: monolithic 6-coin; majors negative at pooled q=0.05
+    config: config/strategies/tree_strategies/fast_scalp
+    role: rnd_pooled_train_source

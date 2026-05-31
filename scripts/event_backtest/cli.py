@@ -134,6 +134,12 @@ def main():
         help="event pnl_r 转美元时每 1R 占初始资金比例，默认 1%%",
     )
     parser.add_argument(
+        "--no-compound-sizing",
+        action="store_true",
+        default=False,
+        help="冻结 initial-capital×risk_per_slot  sizing（legacy 对照；默认按当前 equity 复利）",
+    )
+    parser.add_argument(
         "--output",
         default=None,
         help="保存 JSON 结果路径",
@@ -384,6 +390,7 @@ def main():
         no_kill_switch=args.no_kill_switch,
         inject_add_ml_scores_path=args.inject_add_ml_scores,
         equity_anchor_usdt=initial_capital,
+        compound_sizing=not bool(args.no_compound_sizing),
     )
 
     result.print_report()
@@ -410,6 +417,7 @@ def main():
         start_date=args.start_date or "",
         end_date=args.end_date or "",
         total_r=float(sum(t.pnl_r for t in result.trades)),
+        compound_sizing=not bool(args.no_compound_sizing),
     )
     print(
         f"  资金报告: {cap_dir / 'capital_report.html'} "

@@ -32,6 +32,7 @@ def write_capital_report_from_trades(
     start_date: str = "",
     end_date: str = "",
     total_r: Optional[float] = None,
+    compound_sizing: bool = True,
 ) -> Dict[str, Any]:
     """Write ``capital_report.json/html`` from a trade CSV.
 
@@ -214,7 +215,13 @@ def write_capital_report_from_trades(
         "assumptions": {
             "event_r_multiple": "1R risks risk_per_r of initial_capital; default 1%.",
             "multi_leg_capital_normalized": "pnl_per_capital is applied to initial_capital.",
-            "compounding": "Equity is additive per trade with fixed initial_capital sizing.",
+            "compounding": (
+                "Position sizing uses current equity × risk_per_slot after each close "
+                "(compound sizing; matches constitution)."
+                if compound_sizing
+                else "Equity curve is additive per trade; position sizing frozen at "
+                "initial_capital × risk_per_slot (legacy fixed-base)."
+            ),
             "excluded": "Funding/liquidation/margin usage beyond modeled trade PnL unless present in the backtest trades.",
         },
         "trades_path": str(trades_path),

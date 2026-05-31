@@ -1,0 +1,27 @@
+# ME direction 变体 — 需 config_experiments 实验树（跑前生成，见 README）
+#
+# 变体计划（promote 前人工建树）：
+#   macd_only     → me_direction_macd_only_strategies（TPC 式，regime 承担 EMA）
+#   accel_stack   → config/strategies（当前生产）
+#
+# 占位 grid：先只跑生产 baseline 双段，direction 树建好后再补 runs。
+#
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260528_me_direction/me_direction_grid.yaml --quiet-signal-logs
+
+experiment_id: me_direction_baseline_20260528
+strategy: me
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - BNBUSDT
+  - XRPUSDT
+  - ADAUSDT
+
+runs:
+  - variant: direction_prod_holdout
+    strategies_root: config/strategies
+    start_date: "2024-03-01"
+    end_date: "2026-05-01"
+    output_dir: results/me/experiments/direction_prod_holdout

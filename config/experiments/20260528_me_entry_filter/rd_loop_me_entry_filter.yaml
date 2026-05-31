@@ -1,0 +1,140 @@
+# ME entry_filter R&D — CompressionBreakout 入场择时
+#
+# 现状 (2026-05-28):
+#   config/strategies/me/archetypes/entry_filters.yaml 为空 (filters: [])，仅 prefetch vpin。
+#   即 prefilter pass + direction sign → 立即入场，无 timing。
+#
+# 研究目标：在已经决定要做这笔交易的基础上，给出"何时按下扳机"的语义 trigger。
+# 候选语义假设：
+#   (T1) 点火 — vpin_ignition_score 高（订单流尖峰）→ 即时启动
+#   (T2) 短时加速 — me_accel_5k 大幅突变（动量起点）
+#   (T3) 压缩刚释放 — bb_width_normalized_pct 由低位反弹（瞬时扩张）
+#   (T4) 量能配合 — volume_ratio_pct 高（突破伴随放量）
+#   (T5) 风险窗 — jump_risk_pct 适中（不要在 jump tail 入场）
+#   (T6) 联合 — (T1) + (T2) 或 (T3) + (T4) 等
+#
+# 数据 (gate parquet, n=59592)：
+#   vpin_ignition_score    100% nn, median=0.055, q90=0.185
+#   dual_ignition_score    100% nn, 但 median=0, q90=0 (几乎不触发；不作单 trigger)
+#   bb_width_normalized_pct 81% nn, median=0.50, q90=0.90
+#   me_accel_5k            99.9% nn, |median|≈0, q90=0.39
+#   volume_ratio_pct       81% nn, median=0.50, q90=0.90
+#   jump_risk_pct          81% nn, median=0.50, q90=0.90
+#
+# 跑法:
+#   PYTHONPATH=src:scripts python scripts/rd_loop.py \
+#     --hypothesis-yaml config/experiments/20260528_me_entry_filter/rd_loop_me_entry_filter.yaml
+#   # 此阶段先只做 quick_layer_scans；variant_grid 等候选 trigger 排序后再补
+#
+# 注意:
+#   - 当前 entry_filter 是 PRO-FORMA 顺序的最末层；只有 prefilter + direction 都 R-positive 后做才有意义
+#   - 候选的 ef_vol_regime_shift / ef_liquidity_silence / ef_consolidation_bars 是 live PCM
+#     运行时派生（compute_derived_entry_features），parquet 不带；如需扫这些得先批量预计算
+
+topic: me_entry_filter_optimization
+strategy: me
+output_dir: results/rd_loop/me_entry_filter
+
+parquet: &me_pq results/train_final/me/train_final_20260519_133835_rr_extreme/me/features_labeled.parquet
+# v3 prefilter mask 作为 entry_filter scan 的 base（与 direction R&D 同源）
+prefilter_v3_filter: &v3_filter
+  - tpc_semantic_chop<=0.40
+  - atr_percentile>=0.55
+  - atr_percentile<=0.95
+  - recent_compression_decay>=0.02
+  - recent_compression_decay<=0.20
+  - oi_compression_score<=0.10
+
+quick_layer_scans:
+  # ── 1) condition-set: candidate trigger 在 v3 prefilter base 上的 succ Δpp ──
+  - mode: condition-set
+    features_parquet: *me_pq
+    label: success_no_rr_extreme
+    filter: *v3_filter
+    condition:
+      # T1 vpin ignition
+      - "T1a_vpin_ignition_q50: vpin_ignition_score>=0.055"
+      - "T1b_vpin_ignition_q90: vpin_ignition_score>=0.185"
+      # T2 short-term acceleration
+      - "T2a_accel_pos_q90: me_accel_5k>=0.39"
+      - "T2b_accel_neg_q90: me_accel_5k<=-0.39"
+      - "T2c_accel_abs_q75: me_accel_5k>=0.2"
+      # T3 BB width rebound (low-band)
+      - "T3a_bb_low: bb_width_normalized_pct<=0.30"
+      - "T3b_bb_mid: bb_width_normalized_pct>=0.30 AND bb_width_normalized_pct<=0.70"
+      - "T3c_bb_high: bb_width_normalized_pct>=0.70"
+      # T4 volume confirmation
+      - "T4a_vol_q75: volume_ratio_pct>=0.75"
+      - "T4b_vol_q90: volume_ratio_pct>=0.90"
+      # T5 jump risk window
+      - "T5a_jump_low: jump_risk_pct<=0.30"
+      - "T5b_jump_high: jump_risk_pct>=0.70"
+      # T6 联合
+      - "T6a_ignition_AND_accel: vpin_ignition_score>=0.055 AND me_accel_5k>=0.2"
+      - "T6b_bb_low_AND_vol_high: bb_width_normalized_pct<=0.30 AND volume_ratio_pct>=0.75"
+      - "T6c_ignition_AND_vol: vpin_ignition_score>=0.055 AND volume_ratio_pct>=0.75"
+    out: quick_scan/entry_trigger_condition_set_success.md
+
+  # ── 2) feature-plateau: 单 trigger 阈值扫描，找 plateau / 反向 ──
+  - mode: feature-plateau
+    features_parquet: *me_pq
+    label: success_no_rr_extreme
+    feature: vpin_ignition_score
+    operator: ">="
+    grid: "0.02,0.05,0.08,0.12,0.18,0.25"
+    filter: *v3_filter
+    out: quick_scan/plateau_vpin_ignition.md
+
+  - mode: feature-plateau
+    features_parquet: *me_pq
+    label: success_no_rr_extreme
+    feature: me_accel_5k
+    operator: ">="
+    grid: "0.05,0.10,0.20,0.30,0.40,0.50"
+    filter: *v3_filter
+    out: quick_scan/plateau_accel_pos.md
+
+  - mode: feature-plateau
+    features_parquet: *me_pq
+    label: success_no_rr_extreme
+    feature: volume_ratio_pct
+    operator: ">="
+    grid: "0.50,0.60,0.70,0.80,0.90"
+    filter: *v3_filter
+    out: quick_scan/plateau_volume_ratio.md
+
+  - mode: feature-plateau
+    features_parquet: *me_pq
+    label: success_no_rr_extreme
+    feature: bb_width_normalized_pct
+    operator: "<="
+    grid: "0.20,0.30,0.40,0.50,0.60"
+    filter: *v3_filter
+    out: quick_scan/plateau_bb_low.md
+
+  # ── 3) IC decay: 候选 trigger 在 R 维度的方向 / sign-flip ──
+  - mode: ic-decay
+    features_parquet: *me_pq
+    target: forward_rr
+    features: vpin_ignition_score,me_accel_5k,me_accel_persistence,bb_width_normalized_pct,volume_ratio_pct,jump_risk_pct
+    horizons: "1,3,5,10,20"
+    subset: tpc_semantic_chop<=0.40 AND atr_percentile>=0.55 AND atr_percentile<=0.95 AND recent_compression_decay>=0.02 AND recent_compression_decay<=0.20 AND oi_compression_score<=0.10
+    out: quick_scan/ic_entry_triggers_v3base.md
+
+  # ── 4) IC on chop only — 更宽 base，避免 v3 sample 过少 ──
+  - mode: ic-decay
+    features_parquet: *me_pq
+    target: forward_rr
+    features: vpin_ignition_score,me_accel_5k,bb_width_normalized_pct,volume_ratio_pct,jump_risk_pct,bpc_vol_ratio
+    horizons: "1,3,5,10,20"
+    subset: tpc_semantic_chop<=0.40
+    out: quick_scan/ic_entry_triggers_chop_only.md
+
+# variant_grid 留空 — 等 quick_layer_scans 排序后再建 entry_filter_*_strategies 变体树
+# 第二轮：把得分最高的 2-3 个 trigger 写入候选 entry_filters.yaml，做 event_backtest
+
+decision_doc:
+  topic: me_entry_filter_optimization
+  topic_template: default
+  experiment_index: results/me/experiments/EXPERIMENT_INDEX.json
+  out: decision_doc_skeleton.md

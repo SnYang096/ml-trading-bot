@@ -1,0 +1,14 @@
+# Promoted from pooled 6-coin model, alt holdout q=0.05.
+
+description: "fast_scalp_alts — pooled model score, alt-only symbols"
+
+source:
+  model: model.yaml
+  score_column: score
+
+thresholds:
+  long_entry: 0.3701
+  long_exit: 0.30
+  short_entry: -0.0074
+  short_exit: 0.05
+  dead_zone: true

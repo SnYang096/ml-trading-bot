@@ -1,0 +1,89 @@
+# fast_scalp Phase 2: alt/majors split — train, τ scan, deploy slugs
+#
+#   PYTHONPATH=src:scripts python scripts/rd_loop.py \
+#     --hypothesis-yaml config/experiments/20260530_fast_scalp_alts_majors/rd_loop_fast_scalp_alts_majors.yaml
+
+topic: fast_scalp_alts_majors_split
+strategy: fast_scalp
+output_dir: results/rd_loop/fast_scalp_ic_plateau
+timeframe: "120T"
+feature_store_layer: features_tree_core_120T_c005db49f7
+data_path: data/parquet_data
+
+holdout: &holdout
+  start: "2025-10-01"
+  end: "2026-04-01"
+
+train_dates: &train_dates
+  start_date: "2024-01-01"
+  end_date: "2026-04-01"
+  holdout_start_date: "2025-10-01"
+  holdout_end_date: "2026-04-01"
+
+# Phase 1 pooled artifact (alt inference); override with your train_rd_loop path after Phase 1
+pooled_predictions: &pooled_preds results/train_final/fast_scalp/train_final_20260530_141451_ic_top35/fast_scalp/predictions.parquet
+
+tree_steps:
+  # --- alts deploy path: pooled model + symbol filter ---
+  - mode: filter-predictions
+    predictions: *pooled_preds
+    symbols: SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+    split: holdout
+    out: filtered/alts_from_pooled.parquet
+
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp_alts
+    predictions: filtered/alts_from_pooled.parquet
+    out: alts_holdout_rr_from_6coin
+    segment_label: alts_from_6coin_model
+    quantile_grid: "0.05,0.08,0.10,0.12,0.15,0.20"
+    filter_split: null
+
+  # --- alts-only retrain (reference; weaker OOS) ---
+  - mode: train
+    config: config/strategies/tree_strategies/fast_scalp_alts
+    symbols: SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+    <<: *train_dates
+    output_root: results/train_final/fast_scalp_alts/train_rd_loop
+
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp_alts
+    predictions: results/train_final/fast_scalp_alts/train_rd_loop/fast_scalp_alts/predictions.parquet
+    out: alts_holdout_rr
+    segment_label: alts_holdout
+    quantile_grid: "0.05,0.08,0.10,0.12,0.15,0.20,0.25,0.30"
+
+  # --- majors dedicated retrain (deploy path) ---
+  - mode: train
+    config: config/strategies/tree_strategies/fast_scalp_majors
+    symbols: BTCUSDT,ETHUSDT
+    <<: *train_dates
+    output_root: results/train_final/fast_scalp_majors/train_rd_loop
+
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp_majors
+    predictions: results/train_final/fast_scalp_majors/train_rd_loop/fast_scalp_majors/predictions.parquet
+    out: majors_holdout_rr
+    segment_label: majors_holdout
+    quantile_grid: "0.05,0.08,0.10,0.12,0.15,0.20,0.25,0.30"
+
+  # --- majors from pooled 6-coin model (comparison) ---
+  - mode: filter-predictions
+    predictions: *pooled_preds
+    symbols: BTCUSDT,ETHUSDT
+    split: holdout
+    out: filtered/majors_from_pooled.parquet
+
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp_majors
+    predictions: filtered/majors_from_pooled.parquet
+    out: majors_holdout_rr_from_6coin
+    segment_label: majors_from_6coin_model
+    quantile_grid: "0.05,0.08,0.10,0.12,0.15,0.20,0.25,0.30"
+    filter_split: null
+
+deploy_slugs: config/experiments/20260530_fast_scalp_alts_majors/fast_scalp_deploy_slugs.yaml
+
+decision_doc:
+  topic: fast_scalp_alts_majors_split
+  out: config/experiments/20260530_fast_scalp_alts_majors/DECISION.md

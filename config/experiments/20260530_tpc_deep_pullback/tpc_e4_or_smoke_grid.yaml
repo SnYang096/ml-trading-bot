@@ -1,0 +1,37 @@
+# E4 full stack smoke：E1 prefilter + E2_or entry ± gate path_efficiency
+#
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260530_tpc_deep_pullback/tpc_e4_or_smoke_grid.yaml \
+#     --quiet-signal-logs
+
+experiment_id: tpc_deep_pullback_e4_or_smoke_20260530
+strategy: tpc
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+trading_map: true
+
+runs:
+  - variant: E4_bull_or_pe_smoke
+    strategies_root: config_experiments/tpc_deep_pullback_full_bull_strategies
+    start_date: "2023-01-01"
+    end_date: "2025-01-01"
+    output_dir: results/tpc/experiments/deep_pullback_ablation/E4_bull_or_pe_smoke
+
+  - variant: E4_bull_or_no_pe_smoke
+    strategies_root: config_experiments/tpc_deep_pullback_full_bull_no_pe_strategies
+    start_date: "2023-01-01"
+    end_date: "2025-01-01"
+    output_dir: results/tpc/experiments/deep_pullback_ablation/E4_bull_or_no_pe_smoke
+
+  - variant: E4_bear_or_pe_smoke
+    strategies_root: config_experiments/tpc_deep_pullback_full_bear_strategies
+    start_date: "2023-01-01"
+    end_date: "2025-01-01"
+    output_dir: results/tpc/experiments/deep_pullback_ablation/E4_bear_or_pe_smoke
+
+  - variant: E4_bear_or_no_pe_smoke
+    strategies_root: config_experiments/tpc_deep_pullback_full_bear_no_pe_strategies
+    start_date: "2023-01-01"
+    end_date: "2025-01-01"
+    output_dir: results/tpc/experiments/deep_pullback_ablation/E4_bear_or_no_pe_smoke

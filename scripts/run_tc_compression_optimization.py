@@ -17,6 +17,13 @@ if str(PROJECT_ROOT) not in sys.path:
 
 
 def main() -> int:
+    print(
+        "DEPRECATED: scripts/optimize_gate_plateau_hard_gate.py removed. "
+        "Use scripts/optimize_gate_unified.py or mlbot research plateau --layer gate.",
+        file=sys.stderr,
+    )
+    return 2
+
     parser = argparse.ArgumentParser(
         description="运行TC archetype压缩优化实验",
         formatter_class=argparse.RawDescriptionHelpFormatter,

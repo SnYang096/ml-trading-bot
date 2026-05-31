@@ -9,7 +9,7 @@
 
 ## 0. 术语：什么是 1pp（1 个百分点）
 
-在本文和 `quick_layer_scan` 报告里，**pp = percentage point（百分点）**，表示**成功率本身的差值**，不是相对变化率。
+在本文和 `mlbot research scan`（或遗留 `quick_layer_scan`）报告里，**pp = percentage point（百分点）**，表示**成功率本身的差值**，不是相对变化率。
 
 | 说法 | 含义 | 例子 |
 |---|---|---|
@@ -21,7 +21,7 @@
 - 胜率在 50% 附近时，+1pp 就是「每 100 笔多 1 笔好单」；
 - 写成「+1% 相对提升」会夸大或缩小（56%→57% 相对只涨约 1.8%，但绝对是 +1pp）。
 
-`quick_layer_scan` 的 **Δpp vs base** 列 = `succ_in − base_success`，单位都是**百分点**。
+research scan 的 **Δpp vs base** 列 = `succ_in − base_success`，单位都是**百分点**。
 
 ---
 
@@ -46,7 +46,7 @@
 
 ---
 
-## 2. Label Scan（`quick_layer_scan.py`）
+## 2. Label Scan（`mlbot research scan`）
 
 ### 在问什么
 
@@ -76,12 +76,12 @@
 ### 典型用法（TPC Step 0）
 
 ```bash
-python scripts/quick_layer_scan.py condition-set \
+mlbot research scan condition-set --strategy tpc --layer regime \
   --features-parquet results/<train_final>/tpc/features_labeled.parquet \
   --label success_no_rr_extreme \
-  --filter "tpc_semantic_chop<=0.4" \
-  --condition "F': abs(ema_1200_position)>0.10 AND abs(ema_1200_slope_10)>0.002" \
-  --out results/tpc/quick_scan/regime_candidates_<日期>.md
+  --subset "tpc_semantic_chop<=0.4" \
+  --condition "F_prime: abs(ema_1200_position)>0.10 AND abs(ema_1200_slope_10)>0.002" \
+  --output results/tpc/quick_scan/regime_candidates_<日期>.md
 ```
 
 **判读**：Δpp ≥ +0.5pp 且 |z|>2 → 值得拉 `event_backtest`；|z|<2 → 当噪声，不必烧回测。

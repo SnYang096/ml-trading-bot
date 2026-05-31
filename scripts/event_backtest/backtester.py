@@ -36,6 +36,7 @@ from scripts.event_backtest.reporting.audit import (
     _trade_audit_row_from_fill,
 )
 from scripts.event_backtest.results import BacktestResult
+from scripts.event_backtest.sizing import sync_event_backtest_sizing_equity
 from scripts.event_backtest.simulator.om_bridge import OMBridge, OM_AVAILABLE
 from scripts.event_backtest.simulator.position import (
     PositionSimulator,
@@ -353,6 +354,7 @@ class EventBacktester:
         no_kill_switch: bool = False,
         inject_add_ml_scores_path: Optional[str] = None,
         equity_anchor_usdt: Optional[float] = None,
+        compound_sizing: bool = True,
     ) -> BacktestResult:
         """
         运行事件驱动回测 — 多策略 + 多 timeframe + 跨 symbol 时间线交叉处理
@@ -364,6 +366,10 @@ class EventBacktester:
         equity_anchor_usdt:
           若为 None则内部权益锚点仍为 1000；CLI 传入与 --initial-capital（及 constitution
           spot.account.equity_usdt 默认覆盖）对齐，并与 spot_accum 名义 deploy 上限共用。
+
+        compound_sizing:
+          True（默认）: 每笔新开/加仓按当前权益 × risk_per_slot 反算名义（与宪法一致）。
+          False: 冻结 initial 权益 sizing（legacy 对照）。
         """
         result = BacktestResult(strategy="+".join(self.strategy_names))
         funnel = defaultdict(int)
@@ -863,9 +869,38 @@ class EventBacktester:
             )
             if rv == rv and has_real:
                 return rv
-            return float(_initial_cash) * float(_risk_per_slot) * float(ct.pnl_r)
+            _rb = float(_initial_cash) * float(_risk_per_slot)
+            if compound_sizing:
+                _rb = max(0.0, float(_equity)) * float(_risk_per_slot)
+            return (
+                _rb
+                * float(getattr(ct, "size_multiplier", 1.0) or 1.0)
+                * float(ct.pnl_r)
+            )
 
         _equity = _initial_cash
+        _equity_peak = _equity
+        _spot_cap_budget: Optional[Dict[str, Any]] = None
+
+        def _sync_sizing_equity() -> None:
+            sync_event_backtest_sizing_equity(
+                simulators=self._simulators,
+                equity_usdt=_equity,
+                risk_per_slot=_risk_per_slot,
+                compound_sizing=compound_sizing,
+                initial_cash_usdt=_initial_cash,
+                spot_capital_budget=_spot_cap_budget,
+            )
+
+        def _record_closed_trade_pnl(pnl_usd: float, mark_ts: pd.Timestamp) -> None:
+            nonlocal _equity, _equity_peak
+            _equity = max(0.0, _equity + float(pnl_usd))
+            _equity_curve.append(_equity)
+            _equity_curve_ts.append(mark_ts)
+            if _equity > _equity_peak:
+                _equity_peak = _equity
+            _sync_sizing_equity()
+
         _equity_curve = [_equity]
         _t0_line = timeline_events[0][0] if timeline_events else None
         _equity_curve_ts: List[pd.Timestamp] = (
@@ -878,7 +913,6 @@ class EventBacktester:
                 "Fast mode compatibility: using 1min-exact position updates "
                 "to avoid approximation drift."
             )
-        _equity_peak = _equity
         _ks_triggers: list = []
         _ks_skipped = 0
         _ks_executed = 0
@@ -925,6 +959,19 @@ class EventBacktester:
         else:
             for _sim_bb in self._simulators.values():
                 _sim_bb._spot_capital_budget = None
+
+        _sync_sizing_equity()
+        if compound_sizing:
+            logger.info(
+                "Position sizing: compound (risk_per_slot=%.4f × current equity)",
+                float(_risk_per_slot),
+            )
+        else:
+            logger.info(
+                "Position sizing: fixed-base (risk_per_slot=%.4f × initial=%.2f)",
+                float(_risk_per_slot),
+                float(_initial_cash),
+            )
 
         # ── 每日入场节流 (max_new_entries_per_day) ──
         _daily_entry_limits: Dict[str, Optional[int]] = {}
@@ -1010,12 +1057,7 @@ class EventBacktester:
                         self.pcm.notify_position_closed(upd_sym, ct.archetype)
                     for ct in closed:
                         pnl_usd = _trade_realized_usdt(ct)
-                        _equity += pnl_usd
-                        _equity = max(_equity, 0.0)
-                        _equity_curve.append(_equity)
-                        _equity_curve_ts.append(pd.Timestamp(bar_ts))
-                        if _equity > _equity_peak:
-                            _equity_peak = _equity
+                        _record_closed_trade_pnl(pnl_usd, pd.Timestamp(bar_ts))
                 _pos_last_ts[upd_sym] = ts
 
             # ── Kill switch 检查 (复用实盘 evaluate_safety_state) ──
@@ -1294,12 +1336,7 @@ class EventBacktester:
                     for ct in ev_closed:
                         self.pcm.notify_position_closed(evicted_sym, ct.archetype)
                         pnl_usd = _trade_realized_usdt(ct)
-                        _equity += pnl_usd
-                        _equity = max(_equity, 0.0)
-                        _equity_curve.append(_equity)
-                        _equity_curve_ts.append(pd.Timestamp(ts))
-                        if _equity > _equity_peak:
-                            _equity_peak = _equity
+                        _record_closed_trade_pnl(pnl_usd, pd.Timestamp(ts))
                     funnel.setdefault("evicted_by_evidence", 0)
                     funnel["evicted_by_evidence"] += len(ev_closed)
 
@@ -1841,12 +1878,7 @@ class EventBacktester:
                     for ct in closed:
                         self.pcm.notify_position_closed(sym, ct.archetype)
                         pnl_usd = _trade_realized_usdt(ct)
-                        _equity += pnl_usd
-                        _equity = max(_equity, 0.0)
-                        _equity_curve.append(_equity)
-                        _equity_curve_ts.append(pd.Timestamp(bar_ts))
-                        if _equity > _equity_peak:
-                            _equity_peak = _equity
+                        _record_closed_trade_pnl(pnl_usd, pd.Timestamp(bar_ts))
 
             # 关闭残留持仓
             if simulator.has_positions:
@@ -1867,12 +1899,7 @@ class EventBacktester:
                     _fc_ts = pd.Timestamp(last_time)
                     for ct in _fc_closed:
                         pnl_usd = _trade_realized_usdt(ct)
-                        _equity += pnl_usd
-                        _equity = max(_equity, 0.0)
-                        _equity_curve.append(_equity)
-                        _equity_curve_ts.append(_fc_ts)
-                        if _equity > _equity_peak:
-                            _equity_peak = _equity
+                        _record_closed_trade_pnl(pnl_usd, _fc_ts)
                 else:
                     logger.info(
                         "%s: keep %d open positions for next run",

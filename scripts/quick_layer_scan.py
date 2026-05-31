@@ -41,107 +41,20 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-from scipy.stats import spearmanr
+
+from src.research.expr import OPS as _OPS
+from src.research.expr import build_calendar_mask as _build_calendar_mask
+from src.research.expr import parse_clause as _parse_clause
+from src.research.stat_kernels.ic import ic_decay_rows
+from src.research.stat_kernels.z_test import two_proportion_z as _binary_proportions_z
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-
-# ---------------------------------------------------------------------------
-# 表达式解析（极简：只支持 'feature OP value'、'abs(feature) OP value'，和 AND 链接）
-# ---------------------------------------------------------------------------
-
-_OPS = {
-    "<": lambda a, b: a < b,
-    "<=": lambda a, b: a <= b,
-    "le": lambda a, b: a <= b,
-    ">": lambda a, b: a > b,
-    ">=": lambda a, b: a >= b,
-    "ge": lambda a, b: a >= b,
-    "==": lambda a, b: a == b,
-    "!=": lambda a, b: a != b,
-}
-
-_TOKEN_RE = re.compile(
-    r"^\s*(abs\()?\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)?\s*(<=|>=|<|>|==|!=)\s*([-+0-9eE\.]+)\s*$"
-)
-
-
-def _parse_atom(expr: str) -> Tuple[str, bool, str, float]:
-    m = _TOKEN_RE.match(expr)
-    if not m:
-        raise ValueError(f"Cannot parse atom: {expr!r}")
-    abs_, feature, op, value = m.groups()
-    return feature, bool(abs_), op, float(value)
-
-
-def _eval_atom(
-    df: pd.DataFrame, feature: str, take_abs: bool, op: str, value: float
-) -> pd.Series:
-    if feature not in df.columns:
-        raise KeyError(f"Feature missing: {feature}")
-    s = pd.to_numeric(df[feature], errors="coerce")
-    if take_abs:
-        s = s.abs()
-    return _OPS[op](s, value).fillna(False)
-
-
-def _parse_clause(expr: str) -> Callable[[pd.DataFrame], pd.Series]:
-    parts = [
-        p.strip()
-        for p in re.split(r"\s+AND\s+", expr, flags=re.IGNORECASE)
-        if p.strip()
-    ]
-    atoms = [_parse_atom(p) for p in parts]
-
-    def fn(df: pd.DataFrame) -> pd.Series:
-        masks = [_eval_atom(df, *a) for a in atoms]
-        if not masks:
-            return pd.Series(True, index=df.index)
-        out = masks[0]
-        for m in masks[1:]:
-            out = out & m
-        return out
-
-    return fn
-
-
-def _build_calendar_mask(df: pd.DataFrame, window: Optional[str]) -> pd.Series:
-    if not window:
-        return pd.Series(True, index=df.index)
-    dt_col = None
-    for c in ("datetime", "timestamp", "ts"):
-        if c in df.columns:
-            dt_col = c
-            break
-    if dt_col is None:
-        raise KeyError("No datetime/timestamp column for --calendar-window")
-    dt = pd.to_datetime(df[dt_col], utc=True, errors="coerce")
-    start_s, end_s = [x.strip() for x in window.split(",")]
-    start = pd.to_datetime(start_s, utc=True)
-    end = pd.to_datetime(end_s, utc=True)
-    return ((dt >= start) & (dt < end)).fillna(False)
-
-
-# ---------------------------------------------------------------------------
-# Stat helpers
-# ---------------------------------------------------------------------------
-
-
-def _binary_proportions_z(p_hit: float, n_hit: int, p_oth: float, n_oth: int) -> float:
-    """Two-proportion z-test; returns absolute z (proxy for p-value)."""
-    if n_hit < 5 or n_oth < 5:
-        return 0.0
-    pool = (p_hit * n_hit + p_oth * n_oth) / max(n_hit + n_oth, 1)
-    var = pool * (1 - pool) * (1 / n_hit + 1 / n_oth)
-    if var <= 0:
-        return 0.0
-    return float(abs(p_hit - p_oth) / np.sqrt(var))
 
 
 # ---------------------------------------------------------------------------
@@ -149,9 +62,10 @@ def _binary_proportions_z(p_hit: float, n_hit: int, p_oth: float, n_oth: int) ->
 # ---------------------------------------------------------------------------
 
 
-def mode_feature_plateau(
+def feature_plateau_payload(
     args: argparse.Namespace, df: pd.DataFrame, label: pd.Series, base_mask: pd.Series
-) -> str:
+) -> dict:
+    """Scan threshold grid; return JSON-serializable payload for calibrate chain."""
     feature = args.feature
     op = args.operator
     grid = [float(x) for x in args.grid.split(",")]
@@ -162,32 +76,202 @@ def mode_feature_plateau(
     s = s[valid]
     y = label[valid]
 
-    rows = []
+    row_dicts: List[dict] = []
     base_succ = float(y.mean()) if len(y) else float("nan")
     for thr in grid:
         m = _OPS[op](s, thr)
         n_hit = int(m.sum())
         if n_hit == 0:
-            rows.append((thr, n_hit, float("nan"), float("nan"), 0.0))
+            row_dicts.append(
+                {
+                    "threshold": float(thr),
+                    "n_hit": 0,
+                    "succ_hit": None,
+                    "succ_other": None,
+                    "z": 0.0,
+                }
+            )
             continue
         n_oth = int((~m).sum())
         p_hit = float(y[m].mean())
         p_oth = float(y[~m].mean()) if n_oth else float("nan")
         z = _binary_proportions_z(p_hit, n_hit, p_oth, n_oth) if n_oth else 0.0
-        rows.append((thr, n_hit, p_hit, p_oth, z))
+        row_dicts.append(
+            {
+                "threshold": float(thr),
+                "n_hit": n_hit,
+                "succ_hit": p_hit,
+                "succ_other": None if pd.isna(p_oth) else float(p_oth),
+                "z": float(z),
+            }
+        )
+
+    eligible = [r for r in row_dicts if r["n_hit"] > 0 and r["succ_hit"] is not None]
+    best = max(eligible, key=lambda r: abs(r["z"]), default=None) if eligible else None
+    rec = float(best["threshold"]) if best else None
+
+    plateau_start: float | None = None
+    plateau_end: float | None = None
+    if len(eligible) >= 2:
+        sorted_rows = sorted(eligible, key=lambda r: r["threshold"])
+        anchor_succ = sorted_rows[0]["succ_hit"]
+        run_start = sorted_rows[0]["threshold"]
+        run_end = run_start
+        best_width = 0.0
+        best_mid: float | None = None
+        for row in sorted_rows:
+            if anchor_succ is None or row["succ_hit"] is None:
+                continue
+            if abs(row["succ_hit"] - anchor_succ) <= 0.10:
+                run_end = row["threshold"]
+            else:
+                width = run_end - run_start
+                if width > best_width:
+                    best_width = width
+                    plateau_start = run_start
+                    plateau_end = run_end
+                    best_mid = (run_start + run_end) / 2
+                anchor_succ = row["succ_hit"]
+                run_start = row["threshold"]
+                run_end = run_start
+        width = run_end - run_start
+        if width >= best_width and width > 0:
+            plateau_start = run_start
+            plateau_end = run_end
+            best_mid = (run_start + run_end) / 2
+        if best_mid is not None and rec is None:
+            rec = float(best_mid)
+
+    return {
+        "feature": feature,
+        "operator": op,
+        "base_n": int(len(y)),
+        "base_success": base_succ,
+        "recommended": rec,
+        "mid": rec,
+        "plateau_start": plateau_start,
+        "plateau_end": plateau_end,
+        "rows": row_dicts,
+    }
+
+
+def mode_feature_plateau(
+    args: argparse.Namespace, df: pd.DataFrame, label: pd.Series, base_mask: pd.Series
+) -> str:
+    payload = feature_plateau_payload(args, df, label, base_mask)
+    feature = payload["feature"]
+    op = payload["operator"]
+    base_succ = payload["base_success"]
+    base_n = payload["base_n"]
 
     md = [f"# feature_plateau · {feature} {op} ?", ""]
-    md.append(f"- base n = {len(y)}, base_success = {base_succ:.3%}")
+    md.append(f"- base n = {base_n}, base_success = {base_succ:.3%}")
     md.append("")
     md.append("| threshold | n_hit | succ_hit | succ_other | |z| |")
     md.append("|---:|---:|---:|---:|---:|")
-    for thr, n_hit, p_hit, p_oth, z in rows:
-        ph = "nan" if pd.isna(p_hit) else f"{p_hit:.3%}"
-        po = "nan" if pd.isna(p_oth) else f"{p_oth:.3%}"
-        md.append(f"| {thr:.3g} | {n_hit} | {ph} | {po} | {z:.2f} |")
+    for row in payload["rows"]:
+        p_hit = row["succ_hit"]
+        p_oth = row["succ_other"]
+        z = row["z"]
+        ph = "nan" if p_hit is None or pd.isna(p_hit) else f"{p_hit:.3%}"
+        po = "nan" if p_oth is None or pd.isna(p_oth) else f"{p_oth:.3%}"
+        md.append(
+            f"| {row['threshold']:.3g} | {row['n_hit']} | {ph} | {po} | {z:.2f} |"
+        )
     md.append("")
     md.append(
         "**Plateau interpretation**: consecutive thresholds with similar succ_hit and |z|<2.0 → effect is noise; if all thresholds give ~same succ_hit, **feature is not the bottleneck on this subset**."
+    )
+    return "\n".join(md)
+
+
+def feature_threshold_mean_payload(
+    args: argparse.Namespace,
+    df: pd.DataFrame,
+    target: pd.Series,
+    base_mask: pd.Series,
+) -> dict:
+    """Per-threshold mean of a continuous target (e.g. forward_rr) in hit vs other."""
+    feature = args.feature
+    op = args.operator
+    grid = [float(x) for x in args.grid.split(",")]
+    if feature not in df.columns:
+        raise KeyError(f"Feature missing: {feature}")
+    s = pd.to_numeric(df[feature], errors="coerce")
+    y = pd.to_numeric(target, errors="coerce")
+    valid = s.notna() & y.notna() & base_mask
+    s = s[valid]
+    y = y[valid]
+    base_mean = float(y.mean()) if len(y) else float("nan")
+    row_dicts: List[dict] = []
+    for thr in grid:
+        m = _OPS[op](s, thr)
+        n_hit = int(m.sum())
+        if n_hit == 0:
+            row_dicts.append(
+                {
+                    "threshold": float(thr),
+                    "n_hit": 0,
+                    "mean_hit": None,
+                    "mean_other": None,
+                    "delta_vs_base": None,
+                }
+            )
+            continue
+        mean_hit = float(y[m].mean())
+        mean_oth = float(y[~m].mean()) if int((~m).sum()) else float("nan")
+        delta = mean_hit - base_mean if not pd.isna(base_mean) else None
+        row_dicts.append(
+            {
+                "threshold": float(thr),
+                "n_hit": n_hit,
+                "mean_hit": mean_hit,
+                "mean_other": None if pd.isna(mean_oth) else float(mean_oth),
+                "delta_vs_base": (
+                    None if delta is None or pd.isna(delta) else float(delta)
+                ),
+            }
+        )
+    return {
+        "feature": feature,
+        "operator": op,
+        "target": getattr(args, "target_col", "forward_rr"),
+        "base_n": int(len(y)),
+        "base_mean": base_mean,
+        "rows": row_dicts,
+    }
+
+
+def mode_feature_threshold_mean(
+    args: argparse.Namespace,
+    df: pd.DataFrame,
+    target: pd.Series,
+    base_mask: pd.Series,
+) -> str:
+    payload = feature_threshold_mean_payload(args, df, target, base_mask)
+    feature = payload["feature"]
+    op = payload["operator"]
+    tgt = payload["target"]
+    base_mean = payload["base_mean"]
+    base_n = payload["base_n"]
+
+    md = [f"# feature_threshold_mean · {feature} {op} ? → `{tgt}`", ""]
+    md.append(f"- base n = {base_n}, base_mean_{tgt} = {base_mean:.4f}")
+    md.append("")
+    md.append("| threshold | n_hit | mean_hit | mean_other | Δ vs base |")
+    md.append("|---:|---:|---:|---:|---:|")
+    for row in payload["rows"]:
+        mh = row["mean_hit"]
+        mo = row["mean_other"]
+        d = row["delta_vs_base"]
+        mhs = "nan" if mh is None or pd.isna(mh) else f"{mh:.4f}"
+        mos = "nan" if mo is None or pd.isna(mo) else f"{mo:.4f}"
+        ds = "nan" if d is None or pd.isna(d) else f"{d:+.4f}"
+        md.append(f"| {row['threshold']:.3g} | {row['n_hit']} | {mhs} | {mos} | {ds} |")
+    md.append("")
+    md.append(
+        "**Reading**: rising mean_hit with τ → deeper/stricter filter associates with higher "
+        f"`{tgt}`; flat curve → feature weak on this subset for continuous R (compare IC decay)."
     )
     return "\n".join(md)
 
@@ -280,24 +364,6 @@ def mode_pair_scan(
 # ---------------------------------------------------------------------------
 
 
-def _resolve_target_col(df: pd.DataFrame, target: str, horizon: int) -> Optional[str]:
-    if horizon <= 1:
-        return target if target in df.columns else None
-    for cand in (f"{target}_{horizon}", f"{target}{horizon}"):
-        if cand in df.columns:
-            return cand
-    return target if target in df.columns else None
-
-
-def _spearman_ic(x: pd.Series, y: pd.Series) -> Tuple[float, float, int]:
-    m = x.notna() & y.notna()
-    n = int(m.sum())
-    if n < 100:
-        return float("nan"), float("nan"), n
-    rho, p = spearmanr(x[m], y[m])
-    return float(rho), float(p), n
-
-
 def mode_ic_decay(
     args: argparse.Namespace,
     df: pd.DataFrame,
@@ -331,32 +397,35 @@ def mode_ic_decay(
     )
     md.append("|---:|---:|---|---:|---:|---:|---:|---:|:---:|")
 
-    sub = df.loc[base_mask]
-    for feat in features:
-        if feat not in sub.columns:
+    rows = ic_decay_rows(df, features, horizons, target, mask=base_mask, min_n=100)
+    for row in rows:
+        feat = row["feature"]
+        h = row["horizon"]
+        if h is None:
             md.append(f"| {feat} | — | — | 0 | — | — | — | — | — |")
             continue
-        x = pd.to_numeric(sub[feat], errors="coerce")
-        for h in horizons:
-            tcol = _resolve_target_col(sub, target, h) or target
-            if tcol not in sub.columns:
-                md.append(f"| {feat} | {h} | missing | 0 | — | — | — | — | — |")
-                continue
-            y = pd.to_numeric(sub[tcol], errors="coerce")
-            rho, p, n = _spearman_ic(x, y)
-            base_ic = baseline_map.get((feat, "all", 0))
-            delta_s = ""
-            flip = ""
-            if base_ic is not None and not np.isnan(rho):
-                delta = rho - base_ic
-                delta_s = f"{delta:+.4f}"
-                if base_ic * rho < 0 and abs(rho) > 0.02 and abs(base_ic) > 0.02:
-                    flip = "yes"
-            base_s = f"{base_ic:.4f}" if base_ic is not None else "—"
-            md.append(
-                f"| {feat} | {h} | `{tcol}` | {n} | {rho:.4f} | {p:.2e} | "
-                f"{base_s} | {delta_s} | {flip} |"
-            )
+        tcol = row["target_col"]
+        n = row["n"]
+        if tcol in (None, "missing") or n == 0:
+            md.append(f"| {feat} | {h} | missing | 0 | — | — | — | — | — |")
+            continue
+        rho = row["rank_ic"]
+        p = row["p_value"]
+        base_ic = baseline_map.get((feat, "all", 0))
+        delta_s = ""
+        flip = ""
+        if base_ic is not None and not np.isnan(rho):
+            delta = rho - base_ic
+            delta_s = f"{delta:+.4f}"
+            if base_ic * rho < 0 and abs(rho) > 0.02 and abs(base_ic) > 0.02:
+                flip = "yes"
+        base_s = f"{base_ic:.4f}" if base_ic is not None else "—"
+        rho_s = f"{rho:.4f}" if not np.isnan(rho) else "—"
+        p_s = f"{p:.2e}" if not np.isnan(p) else "—"
+        md.append(
+            f"| {feat} | {h} | `{tcol}` | {n} | {rho_s} | {p_s} | "
+            f"{base_s} | {delta_s} | {flip} |"
+        )
     md.append("")
     md.append(
         "**Reading**: sign_flip=yes with |IC|>0.02 suggests regime drift; "
@@ -614,6 +683,13 @@ def _make_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    import sys as _sys
+
+    print(
+        "DEPRECATED: use 'mlbot research scan|ic|plateau' instead of "
+        "scripts/quick_layer_scan.py (forwards to same kernels).",
+        file=_sys.stderr,
+    )
     args = _make_parser().parse_args()
 
     pq = Path(args.features_parquet)

@@ -27,3 +27,32 @@ def test_tree_determine_feature_columns_exclude_columns_drops_atr():
     cols = determine_feature_columns(df, cfg)
     assert "atr" not in cols
     assert "rsi" in cols
+
+
+def test_tree_determine_feature_columns_scoped_to_requested(monkeypatch):
+    """Parquet passthrough columns (e.g. cvd_change_5_normalized) must not enter the model."""
+    df = pd.DataFrame(
+        {
+            "box_stability_60": [0.1, 0.2],
+            "cvd_change_5_normalized": [0.01, -0.02],
+        }
+    )
+    deps = {
+        "box_structure_f": {"output_columns": ["box_stability_60"]},
+        "cvd_basic_f": {"output_columns": ["cvd_change_5_normalized"]},
+    }
+    monkeypatch.setattr(
+        "scripts.train_strategy_pipeline._load_valid_output_columns",
+        lambda *a, **k: {"box_stability_60", "cvd_change_5_normalized"},
+    )
+    monkeypatch.setattr(
+        "src.research.stat_kernels.ic_prune.load_feature_deps",
+        lambda *a, **k: deps,
+    )
+
+    cfg = FeaturePipelineConfig(
+        requested_features=["atr_f", "box_stability_60"],
+        exclude_columns=["atr"],
+    )
+    cols = determine_feature_columns(df, cfg)
+    assert cols == ["box_stability_60"]

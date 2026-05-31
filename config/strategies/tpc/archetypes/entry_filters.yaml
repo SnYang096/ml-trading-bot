@@ -1,19 +1,11 @@
-# TPC Entry Filter Archetype
-# Auto-promoted by optimize_entry_filter_plateau.py
-# Date: 2026-05-11 23:53
-# Promoted: 2 filters (1 plateau + 0 snotio-only)
-# Locked pool kept: 2 (missing -> disabled)
-# Baseline snotio: 0.2899, σ=1.485
-# Significance: z-test one-sided p<0.1, min_trades=4
-#
-# 职责: "现在该入场吗?" → 硬二值控制入场时机
-# 多个 filter 之间是 OR 关系
-# Tier A = plateau + 显著, Tier B = snotio + 显著 (no plateau)
+# Promoted 2026-05-31 — deep_pullback E2_or (vol OR delta; Pass1 tau 0.45/0.15)
+# Replaces prod cvd+recovery AND entry. Prefilter/gate unchanged (prod upper depth; no PE deny).
+# Smoke: results/tpc/experiments/deep_pullback_ablation/E2_or_smoke (+6.71R, 44 closes BTC+ETH 23-25)
 
 filters:
 - id: tpc_long_absorption_follow_trend
-  enabled: true
-  description: 做多：大级别偏多 + 回调吸收成立后顺势入场
+  enabled: false
+  description: prod entry（2026-05-31 promote → vol/delta OR）
   conditions:
   - feature: tpc_cvd_absorption
     operator: '>='
@@ -22,12 +14,11 @@ filters:
     operator: '>='
     value: 0.039
   tier: A_PLATEAU
-  notes: 'plateau: tpc_cvd_absorption=0.629(conf=LOW), tpc_recovery_strength=0.039(conf=LOW), z=1.73 p=0.0419'
-  promote_never_disable: true
   locked: true
+  notes: disabled after E2_or promote
 - id: tpc_short_absorption_follow_trend
-  enabled: true
-  description: 做空：大级别偏空 + 回调吸收成立后顺势入场
+  enabled: false
+  description: prod entry（2026-05-31 promote → vol/delta OR）
   conditions:
   - feature: tpc_cvd_absorption
     operator: '>='
@@ -36,8 +27,24 @@ filters:
     operator: '>='
     value: 0.039
   tier: A_PLATEAU
-  notes: 'plateau: tpc_cvd_absorption=0.629(conf=LOW), tpc_recovery_strength=0.039(conf=LOW), z=1.73 p=0.0419, promote_never_disable:
-    本轮未扫描，保持启用'
-  promote_never_disable: true
   locked: true
+  notes: disabled after E2_or promote
+- id: tpc_deep_pullback_vol_confirm
+  enabled: true
+  description: 缩量回踩确认（量能维度）
+  conditions:
+  - feature: tpc_vol_pullback_confirm
+    operator: '>='
+    value: 0.45
+  tier: EXPERIMENT
+  notes: 'Pass1 snotio 0.45'
+- id: tpc_deep_pullback_delta_absorb
+  enabled: true
+  description: 回踩段 delta 吸收（订单流维度）
+  conditions:
+  - feature: bpc_pullback_delta_absorption
+    operator: '>='
+    value: 0.15
+  tier: EXPERIMENT
+  notes: 'Pass1 delta 0.15'
 combination_mode: or

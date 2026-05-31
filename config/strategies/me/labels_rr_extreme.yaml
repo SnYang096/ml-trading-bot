@@ -1,47 +1,44 @@
-# ME-Short Failure 子标签：failure_rr_extreme（踩大坑）
-# 🟥 只学习识别"路径极端不利"的结构条件（做空视角）
-# - failure_rr_extreme = forward_rr_short < -0.8R
-#   即价格大幅上涨（对空头是亏损）
-# - 目标：识别哪些条件下做空会踩大坑
+# CompressionBreakout Gate 子标签：success_no_rr_extreme（不踩大坑）
+#
+# direction_aware=true：按 direction.yaml 逐 bar 方向翻转 forward_rr，
+#   多空样本均按「该方向」评估是否踩 < -0.8R 大坑（与 RMR/FER 同口径）。
 
-name: me_short_rr_extreme
-target_column: success_no_rr_extreme  # invert=True
+name: me_rr_extreme
+target_column: success_no_rr_extreme
 
 label_generator:
   module: src.time_series_model.strategies.labels.failure_first_label
   function: compute_bpc_failure_rr_extreme_label
   params:
-    direction: short
+    direction: long
     horizon: 50
-    invert: true  # 1=好机会（不会踩坑），0=踩坑
-    direction_aware: false
+    invert: true
+    direction_aware: true
+    strategy: me
 
-# 标签元信息
 label_meta:
   label_type: binary
   failure_subtype: rr_extreme
   semantic: |
     success_no_rr_extreme = 1 - failure_rr_extreme
-    1 = 不会踩大坑（forward_rr_short >= -0.8R，即价格未大幅上涨）
-    0 = 踩大坑（forward_rr_short < -0.8R，即价格大幅上涨，空头亏损）
+    1 = 不会踩大坑（该 bar 方向上的 forward_rr >= -0.8R）
+    0 = 踩大坑（该 bar 方向上的 forward_rr < -0.8R）
   failure_definition: |
-    failure_rr_extreme = forward_rr_short < -0.8R
-    forward_rr_short = -forward_rr_long （价格上涨 = 空头亏损）
+    failure_rr_extreme = forward_rr_directional < -0.8R
+    direction_aware 时 forward_rr = forward_rr_long × per-bar direction
   horizon: 50 bars
   description: |
-    ME-Short Failure 子标签训练：
-    - 只学习识别做空"踩大坑"的结构条件
-    - ME-Short 专注于向下动量扩张后的失败模式（价格反向上涨）
-    - 高预测值 = 安全（做空不会踩坑）
+    ME / CompressionBreakout Gate 训练：
+    - 识别压缩突破后「沿信号方向」是否会路径极端不利
+    - 高预测值 = 安全（该方向不会踩大坑）
 
 filters:
   - column: success_no_rr_extreme
     notna: true
 
-# Gate 模型专属 KPI 定义
 kpi_definition:
   veto_ability:
-    description: "Gate 是否能有效降低 failure_rr_extreme 发生率（做空方向）"
+    description: "Gate 是否能有效降低 failure_rr_extreme 发生率（多空 direction_aware）"
     metrics:
       - name: lift_at_70pct
         description: "Top 70% 覆盖时的 Lift (failure rate reduction)"

@@ -54,12 +54,13 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from scripts.stat_method_registry import canonicalize_method_name, get_canonical_methods
 from src.features.normalization.raw_scale_columns import load_raw_scale_columns
+from src.research.stat_kernels.stratify import (
+    DEFAULT_MIN_SAMPLES,
+    compute_stratification as _compute_stratification,
+)
 
 # ── 默认百分位 ────────────────────────────────────────────────
 DEFAULT_PERCENTILES = [5, 10, 20, 80, 90, 95]
-
-# ── 默认最小样本量 ─────────────────────────────────────────
-DEFAULT_MIN_SAMPLES = 30
 
 # ── 默认 feature_dependencies.yaml 路径 ───────────────────────
 DEFAULT_DEPS_PATH = "config/feature_dependencies.yaml"
@@ -247,75 +248,6 @@ def _resolve_features_from_config(
             print(f"  🛡️  {feat_f}: drop raw/non-normalized {dropped_raw[:5]}")
 
     return sorted(set(resolved_columns))
-
-
-def _compute_stratification(
-    df: pd.DataFrame,
-    feature: str,
-    threshold: float,
-    operator: str,  # "high" (>= threshold) or "low" (<= threshold)
-    rr_col: str,
-    label_col: str,
-    min_samples: int = DEFAULT_MIN_SAMPLES,
-) -> Optional[Dict[str, Any]]:
-    """
-    按阈值分层，计算两组的 bad rate 和 median RR。
-
-    operator="high": 分析「高端信号」→ df[feature >= threshold] vs 其余
-    operator="low":  分析「低端信号」→ df[feature <= threshold] vs 其余
-    """
-    # 避免重复列名导致 DataFrame 而非 Series
-    cols_needed = [feature, label_col]
-    if rr_col in df.columns and df[rr_col].notna().any():
-        cols_needed.append(rr_col)
-        has_rr = True
-    else:
-        has_rr = False
-    # 去重列名
-    cols_needed = list(dict.fromkeys(cols_needed))
-    valid = df[cols_needed].copy()
-    if valid.columns.duplicated().any():
-        valid = valid.loc[:, ~valid.columns.duplicated()]
-    valid = valid.dropna().reset_index(drop=True)
-    if len(valid) < min_samples * 2:
-        return None
-
-    if operator == "high":
-        signal_mask = (valid[feature] >= threshold).values
-    else:
-        signal_mask = (valid[feature] <= threshold).values
-
-    signal_df = valid.loc[signal_mask]
-    rest_df = valid.loc[~signal_mask]
-
-    if len(signal_df) < min_samples or len(rest_df) < min_samples:
-        return None
-
-    # bad rate = 标签为 0 的比例 (label_col = success_no_rr_extreme, 0 = 踩坑)
-    signal_bad_rate = (signal_df[label_col] == 0).mean()
-    rest_bad_rate = (rest_df[label_col] == 0).mean()
-
-    # median forward_rr
-    signal_med_rr = (
-        float(signal_df[rr_col].median())
-        if rr_col in signal_df.columns
-        else float("nan")
-    )
-    rest_med_rr = (
-        float(rest_df[rr_col].median()) if rr_col in rest_df.columns else float("nan")
-    )
-
-    return {
-        "n_signal": len(signal_df),
-        "n_rest": len(rest_df),
-        "bad_rate_signal": round(signal_bad_rate, 4),
-        "bad_rate_rest": round(rest_bad_rate, 4),
-        "bad_rate_diff": round(signal_bad_rate - rest_bad_rate, 4),
-        "bad_rate_diff_abs": round(abs(signal_bad_rate - rest_bad_rate), 4),
-        "median_rr_signal": round(signal_med_rr, 2),
-        "median_rr_rest": round(rest_med_rr, 2),
-        "threshold": round(threshold, 4),
-    }
 
 
 def analyze_feature(
@@ -3723,6 +3655,13 @@ def _meta_algorithm_prefilter(
 
 
 def main() -> int:
+    import sys as _sys
+
+    print(
+        "DEPRECATED: analyze_archetype_feature_stratification.py → use "
+        "mlbot research fit --layer prefilter and mlbot research segment.",
+        file=_sys.stderr,
+    )
     parser = argparse.ArgumentParser(
         description="分位数分层分析：验证 archetype 语义特征的预测力"
     )

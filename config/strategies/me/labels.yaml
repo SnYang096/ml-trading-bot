@@ -1,7 +1,7 @@
-# ME-Short (MomentumExpansion Short) 策略标签配置
-# 语义：向下流动性加速 + 波动扩张驱动（做空）
+# CompressionBreakout（slug me）策略标签 — 压缩后双向扩张突破
+# 语义：压缩蓄势 → 向上/向下突破，顺势 forward RR
 
-name: me-short
+name: me
 target_column: rr_label
 
 label_generator:
@@ -12,10 +12,9 @@ label_generator:
     max_holding_bars: 50
     take_profit_r: 2.0
     stop_loss_r: 1.0
-    # 突破检测参数
     breakout_lookback: 10
     volume_mult: 1.2
-    combine_mode: short_only  # 只计算向下突破信号
+    combine_mode: any_success  # 双向：breakout_up + breakout_down，按突破方向赋 sign
 
 filters:
   - column: rr_label

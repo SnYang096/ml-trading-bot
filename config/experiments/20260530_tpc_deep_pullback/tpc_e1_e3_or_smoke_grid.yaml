@@ -1,0 +1,39 @@
+# E1_or / E3_or vs E2_or baseline（BTC+ETH 2023–2025）
+#
+#   E2_or     — 仅 OR entry（prod prefilter + gate 无 PE）
+#   E1_bull_or — 深回撤 prefilter bull + OR entry
+#   E1_bear_or — 深回撤 prefilter bear + OR entry
+#   E3_or     — prod prefilter + OR entry + path_efficiency gate
+#
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260530_tpc_deep_pullback/tpc_e1_e3_or_smoke_grid.yaml \
+#     --quiet-signal-logs
+
+experiment_id: tpc_deep_pullback_e1_e3_or_smoke_20260530
+strategy: tpc
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+trading_map: true
+
+# E2_or 基线：results/tpc/experiments/deep_pullback_ablation/E2_or_smoke（44 笔 +6.71R）
+# 本 grid 只跑新增 3 组
+
+runs:
+  - variant: E1_bull_or_smoke
+    strategies_root: config_experiments/tpc_deep_prefilter_bull_or_entry_strategies
+    start_date: "2023-01-01"
+    end_date: "2025-01-01"
+    output_dir: results/tpc/experiments/deep_pullback_ablation/E1_bull_or_smoke
+
+  - variant: E1_bear_or_smoke
+    strategies_root: config_experiments/tpc_deep_prefilter_bear_or_entry_strategies
+    start_date: "2023-01-01"
+    end_date: "2025-01-01"
+    output_dir: results/tpc/experiments/deep_pullback_ablation/E1_bear_or_smoke
+
+  - variant: E3_or_smoke
+    strategies_root: config_experiments/tpc_deep_gate_pe_or_entry_strategies
+    start_date: "2023-01-01"
+    end_date: "2025-01-01"
+    output_dir: results/tpc/experiments/deep_pullback_ablation/E3_or_smoke

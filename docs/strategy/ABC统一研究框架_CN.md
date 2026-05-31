@@ -8,6 +8,7 @@
 > - [`WORKFLOW_整体架构与管线改进计划_CN.md`](WORKFLOW_整体架构与管线改进计划_CN.md)（架构背景与里程碑）
 > - [`短期树独立策略_设计与落地_CN.md`](短期树独立策略_设计与落地_CN.md)（树通道的独立 slug 与上线流程）
 > - [`label_scan_vs_IC_说明_CN.md`](label_scan_vs_IC_说明_CN.md)（label scan / IC 含义与互补）
+> - [`为何不做滚动调阈值_与研究节奏_CN.md`](为何不做滚动调阈值_与研究节奏_CN.md)（滚动 replay vs rolling optimize；月监控 vs 季 R&D；树通道 τ 详述）
 
 ---
 
@@ -50,7 +51,7 @@
 
 | 文件 | 产生方式 | 包含 | 用途 |
 |------|---------|------|------|
-| `features_labeled.parquet` | `mlbot train final --prepare-only -c config/strategies/<slug>` | 特征 + label（`success_no_rr_extreme`、`forward_rr` 等）+ OHLC + atr | **① 假设阶段唯一输入**；optimize_* / quick_layer_scan / factor-eval 都在此跑 |
+| `features_labeled.parquet` | `mlbot train final --prepare-only -c config/strategies/<slug>` | 特征 + label（`success_no_rr_extreme`、`forward_rr` 等）+ OHLC + atr | **① 假设阶段唯一输入**；`mlbot research` / optimize_* / factor-eval 都在此跑 |
 | `predictions.parquet` | `mlbot train final -c config/strategies/<slug>`（含树训练） | 上面所有 + 模型 score + gate_decision | 树通道必需；规则栈仅 ②b 时偶用 |
 | `trades.csv` / `summary.json` | `event_backtest --variant-grid` | 1m 重放 R-multiple / by-side / DD | **② 验因果唯一可信指标** |
 
@@ -70,9 +71,9 @@
         ├──── 规则栈分支（B / C） ────┐         ┌──── 树通道分支（D / A2） ────┐
         ▼                              │         ▼                                 │
 [Phase 1] ① 假设                       │  [Phase 1] ① 假设
-  quick_layer_scan feature-plateau     │    mlbot analyze factor-eval --ic-decay
-  quick_layer_scan condition-set       │    quick_layer_scan ic-decay → 选 H
-  quick_layer_scan ic-decay            │    mlbot train final → predictions.parquet
+  mlbot research scan feature-plateau  │    mlbot analyze factor-eval --ic-decay
+  mlbot research scan condition-set    │    mlbot research ic → 选 H
+  mlbot research ic / plateau          │    mlbot train final → predictions.parquet
   posthoc_layer_effectiveness          │    regime_threshold_calibrate（τ plateau）
         │                              │         │
   ②b 数值精标（可选）：                  │  ②b τ plateau 精标：
@@ -108,20 +109,21 @@
 | 阶段 | 命令 | 适用 |
 |------|------|------|
 | 0 数据 | `mlbot train final --no-docker --prepare-only -c config/strategies/<slug> --output-dir results/train_final/<slug>/<run_id>` | 全部 |
-| ① 规则 plateau | `python scripts/quick_layer_scan.py feature-plateau --features-parquet ... --feature <name> --operator "<=" --grid ...` | B / C 规则栈 |
-| ① 规则 condition | `python scripts/quick_layer_scan.py condition-set --features-parquet ... --label success_no_rr_extreme --condition "H: ..."` | B / C 规则栈 |
-| ① IC / lag | `python scripts/quick_layer_scan.py ic-decay --features-parquet ... --feature <name> --target forward_rr --lags 1,3,5,10,20` | 全部 |
+| ① 规则 plateau | `mlbot research scan feature-plateau --strategy <slug> --layer prefilter --features-parquet ... --feature <name> --operator "<=" --grid ...` | B / C 规则栈 |
+| ① 规则 condition | `mlbot research scan condition-set --strategy <slug> --features-parquet ... --label success_no_rr_extreme --condition "H: ..."` | B / C 规则栈 |
+| ① IC / lag | `mlbot research ic --strategy <slug> --features-parquet ... --features <cols> --horizons 1,3,5,10,20 --target forward_rr` | 全部 |
+| ① 编排 | `PYTHONPATH=src:scripts python scripts/rd_loop.py --hypothesis-yaml config/experiments/rd_loop_<topic>.yaml` | 多 scan 批量 |
 | ① 树特征池 | `mlbot analyze factor-eval --ic-decay-lags 1,3,5,10,20,50` | 树通道 |
 | ①→② 规则数值精标 | `python scripts/optimize_gate_unified.py --logs <features_labeled.parquet> --strategy bpc --output ...`<br/>`python scripts/optimize_entry_filter_plateau.py --logs <features_labeled.parquet> --strategy bpc` | B 规则栈（路线 B：现在可直接吃 features_labeled） |
 | ① 树训练 + τ | `mlbot train final -c config/strategies/<fast_scalp|short_term_swing>` → `python scripts/regime_threshold_calibrate.py ...` | 树通道 |
-| ② 因果 | `python scripts/event_backtest.py --variant-grid config/experiments/<grid>.yaml` | 全部 |
+| ② 因果 | `PYTHONPATH=src:scripts python -m scripts.event_backtest --variant-grid config/experiments/<grid>.yaml` | 全部 |
 | Phase 3 决策 | `python scripts/_new_decision_doc.py --topic-template default ...` | 全部 |
 | 上线 contract | `mlbot pipeline run --all --config config/strategies/<slug>/research/pre_deploy_replay.yaml --stage rolling_sim --skip-shap` | 全部 |
 | 上线 | `python scripts/deploy_config_to_live.py` | 全部 |
 | ③ 周 | `python scripts/regime_watchdog.py --strategies bpc,tpc,me,srb --window-parquet ... --baseline-json config/monitoring/regime_watchdog_baseline.json` | 全部 |
 | ③ 月 | `mlbot pipeline run --all --config config/strategies/<slug>/research/calibrate_roll.default.yaml --stage rolling_sim --skip-shap` | 全部 |
 
-> 任何 `--variant-grid` / `quick_layer_scan` / `optimize_*` / `factor-eval` 命令**都不动生产 yaml**。只有 Phase 3 的 `cp` 和 Phase 4 的 `deploy_config_to_live.py` 改 yaml，且都有人审与 decision doc 留痕。
+> 任何 `--variant-grid` / `mlbot research` / `optimize_*` / `factor-eval` 命令**都不动生产 yaml**。只有 Phase 3 的 `cp` 和 Phase 4 的 `deploy_config_to_live.py` 改 yaml，且都有人审与 decision doc 留痕。命令细节见 [`R&D工具矩阵_CN.md`](R&D工具矩阵_CN.md)。
 
 ---
 
@@ -291,7 +293,7 @@ git push origin monitoring   # 单独 branch，不污染主 trunk
 
 | 状态 | 任务 |
 |------|------|
-| ✅ | `quick_layer_scan` 三模式 + `--bucket-by` |
+| ✅ | `mlbot research scan` 三模式 + `segment --bucket-by` |
 | ✅ | `rd_loop.py` 编排 |
 | ✅ | `event_backtest --variant-grid` |
 | ✅ | `regime_watchdog` 加 PSI / IC drift |

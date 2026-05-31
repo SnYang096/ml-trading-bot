@@ -112,7 +112,7 @@ mlbot research <verb> --strategy <s> --layer <l> --target <t> [--subset ...]
 | 路径                                                                                        | 状态                       | 处理                                                             |
 | ----------------------------------------------------------------------------------------- | ------------------------ | -------------------------------------------------------------- |
 | `scripts/optimize_gate_plateau.py`                                                        | **仓库不存在**                | 移除 3 个脚本 + 2 个 CLI 子命令对它的 import；功能由 `optimize_gate_unified` 接 |
-| `scripts/srb_reverse_shadow_report.py`                                                    | 自标 DEPRECATED            | 留 90 天后删                                                       |
+| `scripts/archive/srb_reverse_shadow_report.py`                                                    | 自标 DEPRECATED            | 留 90 天后删                                                       |
 | `scripts/_factor_ic_baseline_oneshot.py`                                                  | 自标 throwaway             | 合并进 `research ic` 后删                                           |
 | `scripts/optimize_entry_filter_snotio.py`                                                 | 不在任何 pipeline            | 标 DEPRECATED 待删                                                |
 | `mlbot serve-results`                                                                     | hidden + DEPRECATED      | 留                                                              |
@@ -473,7 +473,7 @@ scripts/                                ← 旧入口，过渡期保留 + DEPREC
 | ----------------------------------------- | -------------------- | ---------------------------------------------- |
 | `scripts/optimize_gate_plateau.py`（缺失）    | 移除所有引用（3 脚本 + 2 CLI） | `optimize_gate_unified` / 新 `research plateau` |
 | `scripts/_factor_ic_baseline_oneshot.py`  | 删除                   | `research ic`                                  |
-| `scripts/srb_reverse_shadow_report.py`    | 移到 `archive/`        | —                                              |
+| `scripts/archive/srb_reverse_shadow_report.py`    | 已归档                 | —                                              |
 | `scripts/optimize_entry_filter_snotio.py` | 标 DEPRECATED；6 个月后删  | `research plateau --target snotio`             |
 
 
@@ -514,6 +514,140 @@ scripts/                                ← 旧入口，过渡期保留 + DEPREC
 | `calibrate_roll.default.yaml`    | 月度 drift 监控，保留                                                                     |
 | `pre_deploy_replay.yaml`         | 上线 contract，保留；`plateau_stability` 段当前 deferred，Phase 8 用 `research robustness` 接上 |
 
+
+### 9.5 Phase 落地状态（`feat/research-tools-refactor`，2026-05-27）
+
+| Phase | 状态 | 说明 |
+| ----- | ---- | ---- |
+| P0 feature_store union | ✅ | `config/strategies/_shared/` + `features_tree_core_120T_*`；core-4 prepare-only 共用 layer |
+| P1 最小内核 | ✅ | `src/research/expr|labels|stat_kernels/{z_test,ic}`；ic-decay horizon bug 已修 |
+| P2 抽象层 | ✅ | `subjects/targets/subsets/layer_registry`（dataclass 骨架） |
+| P3 厚内核 | ✅ | gate lift/robustness/plateau/stratify/rr_simulate + `snotio_calc.py`；entry 脚本已接 kernel |
+| P4 research CLI (scan/ic/plateau/segment) | ✅ | TPC smoke 通过；Click passthrough 已修；scan 对拍单测 |
+| P5 research fit | ✅ | LightGBM + `feature_importance.json`（gain + optional SHAP audit） |
+| P6 calibrate/promote/compare/robustness | 部分 | `plateau.json`→`calibrate`（标量+结构化 gate draft）+ compare + robustness + **promote locked-merge** 已通；parity harness 见 `tests/research/test_gate_lift_parity.py` |
+| P7 清理 | ✅ | legacy DEPRECATED；断链 import 已修；`srb_reverse_shadow_report` → `scripts/archive/` |
+| P8 监控 | ✅ | `scripts/monitoring/*` + systemd timer；dashboard tab 未做 |
+
+**Review 收尾（2026-05-27，同分支）**：
+
+| 项 | 状态 | 说明 |
+| -- | ---- | ---- |
+| pair-scan CLI | ✅ | `mlbot research scan pair-scan` + rd_loop 透传 |
+| snotio entry_rr | ✅ | `plateau --kpi snotio --snotio-mode entry_rr` + `entry_rr_scan` kernel |
+| ModelScore subject | ✅ | `--subject 'model.score:…'` + `model_manifest.json` |
+| pre_deploy gate robustness | ✅ | 默认仅 `gate.yaml`；`plateau_stability.robustness_layers` 可扩 |
+| B1 entry_rr 方向列 | ✅ | `{strategy}_breakout_direction` 优先 |
+| B2 robustness 缺 label | ✅ | `ValueError` + exit 3（非 KeyError） |
+| B4 contract 特征 parquet | ✅ | 仅用当前 `run_root`，不回退 `train_final_*` |
+| entry 脚本 shim | ✅ | `optimize_entry_filter_plateau.py` DEPRECATED → research plateau |
+| rd_loop `--subject` | ✅ | snotio-plateau / feature-plateau 透传 scan yaml |
+| CLI e2e 单测 | ✅ | `tests/research/test_cli_plateau_e2e.py` |
+
+**Entry plateau batch（2026-05-27）**：
+
+| 项 | 状态 | 说明 |
+| -- | ---- | ---- |
+| `entry_plateau_scan` 共享模块 | ✅ | auto-loop entry_filters → snotio entry_rr |
+| rd_loop `entry-plateau` | ✅ | 见 `rd_loop_srb_entry_plateau.yaml` |
+| legacy 扫描 thin delegate | ✅ | `optimize_entry_filter_plateau.py` → 共享模块 |
+| compare `snotio_mode` | ✅ | proxy vs entry_rr mismatch 标注 |
+| logs_gated integration smoke | ✅ | `test_entry_plateau_smoke.py`（本地 parquet / skip） |
+| tree `requested_features` 骨架 | ✅ | fast_scalp / short_term_swing（IC 冻结仍待 factor-eval） |
+| plateau baseline 回填工具 | ✅ | `backfill_plateau_baseline.py` + dry-run 默认 |
+
+**仍 Open**：
+
+- P8 dashboard tab（defer 至新 research 命令验证完成后）
+- production yaml `last_calibration.plateaus` 需人审 `--write` 回填后 pre_deploy drift 才生效
+- deprecated 脚本 6 个月硬删未到期
+- rd_loop `gate-plateau` / `locked-prefilter-tune` — **已落地**（见 `config/experiments/tpc/rd_loop_tpc_gate_plateau.yaml`）
+
+**2026-05-29 Phase 0 能力审计补充**（执行 `new_research_command_family_optimization_plan` 首步）：
+- 新增审计文档：`docs/strategy/_research_capability_audit_2026-05-29.md`
+- 确认 `calibrate.py` 仅产单行标量、`promote.py` 为裸 copy2（无 locked 合并）、`plateau --kpi lift` 尚未接线、`research fit --layer gate` 在仅有白名单的 `features_gate.yaml` 上会失败。
+- 已校正 P6 状态行；后续 Gate 闭环工作量按「rd_loop + plateau lift（Todo 2）」+「calibrate/promote 升级 + parity harness（Todo 3）」拆分执行。
+- 详见 `.cursor/plans/new_research_command_family_optimization_plan_(balanced_b+tree)_bebf47e1.plan.md`（含 (B)(C)(D) docs 子节 + 硬验收指标：ME/TPC 各完成一次 Gate refine 零调用旧 `optimize_gate_unified`）。
+
+**Open Questions 拍板（已落地）**：
+
+- Q1 union yaml → `config/strategies/_shared/features.yaml`（目录 `-c config/strategies/_shared`）
+- Q2 fit 输出 → `results/research/fit/<strategy>/<layer>/<run_id>/`
+- Q3 监控 → 先 timer + heartbeat
+- Q4 DEPRECATED → stderr 一行（无 sleep）
+- Q5 ic-decay bug → P1 已修 + 单测
+
+---
+
+## 14. 运营化阶段 (Phase 9+) — 新命令族默认 R&D 路径
+
+> **Phase 0 能力审计**（2026-05-29）：[`_research_capability_audit_2026-05-29.md`](_research_capability_audit_2026-05-29.md)  
+> **执行计划**：`.cursor/plans/new_research_command_family_optimization_plan_(balanced_b+tree)_bebf47e1.plan.md`
+
+### 14.1 新 vs 旧流程（默认口径）
+
+```mermaid
+flowchart TD
+    subgraph New["New Explicit Flow (Default)"]
+        H["Human Narrative + Diagnosis"]
+        RD["① rd_loop / mlbot research scan/plateau/ic"]
+        VG["② event_backtest --variant-grid"]
+        MON["③ Fixed-config monitoring"]
+        H --> RD --> VG -->|Human review + decision doc| MON
+    end
+    subgraph Old["Old Unattended Meta (Deprecated for Discovery)"]
+        POOL["Large requested_features pool"]
+        META["meta_algorithm / optimize_* in pipeline"]
+        ADOPT["--adopt / promote"]
+        POOL --> META --> ADOPT
+    end
+    MON -->|ALERT / drift| H
+```
+
+| 阶段 | 新默认 | 旧路径（仅 legacy / 对拍） |
+|------|--------|---------------------------|
+| ① 假设 | `mlbot research` + `rd_loop` 显式 condition | `meta_algorithm` / 大池 unattended |
+| ② 因果 | `event_backtest --variant-grid`（1–2 yaml diff） | pipeline stage 内 optimize |
+| ③ 监控 | `calibrate_roll` / `watchdog` / `pre_deploy`（固定配置） | 滚动 re-optimize |
+
+**ME/TPC 示例**：
+- Entry：`config/experiments/me/rd_loop_me_entry_filter.yaml`
+- Gate：`config/experiments/tpc/rd_loop_tpc_gate_plateau.yaml`
+- Tree：`config/experiments/fast_scalp/rd_loop_fast_scalp_ic_plateau.yaml`
+
+### 14.2 (B) features_*.yaml 角色重定义
+
+| 文件 | 保留用途 | 可瘦身 |
+|------|----------|--------|
+| `features_gate.yaml` `allowed_gate_deny_features` | Gate 语义白名单 / deny 守卫 | — |
+| `features_direction.yaml` `candidates:` | Direction 验证候选 | — |
+| `features.yaml` / `features_prefilter.yaml` `requested_features` | 树 IC@H / `research fit` 训练池 | 可删「大池 unattended meta」列 |
+| locked 规则列名 | 契约 / 监控 baseline | — |
+
+> `research fit --layer gate` 在仅有白名单的 `features_gate.yaml` 上会失败 —— ** intentional **；Gate 层用 lift plateau，不是 fit 大池。
+
+### 14.3 (C) 阈值来源约定
+
+| 来源 | 角色 | 能否直接 promote？ |
+|------|------|-------------------|
+| rd_loop condition-set 分位（q50/q90） | **探测假设** | 否 |
+| `research plateau`（label/snotio/**lift**）平坦高原 | **生产 τ / 区间证据** | 经 `calibrate` draft + 人审 |
+| `optimize_gate_unified.py` | legacy 对拍 | 否（deprecated） |
+
+### 14.4 (D) semantic_polarity.yaml
+
+- **保留**：语义方向声明，供 Gate 白名单 / direction 检查 / semantic guard 消费。
+- **不再**：unattended meta 大池发现的燃料。
+
+### 14.5 Phase 9–12 落地项
+
+| Phase | 内容 | 状态 |
+|-------|------|------|
+| 9 | `plateau --kpi lift` + `rd_loop gate-plateau` / `locked-prefilter-tune` | 已落地 |
+| 9b | `calibrate` 结构化 draft + `promote` locked-merge + parity harness | 已落地 |
+| 10 | drift → `rd_loop` snippet（`regime_drift_monitor --emit-rd-loop-suggestions`） | 已落地 |
+| 11 | pre_deploy `cross_regime_evidence` + 多层 plateau_stability | 已落地 |
+| 12 | e2e 测试 + migration cookbook | 见 `docs/strategy/迁移_旧meta到新rd_loop_CN.md` |
 
 ---
 

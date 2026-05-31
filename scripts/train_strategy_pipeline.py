@@ -626,6 +626,27 @@ def determine_feature_columns(
         if filtered_count > 0:
             print(f"   ℹ️  Auto-filtered {filtered_count} columns not in output_columns")
 
+    requested = list(getattr(pipeline_cfg, "requested_features", []) or [])
+    invert = list(getattr(pipeline_cfg, "invert_features", []) or [])
+    effective_requested = requested + [c for c in invert if c not in requested]
+    if effective_requested and not pipeline_cfg.selector:
+        from src.research.stat_kernels.ic_prune import (
+            expand_requested_features_to_columns,
+            load_feature_deps,
+        )
+
+        allowed = expand_requested_features_to_columns(
+            effective_requested, load_feature_deps()
+        )
+        before_count = len(cols)
+        cols = [c for c in cols if c in allowed]
+        filtered_count = before_count - len(cols)
+        if filtered_count > 0:
+            print(
+                f"   ℹ️  Scoped to requested_features: kept {len(cols)} model columns "
+                f"(dropped {filtered_count} passthrough columns)"
+            )
+
     # 方案 A：进一步过滤非归一化的原始特征
     before_count = len(cols)
     cols = [c for c in cols if _is_normalized_feature(c)]

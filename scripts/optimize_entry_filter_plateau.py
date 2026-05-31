@@ -69,303 +69,10 @@ from scripts.stat_method_registry import (
     get_canonical_methods,
 )
 from scripts.locked_entry_filter_utils import load_locked_entry_filters
-
-# ================================================================
-# 阈值扫描核心逻辑
-# ================================================================
-
-# 可扫描的运算符（连续阈值）
-_SCANNABLE_OPS = {">=", ">", "<=", "<"}
-
-
-def _find_scannable_conditions(
-    filter_def: Dict[str, Any],
-) -> List[Dict[str, Any]]:
-    """找出 filter 中可扫描的连续阈值条件。
-
-    排除 == / != 条件（bool 特征），只保留 >=, >, <=, < 条件。
-    """
-    scannable = []
-    for i, cond in enumerate(filter_def.get("conditions", [])):
-        if cond.get("operator") in _SCANNABLE_OPS:
-            scannable.append({"index": i, **cond})
-    return scannable
-
-
-def _generate_scan_range(
-    current_value: float,
-    operator: str,
-    n_steps: int = 15,
-) -> List[float]:
-    """根据当前阈值和运算符生成扫描范围。
-
-    对于 >= / > : 高阈值更严格
-    对于 <= / < : 低阈值更严格
-    支持负值范围（如 cvd_divergence_score <= -0.776）
-    """
-    # 动态范围: 当前值 ± 0.4，不截断到 [0, 1]
-    margin = 0.4
-    low = current_value - margin
-    high = current_value + margin
-
-    # 对于归一化特征 (0~1 范围)，适当截断
-    if current_value >= 0 and current_value <= 1:
-        low = max(0.0, low)
-        high = min(1.0, high)
-
-    if abs(high - low) < 1e-8:
-        # fallback: 当前值 ± 0.5
-        low = current_value - 0.5
-        high = current_value + 0.5
-
-    step = (high - low) / (n_steps - 1)
-    return [round(low + i * step, 3) for i in range(n_steps)]
-
-
-def _scan_single_threshold(
-    merged: pd.DataFrame,
-    exec_config: Dict[str, Any],
-    filter_def: Dict[str, Any],
-    cond_index: int,
-    scan_values: List[float],
-    entry_filters_cfg: Dict[str, Any],
-    span_years: float,
-) -> List[Dict[str, Any]]:
-    """对单个条件的阈值范围扫描，返回每个阈值的回测结果。"""
-    results = []
-    original_entry = merged["entry_direction"].copy()
-    conditions = filter_def.get("conditions", [])
-    original_value = conditions[cond_index]["value"]
-
-    for val in scan_values:
-        # 恢复原始信号
-        merged["entry_direction"] = original_entry.copy()
-
-        # 临时修改阈值
-        conditions[cond_index]["value"] = val
-
-        # 应用 filter（用修改后的 conditions）
-        mask = pd.Series(True, index=merged.index)
-        for cond in conditions:
-            feat = cond["feature"]
-            op_str = cond["operator"]
-            v = cond["value"]
-            if feat not in merged.columns:
-                continue
-            op_map = {
-                ">": lambda s, v: s > v,
-                ">=": lambda s, v: s >= v,
-                "<": lambda s, v: s < v,
-                "<=": lambda s, v: s <= v,
-                "==": lambda s, v: s == v,
-                "!=": lambda s, v: s != v,
-            }
-            op_fn = op_map.get(op_str)
-            if op_fn:
-                mask = mask & op_fn(merged[feat].astype(float), float(v))
-
-        merged.loc[~mask, "entry_direction"] = 0.0
-        n_entries = int((merged["entry_direction"] != 0).sum())
-
-        if n_entries < 20:
-            results.append(
-                {
-                    "threshold": val,
-                    "trades": n_entries,
-                    "snotio": 0.0,
-                    "sharpe": 0.0,
-                    "win_rate": 0.0,
-                    "mean_r": 0.0,
-                    "too_few": True,
-                }
-            )
-            continue
-
-        exec_returns, _ = simulate_rr_execution(
-            merged, exec_config, atr_col="atr", use_tier_params=False
-        )
-        valid = exec_returns.dropna()
-        if len(valid) < 10:
-            results.append(
-                {
-                    "threshold": val,
-                    "trades": n_entries,
-                    "snotio": 0.0,
-                    "sharpe": 0.0,
-                    "win_rate": 0.0,
-                    "mean_r": 0.0,
-                    "too_few": True,
-                }
-            )
-            continue
-
-        sh = compute_sharpe(valid, annualize=False)
-        snotio_val = float(valid.mean())  # snotio = mean(R-multiples)
-        results.append(
-            {
-                "threshold": val,
-                "trades": len(valid),
-                "snotio": snotio_val,
-                "sharpe": float(sh),
-                "win_rate": float((valid > 0).mean()),
-                "mean_r": snotio_val,
-                "too_few": False,
-            }
-        )
-
-    # 恢复原始值
-    conditions[cond_index]["value"] = original_value
-    merged["entry_direction"] = original_entry
-    return results
-
-
-def _find_plateau(
-    results: List[Dict[str, Any]],
-    window: int = 5,
-    operator: str = ">=",
-    snotio_cv_max: float = 0.3,
-    trades_cv_max: float = 0.4,
-) -> Dict[str, Any]:
-    """分析扫描结果，找到平坦高原区间。
-
-    使用滑动窗口双 CV 判定：
-      - snotio CV < snotio_cv_max（收益稳定性）
-      - Trades CV < trades_cv_max（执行节奏稳定性 — Entry Filter 特有）
-
-    recommended 不取中点，取 plateau 偏宽容侧：
-      - >= / > 条件：低阈值 = 更宽松 → start + bias * width
-      - <= / < 条件：高阈值 = 更宽松 → end - bias * width
-      - bias 动态绑定 width: 窄高原(width<0.25) bias=0.2, 宽高原 bias=0.1
-        直觉：plateau 很宽 → 本来就不敏感 → 不用偏太多
-               plateau 较窄 → 更容易 miss → 偏宽容更重要
-
-    原理：plateau 的存在证明了「严格 ≠ 更好」，
-    Entry Filter 的错误成本是「错过」而非「多等一次确认」。
-    在 snotio 无本质差别的区间内，选更容易触发入场的一侧。
-
-    plateau 排序用 mean_snotio × plateau_width（鲁棒性最大化），
-    而非单纯 mean_snotio 最大化，让宽而稳的高原优先于窄而高的尖峰。
-
-    输出 plateau_width 作为置信度指标（宽度越大 = 越稳定 = 越可部署）。
-    """
-    valid = [r for r in results if not r.get("too_few")]
-    if len(valid) < window:
-        return {
-            "is_plateau": False,
-            "reason": f"有效点不足 ({len(valid)} < {window})",
-        }
-
-    best_plateau = None
-    for i in range(len(valid) - window + 1):
-        w = valid[i : i + window]
-        snotios = [r["snotio"] for r in w]
-        trades_list = [r["trades"] for r in w]
-        mean_sn = np.mean(snotios)
-        std_sn = np.std(snotios)
-        cv_snotio = std_sn / mean_sn if mean_sn > 1e-8 else 999
-        mean_tr = np.mean(trades_list)
-        std_tr = np.std(trades_list)
-        cv_trades = std_tr / mean_tr if mean_tr > 1e-8 else 999
-
-        if cv_snotio < snotio_cv_max and cv_trades < trades_cv_max and mean_sn > 0:
-            start_t = w[0]["threshold"]
-            end_t = w[-1]["threshold"]
-            plateau_width = abs(end_t - start_t)
-            # 排序: mean_snotio × plateau_width（鲁棒性最大化）
-            robustness = mean_sn * plateau_width
-            if best_plateau is None or robustness > best_plateau.get("_robustness", -1):
-                # bias 动态绑定 width: 窄高原偏多，宽高原偏少
-                bias = 0.2 if plateau_width < 0.25 else 0.1
-                if operator in (">=", ">"):
-                    rec_val = start_t + bias * plateau_width
-                else:
-                    rec_val = end_t - bias * plateau_width
-                # snap to nearest scanned point
-                rec_idx = int(np.argmin([abs(r["threshold"] - rec_val) for r in w]))
-                best_plateau = {
-                    "is_plateau": True,
-                    "_robustness": float(robustness),
-                    "start_threshold": start_t,
-                    "end_threshold": end_t,
-                    "plateau_width": float(plateau_width),
-                    "confidence": _width_to_confidence(plateau_width),
-                    "mean_snotio": float(mean_sn),
-                    "cv_snotio": float(cv_snotio),
-                    "cv_trades": float(cv_trades),
-                    "mean_trades": float(mean_tr),
-                    "recommended": float(w[rec_idx]["threshold"]),
-                }
-
-    if best_plateau is None:
-        # 尝试只用 snotio CV（放宽 Trades CV 约束）
-        for i in range(len(valid) - window + 1):
-            w = valid[i : i + window]
-            snotios = [r["snotio"] for r in w]
-            mean_sn = np.mean(snotios)
-            cv_snotio = np.std(snotios) / mean_sn if mean_sn > 1e-8 else 999
-            if cv_snotio < snotio_cv_max and mean_sn > 0:
-                start_t = w[0]["threshold"]
-                end_t = w[-1]["threshold"]
-                pw = abs(end_t - start_t)
-                robustness = mean_sn * pw
-                if best_plateau is None or robustness > best_plateau.get(
-                    "_robustness", -1
-                ):
-                    trades_list = [r["trades"] for r in w]
-                    cv_trades = (
-                        float(np.std(trades_list) / np.mean(trades_list))
-                        if np.mean(trades_list) > 0
-                        else 999
-                    )
-                    bias = 0.2 if pw < 0.25 else 0.1
-                    if operator in (">=", ">"):
-                        rec_val = start_t + bias * pw
-                    else:
-                        rec_val = end_t - bias * pw
-                    rec_idx = int(np.argmin([abs(r["threshold"] - rec_val) for r in w]))
-                    best_plateau = {
-                        "is_plateau": True,
-                        "_robustness": float(robustness),
-                        "start_threshold": w[0]["threshold"],
-                        "end_threshold": w[-1]["threshold"],
-                        "plateau_width": float(pw),
-                        "confidence": _width_to_confidence(pw),
-                        "mean_snotio": float(mean_sn),
-                        "cv_snotio": float(cv_snotio),
-                        "cv_trades": float(cv_trades),
-                        "cv_trades_warning": True,  # Trades CV 超标
-                        "mean_trades": float(np.mean(trades_list)),
-                        "recommended": float(w[rec_idx]["threshold"]),
-                    }
-
-    if best_plateau is None:
-        snotios = [r["snotio"] for r in valid]
-        best_idx = int(np.argmax(snotios))
-        return {
-            "is_plateau": False,
-            "reason": "无 CV<0.3 的稳定窗口",
-            "best_single": {
-                "threshold": valid[best_idx]["threshold"],
-                "snotio": valid[best_idx]["snotio"],
-                "trades": valid[best_idx]["trades"],
-            },
-        }
-
-    return best_plateau
-
-
-def _width_to_confidence(width: float) -> str:
-    """将 plateau 宽度映射为置信度等级。
-
-    宽度越大 = decision boundary 曲率越低 = 越可部署。
-    """
-    if width >= 0.3:
-        return "HIGH"
-    elif width >= 0.15:
-        return "MEDIUM"
-    else:
-        return "LOW"
-
+from src.research.stat_kernels.snotio_calc import (
+    compute_snotio,
+    width_to_confidence as _width_to_confidence,
+)
 
 # ================================================================
 # HTML 报告生成
@@ -552,6 +259,14 @@ def _generate_html_report(
 
 
 def main() -> int:
+    import sys as _sys
+
+    print(
+        "DEPRECATED: optimize_entry_filter_plateau.py → use "
+        "mlbot research plateau --kpi snotio [--snotio-mode entry_rr|proxy] "
+        "and mlbot research calibrate.",
+        file=_sys.stderr,
+    )
     p = argparse.ArgumentParser(description="Entry Filter Threshold Plateau Scan")
     p.add_argument(
         "--logs",
@@ -612,6 +327,27 @@ def main() -> int:
         default=None,
         help="features_entry_filter.yaml 路径 (候选特征白名单). "
         "未指定时自动查找 config/strategies/{strategy}/features_entry_filter.yaml",
+    )
+    p.add_argument(
+        "--apply-regime",
+        action="store_true",
+        help="direction 之后按 archetypes/regime.yaml 过滤 (与 backtest 漏斗一致)",
+    )
+    p.add_argument(
+        "--apply-prefilter",
+        action="store_true",
+        help="regime 之后按 archetypes/prefilter.yaml 过滤 (与 backtest 漏斗一致)",
+    )
+    p.add_argument(
+        "--recompute-gate",
+        action="store_true",
+        help="从 gate.yaml 重算 gate_decision，而非使用 parquet 中旧 gate 列 "
+        "(direction/prefilter 变更后必须用此选项，否则 distribution mismatch)",
+    )
+    p.add_argument(
+        "--skip-gate",
+        action="store_true",
+        help="跳过 gate 过滤 (仅 regime+prefilter+direction 基线; 样本过少时用)",
     )
     p.add_argument(
         "--scoring-method",
@@ -676,34 +412,57 @@ def main() -> int:
     if "_symbol" in df.columns and "symbol" not in df.columns:
         df["symbol"] = df["_symbol"]
 
-    if "bpc_breakout_direction" in df.columns:
-        df["entry_direction"] = df["bpc_breakout_direction"].astype(float).copy()
-    else:
-        # 使用 direction.yaml 确定方向
-        from scripts.backtest_execution_layer import (
-            load_direction_config,
-            apply_direction_rules,
-        )
+    from scripts.backtest_execution_layer import (
+        load_direction_config,
+        apply_direction_rules,
+        _apply_regime_vectorized,
+        _apply_prefilter_vectorized,
+        _apply_gate_from_yaml_vectorized,
+    )
 
-        dir_cfg = load_direction_config(args.strategy, args.strategies_root)
-        if dir_cfg:
-            applied = apply_direction_rules(df, args.strategy, dir_cfg)
-            if applied:
-                print(f"   Direction: {applied} (from direction.yaml)")
-            else:
-                # direction.yaml 规则无一命中
-                if "entry_direction" in df.columns:
-                    print(f"   Direction: entry_direction (原始列)")
-                else:
-                    print(f"❌ direction.yaml 规则无一命中，且无 entry_direction 列")
-                    return 1
-        elif "entry_direction" in df.columns:
-            print(f"   Direction: entry_direction (原始列, 无 direction.yaml)")
+    # direction.yaml 优先 (与 optimize_entry_filter_snotio / backtest 一致);
+    # bpc_breakout_direction 仅作 BPC 等无 direction_rules 时的 fallback
+    dir_cfg = load_direction_config(args.strategy, args.strategies_root)
+    if dir_cfg and dir_cfg.get("direction_rules"):
+        applied = apply_direction_rules(df, args.strategy, dir_cfg)
+        if applied:
+            print(f"   Direction: {applied} (from direction.yaml)")
         else:
+            if "entry_direction" in df.columns:
+                print("   Direction: entry_direction (direction.yaml 无命中, 用原始列)")
+            else:
+                print("❌ direction.yaml 规则无一命中，且无 entry_direction 列")
+                return 1
+    elif "bpc_breakout_direction" in df.columns:
+        df["entry_direction"] = df["bpc_breakout_direction"].astype(float).copy()
+        print("   Direction: bpc_breakout_direction (fallback, 无 direction_rules)")
+    elif "entry_direction" in df.columns:
+        print("   Direction: entry_direction (原始列, 无 direction.yaml)")
+    else:
+        print(
+            "❌ 无法确定方向: 无 direction.yaml / bpc_breakout_direction / entry_direction"
+        )
+        return 1
+
+    if getattr(args, "apply_regime", False):
+        _n_before = int((df["entry_direction"] != 0).sum())
+        _apply_regime_vectorized(df, args.strategy, args.strategies_root)
+        _n_after = int((df["entry_direction"] != 0).sum())
+        if _n_before > _n_after:
             print(
-                f"❌ 无法确定方向: 无 bpc_breakout_direction / direction.yaml / entry_direction"
+                f"   🌐 Regime (--apply-regime): {_n_before} → {_n_after} "
+                f"(rejected {_n_before - _n_after})"
             )
-            return 1
+
+    if getattr(args, "apply_prefilter", False):
+        _n_before = int((df["entry_direction"] != 0).sum())
+        _apply_prefilter_vectorized(df, args.strategy, args.strategies_root)
+        _n_after = int((df["entry_direction"] != 0).sum())
+        if _n_before > _n_after:
+            print(
+                f"   🛡️  Prefilter (--apply-prefilter): {_n_before} → {_n_after} "
+                f"(rejected {_n_before - _n_after})"
+            )
 
     # 直接使用 logs 中的 OHLC（需要 high, low, close, atr）
     has_ohlc = all(c in df.columns for c in ["high", "low", "close", "atr"])
@@ -716,19 +475,29 @@ def main() -> int:
     # Gate 过滤: entry filter 阈值必须在 gate 过滤后的分布上优化,
     # 否则会和 backtest/execution 产生 distribution mismatch
     # (backtest 先过 gate_decision 再应用 entry filter)
-    if "gate_decision" in merged.columns:
+    if getattr(args, "skip_gate", False):
+        print("   ⏭️  Gate skipped (--skip-gate)")
+    elif getattr(args, "recompute_gate", False):
+        _apply_gate_from_yaml_vectorized(merged, args.strategy, args.strategies_root)
         veto_mask = merged["gate_decision"] != "allow"
         n_allowed = int((~veto_mask).sum())
         merged.loc[veto_mask, "entry_direction"] = 0.0
         print(
-            f"   \U0001f6aa Gate filter (auto): {n_allowed} allow / {len(merged)} total"
+            f"   \U0001f6aa Gate (--recompute-gate): {n_allowed} allow / {len(merged)} total"
+        )
+    elif "gate_decision" in merged.columns:
+        veto_mask = merged["gate_decision"] != "allow"
+        n_allowed = int((~veto_mask).sum())
+        merged.loc[veto_mask, "entry_direction"] = 0.0
+        print(
+            f"   \U0001f6aa Gate filter (parquet): {n_allowed} allow / {len(merged)} total"
         )
     elif "gate_ok" in merged.columns:
         veto_mask = merged["gate_ok"] != True  # noqa: E712
         n_allowed = int((~veto_mask).sum())
         merged.loc[veto_mask, "entry_direction"] = 0.0
         print(
-            f"   \U0001f6aa Gate filter (auto): {n_allowed} allow / {len(merged)} total"
+            f"   \U0001f6aa Gate filter (parquet): {n_allowed} allow / {len(merged)} total"
         )
     else:
         print(
@@ -796,77 +565,28 @@ def main() -> int:
     print(f"   Filters to scan: {len(filters_to_scan)}")
     print()
 
-    all_results = {}
+    from scripts.research.entry_plateau_scan import run_entry_plateau_batch
 
-    for fdef in filters_to_scan:
-        fname = fdef["id"]
-        scannable = _find_scannable_conditions(fdef)
+    try:
+        batch = run_entry_plateau_batch(
+            None,
+            args.strategy,
+            df=merged,
+            filter_id=args.filter,
+            snotio_mode="entry_rr",
+            steps=args.steps,
+            min_trades=20,
+            plateau_window=max(2, int(getattr(args, "plateau_window", 4) or 4)),
+            strategies_root=args.strategies_root,
+            research=args.research,
+            simple_execution=getattr(args, "simple_execution", False),
+            require_gate=True,
+        )
+    except ValueError as exc:
+        print(f"❌ {exc}")
+        return 1
 
-        if not scannable:
-            print(f"   ⚡ {fname}: 无可扫描的连续阈值条件 (全部是 bool)")
-            all_results[fname] = {
-                "description": fdef.get("description", ""),
-                "scanned_conditions": [],
-            }
-            continue
-
-        print(f"   🔍 {fname}: {len(scannable)} 个连续阈值条件")
-
-        cond_results = []
-        for sc in scannable:
-            feature = sc["feature"]
-            operator = sc["operator"]
-            current = sc["value"]
-            idx = sc["index"]
-
-            scan_values = _generate_scan_range(current, operator, n_steps=args.steps)
-            print(
-                f"      {feature} {operator} {current}  →  扫描 [{scan_values[0]}, {scan_values[-1]}]"
-            )
-
-            scan_data = _scan_single_threshold(
-                merged,
-                exec_config,
-                fdef,
-                idx,
-                scan_values,
-                entry_cfg,
-                span_years,
-            )
-
-            plateau = _find_plateau(
-                scan_data,
-                operator=operator,
-                window=max(2, int(getattr(args, "plateau_window", 4) or 4)),
-            )
-
-            status = "✅ 高原" if plateau.get("is_plateau") else "❌ 无高原"
-            if plateau.get("is_plateau"):
-                warn = " ⚠️ Trades CV>0.4" if plateau.get("cv_trades_warning") else ""
-                print(
-                    f"         {status}: [{plateau['start_threshold']:.3f}, {plateau['end_threshold']:.3f}] "
-                    f"width={plateau['plateau_width']:.3f} conf={plateau['confidence']} "
-                    f"mean snotio={plateau['mean_snotio']:.4f} "
-                    f"CV(sn={plateau['cv_snotio']:.3f}, tr={plateau['cv_trades']:.3f}) "
-                    f"推荐={plateau['recommended']:.3f}{warn}"
-                )
-            else:
-                print(f"         {status}: {plateau.get('reason', '')}")
-
-            cond_results.append(
-                {
-                    "feature": feature,
-                    "operator": operator,
-                    "current_value": current,
-                    "scan_results": scan_data,
-                    "plateau": plateau,
-                }
-            )
-
-        all_results[fname] = {
-            "description": fdef.get("description", ""),
-            "scanned_conditions": cond_results,
-        }
+    all_results = batch["all_results"]
 
     # 输出 HTML
     if args.output:

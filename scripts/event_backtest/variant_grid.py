@@ -90,6 +90,9 @@ def _build_event_backtest_cmd(
     data_path = run.get("data_path") or grid.get("data_path")
     if data_path:
         cmd += ["--data-path", str(data_path)]
+    if run.get("trading_map") or grid.get("trading_map"):
+        map_out = out_path / f"trading_map_{strategy}_event.html"
+        cmd += ["--trading-map", str(map_out)]
     cmd += extra_argv
     return cmd
 

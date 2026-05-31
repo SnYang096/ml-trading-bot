@@ -1,0 +1,25 @@
+# Dual-period: recent holdout + 2024 H1 bull window.
+# Tree channel: use tree_holdout_tau_rr_scan + artifact (see DECISION dual_period_top20/).
+# event_backtest currently yields 0 trades until ModelArtifact score is wired.
+experiment_id: fast_scalp_dual_period
+strategy: fast_scalp
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - BNBUSDT
+  - XRPUSDT
+  - ADAUSDT
+runs:
+  - variant: fast_scalp_recent
+    strategies_root: config/strategies/tree_strategies
+    strategy: fast_scalp
+    start_date: "2025-10-01"
+    end_date: "2026-04-01"
+    output_dir: results/fast_scalp/experiments/fast_scalp_recent
+  - variant: fast_scalp_bull_2024
+    strategies_root: config/strategies/tree_strategies
+    strategy: fast_scalp
+    start_date: "2024-01-01"
+    end_date: "2024-06-30"
+    output_dir: results/fast_scalp/experiments/fast_scalp_bull_2024

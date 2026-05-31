@@ -1,0 +1,12 @@
+# Phase 2: rejection tree (train_tree_gate) — separate from entry τ.
+# Phase 1 R&D: disabled until entry baseline vs TPC is established.
+
+enabled: false
+description: "Rejection tree veto; train on failure/bad-trade label with model_gate.yaml"
+
+gate_model: null
+reject_if_prob_bad_gt: null
+
+hard_gates: []
+system_safety: []
+guardrails: []

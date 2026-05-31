@@ -1,0 +1,45 @@
+description: Holdout IC-pruned model input columns. Regenerate via mlbot research
+  ic-prune (writeback_mode=columns).
+provenance:
+  holdout_start: '2025-10-01'
+  holdout_end: '2026-04-01'
+  target: label
+  min_ic: 0.015
+  max_lag: 20
+  allowed_best_lags:
+  - 10
+  - 20
+  reject_peak_at: 50
+  top_n: 20
+  ic_prune_json: results/rd_loop/short_term_swing_ic_plateau/ic_prune_ic_screen_h50_6cols/ic_prune_holdout.json
+columns:
+- feature: bb_width_normalized_pct
+  best_lag: 20
+  rank_ic: -0.149554
+  ic_sign: '-'
+  node: bb_width_normalized_pct_f
+- feature: macd_atr
+  best_lag: 10
+  rank_ic: -0.140356
+  ic_sign: '-'
+  node: macd_atr_f
+- feature: wpt_ignition_score
+  best_lag: 10
+  rank_ic: 0.074017
+  ic_sign: +
+  node: wpt_scene_semantic_scores_f
+- feature: wpt_absorption_score
+  best_lag: 10
+  rank_ic: 0.066308
+  ic_sign: +
+  node: wpt_scene_semantic_scores_f
+- feature: wpt_exhaustion_score
+  best_lag: 10
+  rank_ic: -0.053903
+  ic_sign: '-'
+  node: wpt_scene_semantic_scores_f
+- feature: wpt_compression_score
+  best_lag: 10
+  rank_ic: -0.048979
+  ic_sign: '-'
+  node: wpt_scene_semantic_scores_f
