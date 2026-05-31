@@ -79,6 +79,13 @@ Entry 阈值 promote 前必须看 snotio 或 E4 回测的 Mean R，不能只凭 
 | 风控 | E5 maxDD 不劣于 E4 |
 | recent | 人审，无自动 promote |
 
+## Promote（2026-05-31）
+
+- **上线**：`config/strategies/tpc` + `live/highcap` — prod prefilter + **E2_or entry**（vol≥0.45 OR delta≥0.15）；gate 无 PE deny。
+- **不上线**：E1 depth 下界、E3/E4 PE gate + 深回撤 full stack（smoke 均劣于 E2_or）。
+- **语法统一**：`docs/strategy/layer_condition_schema_unify_plan.md`（prefilter/regime 待复用 gate `when`/`all_of`）。
+
 ## 结论
 
-TODO（Phase 1 scan + Phase 3 grid 完成后填写）
+- **E2_or** 为当前最优；E1/E3 两两组合 + E4 全栈均不 promote。
+- 下一 R&D：Phase B prefilter `when` 实现 → regime-conditional depth；6 币 / recent 复验。
