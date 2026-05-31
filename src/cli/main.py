@@ -1755,6 +1755,11 @@ def feature_store():
     default=False,
     help="Delete existing layer data and rebuild from scratch. Without this flag, existing months are skipped.",
 )
+@click.option(
+    "--features-yaml",
+    default=None,
+    help="Feature manifest (e.g. config/strategies/_shared/features_all.yaml for ~940 cols).",
+)
 @click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def feature_store_build(
     config,
@@ -1771,6 +1776,7 @@ def feature_store_build(
     warmup_months,
     warmup_bars,
     force_rebuild,
+    features_yaml,
     docker,
 ):
     """Build monthly FeatureStore from a config directory (shared infra for tree+nn)."""
@@ -1818,6 +1824,17 @@ def feature_store_build(
         args.extend(["--layer", layer])
     if force_rebuild:
         args.append("--force-rebuild")
+    if features_yaml:
+        args.extend(
+            [
+                "--features-yaml",
+                (
+                    f"/workspace/{features_yaml}"
+                    if use_workspace_prefix
+                    else features_yaml
+                ),
+            ]
+        )
     sys.exit(
         run_script("scripts/build_feature_store_from_config.py", args, docker=docker)
     )

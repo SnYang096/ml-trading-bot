@@ -7,7 +7,12 @@ from pathlib import Path
 from typing import Optional
 
 
-def default_layer_from_config(config_dir: str | Path, *, prefix: str = "features") -> str:
+def default_layer_from_config(
+    config_dir: str | Path,
+    *,
+    prefix: str = "features",
+    features_file: str = "features.yaml",
+) -> str:
     """
     AUTO FeatureStore layer id derived from config content.
 
@@ -35,7 +40,7 @@ def default_layer_from_config(config_dir: str | Path, *, prefix: str = "features
     # --- Extract archetype + timeframe for human-readable prefix ---
     archetype = cfg.name  # directory name = archetype id (me / bpc / fer / lv)
     if archetype == "_shared":
-        archetype = "tree_core"
+        archetype = "tree_full" if features_file == "features_all.yaml" else "tree_core"
 
     timeframe: str | None = None
     meta_path = cfg / "meta.yaml"
@@ -49,9 +54,13 @@ def default_layer_from_config(config_dir: str | Path, *, prefix: str = "features
 
     # --- Compute content hash ---
     parts: list[bytes] = []
-    features_path = cfg / "features.yaml"
+    features_path = cfg / features_file
+    if not features_path.exists() and features_file != "features.yaml":
+        raise FileNotFoundError(f"Feature manifest not found: {features_path}")
     if features_path.exists():
         parts.append(features_path.read_bytes())
+    elif (cfg / "features.yaml").exists():
+        parts.append((cfg / "features.yaml").read_bytes())
     if meta_bytes is not None:
         parts.append(meta_bytes)
     for fname in ("feature_contract.yaml",):
@@ -86,7 +95,12 @@ def default_layer_from_config(config_dir: str | Path, *, prefix: str = "features
     return "_".join(name_parts)
 
 
-def resolve_layer_name(layer: str | None, config_dir: str | Path) -> str:
+def resolve_layer_name(
+    layer: str | None,
+    config_dir: str | Path,
+    *,
+    features_file: str = "features.yaml",
+) -> str:
     """
     Resolve layer name: auto-generate from config if not specified.
     
@@ -109,7 +123,7 @@ def resolve_layer_name(layer: str | None, config_dir: str | Path) -> str:
         'heavy_v6'
     """
     if layer is None or (isinstance(layer, str) and layer.strip() == ""):
-        return default_layer_from_config(config_dir)
+        return default_layer_from_config(config_dir, features_file=features_file)
     return str(layer)
 
 

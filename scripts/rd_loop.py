@@ -22,6 +22,8 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 
 def _load_hypothesis(path: Path) -> Dict[str, Any]:
@@ -554,6 +556,11 @@ def _build_tree_train_cmd(step: Dict[str, Any], cfg: Dict[str, Any]) -> List[str
 def _build_tree_ic_prune_cmd(
     step: Dict[str, Any], output_dir: Path, cfg: Dict[str, Any]
 ) -> List[str]:
+    from src.research.stat_kernels.ic_screen_config import (
+        ic_prune_params_to_argv,
+        resolve_ic_prune_params,
+    )
+
     step = _merge_tree_defaults(step, cfg)
     out_rel = step.get("out") or "ic_prune"
     out_dir = _resolve_project_path(out_rel, relative_to=output_dir)
@@ -561,6 +568,34 @@ def _build_tree_ic_prune_cmd(
     pq = _resolve_project_path(step["features_parquet"], relative_to=output_dir)
     if not pq.is_file():
         pq = _resolve_project_path(step["features_parquet"])
+
+    strategy = step.get("strategy") or cfg.get("strategy")
+    config_dir = step.get("config")
+    params = resolve_ic_prune_params(
+        strategy=strategy,
+        config_dir=config_dir,
+        overrides=step,
+        project_root=PROJECT_ROOT,
+    )
+    summary = params.pop("_ic_screen_summary", None)
+    params.pop("_strategy_config_dir", None)
+    if summary:
+        print(f"ic_screen: {summary}")
+
+    for path_key in (
+        "write_features_yaml",
+        "write_model_features_yaml",
+        "intersect_features_yaml",
+    ):
+        val = params.get(path_key)
+        if val and val is not False:
+            params[path_key] = str(_resolve_project_path(val))
+    if step.get("emit_monotone_constraints"):
+        params["emit_monotone_constraints"] = str(
+            _resolve_project_path(
+                step["emit_monotone_constraints"], relative_to=output_dir
+            )
+        )
 
     cmd = _mlbot_cmd() + [
         "research",
@@ -570,49 +605,11 @@ def _build_tree_ic_prune_cmd(
         "--out-dir",
         str(out_dir),
     ]
-    strategy = step.get("strategy") or cfg.get("strategy")
     if strategy:
         cmd += ["--strategy", str(strategy)]
-    cmd += [
-        "--holdout-start",
-        str(step.get("holdout_start", "2025-10-01")),
-        "--holdout-end",
-        str(step.get("holdout_end", "2026-04-01")),
-        "--horizons",
-        str(step.get("horizons", "1,2,3,4,5")),
-        "--max-lag",
-        str(step.get("max_lag", 5)),
-        "--min-ic",
-        str(step.get("min_ic", 0.02)),
-        "--min-n",
-        str(step.get("min_n", 200)),
-        "--invert-mode",
-        str(step.get("invert_mode", "none")),
-    ]
-    write_yaml = step.get("write_features_yaml", False)
-    if write_yaml is False:
-        cmd.append("--no-write-features-yaml")
-    else:
-        write_path = write_yaml or step.get("features_yaml")
-        if write_path:
-            wp = _resolve_project_path(write_path)
-            cmd += ["--write-features-yaml", str(wp)]
-    if step.get("top_n_nodes") is not None:
-        cmd += ["--top-n-nodes", str(step["top_n_nodes"])]
-    if step.get("intersect_features_yaml"):
-        iy = _resolve_project_path(step["intersect_features_yaml"])
-        cmd += ["--intersect-features-yaml", str(iy)]
-    always = step.get("always_include") or ["atr_f"]
-    if isinstance(always, list):
-        always_s = ",".join(str(x) for x in always)
-    else:
-        always_s = str(always)
-    cmd += ["--always-include", always_s]
-    if step.get("emit_monotone_constraints"):
-        mc = _resolve_project_path(
-            step["emit_monotone_constraints"], relative_to=output_dir
-        )
-        cmd += ["--emit-monotone-constraints", str(mc)]
+    if config_dir:
+        cmd += ["--config-dir", str(_resolve_project_path(config_dir))]
+    cmd += ic_prune_params_to_argv(params)
     return cmd
 
 

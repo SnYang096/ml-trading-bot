@@ -1,3 +1,6 @@
+# Dual-period: recent holdout + 2024 H1 bull window.
+# Tree channel: use tree_holdout_tau_rr_scan + artifact (see DECISION dual_period_top20/).
+# event_backtest currently yields 0 trades until ModelArtifact score is wired.
 experiment_id: fast_scalp_dual_period
 strategy: fast_scalp
 symbols:

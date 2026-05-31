@@ -33,7 +33,9 @@ from src.features.loader.strategy_feature_loader import (
 from src.time_series_model.strategy_config import StrategyConfigLoader  # noqa: E402
 
 
-def _load_feature_store_build_config(cfg_dir: Path):
+def _load_feature_store_build_config(
+    cfg_dir: Path, *, features_yaml: Path | None = None
+):
     """Load enough strategy config for FeatureStore builds.
 
     Tree strategies have the full ``features.yaml`` + ``labels.yaml`` +
@@ -42,9 +44,13 @@ def _load_feature_store_build_config(cfg_dir: Path):
     ``features.yaml`` and optional ``meta.yaml`` to materialize FeatureStore.
     """
     try:
-        return StrategyConfigLoader(cfg_dir).load()
+        loader = StrategyConfigLoader(
+            cfg_dir,
+            features_override=features_yaml,
+        )
+        return loader.load()
     except FileNotFoundError as exc:
-        features_path = cfg_dir / "features.yaml"
+        features_path = features_yaml or (cfg_dir / "features.yaml")
         if not features_path.exists():
             raise
         missing_text = str(exc)
@@ -143,6 +149,12 @@ def parse_args() -> argparse.Namespace:
         "--config", required=True, help="Config directory containing features.yaml."
     )
     p.add_argument(
+        "--features-yaml",
+        default=None,
+        help="Feature manifest path (default: {config}/features.yaml). "
+        "Use config/strategies/_shared/features_all.yaml for full ~940-col layer.",
+    )
+    p.add_argument(
         "--symbols",
         default=None,
         help="Comma-separated symbols. If not provided, will use --universe-config if specified.",
@@ -204,7 +216,12 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     cfg_dir = Path(args.config).resolve()
-    cfg = _load_feature_store_build_config(cfg_dir)
+    features_yaml: Path | None = None
+    if args.features_yaml:
+        features_yaml = Path(args.features_yaml)
+        if not features_yaml.is_absolute():
+            features_yaml = (Path.cwd() / features_yaml).resolve()
+    cfg = _load_feature_store_build_config(cfg_dir, features_yaml=features_yaml)
 
     # Resolve symbols: from --symbols or --universe-config
     if args.symbols:
@@ -241,7 +258,10 @@ def main() -> None:
     store = FeatureStore(root)
 
     # Auto-generate layer name if not specified (unified handling for both CLI and direct script calls)
-    layer = resolve_layer_name(args.layer, cfg_dir)
+    features_file = "features.yaml"
+    if features_yaml is not None:
+        features_file = features_yaml.name
+    layer = resolve_layer_name(args.layer, cfg_dir, features_file=features_file)
 
     # Force rebuild: delete existing layer data
     if args.force_rebuild:

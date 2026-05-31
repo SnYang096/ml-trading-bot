@@ -1,30 +1,74 @@
-# Shared tree-core FeatureStore (core-4 union)
+# Shared FeatureStore layers (`config/strategies/_shared`)
 
-Union of `requested_features` from **bpc / tpc / me / srb** (~95 nodes).  
-Build once; each strategy runs `--prepare-only` with the same layer for labels only.
+Two AUTO layers from the same config dir; hash differs by feature manifest.
 
-## Build
+| Layer | Manifest | Nodes | ~Output cols | Resolve |
+|-------|----------|-------|--------------|---------|
+| **tree_core** | `features.yaml` | ~95 (BPC/TPC/ME/SRB union) | ~455 | `features_tree_core_120T_c005db49f7` |
+| **tree_full** | `features_all.yaml` | 289 (`_f` registry) | ~940 | `features_tree_full_120T_958f665062` |
+
+Regenerate manifest + print current layer id:
 
 ```bash
-mlbot feature-store build -c config/strategies/_shared
-# Note resolved layer name from output, e.g. features_tree_core_120T_<hash10>
+python scripts/generate_all_features_yaml.py --strategy-config config/strategies/_shared
+
+python -c "from src.feature_store.tree_full_layer import resolve_tree_full_layer; print(resolve_tree_full_layer())"
 ```
 
-Or resolve programmatically:
+## Build tree_full (~940 cols, all strategies)
 
 ```bash
-python -c "from src.feature_store.tree_core_layer import resolve_tree_core_layer; print(resolve_tree_core_layer())"
+LAYER=$(python -c "from src.feature_store.tree_full_layer import resolve_tree_full_layer; print(resolve_tree_full_layer())")
+
+mlbot feature-store build --no-docker \
+  -c config/strategies/_shared \
+  --features-yaml config/strategies/_shared/features_all.yaml \
+  -t 120T \
+  --symbols BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT \
+  --start-date 2024-01-01 --end-date 2026-04-01 \
+  --warmup-months 6
+# Layer printed at end → e.g. features_tree_full_120T_958f665062
 ```
 
-## Prepare-only (per strategy, shared features cache)
+Or highcap universe:
 
 ```bash
-LAYER=$(python -c "from src.feature_store.tree_core_layer import resolve_tree_core_layer; print(resolve_tree_core_layer())")
+mlbot feature-store build --no-docker \
+  -c config/strategies/_shared \
+  --features-yaml config/strategies/_shared/features_all.yaml \
+  -t 120T \
+  --universe-config config/download/crypto_4h_token_universe_groups.yaml \
+  --universe-groups highcap \
+  --start-date 2024-01-01 --end-date 2026-04-01 \
+  --warmup-months 6
+```
 
+## Use from any strategy (read-only subset)
+
+Each slug keeps its own slim `features.yaml` for **model** columns. Point prepare/train at **tree_full** layer so FeatureStore hits cache for any column in the registry:
+
+```bash
+LAYER=features_tree_full_120T_958f665062
+
+# IC / prepare on full registry (parquet gets ~940 cols)
 mlbot train final --no-docker --prepare-only \
-  -c config/strategies/bpc \
+  -c config/strategies/tree_strategies/short_term_swing \
+  --features config/strategies/_shared/features_all.yaml \
   --feature-store-layer "$LAYER" \
-  --output-dir results/train_final/bpc/<run_id>
+  --symbol BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT \
+  -t 120T \
+  --output-root results/train_final/short_term_swing/prepare_wide_<run_id>
+
+# Train still uses pruned features.yaml (post ic-prune writeback)
+mlbot train final --no-docker \
+  -c config/strategies/tree_strategies/short_term_swing \
+  --feature-store-layer "$LAYER" \
+  ...
 ```
 
-Repeat for `tpc`, `me`, `srb` with the **same** `--feature-store-layer`.
+**rd_loop:** set top-level `feature_store_layer: features_tree_full_120T_958f665062`.  
+For wide IC prepare, add prepare step `features: config/strategies/_shared/features_all.yaml`.
+
+## Invalidation
+
+Rebuild when `feature_dependencies.yaml`, feature compute code, or `features_all.yaml` changes (layer hash shifts).
