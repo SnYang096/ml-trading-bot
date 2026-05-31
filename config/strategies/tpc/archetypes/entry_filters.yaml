@@ -1,34 +1,7 @@
 # Promoted 2026-05-31 — deep_pullback E2_or (vol OR delta; Pass1 tau 0.45/0.15)
-# Replaces prod cvd+recovery AND entry. Prefilter/gate unchanged (prod upper depth; no PE deny).
-# Smoke: results/tpc/experiments/deep_pullback_ablation/E2_or_smoke (+6.71R, 44 closes BTC+ETH 23-25)
+# Prefilter/gate unchanged. Smoke: E2_or_smoke (+6.71R, 44 closes BTC+ETH 23-25)
 
 filters:
-- id: tpc_long_absorption_follow_trend
-  enabled: false
-  description: prod entry（2026-05-31 promote → vol/delta OR）
-  conditions:
-  - feature: tpc_cvd_absorption
-    operator: '>='
-    value: 0.629
-  - feature: tpc_recovery_strength
-    operator: '>='
-    value: 0.039
-  tier: A_PLATEAU
-  locked: true
-  notes: disabled after E2_or promote
-- id: tpc_short_absorption_follow_trend
-  enabled: false
-  description: prod entry（2026-05-31 promote → vol/delta OR）
-  conditions:
-  - feature: tpc_cvd_absorption
-    operator: '>='
-    value: 0.629
-  - feature: tpc_recovery_strength
-    operator: '>='
-    value: 0.039
-  tier: A_PLATEAU
-  locked: true
-  notes: disabled after E2_or promote
 - id: tpc_deep_pullback_vol_confirm
   enabled: true
   description: 缩量回踩确认（量能维度）

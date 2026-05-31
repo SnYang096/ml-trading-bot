@@ -1,0 +1,37 @@
+# Re-validate locked gate rules (0530 follow-up) — include locked in plateau scan
+topic: tpc_gate_locked_revalidate
+strategy: tpc
+output_dir: results/rd_loop/tpc_gate_locked_revalidate
+
+research_scans:
+  - mode: gate-plateau
+    strategy: tpc
+    layer: gate
+    features_parquet: results/train_final/tpc/train_final_20260523_122438_rr_extreme/tpc/features_labeled.parquet
+    label_col: is_good
+    step: 0.05
+    skip_locked: false
+    write_back_intervals: true
+    out: quick_scan/gate_plateau_all_rules
+
+  - mode: gate-plateau
+    strategy: tpc
+    layer: gate
+    features_parquet: results/train_final/tpc/train_final_20260523_122438_rr_extreme/tpc/features_labeled.parquet
+    feature: vol_persistence
+    operator: gt
+    grid: "0.001,0.003,0.006,0.01,0.02,0.04,0.062"
+    out: quick_scan/gate_lift_vol_persistence.json
+
+  - mode: gate-plateau
+    strategy: tpc
+    layer: gate
+    features_parquet: results/train_final/tpc/train_final_20260523_122438_rr_extreme/tpc/features_labeled.parquet
+    feature: vol_leverage_asymmetry
+    operator: gt
+    grid: "0.03,0.056,0.08,0.12,0.15"
+    out: quick_scan/gate_lift_vol_leverage_asymmetry.json
+
+decision_doc:
+  path: config/experiments/20260530_tpc_deep_pullback/DECISION_gate_ablation.md
+  experiment_index: results/tpc/experiments/EXPERIMENT_INDEX.json
