@@ -411,6 +411,7 @@ def client(console_settings, monkeypatch):
         "mlbot_console.routers.account",
         "mlbot_console.routers.links",
         "mlbot_console.routers.regime",
+        "mlbot_console.routers.monitoring",
     ):
         monkeypatch.setattr(f"{mod}.SETTINGS", console_settings)
     return TestClient(app)

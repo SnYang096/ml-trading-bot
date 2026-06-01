@@ -1,7 +1,13 @@
 """Monitoring: store, scheduler, CMS dashboard, Telegram."""
 
 from src.monitoring.dashboard import build_monitoring_dashboard
-from src.monitoring.scheduler import list_cadences, run_all_due, run_cadence
+from src.monitoring.scheduler import (
+    default_execute_manifest,
+    default_load_manifest,
+    list_cadences,
+    run_all_due,
+    run_cadence,
+)
 from src.monitoring.staleness_check import run_staleness_check
 from src.monitoring.store import (
     index_monitor_run,
@@ -24,6 +30,8 @@ __all__ = [
     "list_cadences",
     "run_cadence",
     "run_all_due",
+    "default_execute_manifest",
+    "default_load_manifest",
     "run_staleness_check",
     "should_notify_cadence_result",
     "notify_cadence_result",

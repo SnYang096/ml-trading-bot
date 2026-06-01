@@ -47,6 +47,7 @@ def _window_cfg(manifest: Dict[str, Any], key: str) -> Dict[str, Any]:
 
 
 def _run_py(script: str, argv: List[str]) -> int:
+    """Legacy subprocess executor (kept for emergency / third-party steps)."""
     cmd = [sys.executable, str(PROJECT_ROOT / script), *argv]
     env = {**os.environ, "PYTHONPATH": f"{PROJECT_ROOT / 'src'}:{PROJECT_ROOT}"}
     return int(
@@ -56,6 +57,15 @@ def _run_py(script: str, argv: List[str]) -> int:
 
 def _run_monitor_script(script: str, argv: List[str]) -> int:
     return _run_py(f"scripts/{script}", argv)
+
+
+def _use_subprocess_fallback() -> bool:
+    """Allow forcing the old subprocess path via env var (emergency escape hatch)."""
+    return os.environ.get("MLBOT_MONITOR_FORCE_SUBPROCESS", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
 
 
 def execute_manifest(
@@ -123,7 +133,30 @@ def execute_manifest(
             if dry_run:
                 print(f"[dry-run] export-window → {parquet}")
                 continue
-            rc = _run_py("scripts/monitoring/export_feature_bus_window.py", argv)
+            if _use_subprocess_fallback():
+                rc = _run_py("scripts/monitoring/export_feature_bus_window.py", argv)
+            else:
+                from scripts.monitoring.export_feature_bus_window import (
+                    export_feature_bus_window,
+                )
+
+                try:
+                    export_feature_bus_window(
+                        bus_root=Path(
+                            cfg.get("bus_root")
+                            or os.environ.get(
+                                "MLBOT_FEATURE_BUS_ROOT", "live/shared_feature_bus"
+                            )
+                        ),
+                        timeframe=str(win.get("timeframe", "120T")),
+                        lookback_days=int(win.get("lookback_days", 7)),
+                        output=parquet,
+                        symbols=str(win.get("symbols") or "") or None,
+                    )
+                    rc = 0
+                except Exception as exc:
+                    print(f"ERROR export-window: {exc}", file=sys.stderr)
+                    rc = 3
             if rc != 0:
                 return rc, run_ts, out_dir
 
@@ -149,7 +182,28 @@ def execute_manifest(
             if dry_run:
                 print(f"[dry-run] archive-batch → {parquet}")
                 continue
-            rc = _run_py("scripts/monitoring/archive_batch_window.py", argv)
+            if _use_subprocess_fallback():
+                rc = _run_py("scripts/monitoring/archive_batch_window.py", argv)
+            else:
+                from scripts.monitoring.archive_batch_window import archive_batch_window
+
+                try:
+                    archive_batch_window(
+                        strategy=str(
+                            cfg.get("strategy") or win.get("strategy") or "tpc"
+                        ),
+                        segment=str(
+                            cfg.get("segment") or win.get("segment") or "recent_6m_oos"
+                        ),
+                        output=parquet,
+                        market_segment_path=_resolve_path(
+                            "config/market_segment.yaml", run_ts=run_ts
+                        ),
+                    )
+                    rc = 0
+                except Exception as exc:
+                    print(f"ERROR archive-batch: {exc}", file=sys.stderr)
+                    rc = 3
             if rc != 0:
                 return rc, run_ts, out_dir
 
@@ -180,7 +234,26 @@ def execute_manifest(
             if dry_run:
                 print(f"[dry-run] watchdog {pq}")
                 continue
-            rc = _run_monitor_script("regime_watchdog.py", argv)
+            if _use_subprocess_fallback():
+                rc = _run_monitor_script("regime_watchdog.py", argv)
+            else:
+                import argparse
+                from scripts.regime_watchdog import run_watchdog
+
+                ns = argparse.Namespace(
+                    window_parquet=str(pq),
+                    baseline_json=str(baseline),
+                    out_dir=str(wd_out),
+                    strategies=strategies_csv,
+                    strategies_root="config/strategies",
+                    bull_share_tol=0.10,
+                    trigger_drift_tol_rel=0.50,
+                    ic_baseline_json="config/monitoring/factor_ic_baseline_tpc_20260526.json",
+                    psi_features="ema_1200_position,vol_persistence,vol_leverage_asymmetry",
+                    psi_tol=0.25,
+                    ic_flip_min_abs=0.02,
+                )
+                rc = run_watchdog(ns)
             if rc != 0:
                 exit_code = 1
 
@@ -204,7 +277,21 @@ def execute_manifest(
             if dry_run:
                 print(f"[dry-run] drift {pq}")
                 continue
-            rc = _run_monitor_script("regime_drift_monitor.py", argv)
+            if _use_subprocess_fallback():
+                rc = _run_monitor_script("regime_drift_monitor.py", argv)
+            else:
+                import argparse
+                from scripts.regime_drift_monitor import run_drift_monitor
+
+                ns = argparse.Namespace(
+                    window_parquet=str(pq),
+                    out_dir=str(drift_out),
+                    strategies=strategies_csv,
+                    strategies_root="config/strategies",
+                    drift_quantile=0.5,
+                    emit_rd_loop_suggestions=bool(cfg.get("emit_rd_loop_suggestions")),
+                )
+                rc = run_drift_monitor(ns)
             if rc != 0:
                 exit_code = 1
 

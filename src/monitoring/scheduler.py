@@ -15,7 +15,31 @@ from src.monitoring.store import (
 )
 from src.monitoring.telegram import notify_cadence_result
 
+# In-process manifest executor (the preferred path after manifest 内聚 refactor).
+# Import is done here so callers can stay inside src/monitoring.
+from scripts.monitoring.run_monitor_manifest import (
+    _load_manifest,
+    execute_manifest as _execute_manifest_raw,
+)
+
 ExecuteManifestFn = Callable[..., Tuple[int, str, Path]]
+
+
+def default_execute_manifest(
+    manifest: Dict[str, Any],
+    *,
+    config_path: Path,
+    run_ts: Optional[str] = None,
+    dry_run: bool = False,
+) -> Tuple[int, str, Path]:
+    """Default in-process manifest runner (no subprocess for known steps)."""
+    return _execute_manifest_raw(
+        manifest, config_path=config_path, run_ts=run_ts, dry_run=dry_run
+    )
+
+
+def default_load_manifest(path: Path) -> Dict[str, Any]:
+    return _load_manifest(path)
 
 
 def resolve_manifest_path(rel: str, *, repo_root: Path = PROJECT_ROOT) -> Path:

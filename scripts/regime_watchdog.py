@@ -316,7 +316,11 @@ def main() -> int:
         help="Min |IC| on both sides to flag sign flip.",
     )
     args = p.parse_args()
+    return run_watchdog(args)
 
+
+def run_watchdog(args: argparse.Namespace) -> int:
+    """Core logic for regime_watchdog (callable from other Python code)."""
     pq = Path(args.window_parquet)
     if not pq.is_absolute():
         pq = (PROJECT_ROOT / pq).resolve()

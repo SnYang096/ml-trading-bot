@@ -64,7 +64,7 @@ def test_execute_manifest_rejects_unknown_step(tmp_path):
 
 
 def test_execute_manifest_writes_heartbeat_on_success(tmp_path, monkeypatch):
-    """Watchdog/drift subprocesses are stubbed; heartbeat still written."""
+    """Watchdog/drift are stubbed (supports both in-process and legacy subprocess paths)."""
     manifest = {
         "monitor_id": "test_stack",
         "output_dir": str(tmp_path / "out/{run_ts}"),
@@ -88,6 +88,10 @@ def test_execute_manifest_writes_heartbeat_on_success(tmp_path, monkeypatch):
 
     monkeypatch.setattr(mod, "_run_monitor_script", fake_run)
 
+    # Force legacy subprocess path for this test so the existing monkeypatch is sufficient.
+    # The test only cares that heartbeat is written, not the execution engine.
+    monkeypatch.setenv("MLBOT_MONITOR_FORCE_SUBPROCESS", "1")
+
     rc, _, out_dir = execute_manifest(
         manifest,
         config_path=tmp_path / "m.yaml",
@@ -101,3 +105,43 @@ def test_execute_manifest_writes_heartbeat_on_success(tmp_path, monkeypatch):
     hb = json.loads(hb_path.read_text(encoding="utf-8"))
     assert hb["status"] == "OK"
     assert hb["task"] == "test_stack"
+
+
+def test_execute_manifest_watchdog_in_process(tmp_path, monkeypatch):
+    """watchdog step runs via direct function call (in-process) by default."""
+    import argparse
+
+    # Create dummy parquet files so the code gets past file-existence checks
+    short_pq = tmp_path / "short.parquet"
+    short_pq.write_bytes(b"")  # 0-byte is fine — we monkeypatch before read
+
+    manifest = {
+        "monitor_id": "inproc_watchdog",
+        "output_dir": str(tmp_path / "out/{run_ts}"),
+        "windows": {"short": {"parquet": str(short_pq)}},
+        "strategies": ["tpc"],
+        "steps": [{"watchdog": {"window": "short"}}],
+    }
+
+    monkeypatch.delenv("MLBOT_MONITOR_FORCE_SUBPROCESS", raising=False)
+
+    called = {"flag": False}
+
+    def fake_run_watchdog(ns: argparse.Namespace) -> int:
+        called["flag"] = True
+        assert str(ns.window_parquet).endswith("short.parquet")
+        return 0
+
+    # Patch at the module that will import it at runtime
+    import scripts.regime_watchdog as rw_mod
+
+    monkeypatch.setattr(rw_mod, "run_watchdog", fake_run_watchdog)
+
+    rc, _, _ = execute_manifest(
+        manifest,
+        config_path=tmp_path / "m.yaml",
+        run_ts="20260103_1200",
+        dry_run=False,
+    )
+    assert rc == 0
+    assert called["flag"] is True

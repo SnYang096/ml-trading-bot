@@ -115,7 +115,11 @@ def main() -> int:
         help="On ALERT, write rd_loop yaml snippets under results/drift_suggestions/",
     )
     args = p.parse_args()
+    return run_drift_monitor(args)
 
+
+def run_drift_monitor(args: argparse.Namespace) -> int:
+    """Core logic for regime_drift_monitor (callable directly from Python)."""
     pq = Path(args.window_parquet)
     if not pq.is_absolute():
         pq = (PROJECT_ROOT / pq).resolve()

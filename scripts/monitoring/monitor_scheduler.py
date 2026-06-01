@@ -13,8 +13,13 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from scripts.monitoring.run_monitor_manifest import _load_manifest, execute_manifest
-from src.monitoring.scheduler import list_cadences, run_all_due, run_cadence
+from src.monitoring.scheduler import (
+    default_execute_manifest,
+    default_load_manifest,
+    list_cadences,
+    run_all_due,
+    run_cadence,
+)
 
 
 def main() -> int:
@@ -40,8 +45,8 @@ def main() -> int:
         return 0
 
     kwargs = {
-        "execute_manifest": execute_manifest,
-        "load_manifest": _load_manifest,
+        "execute_manifest": default_execute_manifest,
+        "load_manifest": default_load_manifest,
         "schedules_path": sched_path,
         "dry_run": bool(args.dry_run),
     }
