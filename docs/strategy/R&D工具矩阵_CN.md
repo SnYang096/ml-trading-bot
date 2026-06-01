@@ -1,6 +1,7 @@
 # R&D 工具矩阵（B 系统主线）
 
 > **替代口径**：日常 R&D 与运维以本文为准，不再把 `research_roll` / `validate_static.*` 当作发现特征或调阈值的主入口。  
+> **迁移计划**：[`配置与监控_manifest迁移计划_CN.md`](配置与监控_manifest迁移计划_CN.md)（`pre_deploy` / `calibrate_roll` → experiments + `config/monitoring`）。  
 > **顶层框架（ABC × 规则/树 统一视图）**：[`ABC统一研究框架_CN.md`](ABC统一研究框架_CN.md) —— 本文是它的"工具单"。  
 > 配套执行手册：[`方法论_R_and_D流程_CN.md`](方法论_R_and_D流程_CN.md) · 架构背景：[`WORKFLOW_整体架构与管线改进计划_CN.md`](WORKFLOW_整体架构与管线改进计划_CN.md)
 
@@ -250,10 +251,11 @@ PYTHONPATH=src:scripts python scripts/_new_decision_doc.py \
 
 ### 阶段 C — 监控与上线（③，固定流程）
 
+> **权威命令**：[`漂移监控_mlbot_monitor_CN.md`](漂移监控_mlbot_monitor_CN.md)（`mlbot monitor`）。
+
 | 频率 | 工具 | 产出 | 验收 |
 |------|------|------|------|
-| **周** | `regime_watchdog.py` | `report.json` | exit 0；IC/PSI 无 ALERT |
-| **周** | `regime_drift_monitor.py` | drift report | plateau 未漂出 |
+| **周** | `mlbot monitor weekly`（或 `watchdog` + `drift`） | `results/monitoring/weekly_watchdog/<ts>/` | exit 0；IC/PSI / plateau 无 ALERT |
 | **月** | `calibrate_roll.default` `--stage rolling_sim` **或** 固定 config 的 `event_backtest` | `stitched_summary` / ledger | sharpe、trades 趋势正常 |
 | **上线前** | `pre_deploy_replay.yaml` **或** `pre_deploy_contract_checks.py` | `contract_checks.json` | 无 BLOCKED |
 | **上线** | `deploy_config_to_live.py` | live 镜像 | 人 confirm |
@@ -453,15 +455,10 @@ mlbot research promote --from results/.../gate_draft.yaml \
 PYTHONPATH=src:scripts python -m scripts.event_backtest --variant-grid \
   config/experiments/<your_grid>.yaml
 
-# ③ 周监控
-PYTHONPATH=src:scripts python scripts/regime_watchdog.py \
-  --strategies bpc,tpc,me,srb \
-  --window-parquet results/<recent>/features_labeled.parquet \
-  --baseline-json config/monitoring/regime_watchdog_baseline.json
-
-PYTHONPATH=src:scripts python scripts/regime_drift_monitor.py \
-  --strategy tpc --emit-rd-loop-suggestions \
-  ...   # ALERT 时写 rd_loop 建议 snippet
+# ③ 周监控（见 漂移监控_mlbot_monitor_CN.md）
+export WATCHDOG_PARQUET=results/<recent>/features_labeled.parquet
+mlbot monitor weekly
+# 或：mlbot monitor drift --window-parquet "$WATCHDOG_PARQUET" --emit-rd-loop-suggestions
 
 # ③ 月监控
 mlbot pipeline run --all \

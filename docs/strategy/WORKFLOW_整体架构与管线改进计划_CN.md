@@ -431,6 +431,8 @@ threshold_calibration:
 ## 6. 漂移检测与告警
 
 > 漂移检测不是"自动修复"，是"早期警报"。任何漂移信号都应 **alert → 人审 → 决定是否 R&D**。
+>
+> **命令入口**：[`漂移监控_mlbot_monitor_CN.md`](漂移监控_mlbot_monitor_CN.md)（`mlbot monitor`；本地 / 远程实盘机同命令）。
 
 ### 6.1 三层漂移指标
 
@@ -445,10 +447,10 @@ threshold_calibration:
 
 | 检测 | 现状 | 后续（非阻塞） |
 |---|---|---|
-| PSI / feature drift | ✅ `regime_watchdog.py`（PSI vs IC baseline 参考 parquet） | 扩展到 BPC/ME；月度 cron |
-| IC@H 时序追踪 | ✅ `mlbot research ic` + watchdog IC sign-flip alert | 与 `factor_ic_baseline_*.json` 周度 cron（命令见工具矩阵 §1） |
-| plateau drift | ✅ `regime_drift_monitor.py` + calibrate_roll dry_run | slow 内 `prefilter_drift_guard` 仍偏宽，见附录 A #6 |
-| strategy sharpe drift | ✅ `rolling_dashboard` 有 dashboard | 加 alert 阈值 |
+| PSI / feature drift | ✅ `mlbot monitor watchdog` | 远程：`mlbot monitor weekly` + 显式 `WATCHDOG_PARQUET` |
+| IC@H 时序追踪 | ✅ `mlbot research ic` + watchdog IC sign-flip | 基线 `config/monitoring/factor_ic_baseline_*.json` |
+| plateau drift | ✅ `mlbot monitor drift` + calibrate_roll dry_run | `prefilter_drift_guard` 仍偏宽，见附录 A #6 |
+| strategy sharpe drift | ⚠️ `rolling_dashboard` 仅有看板 | **自动 alert 未做**（非 `mlbot monitor` v1） |
 
 ### 6.3 不要做的检测
 

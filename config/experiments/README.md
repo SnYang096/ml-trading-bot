@@ -26,9 +26,12 @@
 > **跨 Layer 决策准则（2026-06 新增）**：  
 > 所有 gate / entry_filters / prefilter / regime / direction 等规则的最终 promote，必须遵守 [`LAYER_PROMOTION_CRITERIA.md`](LAYER_PROMOTION_CRITERIA.md) 里的“三条杠”：  
 > **在 canonical 三个市场阶段上，总 R 明显提升 + maxDD 不恶化 + 逻辑可解释** 才允许写入生产 YAML 并 `locked: true`。  
-> IC/label scan 仅用于生成假设。TPC gate 系列是本准则的第一次完整落地。
+> IC/label scan 仅用于生成假设。TPC gate 系列是本准则的第一次完整落地。  
+> **Promote 后平台基线（远程 drift）**：同文件 **§4** + [`docs/strategy/漂移监控_mlbot_monitor_CN.md`](../docs/strategy/漂移监控_mlbot_monitor_CN.md) §10（git 提交 monitoring JSON/plateaus；**不上传** train_final parquet）。
 
 **跨实验校准：** [`_cross/regime_thresholds/`](_cross/regime_thresholds/)（regime τ 季度标定日志）。
+
+**架构迁移（计划）：** 周/月监控、`pre_deploy` 门禁将迁出 `config/strategies/*/research/`，改用 `config/monitoring/` 与实验目录内 manifest；见 [`docs/strategy/配置与监控_manifest迁移计划_CN.md`](../docs/strategy/配置与监控_manifest迁移计划_CN.md)。
 
 **历史链接：** [`docs/decisions/README.md`](../docs/decisions/README.md) 为迁移索引；`docs/strategy/` 内旧 URL 不批量改。
 

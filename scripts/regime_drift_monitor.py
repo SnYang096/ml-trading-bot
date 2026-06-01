@@ -206,7 +206,7 @@ def main() -> int:
         for pth in written:
             print(f"  suggestion: {pth}")
 
-    return 2 if any_alert else 0
+    return 1 if any_alert else 0
 
 
 if __name__ == "__main__":

@@ -56,6 +56,64 @@ IC、label scan（feature-plateau / condition-set / quick_layer_scan）、单特
    - 打 `locked: true` + `promote_never_disable: true`
    - 删除所有对应的 disabled 历史痕迹
 5. 原则上每个 layer 最终只保留“当前已验证最好”的那套规则，历史实验留在 `config_experiments/` 快照里即可。
+6. **Promote 后更新「平台基线」并 `git push`**（远程 drift 只读 git；**不要**上传 `train_final` parquet）。见下文 §4 与 [`docs/strategy/漂移监控_mlbot_monitor_CN.md`](../../docs/strategy/漂移监控_mlbot_monitor_CN.md) §10。
+
+---
+
+## 4. Post-promote「平台基线」与远程漂移（监控 bundle）
+
+**Status**: Codified 2026-06-02. Complements the causal “三条杠” above; does **not** replace variant-grid evidence.
+
+### 4.1 What「平台 baseline」means
+
+| Term | Meaning |
+|------|---------|
+| **Platform baseline (reference)** | Stats frozen at promote/calibration on a **calibration window** (e.g. `recent_6m_oos`): bull_share, trigger_rates, IC signs, PSI reference distribution, regime **plateau bands** |
+| **Current (near-term)** | Built **only on the prod host**: feature-bus export (~7d) + archive-batch (~6m) — **not** rsync’d from local `train_final` |
+| **Monitoring contract features** | Columns that participate in drift = **production rule columns** + `psi_features` in manifest + features listed in `regime.yaml` `last_calibration.plateaus` — **not** every column in `features.yaml` |
+
+You do **not** need a platform baseline row for every feature explored in research; only for **promoted, production-monitoring** contracts.
+
+### 4.2 What to commit to git (remote drift reads this)
+
+| Artifact | Commit? | Used by remote drift |
+|----------|---------|----------------------|
+| `config/strategies/<slug>/archetypes/*.yaml` (locked rules) | ✅ | Rule semantics; gate trigger parsing |
+| `regime.yaml` → `last_calibration.plateaus` | ✅ | `regime_drift_monitor` plateau P50 |
+| `config/monitoring/regime_watchdog_baseline.json` | ✅ per slug | bull_share, trigger_rate, PSI ref metadata |
+| `config/monitoring/factor_ic_baseline_<slug>_*.json` | ✅ when IC monitoring applies | IC sign-flip |
+| `config/market_segment.yaml` | ✅ when segments change | `archive-batch` window |
+| `config/monitoring/*.yaml` manifests | ✅ | cron `mlbot monitor run` |
+| `DECISION.md` / `docs/decisions/*.md` | ✅ | Human audit |
+| `results/train_final/**/features_labeled.parquet` | ❌ | **Forbidden** as remote weekly current (C1) |
+
+Remote also needs **local data only on the server**: archive bars, feature-bus, execution ledgers / rolling monthly reports.
+
+### 4.3 Monitoring bundle checklist (after each B/C rule-stack promote)
+
+On the **same calibration window** documented in `DECISION.md` (recommended: `recent_6m_oos`):
+
+1. **Plateaus**: run `regime_threshold_calibrate` (or equivalent) → write `archetypes/regime.yaml` `last_calibration.plateaus`.
+2. **Watchdog baseline**: on calibration-window parquet, update `config/monitoring/regime_watchdog_baseline.json` for `<slug>` (bull_share, trigger_rates). That parquet is **reference only**, not remote weekly current.
+3. **IC baseline** (if gate IC monitoring applies): `mlbot research ic` → `config/monitoring/factor_ic_baseline_<slug>_<date>.json`; set `factor_ic_baseline_ref` in watchdog baseline.
+4. **PSI contract**: list production gate/prefilter columns in `config/monitoring/weekly_<slug>.yaml` `psi_features` (default script list is only 3 features).
+5. **Decision + reproduce**: finish `DECISION.md`; `git push` → remote `git pull` + deploy `live/highcap`.
+6. **Do not ship**: full `results/train_final` to prod for cron; remote builds current via bus export + archive-batch (see drift doc §7).
+
+Repeat 1–4 after ALERT-driven R&D **only if** a new promote changes thresholds or monitored features.
+
+**Flow (full diagram)**: [`漂移监控_mlbot_monitor_CN.md`](../../docs/strategy/漂移监控_mlbot_monitor_CN.md) §10.2.
+
+### 4.4 Does this repo’s R&D flow guarantee it today?
+
+| Requirement | In flow? | Today |
+|-------------|----------|-------|
+| Pre-promote dual-segment variant-grid | ✅ §1–3 above | Enforced by doctrine |
+| Post-promote monitoring bundle | ⚠️ §2.5 方法论 + this §4 | **Manual**; no CI/deploy gate (T11) |
+| Per-strategy IC baseline | ⚠️ | Mostly TPC only (C3) |
+| Remote current ≠ reference | ❌ | C1/C6 until T1 export + archive-batch |
+
+**Bottom line**: Passing LAYER_PROMOTION **does not** auto-update drift baselines; treat §4.3 as mandatory human steps until T11 hard-checks land.
 
 ---
 
@@ -64,6 +122,7 @@ IC、label scan（feature-plateau / condition-set / quick_layer_scan）、单特
 - `config/market_segment.yaml` + `scripts/event_backtest/market_segment.py`
 - `variant_grid.py` 的 `segment_matrix` 支持（自动展开日期 + 输出子目录按 segment id 干净命名）
 - 每个实验必须有 `README.md`（跑法 + 结果路径）和 `DECISION.md`（结果 + promote 结论）
+- Post-promote drift baselines: [`docs/strategy/漂移监控_mlbot_monitor_CN.md`](../../docs/strategy/漂移监控_mlbot_monitor_CN.md) §10；迁移 TODO T11
 
 ---
 

@@ -230,6 +230,8 @@ PYTHONPATH=src:scripts python -m scripts.event_backtest \
 
 ### 2.5 阶段 [5-6] promote + watchdog
 
+**Promote 后必须更新「平台基线」并 push git**（远程 drift 只读这些；**不要**上传 train_final parquet）。完整 checklist 见 **[`漂移监控_mlbot_monitor_CN.md`](漂移监控_mlbot_monitor_CN.md) §10.6**。
+
 ```bash
 # 同步配置
 cp config_experiments/<new>_strategies/tpc/archetypes/gate.yaml \
@@ -237,13 +239,15 @@ cp config_experiments/<new>_strategies/tpc/archetypes/gate.yaml \
 cp config/strategies/tpc/archetypes/gate.yaml \
    live/highcap/config/strategies/tpc/archetypes/gate.yaml
 
-# 重新计算 watchdog baseline
+# 监控 bundle（标定窗 parquet 仅用于本地统计 reference，非远程 current）
 PARQ=$(ls -t results/train_final/tpc/train_final_*/tpc/features_labeled.parquet | head -1)
-# 修改 config/monitoring/regime_watchdog_baseline.json
-# 然后 smoke test:
+# 1) regime.yaml last_calibration.plateaus（regime_threshold_calibrate）
+# 2) 更新 config/monitoring/regime_watchdog_baseline.json
+# 3) 可选 mlbot research ic → config/monitoring/factor_ic_baseline_<slug>_<date>.json
 PYTHONPATH=src:scripts python scripts/regime_watchdog.py \
   --strategies tpc --window-parquet "$PARQ" \
   --baseline-json config/monitoring/regime_watchdog_baseline.json
+git add config/strategies config/monitoring docs/decisions
 ```
 
 **写决策文档** `docs/decisions/<topic>_<日期>.md`，最低要求：
@@ -255,23 +259,19 @@ PYTHONPATH=src:scripts python scripts/regime_watchdog.py \
 
 ### 2.6 阶段 [7] 周度监控
 
-加 cron（建议每周一早上）：
+权威命令见 **[`漂移监控_mlbot_monitor_CN.md`](漂移监控_mlbot_monitor_CN.md)**。本地与远程同一套 `mlbot monitor`；远程需显式设置 `WATCHDOG_PARQUET`。
 
 ```bash
-0 8 * * 1 cd /home/yin/trading/ml_trading_bot && \
-  PYTHONPATH=src:scripts python scripts/regime_watchdog.py \
-    --strategies tpc \
-    --window-parquet results/<recent>/features.parquet \
-    --baseline-json config/monitoring/regime_watchdog_baseline.json \
-    || /usr/bin/notify-send "regime_watchdog ALERT"
-
-0 8 * * 1 cd /home/yin/trading/ml_trading_bot && \
-  PYTHONPATH=src:scripts python scripts/regime_drift_monitor.py \
-    --strategies tpc,bpc,me,srb \
-    --window-parquet results/<recent>/features.parquet
+# 周日 cron 或 systemd（etc/systemd/mlbot-weekly-watchdog.timer）
+export WATCHDOG_PARQUET=results/<recent>/features_labeled.parquet
+mlbot monitor weekly
+# 或拆开：
+mlbot monitor watchdog --window-parquet "$WATCHDOG_PARQUET" \
+  --baseline-json config/monitoring/regime_watchdog_baseline.json
+mlbot monitor drift --window-parquet "$WATCHDOG_PARQUET" --emit-rd-loop-suggestions
 ```
 
-**任一 alert 触发新一轮 R&D**（回到阶段 [1]）。
+**任一 ALERT（exit 1）→ 人审后新一轮 R&D**（回到阶段 [1]）；monitor **不改** yaml。
 
 ## 3. ABC × 层 × 节奏 × 命令 速查
 
@@ -298,8 +298,8 @@ PYTHONPATH=src:scripts python scripts/regime_watchdog.py \
 | Gate | tail veto（小帽子树 / 单 τ）| Q | 先 `mlbot research scan condition-set`（或 `rd_loop`），再 `event_backtest --variant-grid` 双段验 | EXPERIMENT_INDEX.json + `_new_decision_doc.py` | 是（人审 → archetypes/gate.yaml）|
 | Entry | OR rules（locked）| Q | `mlbot research plateau` 或 `rd_loop` mode `entry-plateau`（子样本加 regime+prefilter subset）| top-3 候选报告 | 是（人审 → entry_filters.yaml）|
 | Execution | 紧 SL + 较快兑现 | 年度 | `execution_opt grid`（不自动 promote）| — | 否（默认）|
-| **监控** | bull_share / trigger_rate / IC / PSI | W cron | `PYTHONPATH=src:scripts python scripts/regime_watchdog.py --window-parquet ... --baseline-json config/monitoring/regime_watchdog_baseline.json` | report.json + exit=1 alert | 否 |
-| 漂移触发 | plateau drift / IC sign-flip | W cron | `PYTHONPATH=src:scripts python scripts/regime_drift_monitor.py --strategies tpc,bpc,me,srb --window-parquet ...` | drift report | 否 |
+| **监控** | bull_share / trigger_rate / IC / PSI | W cron | `mlbot monitor watchdog` / `mlbot monitor weekly`（见 [`漂移监控_mlbot_monitor_CN.md`](漂移监控_mlbot_monitor_CN.md)） | report.json + exit=1 | 否 |
+| 漂移触发 | plateau drift / IC sign-flip | W cron | `mlbot monitor drift`（`--emit-rd-loop-suggestions` 可选） | drift_report.json | 否 |
 
 ### 3.3 C 系统（chop_grid / trend_scalp，多腿）
 
@@ -360,7 +360,7 @@ PYTHONPATH=src:scripts python scripts/regime_watchdog.py \
 | Hypothesis | 章节 4：因子构造直觉 | `mlbot research` / `rd_loop` + 人脑 |
 | Backtest | 章节 8：vectorbt walk-forward | `event_backtest`（订单流级，比 ML4T 标准更细） |
 | Cross-validation | 章节 7：Purged K-fold | **不用 K-fold**：`mlbot train` 用 causal `TimeSeriesSplit`；promote 用 **多窗口 walk-forward 共识**（recent + bull + 可选第三段），见 [Wave 3 §3](../experiments/z实验_001_bpc/wave3/02_meta_findings_on_meta_algo.md) |
-| Live → Monitoring | 章节 23 | `regime_watchdog` + `regime_drift_monitor`（含 PSI / IC drift） |
+| Live → Monitoring | 章节 23 | `mlbot monitor`（watchdog + drift，含 PSI / IC drift）— [`漂移监控_mlbot_monitor_CN.md`](漂移监控_mlbot_monitor_CN.md) |
 
 ## 7. 后续 roadmap
 

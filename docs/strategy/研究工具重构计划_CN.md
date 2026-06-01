@@ -527,7 +527,7 @@ scripts/                                ← 旧入口，过渡期保留 + DEPREC
 | P5 research fit | ✅ | LightGBM + `feature_importance.json`（gain + optional SHAP audit） |
 | P6 calibrate/promote/compare/robustness | 部分 | `plateau.json`→`calibrate`（标量+结构化 gate draft）+ compare + robustness + **promote locked-merge** 已通；parity harness 见 `tests/research/test_gate_lift_parity.py` |
 | P7 清理 | ✅ | legacy DEPRECATED；断链 import 已修；`srb_reverse_shadow_report` → `scripts/archive/` |
-| P8 监控 | ✅ | `scripts/monitoring/*` + systemd timer；dashboard tab 未做 |
+| P8 监控 | ✅ | `mlbot monitor` + `scripts/monitoring/*` + systemd；见 [`漂移监控_mlbot_monitor_CN.md`](漂移监控_mlbot_monitor_CN.md)；RD 看板 tab 未做 |
 
 **Review 收尾（2026-05-27，同分支）**：
 

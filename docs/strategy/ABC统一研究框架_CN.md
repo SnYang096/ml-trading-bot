@@ -184,6 +184,8 @@ features_labeled.parquet
 
 ## 6. 监控架构（cron + 远端 CMS + 缺勤告警）
 
+> **命令权威入口**：[`漂移监控_mlbot_monitor_CN.md`](漂移监控_mlbot_monitor_CN.md)（`mlbot monitor`；本地与远程同一套）。
+
 ### 6.1 本地节奏
 
 ```
@@ -205,32 +207,15 @@ OnCalendar=Sun 08:00
 Persistent=true
 ```
 
-`run_weekly.sh` 三件事：
+周任务（推荐 `mlbot monitor weekly`，见 [`漂移监控_mlbot_monitor_CN.md`](漂移监控_mlbot_monitor_CN.md)）：
 
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
-RUN_TS=$(date -u +%Y%m%d_%H%M)
-OUTDIR=results/monitoring/weekly_watchdog/${RUN_TS}
-mkdir -p "$OUTDIR"
-
-# 1) 跑 watchdog
-PYTHONPATH=src:scripts python scripts/regime_watchdog.py \
-  --strategies bpc,tpc,me,srb \
-  --window-parquet results/<recent_window>/features_labeled.parquet \
-  --baseline-json config/monitoring/regime_watchdog_baseline.json \
-  --output "$OUTDIR/result.json"
-
-# 2) 写心跳（必须，独立于 result.json）
-cat > "$OUTDIR/heartbeat.json" <<EOF
-{"task": "weekly_watchdog", "ts": "$(date -u --iso-8601=seconds)", "status": "OK"}
-EOF
-
-# 3) 推到远端（git or s3 都行）
-git add results/monitoring/weekly_watchdog/${RUN_TS}/
-git commit -m "monitor: weekly watchdog ${RUN_TS}"
-git push origin monitoring   # 单独 branch，不污染主 trunk
+export WATCHDOG_PARQUET=results/<recent>/features_labeled.parquet
+mlbot monitor weekly
+# 等价 scripts/monitoring/run_weekly.sh：watchdog + drift + heartbeat；ALERT → exit 1
 ```
+
+可选：将 `results/monitoring/weekly_watchdog/<ts>/` push 到 `monitoring` 分支供 CMS 只读展示（非必须）。
 
 ### 6.2 远端 CMS 三个职责
 
@@ -254,7 +239,7 @@ git push origin monitoring   # 单独 branch，不污染主 trunk
 | 频率 | 任务 | 失败/缺勤动作 |
 |------|------|--------------|
 | 日 | live ledger 健康（已有 quant-feature-bus 日志监控） | Telegram |
-| 周日 08:00 | `regime_watchdog` + `regime_drift_monitor` | 心跳 → CMS；缺勤 24h → Telegram |
+| 周日 08:00 | `mlbot monitor weekly`（watchdog + drift） | 心跳 → `results/monitoring/…`；CMS 缺勤告警仍待办 |
 | 月 1 号 02:00 | `calibrate_roll rolling_sim` 或 cron 跑 `event_backtest` 固定 window | 同上 |
 | 每次 deploy 前 | `pre_deploy_contract_checks.py`（人触发，但产物入 CMS 历史） | BLOCKED → 阻止 deploy |
 
@@ -281,6 +266,8 @@ git push origin monitoring   # 单独 branch，不污染主 trunk
 |------|------|
 | [`R&D工具矩阵_CN.md`](R&D工具矩阵_CN.md) | **本文 §3 的工具单**；本文给框架图，工具矩阵给逐工具能力对比 |
 | [`方法论_R_and_D流程_CN.md`](方法论_R_and_D流程_CN.md) | **本文的执行手册**；本文给"why + 谁配谁"，方法论给"具体命令 + 反例" |
+| [`漂移监控_mlbot_monitor_CN.md`](漂移监控_mlbot_monitor_CN.md) | **③ 监控命令权威入口**（`mlbot monitor`；本地 / 远程） |
+| [`配置与监控_manifest迁移计划_CN.md`](配置与监控_manifest迁移计划_CN.md) | **配置分层与 manifest 迁移**（experiments / monitoring / strategies / live） |
 | [`WORKFLOW_整体架构与管线改进计划_CN.md`](WORKFLOW_整体架构与管线改进计划_CN.md) | 架构背景与里程碑（M1/M4 等） |
 | [`短期树独立策略_设计与落地_CN.md`](短期树独立策略_设计与落地_CN.md) | 本文 §4 的详细版（树通道独立 slug 上线流程） |
 | [`label_scan_vs_IC_说明_CN.md`](label_scan_vs_IC_说明_CN.md) | label scan 与 IC 在 ① 假设阶段的互补关系 |
@@ -300,6 +287,6 @@ git push origin monitoring   # 单独 branch，不污染主 trunk
 | ✅ | `_new_decision_doc.py` 模板 |
 | ✅ | 本文（统一框架）+ `R&D工具矩阵_CN.md`（弃用口径） |
 | ✅ | 路线 B：`optimize_gate_unified` / `optimize_entry_filter_plateau` 支持 `features_labeled.parquet` |
-| ⏳ | systemd timer + heartbeat upload 脚本（§6.1 落地） |
-| ⏳ | CMS 心跳缺勤告警 endpoint + dedupe |
+| ✅ | `mlbot monitor` + `run_weekly.sh`（watchdog+drift）+ `etc/systemd/mlbot-weekly-watchdog.*` |
+| ⏳ | CMS 心跳缺勤告警 endpoint + dedupe（见 [`漂移监控_mlbot_monitor_CN.md`](漂移监控_mlbot_monitor_CN.md) §6.3） |
 | ⏳ | 路线 A（远期）：把 lift/plateau/robustness 抽到 `src/research/stat_kernels.py`，scan 与 optimize 共用内核 |

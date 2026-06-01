@@ -46,7 +46,7 @@
 ### 2.1 目标
 
 1. **研发 (R&D)**：一个「实验注册表 + 看板」，索引 `rd_loop` / `EXPERIMENT_INDEX` / plateau / calibrate / 决策文档，展示 **假设 → 证据 → 双段验证 → 决策 → 上线** 的谱系；可从 UI 启动 `rd_loop` / `variant-grid` job。
-2. **监控 (Monitoring)**：把 `regime_watchdog` / `regime_drift_monitor` / `pre_deploy_contract_checks` 的 JSON 变成 **Prometheus 指标 + Grafana 面板 + Telegram 告警**，与实盘指标并排。
+2. **监控 (Monitoring)**：把 `mlbot monitor` 产物（`regime_watchdog` / `regime_drift_monitor` / `pre_deploy_contract_checks` 的 JSON）变成 **Prometheus 指标 + Grafana 面板 + Telegram 告警**，与实盘指标并排。命令与本地/远程分工见 [`../strategy/漂移监控_mlbot_monitor_CN.md`](../strategy/漂移监控_mlbot_monitor_CN.md)。
 3. **管理 (Management/CMS)**：策略各层状态（locked/active/disabled）、config/yaml 版本与 diff、**promote 审计日志**（谁、何时、改了哪条规则、skip 了什么）、上线门禁（contract 状态）。
 4. **对账 (Reconciliation)**：复用 `mlbot_console` 已有的账户/订单/现货账本对账，**与研发侧打通**（live 表现回流到对应实验/决策）。
 

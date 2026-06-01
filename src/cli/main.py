@@ -7931,6 +7931,99 @@ def research_promote(args):
 
 
 # =============================================================================
+# Monitor Commands (drift / regime health — local + remote)
+# =============================================================================
+
+
+@cli.group()
+def monitor():
+    """Drift monitoring for live and R&D (does not promote or edit archetypes).
+
+    Authoritative guide: docs/strategy/漂移监控_mlbot_monitor_CN.md
+
+    Boundaries:
+      mlbot monitor     — regime_watchdog, plateau drift, contract checks
+      mlbot multileg monitor — multi-leg C-system rolling health
+      mlbot research    — hypothesis discovery (not cron monitoring)
+    """
+    pass
+
+
+_MONITOR_CTX = {"ignore_unknown_options": True}
+
+
+@monitor.command("watchdog", context_settings=_MONITOR_CTX)
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def monitor_watchdog(args):
+    """Regime / gate health, PSI, IC sign-flip (scripts/regime_watchdog.py)."""
+    sys.exit(run_script("scripts/regime_watchdog.py", list(args)))
+
+
+@monitor.command("drift", context_settings=_MONITOR_CTX)
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def monitor_drift(args):
+    """Regime plateau drift vs last_calibration (scripts/regime_drift_monitor.py)."""
+    sys.exit(run_script("scripts/regime_drift_monitor.py", list(args)))
+
+
+@monitor.command("contract", context_settings=_MONITOR_CTX)
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def monitor_contract(args):
+    """Pre-deploy contract + plateau stability (scripts/pre_deploy_contract_checks.py)."""
+    sys.exit(run_script("scripts/pre_deploy_contract_checks.py", list(args)))
+
+
+@monitor.command("segments")
+@click.option(
+    "--config",
+    "config_path",
+    default="config/market_segment.yaml",
+    show_default=True,
+    help="market_segment.yaml path",
+)
+def monitor_segments(config_path: str):
+    """List canonical calendar segments (config/market_segment.yaml)."""
+    from scripts.event_backtest.market_segment import load_market_segments
+
+    root = get_project_root()
+    path = Path(config_path)
+    if not path.is_absolute():
+        path = (root / path).resolve()
+    segments = load_market_segments(path)
+    click.echo(f"market_segment: {path} ({len(segments)} segments)\n")
+    for sid in sorted(segments):
+        row = segments[sid]
+        click.echo(
+            f"  {sid}: {row.get('start_date')} → {row.get('end_date')}  "
+            f"[{row.get('label', '')}] {row.get('purpose', '')}"
+        )
+
+
+@monitor.command("weekly")
+@click.option(
+    "--window-parquet",
+    envvar="WATCHDOG_PARQUET",
+    default="",
+    help="Short-window parquet for watchdog (env: WATCHDOG_PARQUET)",
+)
+@click.option(
+    "--drift-parquet",
+    envvar="DRIFT_PARQUET",
+    default="",
+    help="Long-window parquet for drift plateau (env: DRIFT_PARQUET; defaults to watchdog parquet)",
+)
+def monitor_weekly(window_parquet: str, drift_parquet: str):
+    """Run weekly bundle: watchdog + drift + heartbeat (scripts/monitoring/run_weekly.sh)."""
+    import os
+
+    if str(window_parquet).strip():
+        os.environ["WATCHDOG_PARQUET"] = str(window_parquet).strip()
+    if str(drift_parquet).strip():
+        os.environ["DRIFT_PARQUET"] = str(drift_parquet).strip()
+    sys.exit(run_script("scripts/monitoring/run_weekly.sh", []))
+
+
+# =============================================================================
 # Analysis Commands
 # =============================================================================
 
