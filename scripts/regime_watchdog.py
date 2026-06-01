@@ -108,43 +108,10 @@ def _extract_bull_conditional_rules(
     return rules
 
 
-def _compute_psi(
-    reference: pd.Series, current: pd.Series, *, n_bins: int = 10
-) -> Optional[float]:
-    """Population Stability Index between reference and current distributions."""
-    ref = (
-        pd.to_numeric(reference, errors="coerce")
-        .replace([np.inf, -np.inf], np.nan)
-        .dropna()
-    )
-    cur = (
-        pd.to_numeric(current, errors="coerce")
-        .replace([np.inf, -np.inf], np.nan)
-        .dropna()
-    )
-    if len(ref) < 100 or len(cur) < 50:
-        return None
-    edges = np.unique(np.quantile(ref, np.linspace(0.0, 1.0, n_bins + 1)))
-    if len(edges) < 3:
-        return None
-    ref_hist, _ = np.histogram(ref, bins=edges)
-    cur_hist, _ = np.histogram(cur, bins=edges)
-    ref_pct = ref_hist / max(ref_hist.sum(), 1)
-    cur_pct = cur_hist / max(cur_hist.sum(), 1)
-    eps = 1e-6
-    psi = float(np.sum((cur_pct - ref_pct) * np.log((cur_pct + eps) / (ref_pct + eps))))
-    return psi
-
-
-def _spearman_ic_pair(x: pd.Series, y: pd.Series) -> Tuple[Optional[float], int]:
-    xs = pd.to_numeric(x, errors="coerce")
-    ys = pd.to_numeric(y, errors="coerce")
-    m = xs.notna() & ys.notna()
-    n = int(m.sum())
-    if n < 100:
-        return None, n
-    rho = float(xs[m].corr(ys[m], method="spearman"))
-    return rho, n
+from src.research.stat_kernels.drift import (
+    evaluate_ic_drift_vs_baseline,
+    evaluate_psi_features,
+)
 
 
 def evaluate_factor_health(
@@ -157,62 +124,19 @@ def evaluate_factor_health(
     ic_flip_min_abs: float,
 ) -> Dict[str, Any]:
     """IC drift vs baseline JSON + PSI vs reference parquet."""
-    items: List[Dict[str, Any]] = []
-    alerts: List[str] = []
-    target = str(ic_baseline.get("target", "forward_rr"))
-    baseline_rows = [
-        r
-        for r in (ic_baseline.get("rows") or [])
-        if isinstance(r, dict) and r.get("bucket") == "all"
-    ]
-    ref_df = reference_df if reference_df is not None else window_df
-
-    if target not in window_df.columns:
-        alerts.append(f"MISSING_TARGET: {target}")
-    else:
-        y_win = window_df[target]
-        for row in baseline_rows:
-            feat = str(row.get("feature", ""))
-            if not feat or feat not in window_df.columns:
-                continue
-            base_ic = float(row.get("rank_ic", 0.0))
-            cur_ic, n = _spearman_ic_pair(window_df[feat], y_win)
-            if cur_ic is None:
-                continue
-            delta = cur_ic - base_ic
-            sign_flip = (
-                base_ic * cur_ic < 0
-                and abs(cur_ic) > ic_flip_min_abs
-                and abs(base_ic) > ic_flip_min_abs
-            )
-            items.append(
-                {
-                    "kind": "ic_drift",
-                    "feature": feat,
-                    "baseline_ic": base_ic,
-                    "current_ic": cur_ic,
-                    "delta": delta,
-                    "n": n,
-                    "sign_flip": sign_flip,
-                }
-            )
-            if sign_flip:
-                alerts.append(
-                    f"IC_SIGN_FLIP: {feat} {cur_ic:+.4f} vs baseline {base_ic:+.4f}"
-                )
-
-    for feat in psi_features:
-        if feat not in window_df.columns:
-            items.append(
-                {"kind": "psi", "feature": feat, "skipped": "missing in window"}
-            )
-            continue
-        ref_series = ref_df[feat] if feat in ref_df.columns else window_df[feat]
-        psi = _compute_psi(ref_series, window_df[feat])
-        items.append({"kind": "psi", "feature": feat, "psi": psi})
-        if psi is not None and psi > psi_tol:
-            alerts.append(f"PSI_DRIFT: {feat} psi={psi:.3f} > {psi_tol}")
-
+    ic_items, ic_alerts = evaluate_ic_drift_vs_baseline(
+        window_df=window_df,
+        ic_baseline=ic_baseline,
+        ic_flip_min_abs=ic_flip_min_abs,
+    )
+    psi_items, psi_alerts = evaluate_psi_features(
+        window_df=window_df,
+        reference_df=reference_df,
+        psi_features=psi_features,
+        psi_tol=psi_tol,
+    )
+    items = ic_items + psi_items
+    alerts = ic_alerts + psi_alerts
     return {"items": items, "alerts": alerts, "any_alert": bool(alerts)}
 
 

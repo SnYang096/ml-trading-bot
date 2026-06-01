@@ -26,7 +26,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import numpy as np
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -34,14 +33,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.plateau_stability import PlateauRange, plateau_range_from_dict
+from src.research.stat_kernels.drift import plateau_mid_in_band
 from src.time_series_model.regime.threshold_calibrator import load_regime_yaml
-
-
-def _percentile(series: pd.Series, q: float) -> Optional[float]:
-    s = series.replace([np.inf, -np.inf], np.nan).dropna().astype(float)
-    if len(s) < 5:
-        return None
-    return float(s.quantile(q))
 
 
 def evaluate_strategy_drift(
@@ -75,34 +68,25 @@ def evaluate_strategy_drift(
             )
             any_alert = True
             continue
-        col = window_df[feature]
-        p_low = _percentile(col, tail_band_q[0])
-        p_mid = _percentile(col, drift_quantile)
-        p_high = _percentile(col, tail_band_q[1])
-        if p_mid is None:
-            items.append(
-                {
-                    "feature": feature,
-                    "operator": operator,
-                    "status": "INSUFFICIENT_DATA",
-                    "plateau": {"start": plateau.start, "end": plateau.end},
-                }
-            )
-            any_alert = True
-            continue
-        in_band = plateau.start <= p_mid <= plateau.end
+        band = plateau_mid_in_band(
+            series=window_df[feature],
+            plateau_start=plateau.start,
+            plateau_end=plateau.end,
+            drift_quantile=drift_quantile,
+            tail_band_q=tail_band_q,
+        )
         items.append(
             {
                 "feature": feature,
                 "operator": operator,
                 "plateau": {"start": plateau.start, "end": plateau.end},
-                "window_p25": p_low,
-                "window_p50": p_mid,
-                "window_p75": p_high,
-                "status": "OK" if in_band else "DRIFT",
+                "window_p25": band["window_p25"],
+                "window_p50": band["window_p50"],
+                "window_p75": band["window_p75"],
+                "status": band["status"],
             }
         )
-        if not in_band:
+        if not band.get("in_band", False):
             any_alert = True
     return {
         "strategy": strategy,

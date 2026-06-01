@@ -21,6 +21,7 @@
     { id: "trade-map", href: "/trade-map", label: "交易地图" },
     { id: "orders", href: "/orders", label: "订单" },
     { id: "regime", href: "/regime", label: "Regime" },
+    { id: "monitoring", href: "/monitoring", label: "漂移监控" },
     { id: "account", href: "/account", label: "账户总览" },
   ];
 

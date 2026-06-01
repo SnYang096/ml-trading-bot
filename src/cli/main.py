@@ -7999,6 +7999,147 @@ def monitor_segments(config_path: str):
         )
 
 
+@monitor.command("export-window")
+@click.option(
+    "--bus-root",
+    envvar="MLBOT_FEATURE_BUS_ROOT",
+    default="live/shared_feature_bus",
+    show_default=True,
+)
+@click.option("--timeframe", default="120T", show_default=True)
+@click.option("--lookback-days", default=7, show_default=True, type=int)
+@click.option("--symbols", default="", help="Comma-separated symbols (default: bus listing)")
+@click.option("--output", required=True, help="Output parquet path")
+def monitor_export_window(
+    bus_root: str, timeframe: str, lookback_days: int, symbols: str, output: str
+):
+    """Export feature-bus window parquet (scripts/monitoring/export_feature_bus_window.py)."""
+    args = [
+        "--bus-root",
+        bus_root,
+        "--timeframe",
+        timeframe,
+        "--lookback-days",
+        str(lookback_days),
+        "--output",
+        output,
+    ]
+    if str(symbols).strip():
+        args.extend(["--symbols", str(symbols).strip()])
+    sys.exit(run_script("scripts/monitoring/export_feature_bus_window.py", args))
+
+
+@monitor.command("archive-batch")
+@click.option("--strategy", default="tpc", show_default=True)
+@click.option("--segment", default="recent_6m_oos", show_default=True)
+@click.option(
+    "--market-segment",
+    default="config/market_segment.yaml",
+    show_default=True,
+)
+@click.option("--output", required=True, help="Output parquet path")
+@click.option("--symbol", default="BTCUSDT", show_default=True)
+@click.option("--timeframe", default="120T", show_default=True)
+def monitor_archive_batch(
+    strategy: str,
+    segment: str,
+    market_segment: str,
+    output: str,
+    symbol: str,
+    timeframe: str,
+):
+    """Long-window parquet via train final --prepare-only (archive_batch_window.py)."""
+    sys.exit(
+        run_script(
+            "scripts/monitoring/archive_batch_window.py",
+            [
+                "--strategy",
+                strategy,
+                "--segment",
+                segment,
+                "--market-segment",
+                market_segment,
+                "--output",
+                output,
+                "--symbol",
+                symbol,
+                "--timeframe",
+                timeframe,
+            ],
+        )
+    )
+
+
+@monitor.command("schedule")
+@click.option(
+    "--cadence",
+    default="",
+    help="weekly|monthly|quarterly|yearly (see config/monitoring/schedules.yaml)",
+)
+@click.option("--all", "run_all", is_flag=True, help="Run every cadence in schedules.yaml")
+@click.option(
+    "--schedules",
+    default="config/monitoring/schedules.yaml",
+    show_default=True,
+)
+@click.option("--run-ts", default="", help="Override {run_ts} in manifest paths")
+@click.option("--dry-run", is_flag=True)
+@click.option("--list", "list_only", is_flag=True, help="List cadence names")
+def monitor_schedule(
+    cadence: str, run_all: bool, schedules: str, run_ts: str, dry_run: bool, list_only: bool
+):
+    """Scheduled monitor: run manifest + update index.json + rd_registry.sqlite (CMS)."""
+    args = ["--schedules", schedules]
+    if list_only:
+        args.append("--list")
+    elif run_all:
+        args.append("--all")
+    else:
+        if not str(cadence).strip():
+            raise click.ClickException("Specify --cadence or --all (or --list)")
+        args.extend(["--cadence", str(cadence).strip()])
+    if str(run_ts).strip():
+        args.extend(["--run-ts", str(run_ts).strip()])
+    if dry_run:
+        args.append("--dry-run")
+    sys.exit(run_script("scripts/monitoring/monitor_scheduler.py", args))
+
+
+@monitor.command("check-staleness")
+@click.option(
+    "--schedules",
+    default="config/monitoring/schedules.yaml",
+    show_default=True,
+)
+@click.option("--dry-run", is_flag=True, help="Report only, no Telegram")
+def monitor_check_staleness(schedules: str, dry_run: bool):
+    """Telegram alert when any cadence missed its expected run (缺勤)."""
+    args = ["--schedules", schedules]
+    if dry_run:
+        args.append("--dry-run")
+    sys.exit(run_script("scripts/monitoring/check_monitor_staleness.py", args))
+
+
+@monitor.command("run")
+@click.option(
+    "--config",
+    "config_path",
+    default="config/monitoring/weekly_rule_stack.yaml",
+    show_default=True,
+    help="Monitor manifest YAML",
+)
+@click.option("--run-ts", default="", help="Override {run_ts} in manifest paths")
+@click.option("--dry-run", is_flag=True, help="Print steps without executing")
+def monitor_run(config_path: str, run_ts: str, dry_run: bool):
+    """Execute monitor manifest (export-window → archive-batch → watchdog → drift)."""
+    args = ["--config", config_path]
+    if str(run_ts).strip():
+        args.extend(["--run-ts", str(run_ts).strip()])
+    if dry_run:
+        args.append("--dry-run")
+    sys.exit(run_script("scripts/monitoring/run_monitor_manifest.py", args))
+
+
 @monitor.command("weekly")
 @click.option(
     "--window-parquet",
@@ -8010,16 +8151,34 @@ def monitor_segments(config_path: str):
     "--drift-parquet",
     envvar="DRIFT_PARQUET",
     default="",
-    help="Long-window parquet for drift plateau (env: DRIFT_PARQUET; defaults to watchdog parquet)",
+    help="Long-window parquet for drift plateau (env: DRIFT_PARQUET)",
 )
-def monitor_weekly(window_parquet: str, drift_parquet: str):
-    """Run weekly bundle: watchdog + drift + heartbeat (scripts/monitoring/run_weekly.sh)."""
+@click.option(
+    "--manifest",
+    default="",
+    help="If set, run mlbot monitor run --config <manifest> instead of run_weekly.sh",
+)
+@click.option(
+    "--auto-window/--no-auto-window",
+    default=True,
+    help="When parquets unset, export 7d bus + 6m archive-batch before watchdog/drift",
+)
+def monitor_weekly(
+    window_parquet: str, drift_parquet: str, manifest: str, auto_window: bool
+):
+    """Weekly monitor: manifest run, or shell bundle with optional auto window production."""
     import os
+
+    if str(manifest).strip():
+        args = ["--config", str(manifest).strip()]
+        sys.exit(run_script("scripts/monitoring/run_monitor_manifest.py", args))
 
     if str(window_parquet).strip():
         os.environ["WATCHDOG_PARQUET"] = str(window_parquet).strip()
     if str(drift_parquet).strip():
         os.environ["DRIFT_PARQUET"] = str(drift_parquet).strip()
+    if auto_window:
+        os.environ["MLBOT_MONITOR_AUTO_WINDOW"] = "1"
     sys.exit(run_script("scripts/monitoring/run_weekly.sh", []))
 
 

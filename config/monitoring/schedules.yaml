@@ -1,0 +1,32 @@
+# Monitor cadence → manifest. Remote systemd timers call:
+#   mlbot monitor schedule --cadence <name>
+#
+# Facts live under results/monitoring/; CMS reads results/monitoring/index.json
+# and results/rd_registry.sqlite (monitor_event table).
+
+staleness_hours:
+  daily: 36
+  weekly: 192
+  monthly: 840
+  quarterly: 2400
+  yearly: 9600
+
+schedules:
+  daily:
+    manifest: config/monitoring/daily_health.yaml
+    description: Daily bus 1d + watchdog; plus staleness TG if overdue
+  weekly:
+    manifest: config/monitoring/weekly_rule_stack.yaml
+    description: Gate PSI + regime plateau (bus short + long export)
+  monthly:
+    manifest: config/monitoring/monthly_drift.yaml
+    description: Regime plateau on ~30d bus window
+  quarterly:
+    manifest: config/monitoring/quarterly_drift.yaml
+    description: Full bus snapshot + watchdog + drift
+  yearly:
+    manifest: config/monitoring/yearly_drift.yaml
+    description: Full bus drift archive (human review)
+
+# Default SQLite index (override with MLBOT_RD_REGISTRY_DB)
+registry_db: results/rd_registry.sqlite

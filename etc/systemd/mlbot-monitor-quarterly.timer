@@ -1,0 +1,9 @@
+[Unit]
+Description=mlbot monitor quarterly — Jan/Apr/Jul/Oct 1st 10:00 UTC
+
+[Timer]
+OnCalendar=*-01,04,07,10-01 10:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

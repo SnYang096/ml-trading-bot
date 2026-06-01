@@ -250,17 +250,17 @@ steps:
 
 | ID | 优先级 | 任务 | 对应缺口 | 状态 |
 |----|--------|------|----------|------|
-| **T1** | **高** | 远程 **`export-window`（7d）+ `archive-batch`（6m）**；周 manifest 分窗；移除 train_final fallback | C1,C6 | 待做 |
+| **T1** | **高** | 远程 **`export-window`（7d）+ `archive-batch`（6m）**；周 manifest 分窗；移除 train_final fallback | C1,C6 | **已做**（2026-06-01） |
 | **T10** | 中 | 周/月/季/年 manifest 族（§漂移监控 §4.5）；月任务改为 fixed replay | C6 | 待做 |
 | **T11** | 中 | Promote **监控 bundle** checklist（§10.6）写入方法论；baseline 去绝对路径；deploy 可选校验 | §10.5 | 待做 |
 | **T2** | **高** | 统一 exit code（drift 2→1） | C2 | **已修**（2026-06-02 P0.5） |
-| **T12** | 中 | 与 **T8** 合并：`stat_kernels/drift.py` + 重构 watchdog/drift（**C7**） | C7 | 待做（里程碑 2） |
+| **T12** | 中 | 与 **T8** 合并：`stat_kernels/drift.py` + 重构 watchdog/drift（**C7**） | C7 | **已做**（2026-06-01） |
 | **T3** | 中 | bpc / me / srb baseline | C3 | 待做 |
-| **T4** | 中 | **Telegram** monitor ALERT + **CMS** 漂移卡片（远程主展示） | C4 | 待做 |
+| **T4** | 中 | **Telegram** monitor ALERT + **CMS** 漂移卡片（远程主展示） | C4 | TG OnFailure **已做**；CMS 待做 |
 | **T5** | 低/远期 | realized-R vs expected-R（execution 层「该下线」证据） | C5 | 待做 |
 | **T6** | 校验 | regime plateau 与 gate 规则一致性 | — | 例行 |
 | **T7** | 中 | 远程 cron 日更 export-window+monitor（可选，默认周更） | — | 待做 |
-| **T8** | 中 | 统一 monitor verb 族 + `stat_kernels/drift.py` 内核（§漂移监控 §5，含 **C7/T12**） | C7 | 待做（里程碑 2） |
+| **T8** | 中 | 统一 monitor verb 族 + `stat_kernels/drift.py` 内核（§漂移监控 §5，含 **C7/T12**） | C7 | drift 内核 **已做**；`score`/`distribution` 待做 |
 | **T9** | 中 | manifest `window.source` 多分支 + `export-window`；§7.4 验收：远程 bus 导出、本地 labeled 复核 | §7.4 | 待做 |
 
 **远程数据拼窗（T1）**：
@@ -284,3 +284,4 @@ steps:
 | 2026-06-02 | §4.5 节奏×层×算法；周 manifest 双窗；T10 |
 | 2026-06-02 | §10 平台基线 / 本地→远程交付物；T11 promote bundle |
 | 2026-06-02 | 代码审查 C7、§漂移监控 §1.2；T2 已修；T12↔T8；P0.5 周跑去 fallback + DRIFT_PARQUET |
+| 2026-06-01 | 里程碑 2：T1 export/archive + `weekly_rule_stack.yaml` + `monitor run`；T12 drift 内核；T4 TG OnFailure |

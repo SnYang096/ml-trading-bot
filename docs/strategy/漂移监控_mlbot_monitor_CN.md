@@ -81,29 +81,29 @@ flowchart TB
 
 | ID     | 严重度    | 缺口                                                                                                                                                                                                                                                                                                                                   | 影响                                                               |
 | ------ | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
-| **C1** | **致命** | 无「近端 / 实盘窗口」数据源。`[run_weekly.sh](../../scripts/monitoring/run_weekly.sh)` fallback 与 baseline（`[regime_watchdog_baseline.json](../../config/monitoring/regime_watchdog_baseline.json)`、`[factor_ic_baseline_tpc_20260526.json](../../config/monitoring/factor_ic_baseline_tpc_20260526.json)`）均指向同一份 `train_final` **全历史**（n≈107970） | current=reference → PSI≈0、IC≈baseline、plateau 在带内 → **永不 ALERT** |
+| **C1** | ~~致命~~ **已接线** | P0.5 已禁 train_final fallback；里程碑 2 落地 `export-window` + `archive-batch` + [`weekly_rule_stack.yaml`](../../config/monitoring/weekly_rule_stack.yaml) | 远程须 bus/archive 数据就绪；无 bus 行 → export **exit 3** |
 | **C2** | ~~高~~ **已修** | ~~`regime_drift_monitor.py` 返回 2~~ → 已统一为 **1**（2026-06-02 P0.5） | 下游可统一 `exit=1` 为 ALERT |
 | **C3** | 中      | baseline 仅覆盖 **TPC**；`--strategies bpc,tpc,me,srb` 时 bpc/me/srb 的 bull_share、trigger、IC **静默跳过**                                                                                                                                                                                                                                     | 多策略周跑名义上全跑，实际只盯 TPC                                              |
-| **C4** | 中 | 告警通道未闭环：systemd 无 `OnFailure`；**CMS 漂移卡片未做**；TG 未接 monitor ALERT | 远程 cron 非零 exit / report 无人看 |
+| **C4** | 中 | **CMS 漂移卡片未做**；TG 已接 systemd `OnFailure`（[`mlbot-monitor-notify@`](../../etc/systemd/mlbot-monitor-notify@.service) + heartbeat 摘要） | 业务级 CMS 卡片仍待做 |
 | **C5** | 低/远期   | 无 realized-R vs expected-R（实盘成交 vs 回测预期）漂移                                                                                                                                                                                                                                                                                           | v1 已知缺口，见 NP 问题归档                                                |
-| **C6** | 高 | 周跑 `watchdog`+`drift` 共用单一 `WATCHDOG_PARQUET`；regime 需 6m 窗、gate 需 7d 窗 | 应拆 `features_current_7d` + `features_current_6m`（§4.5）；P0.5 已支持 `DRIFT_PARQUET` 分路径，产数仍待 T1 |
-| **C7** | 中 | Monitor 与 Research **算法内核未共享**：[`regime_watchdog.py`](../../scripts/regime_watchdog.py) 内联 PSI/IC；[`research ic`](../../scripts/research/ic.py) 用 [`stat_kernels.ic.rank_ic`](../../src/research/stat_kernels/ic.py)（scipy） | 阈值/min_n/IC 定义可能漂移；统一 verb（T8）前需收敛到 `stat_kernels/drift.py` |
+| **C6** | ~~高~~ **已修** | manifest / `run_weekly.sh`（`MLBOT_MONITOR_AUTO_WINDOW=1`）产 `features_current_7d` + `features_current_6m`；`watchdog`/`drift` 分窗 | 依赖 T1 数据源在远程可用 |
+| **C7** | ~~中~~ **已修** | PSI/IC/plateau 收敛到 [`stat_kernels/drift.py`](../../src/research/stat_kernels/drift.py)；watchdog/drift 已引用 | `distribution`/`score` verb 仍属 T8 后续 |
 
 
 **已验证 OK**（审查时）：bpc / tpc / me / srb 的 `archetypes/regime.yaml` 均有 `last_calibration.plateaus`；TPC bull-only gate 规则仍在 canonical `[gate.yaml](../../config/strategies/tpc/archetypes/gate.yaml)`。
 
-**阻断项**：修复 **C1**（远程产数）前，远程 cron 即使 exit 0 也不代表 regime 健康。P0.5 后：未设 `WATCHDOG_PARQUET`/`DRIFT_PARQUET` → **exit 3**（不再 fallback `train_final`）。
+**阻断项**：远程 cron 须保证 **bus 有 7d 行** 且 **archive/prepare 可出 6m 窗**；未设 parquet 且未开 `MLBOT_MONITOR_AUTO_WINDOW` → **exit 3**。
 
 ### 1.2 代码审查证据（2026-06-02）
 
 | 审查项 | 证据 | 结论 |
 |--------|------|------|
-| CLI 对称性 | [`main.py`](../../src/cli/main.py) `research`: scan/ic/plateau/…；`monitor`: watchdog/drift/contract/weekly only | 目标 verb（`export-window`/`archive-batch`/`score`）**未实现**（里程碑 2） |
-| 内核重复 **C7** | `regime_watchdog.py` L111–147 `_compute_psi` / `_spearman_ic_pair` vs `stat_kernels/ic.py` L47–52 `rank_ic`（scipy） | IC 实现不一致 |
-| 远程产数 **C1** | `run_weekly.sh` 曾 L12–17 fallback train_final；[`mlbot-weekly-watchdog.service`](../../etc/systemd/mlbot-weekly-watchdog.service) `WATCHDOG_PARQUET=` 空 | **T1** 待做；P0.5 已移除 fallback |
-| 双窗 **C6** | 周跑须 `WATCHDOG_PARQUET` + `DRIFT_PARQUET`（可同路径，推荐不同窗） | T1 后 7d bus + 6m batch |
+| CLI 对称性 | [`main.py`](../../src/cli/main.py) `monitor`: export-window / archive-batch / run / weekly | `score`/`distribution` 仍待 T8 |
+| 内核 **C7** | [`stat_kernels/drift.py`](../../src/research/stat_kernels/drift.py) + watchdog/drift 引用 | 已共享 rank_ic（scipy） |
+| 远程产数 **C1** | [`export_feature_bus_window.py`](../../scripts/monitoring/export_feature_bus_window.py)；[`archive_batch_window.py`](../../scripts/monitoring/archive_batch_window.py) | 须远程 bus/archive 数据 |
+| 双窗 **C6** | [`weekly_rule_stack.yaml`](../../config/monitoring/weekly_rule_stack.yaml)；`DRIFT_PARQUET` 默认 6m batch | 已分窗 |
 | exit code **C2** | `regime_drift_monitor.py` 曾 L209 `return 2` | **P0.5 已改为 1** |
-| 运维 **C4** | [`quant_telegram_notify.sh`](../../deploy/monitoring/scripts/quant_telegram_notify.sh) 仅 unit/state；weekly service 无 `OnFailure` | 业务 drift TG 待 T4 |
+| 运维 **C4** | [`mlbot-monitor-notify@.service`](../../etc/systemd/mlbot-monitor-notify@.service) + [`monitor_telegram_notify.sh`](../../scripts/monitoring/monitor_telegram_notify.sh) | CMS 卡片仍待做 |
 | ABC+树 | watchdog 默认 `bpc,tpc,me,srb`；无 tree slug | 树需 `score` verb + baseline（T8） |
 
 ---
@@ -331,7 +331,7 @@ flowchart TB
 | 节奏 | 主要问什么 | 策略层 | 算法（现有/计划） | current 窗（语义） | 远程产数方式 |
 |------|------------|--------|-------------------|-------------------|--------------|
 | **周** | 实盘分布是否**突然**变了？ | **Gate**（+ 快变量 prefilter） | PSI、bull_share、trigger_rate | 近 **7–14d**（≈ bus 深度） | **`feature_bus_export`**（不重算） |
-| **周** | Regime plateau 是否仍盖住市场？ | **Regime** | plateau P50 vs `last_calibration` | **`recent_6m_oos`** 或至少 **90d** 120T 样本 | **`archive_batch`**（publisher 同引擎算特征，**无 label**） |
+| **周** | Regime plateau 是否仍盖住市场？ | **Regime** | plateau P50 vs `last_calibration` | bus 滚动深度内 **120T** 样本（≈数月） | **`feature_bus_export`**（`lookback-days 0` 或足够长） |
 | **月** | 锁死 config 下 PnL/触发是否恶化？ | **Execution**（全链路） | 固定 config `event_backtest` / `rolling_sim` 月 KPI | 最近 **1–3 月** | **replay 产物**（`monthly_ledger`、trades），非特征 parquet |
 | **月** | C 段级语义是否漂？ | **Regime/Prefilter（C）** + 执行 | multileg 月报环比（chop/trend/forced） | **6 月** rolling 月均值 | `rolling_sim` + `multileg monitor` |
 | **月**（可选） | 因子方向是否衰减？ | Prefilter / Gate | IC sign-flip、PSI 趋势 | **30–90d** | `archive_batch` + **`prepare_labeled`**（要 `forward_rr`） |
@@ -558,24 +558,12 @@ verbs（目标态，粗体=已有薄壳）:
 
 ### 7.1 推荐拼窗方式（远程 cron）
 
-**周跑默认（两路 current，解决 C6）**：
+**周跑默认（两路 current，均来自 bus，解决 C6）**：
 
 1. **reference**：git `config/monitoring/*_baseline.json` + `regime.yaml` plateaus；PSI 的 reference 来自 baseline 内 `source_parquet`（标定窗），**≠** 任一 current。
-2. **current 短窗**（gate / PSI 突变）：`export-window` → `features_current_7d.parquet`
-3. **current 长窗**（regime plateau）：`archive-batch --segment recent_6m_oos` → `features_current_6m.parquet`（**无现成 6m 特征文件时必须算**，不是重复造轮子，而是 **publisher 未把 6m 写入 bus**）
-4. **monitor**：
-
-```bash
-# T1 落地后示意
-mlbot monitor export-window --timeframe 120T --lookback-days 7 \
-  --output results/monitoring/window/$(date -u +%Y%m%d)/features_current_7d.parquet
-mlbot monitor archive-batch --segment recent_6m_oos --strategy tpc \
-  --output results/monitoring/window/$(date -u +%Y%m%d)/features_current_6m.parquet
-
-export WATCHDOG_PARQUET=.../features_current_7d.parquet
-export DRIFT_PARQUET=.../features_current_6m.parquet   # drift 脚本待接此 env（或 manifest 分 step）
-mlbot monitor weekly
-```
+2. **current 短窗**（gate / PSI 突变）：`export-window --lookback-days 7` → `features_current_7d.parquet`
+3. **current 长窗**（regime plateau）：`export-window --lookback-days 0`（bus 滚动快照全量）→ `features_current_long.parquet`。**不**在 monitor 时 `prepare-only`；publisher 已持续 append 120T 特征。
+4. **monitor**：`mlbot monitor run --config config/monitoring/weekly_rule_stack.yaml` 或设 `WATCHDOG_PARQUET` / `DRIFT_PARQUET` 后 `mlbot monitor weekly`。
 
 **可选路径（仅 manifest 声明时）**：
 
@@ -913,5 +901,6 @@ ALERT 后新一轮 R&D **不重复** 1–4，除非 promote 了新阈值/新 gat
 | 2026-06-02 | §10 本地→远程交付物、平台基线定义、流程图、promote 监控 bundle；T11 |
 | 2026-06-02 | 同步写入 `LAYER_PROMOTION_CRITERIA.md` §4、`config/experiments/README.md` |
 | 2026-06-02 | §1.2 代码审查证据；C7；C2 P0.5 修复；周跑 `DRIFT_PARQUET` |
+| 2026-06-01 | 里程碑 2：`export-window`/`archive-batch`/`monitor run`；`weekly_rule_stack.yaml`；`stat_kernels/drift.py`；systemd OnFailure+TG |
 
 

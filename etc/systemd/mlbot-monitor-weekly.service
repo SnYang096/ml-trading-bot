@@ -1,5 +1,5 @@
 [Unit]
-Description=mlbot weekly regime watchdog (manifest or run_weekly.sh)
+Description=mlbot monitor weekly (bus export + watchdog + drift + CMS index)
 After=network-online.target
 OnFailure=mlbot-monitor-notify@%n.service
 
@@ -7,10 +7,6 @@ OnFailure=mlbot-monitor-notify@%n.service
 Type=oneshot
 WorkingDirectory=/home/yin/trading/ml_trading_bot
 Environment=MLBOT_FEATURE_BUS_ROOT=live/shared_feature_bus
-Environment=MLBOT_MONITOR_AUTO_WINDOW=1
-# Optional overrides (unset = auto-produce under results/monitoring/window/<ts>/):
-# Environment=WATCHDOG_PARQUET=
-# Environment=DRIFT_PARQUET=
 ExecStart=/bin/bash -lc 'mlbot monitor schedule --cadence weekly'
 
 [Install]

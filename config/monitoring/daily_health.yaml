@@ -1,0 +1,18 @@
+# Daily bus health check (gate/PSI short window). Staleness scan runs after schedule.
+monitor_id: daily_health
+output_dir: results/monitoring/daily_health/{run_ts}
+
+windows:
+  short:
+    source: feature_bus_export
+    lookback_days: 1
+    timeframe: 120T
+    parquet: results/monitoring/window/{run_ts}/features_current_1d.parquet
+
+strategies: [bpc, tpc, me, srb]
+
+steps:
+  - export-window: { window: short }
+  - watchdog:
+      window: short
+      baseline: config/monitoring/regime_watchdog_baseline.json

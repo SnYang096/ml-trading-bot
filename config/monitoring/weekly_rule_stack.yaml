@@ -1,0 +1,29 @@
+# Weekly rule-stack monitor manifest (see config/monitoring/README.md).
+# Remote: bus-only current windows (no train_final, no monitor-time prepare).
+monitor_id: weekly_rule_stack
+output_dir: results/monitoring/weekly_rule_stack/{run_ts}
+
+windows:
+  short:
+    source: feature_bus_export
+    lookback_days: 7
+    timeframe: 120T
+    parquet: results/monitoring/window/{run_ts}/features_current_7d.parquet
+  long:
+    source: feature_bus_export
+    # Regime plateau: use bus rolling depth (~5000 x 120T bars). 0 = full bus file.
+    lookback_days: 0
+    timeframe: 120T
+    parquet: results/monitoring/window/{run_ts}/features_current_long.parquet
+
+strategies: [bpc, tpc, me, srb]
+
+steps:
+  - export-window: { window: short }
+  - export-window: { window: long }
+  - watchdog:
+      window: short
+      baseline: config/monitoring/regime_watchdog_baseline.json
+  - drift:
+      window: long
+      emit_rd_loop_suggestions: true

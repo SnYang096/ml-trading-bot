@@ -1,0 +1,17 @@
+monitor_id: monthly_drift
+output_dir: results/monitoring/monthly_drift/{run_ts}
+
+windows:
+  long:
+    source: feature_bus_export
+    lookback_days: 30
+    timeframe: 120T
+    parquet: results/monitoring/window/{run_ts}/features_current_30d.parquet
+
+strategies: [bpc, tpc, me, srb]
+
+steps:
+  - export-window: { window: long }
+  - drift:
+      window: long
+      emit_rd_loop_suggestions: false

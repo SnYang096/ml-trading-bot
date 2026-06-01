@@ -1,0 +1,13 @@
+[Unit]
+Description=mlbot monitor yearly drift archive
+After=network-online.target
+OnFailure=mlbot-monitor-notify@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/yin/trading/ml_trading_bot
+Environment=MLBOT_FEATURE_BUS_ROOT=live/shared_feature_bus
+ExecStart=/bin/bash -lc 'mlbot monitor schedule --cadence yearly'
+
+[Install]
+WantedBy=multi-user.target
