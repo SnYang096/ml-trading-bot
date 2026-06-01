@@ -1,0 +1,23 @@
+# Phase 2 — 仅当 DECISION 签字后跑（单调候选 vs G1）
+#
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260602_tpc_gate_monotonic_validate/tpc_gate_monotonic_phase2_grid.yaml \
+#     --quiet-signal-logs
+
+experiment_id: tpc_gate_monotonic_phase2_20260602
+strategy: tpc
+market_segment_path: config/market_segment.yaml
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+
+segment_matrix:
+  segments:
+    - bear_2022
+    - bull_2023_2024
+    - recent_range_to_bear
+  variants:
+    - suffix: G1_no_bull_vol
+      strategies_root: config_experiments/tpc_gate_ablate_G1_no_bull_vol_strategies
+      output_dir: results/tpc/experiments/gate_monotonic_phase2/G1
+    # 待建: G8_vla_lt_003_bull — vla<0.03 + ema>0.10 deny only

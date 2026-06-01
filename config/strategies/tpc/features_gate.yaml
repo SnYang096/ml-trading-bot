@@ -14,12 +14,6 @@ feature_pipeline:
     - "vol_persistence"
     - "vol_leverage_asymmetry"
     - "vol_regime_shift*"
-    # EVT（与 gate: evt_var_99 列名一致；同时保留 stat_evt_* 兼容别名义）
-    - "evt_var_99"
-    - "evt_var_99_*"
-    - "stat_evt_var_*"
-    - "stat_evt_expected_shortfall*"
-    - "stat_evt_excess_vol*"
     # Chop / 震荡噪声
     - "bb_width_normalized_pct"
     - "range_compression_*"

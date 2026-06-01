@@ -1,0 +1,32 @@
+# Feature-family attribution manifest for tree_forward_rr_ic_small_pool analysis
+
+runs:
+  - id: fast_scalp_label
+    label: "A1 fast_scalp / label IC"
+    ic_prune_json: results/rd_loop/tree_forward_rr_ic_small_pool/fast_scalp/ic_prune_label/ic_prune_holdout.json
+    train_results_json: results/train_final/tree_forward_rr_ic_small_pool/train_fast_scalp_label/fast_scalp_label_ic_small/results.json
+    tau_md: results/rd_loop/tree_forward_rr_ic_small_pool/fast_scalp/tau_label/tau_scan_holdout_rr.md
+
+  - id: fast_scalp_forward_rr
+    label: "A2 fast_scalp / forward_rr_h3 IC"
+    ic_prune_json: results/rd_loop/tree_forward_rr_ic_small_pool/fast_scalp/ic_prune_forward_rr_h3/ic_prune_holdout.json
+    train_results_json: results/train_final/tree_forward_rr_ic_small_pool/train_fast_scalp_forward_rr/fast_scalp_forward_rr_ic_small/results.json
+    tau_md: results/rd_loop/tree_forward_rr_ic_small_pool/fast_scalp/tau_forward_rr_h3/tau_scan_holdout_rr.md
+
+  - id: swing_label
+    label: "B1 short_term_swing / label IC"
+    ic_prune_json: results/rd_loop/tree_forward_rr_ic_small_pool/short_term_swing/ic_prune_label/ic_prune_holdout.json
+    train_results_json: results/train_final/tree_forward_rr_ic_small_pool/train_swing_label/short_term_swing_label_ic_small/results.json
+    tau_md: results/rd_loop/tree_forward_rr_ic_small_pool/short_term_swing/tau_label/tau_scan_holdout_rr.md
+
+  - id: swing_forward_rr
+    label: "B2 short_term_swing / forward_rr_h20 IC"
+    ic_prune_json: results/rd_loop/tree_forward_rr_ic_small_pool/short_term_swing/ic_prune_forward_rr_h20/ic_prune_holdout.json
+    train_results_json: results/train_final/tree_forward_rr_ic_small_pool/train_swing_forward_rr/short_term_swing_forward_rr_ic_small/results.json
+    tau_md: results/rd_loop/tree_forward_rr_ic_small_pool/short_term_swing/tau_forward_rr_h20/tau_scan_holdout_rr.md
+
+  - id: wide_top100_ref
+    label: "wide top-100 reference (large pool)"
+    ic_prune_json: results/rd_loop/short_term_swing_ic_plateau/ic_prune_wide_20260601/ic_prune_holdout.json
+    train_results_json: results/train_final/short_term_swing/train_wide_top100_recent6m_20260601/short_term_swing_wide_top100_test/results.json
+    tau_md: results/rd_loop/short_term_swing_wide_top100_recent6m/holdout_rr_recent6m/tau_scan_holdout_rr.md

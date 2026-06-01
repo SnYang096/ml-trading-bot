@@ -10,7 +10,9 @@ import pytest
 import yaml
 
 from src.time_series_model.strategies.labels.forward_rr_signed_label import (
+    compute_raw_signed_forward_rr,
     compute_signed_forward_rr_label,
+    forward_rr_column_name,
 )
 
 
@@ -88,6 +90,19 @@ def test_tree_slug_model_uses_regression() -> None:
         params = model["trainer"]["params"]
         assert params["task_type"] == "regression"
         assert params["target_col"] == "label"
+
+
+def test_forward_rr_h_column_helpers() -> None:
+    assert forward_rr_column_name(3) == "forward_rr_h3"
+    assert forward_rr_column_name(20) == "forward_rr_h20"
+    n = 50
+    rng = np.random.default_rng(42)
+    close = 100 + np.cumsum(rng.normal(0, 1, size=n))
+    df = pd.DataFrame({"close": close, "atr14": np.full(n, 1.0)})
+    raw = compute_raw_signed_forward_rr(df, horizon=3)
+    floored = compute_signed_forward_rr_label(df, horizon=3, rr_floor=0.5)
+    assert raw.name == "forward_rr_h3"
+    assert raw.notna().sum() > floored.notna().sum()
 
 
 def test_signed_forward_rr_label_basic() -> None:

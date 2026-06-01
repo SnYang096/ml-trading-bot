@@ -1,4 +1,4 @@
-# fast_scalp single-leg execution (H=3 → max_holding_bars ≈ 2×H).
+# fast_scalp_majors — same single-leg RR execution as fast_scalp (H=3).
 
 add_position:
   enabled: false

@@ -701,6 +701,8 @@ def _run_tree_step(step: Dict[str, Any], output_dir: Path, cfg: Dict[str, Any]) 
                 data_path=str(step.get("data_path", "data/parquet_data")),
                 feature_store_layer=step.get("feature_store_layer"),
                 fixed_quantile=step.get("fixed_quantile"),
+                long_entry_threshold=step.get("long_entry_threshold"),
+                short_entry_threshold=step.get("short_entry_threshold"),
                 segment_label=str(step.get("segment_label", "holdout")),
                 quantile_grid=str(
                     step.get("quantile_grid", "0.05,0.08,0.10,0.12,0.15,0.20,0.25,0.30")

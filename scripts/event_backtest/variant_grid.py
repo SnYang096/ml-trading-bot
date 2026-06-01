@@ -28,6 +28,12 @@ from typing import Any, Dict, List
 
 import yaml
 
+from scripts.event_backtest.market_segment import (
+    expand_segment_matrix,
+    load_market_segments,
+    resolve_segment_run,
+)
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 _ENGINE_EVENT = "event_backtest"
@@ -93,6 +99,12 @@ def _build_event_backtest_cmd(
     if run.get("trading_map") or grid.get("trading_map"):
         map_out = out_path / f"trading_map_{strategy}_event.html"
         cmd += ["--trading-map", str(map_out)]
+    inject_scores = run.get("inject_scores") or grid.get("inject_scores")
+    if inject_scores:
+        inj_path = Path(str(inject_scores))
+        if not inj_path.is_absolute():
+            inj_path = (_REPO_ROOT / inj_path).resolve()
+        cmd += ["--inject-add-ml-scores", str(inj_path)]
     cmd += extra_argv
     return cmd
 
@@ -162,8 +174,10 @@ def _run_one(
             run=run, grid=grid, out_path=out_path, extra_argv=extra_argv
         )
 
+    seg = run.get("segment")
+    seg_note = f" segment={seg!r}" if seg else ""
     print(
-        f"\n=== variant_grid[{engine}]: {variant} "
+        f"\n=== variant_grid[{engine}]: {variant}{seg_note} "
         f"({run.get('start_date')} → {run.get('end_date')}) ==="
     )
     print(" ".join(cmd))
@@ -208,6 +222,30 @@ def _write_index(
     return index_path
 
 
+def _normalize_runs(grid: Dict[str, Any]) -> List[Dict[str, Any]]:
+    raw = (
+        expand_segment_matrix(grid)
+        if grid.get("segment_matrix")
+        else (grid.get("runs") or [])
+    )
+    if not raw:
+        return []
+    seg_path = grid.get("market_segment_path")
+    segments = (
+        load_market_segments(seg_path)
+        if seg_path or any(r.get("segment") for r in raw)
+        else None
+    )
+    if segments is None and any(isinstance(r, dict) and r.get("segment") for r in raw):
+        segments = load_market_segments()
+    out: List[Dict[str, Any]] = []
+    for run in raw:
+        if not isinstance(run, dict):
+            continue
+        out.append(resolve_segment_run(run, grid=grid, segments=segments))
+    return out
+
+
 def run_variant_grid(
     grid_path: Path,
     *,
@@ -216,7 +254,7 @@ def run_variant_grid(
     if not grid_path.is_absolute():
         grid_path = (_REPO_ROOT / grid_path).resolve()
     grid = _load_grid(grid_path)
-    runs = grid.get("runs") or []
+    runs = _normalize_runs(grid)
     if not runs:
         print("ERROR: variant grid has no runs", file=sys.stderr)
         return 3
@@ -225,8 +263,6 @@ def run_variant_grid(
     runs_meta: List[Dict[str, Any]] = []
     worst_rc = 0
     for run in runs:
-        if not isinstance(run, dict):
-            continue
         rc = _run_one(run=run, grid=grid, extra_argv=extra)
         worst_rc = max(worst_rc, rc)
         strategy = str(run.get("strategy") or grid.get("strategy") or "tpc")
@@ -235,6 +271,8 @@ def run_variant_grid(
         runs_meta.append(
             {
                 "variant": variant,
+                "segment": run.get("segment"),
+                "segment_label": run.get("segment_label"),
                 "engine": _resolve_engine(run, grid),
                 "period": f"{run['start_date']}/{run['end_date']}",
                 "strategies_root": run.get("strategies_root")

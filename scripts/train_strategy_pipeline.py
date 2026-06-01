@@ -2759,11 +2759,12 @@ def train_strategy(
     # `sample_weight` back if present so training can consume it.
     _train_tmp = df_train_features.copy()
     _test_tmp = df_test_features.copy()
+    label_params = dict(strategy_config.labels.generator.params or {})
     df_train_features[strategy_config.labels.target_column] = label_func(
-        _train_tmp, **strategy_config.labels.generator.params
+        _train_tmp, **label_params
     )
     df_test_features[strategy_config.labels.target_column] = label_func(
-        _test_tmp, **strategy_config.labels.generator.params
+        _test_tmp, **label_params
     )
     if "sample_weight" in _train_tmp.columns:
         df_train_features["sample_weight"] = _train_tmp["sample_weight"]
@@ -2774,6 +2775,32 @@ def train_strategy(
         df_train_features["forward_rr"] = _train_tmp["forward_rr"]
     if "forward_rr" in _test_tmp.columns:
         df_test_features["forward_rr"] = _test_tmp["forward_rr"]
+    # Raw forward RR @ horizon (unfloored) for IC screen / analysis
+    if (
+        strategy_config.labels.generator.module
+        == "src.time_series_model.strategies.labels.forward_rr_signed_label"
+        and strategy_config.labels.generator.function
+        == "compute_signed_forward_rr_label"
+    ):
+        from src.time_series_model.strategies.labels.forward_rr_signed_label import (
+            compute_raw_signed_forward_rr,
+            forward_rr_column_name,
+        )
+
+        horizon = int(label_params.get("horizon", 0) or 0)
+        if horizon > 0:
+            raw_col = forward_rr_column_name(horizon)
+            raw_params = {
+                k: v
+                for k, v in label_params.items()
+                if k in ("horizon", "price_col", "atr_col")
+            }
+            df_train_features[raw_col] = compute_raw_signed_forward_rr(
+                _train_tmp, **raw_params
+            )
+            df_test_features[raw_col] = compute_raw_signed_forward_rr(
+                _test_tmp, **raw_params
+            )
     train_labels = df_train_features[strategy_config.labels.target_column]
     test_labels = df_test_features[strategy_config.labels.target_column]
     print(
@@ -3017,6 +3044,11 @@ def train_strategy(
             ]
             if c in df_all.columns
         ]
+        meta_cols.extend(
+            c
+            for c in df_all.columns
+            if c.startswith("forward_rr_h") and c not in meta_cols
+        )
         keep_cols = list(dict.fromkeys(meta_cols + feature_cols))  # 去重保序
         # 也保留 direction 相关列
         for c in df_all.columns:

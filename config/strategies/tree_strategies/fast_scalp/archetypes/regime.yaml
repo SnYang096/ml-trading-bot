@@ -1,5 +1,4 @@
-# fast_scalp regime — thin EMA1200 macro band (aligned with TPC/B).
-# See docs/strategy/regime_layer.md
+# Shared EMA1200 macro band with fast_scalp / TPC/B.
 
 allowed_regimes:
   - bull
@@ -18,11 +17,5 @@ rules:
       - feature: ema_1200_position
         operator: "<="
         value: -0.10
-    rationale: Leave EMA1200 mid-axis dead zone — shared macro regime with B
+    rationale: Leave EMA1200 mid-axis dead zone
     locked: true
-    lock_reason: Regime slow variable — EMA1200 band
-
-last_calibration:
-  timestamp: null
-  data_source: null
-  notes: "Initial scaffold; calibrate after first train_final run if needed."

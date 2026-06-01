@@ -1,0 +1,43 @@
+# event_backtest（1min 持仓管理）确认 — deploy 树 score 注入
+#
+# 前置：导出 holdout score parquet
+#   PYTHONPATH=src:scripts python scripts/research/export_tree_scores_for_event_backtest.py \
+#     --predictions results/train_final/fast_scalp/train_final_20260530_141451_ic_top35/fast_scalp/predictions.parquet \
+#     --symbols SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT \
+#     --output results/rd_loop/fast_scalp_ic_plateau/event_confirm/scores/alts_holdout.parquet
+#   PYTHONPATH=src:scripts python scripts/research/export_tree_scores_for_event_backtest.py \
+#     --predictions results/train_final/fast_scalp_majors/train_final_latest/fast_scalp_majors/predictions.parquet \
+#     --symbols BTCUSDT,ETHUSDT \
+#     --output results/rd_loop/fast_scalp_ic_plateau/event_confirm/scores/majors_holdout.parquet
+#
+# 跑法：
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260530_fast_scalp_alts_majors/fast_scalp_event_backtest_confirm.yaml
+
+experiment_id: fast_scalp_event_confirm_20260601
+strategy: fast_scalp
+strategies_root: config/strategies/tree_strategies
+data_path: data/parquet_data
+
+runs:
+  - variant: alts_event_recent6m
+    strategy: fast_scalp_alts
+    symbols:
+      - SOLUSDT
+      - BNBUSDT
+      - XRPUSDT
+      - ADAUSDT
+    start_date: "2025-10-01"
+    end_date: "2026-03-31"
+    inject_scores: results/rd_loop/fast_scalp_ic_plateau/event_confirm/scores/alts_holdout.parquet
+    output_dir: results/rd_loop/fast_scalp_ic_plateau/event_confirm/alts_recent_6m_oos
+
+  - variant: majors_event_recent6m
+    strategy: fast_scalp_majors
+    symbols:
+      - BTCUSDT
+      - ETHUSDT
+    start_date: "2025-10-01"
+    end_date: "2026-03-31"
+    inject_scores: results/rd_loop/fast_scalp_ic_plateau/event_confirm/scores/majors_holdout.parquet
+    output_dir: results/rd_loop/fast_scalp_ic_plateau/event_confirm/majors_recent_6m_oos

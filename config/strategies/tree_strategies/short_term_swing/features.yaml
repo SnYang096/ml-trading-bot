@@ -13,9 +13,23 @@ feature_pipeline:
   - atr
   requested_features:
   - atr_f
+  - dtw_triangle_dist_w50
+  - dtw_triangle_dist_w45
+  - dtw_bullish_engulfing_dist_w40
+  - box_pos_60
+  - cvd_divergence_score
+  - trend_div_alignment
   - bb_width_normalized_pct
+  - bb_lower
+  - dtw_double_top_inverse_dist_w50
+  - bpc_impulse_return_atr
   - macd_atr
-  - wpt_ignition_score
-  - wpt_absorption_score
-  - wpt_exhaustion_score
-  - wpt_compression_score
+  - dtw_random_30_dist_w40
+  - roc_20
+  - cvd_divergence_score_pct
+  - macdext_atr_norm
+  - spectrum_cvd_low_freq_ratio
+  - box_stability_60
+  - macdext
+  - dist_to_zz_high_atr
+  - ppo

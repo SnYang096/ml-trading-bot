@@ -1,5 +1,6 @@
 # Promoted 2026-05-31 — deep_pullback E2_or (vol OR delta; Pass1 tau 0.45/0.15)
-# Prefilter/gate unchanged. Smoke: E2_or_smoke (+6.71R, 44 closes BTC+ETH 23-25)
+# Gate 2026-06-01 — disabled bull vol_persistence + vol_leverage mid-bands (G1); chop on; EVT rule removed.
+# Smoke: E2_or + G1 gate (+7.88R, 48 closes BTC+ETH bull_2023_2024)
 
 filters:
 - id: tpc_deep_pullback_vol_confirm

@@ -1,0 +1,222 @@
+# TPC regime 复验 + gate 扩展（label scan only）
+#
+#   PYTHONPATH=src:scripts python scripts/rd_loop.py \
+#     --hypothesis-yaml config/experiments/20260601_tpc_regime_gate_extend/rd_loop_tpc_regime_gate_extend.yaml
+
+topic: tpc_regime_gate_extend_20260601
+strategy: tpc
+output_dir: results/rd_loop/tpc_regime_gate_extend
+
+features_parquet: &parquet results/train_final/tpc/train_final_20260523_122438_rr_extreme/tpc/features_labeled.parquet
+label: &label success_no_rr_extreme
+
+# 与 0530/0531 一致：chop 可控子集上评 regime / gate
+base_filter: &base_filter
+  - tpc_semantic_chop<=0.40
+
+bull_filter: &bull_filter
+  - ema_1200_position>=0.10
+  - tpc_semantic_chop<=0.40
+
+quick_layer_scans:
+  # ═══════════════════════════════════════════════════════════════
+  # 1) Regime — ema1200 阈值 & slope（复验 F' 文档，TPC 专用 parquet）
+  # ═══════════════════════════════════════════════════════════════
+  - mode: condition-set
+    features_parquet: *parquet
+    label: *label
+    layer: regime
+    filter: *base_filter
+    condition:
+      - "prod_H: abs(ema_1200_position)>0.10"
+      - "H_loose_008: abs(ema_1200_position)>0.08"
+      - "H_tight_012: abs(ema_1200_position)>0.12"
+      - "H_tight_015: abs(ema_1200_position)>0.15"
+      - "F_prime: abs(ema_1200_position)>0.10 AND abs(ema_1200_slope_10)>0.002"
+      - "F_slope_loose: abs(ema_1200_position)>0.10 AND abs(ema_1200_slope_10)>0.001"
+      - "slope_only_002: abs(ema_1200_slope_10)>0.002"
+      - "bull_only_010: ema_1200_position>0.10"
+      - "bear_only_010: ema_1200_position<-0.10"
+    out: quick_scan/regime_ema_slope_candidates.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: regime
+    feature: ema_1200_position
+    operator: ">="
+    grid: "0.05,0.08,0.10,0.12,0.15,0.20,0.25"
+    filter: *base_filter
+    out: quick_scan/regime_ema_pos_ge_all.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: regime
+    feature: ema_1200_slope_10
+    operator: ">="
+    grid: "0.0005,0.001,0.002,0.003,0.005,0.008,0.01"
+    filter: *base_filter
+    out: quick_scan/regime_ema_slope10_ge_all.md
+
+  - mode: condition-set
+    features_parquet: *parquet
+    label: *label
+    layer: regime
+    filter: *base_filter
+    condition:
+      - "trend_r2_hi: trend_r2_20>=0.55"
+      - "trend_r2_mid: trend_r2_20>=0.35 AND trend_r2_20<0.55"
+      - "bb_narrow: bb_width_normalized_pct<=0.35"
+      - "bb_wide: bb_width_normalized_pct>=0.65"
+    out: quick_scan/regime_alt_macro_candidates.md
+
+  - mode: ic-decay
+    features_parquet: *parquet
+    label: *label
+    features: >-
+      ema_1200_position,ema_1200_slope_10,trend_r2_20,bb_width_normalized_pct,
+      path_efficiency_pct,vol_leverage_asymmetry,vol_persistence,evt_var_99
+    horizons: "1,3,6,12,24"
+    target: forward_rr
+    filter: *base_filter
+    out: quick_scan/regime_gate_ic_decay.md
+
+  # ═══════════════════════════════════════════════════════════════
+  # 2) vol_leverage — 单边低尾 deny 候选（bull）
+  # ═══════════════════════════════════════════════════════════════
+  - mode: condition-set
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    filter: *bull_filter
+    condition:
+      - "prod_mid_deny: vol_leverage_asymmetry>0.0558 AND vol_leverage_asymmetry<0.1482 AND ema_1200_position>0.10"
+      - "low_deny_003: vol_leverage_asymmetry<0.03 AND ema_1200_position>0.10"
+      - "low_deny_005: vol_leverage_asymmetry<0.05 AND ema_1200_position>0.10"
+      - "low_deny_008: vol_leverage_asymmetry<0.08 AND ema_1200_position>0.10"
+      - "high_deny_015: vol_leverage_asymmetry>0.15 AND ema_1200_position>0.10"
+    out: quick_scan/gate_vol_lev_single_sided.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    feature: vol_leverage_asymmetry
+    operator: "<"
+    grid: "0.02,0.03,0.05,0.08,0.10,0.12,0.15"
+    filter: *bull_filter
+    out: quick_scan/gate_vol_lev_lt_bull.md
+
+  # ═══════════════════════════════════════════════════════════════
+  # 3) evt_var_99 — prod 窄带（disabled）复测
+  # ═══════════════════════════════════════════════════════════════
+  - mode: condition-set
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    filter: *base_filter
+    condition:
+      - "prod_evt_deny: evt_var_99>0.6706 AND evt_var_99<0.7976"
+      - "evt_high: evt_var_99>0.75"
+      - "evt_low: evt_var_99<0.55"
+    out: quick_scan/gate_evt_candidates.md
+
+  - mode: gate-plateau
+    features_parquet: *parquet
+    strategy: tpc
+    label_col: *label
+    feature: evt_var_99
+    operator: "gt"
+    grid: "0.55,0.60,0.65,0.67,0.70,0.75,0.80"
+    filter: *base_filter
+    min_lift: 0.05
+    out: quick_scan/gate_lift_evt_var_99.json
+
+  # ═══════════════════════════════════════════════════════════════
+  # 4) path_efficiency — >0.15 deny 是否该去掉
+  # ═══════════════════════════════════════════════════════════════
+  - mode: condition-set
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    filter: *bull_filter
+    condition:
+      - "deny_pe_gt_015: path_efficiency_pct>0.15"
+      - "deny_pe_gt_025: path_efficiency_pct>0.25"
+      - "allow_pe_ge_015: path_efficiency_pct>=0.15"
+      - "low_pe_lt_015: path_efficiency_pct<0.15"
+    out: quick_scan/gate_pe_deny_vs_allow.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    feature: path_efficiency_pct
+    operator: ">"
+    grid: "0.15,0.25,0.35,0.45,0.55,0.65,0.75"
+    filter: *bull_filter
+    out: quick_scan/gate_pe_gt_bull.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    feature: path_efficiency_pct
+    operator: "<="
+    grid: "0.15,0.25,0.35,0.45,0.55,0.65,0.75,0.85"
+    filter: *bull_filter
+    out: quick_scan/gate_pe_lte_bull.md
+
+  # ═══════════════════════════════════════════════════════════════
+  # 5) 其它 gate 白名单候选
+  # ═══════════════════════════════════════════════════════════════
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    feature: bb_width_normalized_pct
+    operator: ">="
+    grid: "0.25,0.35,0.45,0.55,0.65,0.75,0.85"
+    filter: *bull_filter
+    out: quick_scan/gate_bb_width_ge_bull.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    feature: vol_clustering_strength
+    operator: ">"
+    grid: "0.15,0.25,0.35,0.45,0.55,0.65,0.75"
+    filter: *bull_filter
+    out: quick_scan/gate_vol_cluster_gt_bull.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    feature: atr_percentile
+    operator: ">="
+    grid: "0.35,0.45,0.55,0.65,0.75,0.85,0.95"
+    filter: *bull_filter
+    out: quick_scan/gate_atr_pct_ge_bull.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    feature: trend_r2_20
+    operator: ">="
+    grid: "0.25,0.35,0.45,0.55,0.65,0.75,0.85"
+    filter: *bull_filter
+    out: quick_scan/gate_trend_r2_ge_bull.md
+
+decision_doc:
+  topic: tpc_regime_gate_extend_20260601
+  experiment_index: results/tpc/experiments/EXPERIMENT_INDEX.json
+  out: ../../../config/experiments/20260601_tpc_regime_gate_extend/DECISION.md
+
+quick_scan_html:
+  enabled: true
+  scan_dir: quick_scan
+  out: quick_scan/report.html

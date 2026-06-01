@@ -1,0 +1,99 @@
+# short_term_swing wide-pool top-100 columns test on recent_6m_oos
+#
+#   PYTHONPATH=src:scripts:. python scripts/rd_loop.py \
+#     --hypothesis-yaml config/experiments/20260601_1210_short_term_swing_wide_top100/rd_loop_short_term_swing_wide_top100.yaml
+#
+# 背景：
+#   - 复用 20260601 wide prepare（~882 cols, 6 币 2024-01→2026-03）
+#   - 复用同次 IC prune 产生的 ranked 列表（252 pass → 取 top-100）
+#   - 关键：holdout / τ 评估严格使用 recent_6m_oos（2025-10-01 → 2026-03-31）
+#     来自 config/market_segment.yaml（本次实验同期新增，便于未来与 TPC gate 等统一口径）
+#   - 策略配置独立 slug：short_term_swing_wide_top100_test（features.yaml 已写入 top-100 + atr_f）
+#   - 目的：验证“从大池子 IC 挑 100 列”在干净最近 6m OOS 上的实际可交易性（对比之前的 top-20 全面负）
+
+topic: short_term_swing_wide_top100_recent6m
+strategy: short_term_swing
+output_dir: results/rd_loop/short_term_swing_wide_top100_recent6m
+timeframe: "120T"
+feature_store_layer: features_tree_full_120T_958f665062
+data_path: data/parquet_data
+
+# 严格的最近 6 个月 OOS（very recent current regime）
+# 与 config/market_segment.yaml: recent_6m_oos 对齐
+# 数据上限 ~2026-03-30，此窗安全
+holdout: &holdout
+  start: "2025-10-01"
+  end: "2026-03-31"
+
+symbols_6: &symbols_6 BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+
+# 训练窗覆盖 holdout 前 + 少量 overlap（与之前 wide 保持一致）
+train_dates: &train_dates
+  start_date: "2024-01-01"
+  end_date: "2026-03-31"
+  holdout_start_date: "2025-10-01"
+  holdout_end_date: "2026-03-31"
+
+# 复用已有的 wide prepare（包含全部 ~882 列）
+# 实际进模型的列由 short_term_swing_wide_top100_test/features.yaml 决定（top-100 + atr_f）
+wide_prepare_parquet: &wide_prepare results/train_final/short_term_swing/prepare_wide_all_20260601/short_term_swing/features_labeled.parquet
+
+# 产物根（独立于 canonical short_term_swing，避免污染）
+prepare_root: &prepare_root results/train_final/short_term_swing/prepare_wide_all_20260601
+train_root: &train_root results/train_final/short_term_swing/train_wide_top100_recent6m_20260601
+
+tree_steps:
+  # prepare 已完成（wide 全列），此处仅作文档；如需重跑可置 enabled: true
+  - mode: prepare-only
+    enabled: false
+    config: config/strategies/tree_strategies/short_term_swing_wide_top100_test
+    symbols: *symbols_6
+    <<: *train_dates
+    output_root: *prepare_root
+    # 注意：features_parquet 仍指向原 wide（含全部列），scoping 在 train 阶段由 features.yaml 控制
+
+  # IC prune 复用之前 wide 结果（252 pass 的 ranked 列表）
+  # 本次实验不重新跑 IC，而是直接用 top-100 做 scoped train + τ 验证
+  - mode: ic-prune
+    enabled: false
+    config: config/strategies/tree_strategies/short_term_swing_wide_top100_test
+    features_parquet: *wide_prepare
+    out: ic_prune_wide_top100_reference
+    # 下面这行如果打开，会把 top-100 写回该 test slug 的 features.yaml（已手动写入，保持一致即可）
+    # intersect_features_yaml: config/strategies/tree_strategies/short_term_swing_wide_top100_test/features.yaml
+    # IC 规则仍参考 canonical 的 ic_screen.yaml（allowed_best_lags=10,20 等）
+
+  # 核心：用 dedicated top-100 config 训练（features.yaml 里只有 100 列 + atr_f）
+  - mode: train
+    enabled: true
+    config: config/strategies/tree_strategies/short_term_swing_wide_top100_test
+    symbols: *symbols_6
+    <<: *train_dates
+    output_root: *train_root
+    # 训练会自动调用 determine_feature_columns，只取该 slug features.yaml 里声明的列
+
+  # τ scan：严格在 recent_6m_oos 窗上（filter_split 仍用 holdout 标签，或直接日期）
+  - mode: tau-scan
+    enabled: true
+    config: config/strategies/tree_strategies/short_term_swing_wide_top100_test
+    predictions: results/train_final/short_term_swing/train_wide_top100_recent6m_20260601/short_term_swing_wide_top100_test/predictions.parquet
+    out: holdout_rr_recent6m
+    segment_label: recent_6m_oos
+    quantile_grid: "0.05,0.08,0.10,0.15,0.20,0.25,0.30"
+    # 优先用日期过滤（更精确对齐 market_segment）
+    # 如果 tree_holdout_tau_rr_scan 支持 --holdout-start / --holdout-end，这里可显式传
+    # 目前先用 filter_split: holdout（假设 prepare 时 split 列已按 2025-10-01 切）
+    filter_split: holdout
+
+research_scans: []
+# 如需额外分析可加：
+# research_scans:
+#   - mode: ic-decay
+#     ...
+
+# 未来可加 event_backtest grid（参考 TPC gate 做法 + segment_matrix 包含 recent_6m_oos）
+# variant_grid: ...
+
+decision_doc:
+  topic: short_term_swing_wide_top100_recent6m
+  out: config/experiments/20260601_1210_short_term_swing_wide_top100/DECISION.md

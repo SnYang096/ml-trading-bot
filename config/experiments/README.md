@@ -23,6 +23,11 @@
 
 **不在此目录：** 整棵策略变体树 → 仓库根 [`config_experiments/`](../config_experiments/)（与 `config/strategies` 对照）。
 
+> **跨 Layer 决策准则（2026-06 新增）**：  
+> 所有 gate / entry_filters / prefilter / regime / direction 等规则的最终 promote，必须遵守 [`LAYER_PROMOTION_CRITERIA.md`](LAYER_PROMOTION_CRITERIA.md) 里的“三条杠”：  
+> **在 canonical 三个市场阶段上，总 R 明显提升 + maxDD 不恶化 + 逻辑可解释** 才允许写入生产 YAML 并 `locked: true`。  
+> IC/label scan 仅用于生成假设。TPC gate 系列是本准则的第一次完整落地。
+
 **跨实验校准：** [`_cross/regime_thresholds/`](_cross/regime_thresholds/)（regime τ 季度标定日志）。
 
 **历史链接：** [`docs/decisions/README.md`](../docs/decisions/README.md) 为迁移索引；`docs/strategy/` 内旧 URL 不批量改。
@@ -65,6 +70,15 @@ PYTHONPATH=src:scripts python -m scripts.event_backtest \
 | [`20260529_tpc_gate_plateau/`](20260529_tpc_gate_plateau/) | tpc | gate plateau |
 | [`20260530_tpc_deep_pullback/`](20260530_tpc_deep_pullback/) | tpc | 深回撤 + 吸收（H1–H4） |
 | [`_smoke/`](_smoke/) | tpc | CI / 工具 smoke（非正式实验） |
+
+|| [`20260531_tpc_gate_validate/`](20260531_tpc_gate_validate/) | tpc | gate ablation Phase 1 |
+|| [`20260601_1124_tpc_regime_gate_extend/`](20260601_1124_tpc_regime_gate_extend/) | tpc | regime gate extend |
+|| [`20260601_1125_tpc_gate_validate/`](20260601_1125_tpc_gate_validate/) | tpc | gate G0/G1 by segment (mixed names) |
+|| [`20260601_1126_tpc_gate_monotonic_validate/`](20260601_1126_tpc_gate_monotonic_validate/) | tpc | monotonic single-sided gate label scan |
+|| [`20260601_1130_tpc_gate_final_lock/`](20260601_1130_tpc_gate_final_lock/) | tpc | gate final lock attempt (含 G10，YAML 问题中断) |
+|| [`20260601_1210_short_term_swing_wide_top100/`](20260601_1210_short_term_swing_wide_top100/) | short_term_swing | wide top100 IC + tree |
+|| [`20260601_1300_tpc_gate_canonical_g0_g1/`](20260601_1300_tpc_gate_canonical_g0_g1/) | tpc | **最终干净 G0 vs G1 判决**（仅 canonical 三阶段，按 LAYER_PROMOTION_CRITERIA.md lock） |
+|| [`20260601_1322_tree_forward_rr_ic_small_pool/`](20260601_1322_tree_forward_rr_ic_small_pool/) | fast_scalp, short_term_swing | label vs forward_rr IC + small pool comparison |
 
 ## 新建实验 checklist
 

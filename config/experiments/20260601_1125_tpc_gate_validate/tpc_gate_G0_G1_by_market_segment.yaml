@@ -1,0 +1,25 @@
+# G0 vs G1 — 按 config/market_segment.yaml 分段（BTC+ETH smoke）
+#
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260601_tpc_gate_validate/tpc_gate_G0_G1_by_market_segment.yaml \
+#     --quiet-signal-logs
+
+experiment_id: tpc_gate_G0_G1_by_market_segment_20260601
+strategy: tpc
+market_segment_path: config/market_segment.yaml
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+
+segment_matrix:
+  segments:
+    - bear_2022
+    - bull_2023_2024
+    - recent_range_to_bear
+  variants:
+    - suffix: G0
+      strategies_root: config_experiments/tpc_gate_ablate_G0_prod_strategies
+      output_dir: results/tpc/experiments/gate_by_segment/G0
+    - suffix: G1
+      strategies_root: config_experiments/tpc_gate_ablate_G1_no_bull_vol_strategies
+      output_dir: results/tpc/experiments/gate_by_segment/G1

@@ -93,6 +93,17 @@ class DirectionEvaluator:
         if self._fixed is not None:
             return self._fixed, "fixed_direction"
 
+        tree_hit = self._evaluate_tree_score_direction(features)
+        if tree_hit is not None:
+            direction, rule_id = tree_hit
+            if (
+                direction != 0
+                and self._filter is not None
+                and direction != self._filter
+            ):
+                return 0, None
+            return direction, rule_id
+
         if not self.rules:
             return 0, None
 
@@ -255,6 +266,32 @@ class DirectionEvaluator:
                 return direction, str(rule_id)
 
         return 0, None
+
+    def _evaluate_tree_score_direction(
+        self, features: Dict[str, Any]
+    ) -> Optional[Tuple[int, Optional[str]]]:
+        """Tree regression slug: direction.yaml ``source`` + ``thresholds`` block."""
+        thr = self.config.get("thresholds")
+        if not isinstance(thr, dict) or not thr:
+            return None
+        src = self.config.get("source") or {}
+        col = str(src.get("score_column") or "score").strip()
+        raw = features.get(col)
+        if raw is None:
+            return 0, None
+        try:
+            v = float(raw)
+        except (TypeError, ValueError):
+            return 0, None
+        if v != v:  # NaN
+            return 0, None
+        long_entry = thr.get("long_entry")
+        short_entry = thr.get("short_entry")
+        if long_entry is not None and v >= float(long_entry):
+            return 1, "tree_score_long"
+        if short_entry is not None and v <= float(short_entry):
+            return -1, "tree_score_short"
+        return 0, "tree_dead_zone"
 
     def _evaluate_atomic_direction_rule(
         self, rule: Dict[str, Any], features: Dict[str, Any]

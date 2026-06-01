@@ -1,0 +1,50 @@
+# Phase 2 — scan 后再跑（固定 E2_or entry + prod prefilter + prod regime）
+#
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260601_tpc_regime_gate_extend/tpc_regime_gate_extend_phase2_grid.yaml \
+#     --quiet-signal-logs
+
+experiment_id: tpc_regime_gate_extend_phase2_20260601
+strategy: tpc
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+trading_map: false
+
+runs:
+  - variant: G0_gate_prod
+    strategies_root: config_experiments/tpc_gate_ablate_G0_prod_strategies
+    start_date: "2023-01-01"
+    end_date: "2025-01-01"
+    output_dir: results/tpc/experiments/regime_gate_extend/G0_gate_prod
+
+  - variant: G1_no_bull_vol_gates
+    strategies_root: config_experiments/tpc_gate_ablate_G1_no_bull_vol_strategies
+    start_date: "2023-01-01"
+    end_date: "2025-01-01"
+    output_dir: results/tpc/experiments/regime_gate_extend/G1_no_bull_vol
+
+  - variant: G6_vol_lev_low_deny
+    strategies_root: config_experiments/tpc_gate_G6_vol_lev_low_deny_strategies
+    start_date: "2023-01-01"
+    end_date: "2025-01-01"
+    output_dir: results/tpc/experiments/regime_gate_extend/G6_vol_lev_low_deny
+
+  - variant: G7_evt_low_deny
+    strategies_root: config_experiments/tpc_gate_G7_evt_low_deny_strategies
+    start_date: "2023-01-01"
+    end_date: "2025-01-01"
+    output_dir: results/tpc/experiments/regime_gate_extend/G7_evt_low_deny
+
+  - variant: G9_vol_persist_all_regimes
+    strategies_root: config_experiments/tpc_gate_G9_vol_persist_all_regimes_strategies
+    start_date: "2023-01-01"
+    end_date: "2025-01-01"
+    output_dir: results/tpc/experiments/regime_gate_extend/G9_vol_persist_all_regimes
+
+  # 可选：F' regime（仅当 DECISION 签字复验 regime 时取消注释）
+  # - variant: Fp_ema_plus_slope
+  #   strategies_root: config_experiments/Fp_ema_plus_slope_strategies
+  #   start_date: "2023-01-01"
+  #   end_date: "2025-01-01"
+  #   output_dir: results/tpc/experiments/regime_gate_extend/Fp_ema_plus_slope

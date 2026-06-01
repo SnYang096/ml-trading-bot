@@ -18,24 +18,31 @@
 
 ## 物料
 
-- `rd_loop_fast_scalp_alts_majors.yaml` — 训练 / τ 扫描路径锚点
+- `rd_loop_fast_scalp_alts_majors.yaml` — Phase 2 训练 / holdout τ 扫描
+- `fast_scalp_segment_tau_grid.yaml` — **market_segment 四段验证**（deploy 冻结 τ，artifact 现推 score）
 - `fast_scalp_deploy_slugs.yaml` — 部署 slug 与 artifact 对照（机器可读）
 - 策略配置：`config/strategies/tree_strategies/fast_scalp_alts/`、`fast_scalp_majors/`
 
 ## 跑法
 
 ```bash
-# 一条命令：filter → τ scan → train → compare
-PYTHONPATH=src:scripts python scripts/rd_loop.py \
+# Phase 2：filter → τ scan → train → compare
+PYTHONPATH=src:scripts:. python scripts/rd_loop.py \
   --hypothesis-yaml config/experiments/20260530_fast_scalp_alts_majors/rd_loop_fast_scalp_alts_majors.yaml
+
+# 分段稳定性（config/market_segment.yaml 四段，冻结 deploy τ）
+PYTHONPATH=src:scripts:. python scripts/rd_loop.py \
+  --hypothesis-yaml config/experiments/20260530_fast_scalp_alts_majors/fast_scalp_segment_tau_grid.yaml
 ```
 
-运行前把 `rd_loop_fast_scalp_alts_majors.yaml` 里 `pooled_predictions` 指到 Phase 1 artifact。
+Segment 窗口与 `config/market_segment.yaml` 对齐：`bear_2022` | `bull_2023_2024` | `recent_range_to_bear` | `recent_6m_oos`。  
+模型 train 自 2024-01-01，holdout 自 2025-10-01；更早段为 walk-forward 诊断，**promote 门禁仍以 recent_6m_oos 为准**。
 
 ## 结果产物
 
 - `results/rd_loop/fast_scalp_ic_plateau/alts_holdout_rr_from_6coin/`
 - `results/rd_loop/fast_scalp_ic_plateau/majors_holdout_rr/`
+- `results/rd_loop/fast_scalp_ic_plateau/segment_matrix/{alts,majors}/<segment_id>/`
 - `results/train_final/fast_scalp_alts/train_final_latest/`
 - `results/train_final/fast_scalp_majors/train_final_latest/`
 

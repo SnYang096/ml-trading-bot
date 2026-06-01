@@ -1,0 +1,44 @@
+# TPC Gate 最终干净判决 Grid（仅 G0 vs G1，使用官方三个市场阶段）
+#
+# 这是 TPC gate 系列实验的**最终判决**版本：
+# - 严格只用 G0（prod 基线，两条 bull vol 中间带启用） vs G1（两条规则全部 disabled）
+# - 严格使用 config/market_segment.yaml 里定义的三个 canonical English segment
+# - 输出目录干净、无历史中文 segment 名称污染
+# - 跑完后直接按 LAYER_PROMOTION_CRITERIA.md 的三条杠决定是否 lock G1 形态 + 物理删除所有 disabled 历史规则
+#
+# 运行（推荐）：
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260601_1300_tpc_gate_canonical_g0_g1/tpc_gate_g0_vs_g1_canonical.yaml \
+#     --quiet-signal-logs
+#
+# 参考：
+# - LAYER_PROMOTION_CRITERIA.md（本目录同级）
+# - 之前所有 ablation（0530/0531/0601/0602）结论一致指向 G1
+# - 策略树快照：config_experiments/tpc_gate_ablate_G{0,1}_*_strategies （已冻结）
+
+experiment_id: tpc_gate_canonical_g0_vs_g1_20260601_1300
+strategy: tpc
+market_segment_path: config/market_segment.yaml
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+
+segment_matrix:
+  segments:
+    - bear_2022
+    - bull_2023_2024
+    - recent_range_to_bear
+  variants:
+    - suffix: G0_prod_baseline
+      strategies_root: config_experiments/tpc_gate_ablate_G0_prod_strategies
+      output_dir: results/tpc/experiments/gate_canonical_final/G0
+
+    - suffix: G1_no_bull_vol
+      strategies_root: config_experiments/tpc_gate_ablate_G1_no_bull_vol_strategies
+      output_dir: results/tpc/experiments/gate_canonical_final/G1
+
+# 说明：
+# - 完全不包含任何 G10 / monotonic / vol_lev 低尾 / EVT 等变体（它们已在之前实验被证伪或语法问题中断）
+# - 结果将严格按 bear_2022 / bull_2023_2024 / recent_range_to_bear 三个干净子目录产出
+# - 跑完后直接对比每个 segment 的 Total R、maxDD、CAGR、tail contrib 等，按 LAYER_PROMOTION_CRITERIA.md 决定
+# - 预期结论（基于历史一致证据）：G1 在 bull + recent 明显优于 G0，bear 中性 → lock G1 + 清理 gate.yaml

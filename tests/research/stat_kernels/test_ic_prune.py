@@ -79,6 +79,33 @@ def test_screen_features_requires_forward_rr():
         )
 
 
+def test_screen_features_skips_forward_rr_h_and_target() -> None:
+    n = 300
+    rng = np.random.default_rng(0)
+    df = pd.DataFrame(
+        {
+            "datetime": pd.date_range("2025-10-01", periods=n, freq="h"),
+            "forward_rr_h3": rng.normal(0, 1, n),
+            "label": rng.normal(0, 1, n),
+            "feat_a": rng.normal(0, 1, n),
+        }
+    )
+    rows, _, _ = screen_features(
+        df,
+        holdout_start="2025-10-01",
+        holdout_end="2026-04-01",
+        horizons=[1, 3],
+        min_ic=0.01,
+        max_lag=3,
+        min_n=50,
+        target="forward_rr_h3",
+    )
+    names = {r["feature"] for r in rows}
+    assert "forward_rr_h3" not in names
+    assert "label" not in names
+    assert "feat_a" in names
+
+
 def test_screen_features_records_sign(tmp_path: Path) -> None:
     df = _synthetic_holdout_df()
     rows, nodes, requested = screen_features(

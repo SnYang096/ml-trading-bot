@@ -1,0 +1,127 @@
+# fast_scalp alts/majors — market_segment 分段 τ 验证（deploy 冻结 quantile）
+#
+# 与 TPC gate 的 segment_matrix 同口径：日期来自 config/market_segment.yaml
+#
+#   PYTHONPATH=src:scripts:. python scripts/rd_loop.py \
+#     --hypothesis-yaml config/experiments/20260530_fast_scalp_alts_majors/fast_scalp_segment_tau_grid.yaml
+#
+# 方法：
+#   - 历史段（train 之前 / 混合窗）：artifact 现推 score + 冻结 q（段内重算 pred 分位阈值）
+#   - recent_6m_oos：与 Phase 2 一致，用 train artifact 的 holdout predictions.parquet（不现推）
+
+experiment_id: fast_scalp_segment_tau_20260601
+topic: fast_scalp_alts_majors_segment_validate
+strategy: fast_scalp
+output_dir: results/rd_loop/fast_scalp_ic_plateau/segment_matrix
+market_segment_path: config/market_segment.yaml
+timeframe: "120T"
+data_path: data/parquet_data
+feature_store_layer: features_tree_full_120T_958f665062
+
+train_start_date: "2024-01-01"
+holdout_start_date: "2025-10-01"
+
+pooled_artifact: &pooled_art results/train_final/fast_scalp/train_final_20260530_141451_ic_top35/fast_scalp
+pooled_predictions: &pooled_preds results/train_final/fast_scalp/train_final_20260530_141451_ic_top35/fast_scalp/predictions.parquet
+majors_artifact: &majors_art results/train_final/fast_scalp_majors/train_final_latest/fast_scalp_majors
+majors_predictions: &majors_preds results/train_final/fast_scalp_majors/train_final_latest/fast_scalp_majors/predictions.parquet
+
+seg_bear_2022: &seg_bear_2022
+  start_date: "2022-01-01"
+  end_date: "2023-01-01"
+  segment_label: bear_2022
+
+seg_bull_2023_2024: &seg_bull_2023_2024
+  start_date: "2023-01-01"
+  end_date: "2025-01-01"
+  segment_label: bull_2023_2024
+
+seg_recent_range: &seg_recent_range
+  start_date: "2025-01-01"
+  end_date: "2026-04-01"
+  segment_label: recent_range_to_bear
+
+seg_recent_6m: &seg_recent_6m
+  start_date: "2025-10-01"
+  end_date: "2026-03-31"
+  segment_label: recent_6m_oos
+
+alts_q: &alts_q
+  fixed_quantile: 0.05
+
+majors_q: &majors_q
+  fixed_quantile: 0.08
+
+tree_steps:
+  # ── fast_scalp_alts：历史 walk-forward（artifact 现推）──
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp_alts
+    artifact_dir: *pooled_art
+    symbols: SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+    <<: [*seg_bear_2022, *alts_q]
+    out: alts/bear_2022
+    filter_split: null
+
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp_alts
+    artifact_dir: *pooled_art
+    symbols: SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+    <<: [*seg_bull_2023_2024, *alts_q]
+    out: alts/bull_2023_2024
+    filter_split: null
+
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp_alts
+    artifact_dir: *pooled_art
+    symbols: SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+    <<: [*seg_recent_range, *alts_q]
+    out: alts/recent_range_to_bear
+    filter_split: null
+
+  # recent_6m_oos：holdout parquet（Phase 2 同路径）
+  - mode: filter-predictions
+    predictions: *pooled_preds
+    symbols: SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+    split: holdout
+    out: filtered/alts_holdout_preds.parquet
+
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp_alts
+    predictions: filtered/alts_holdout_preds.parquet
+    <<: [*seg_recent_6m, *alts_q]
+    out: alts/recent_6m_oos
+    filter_split: null
+
+  # ── fast_scalp_majors：历史 walk-forward ──
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp_majors
+    artifact_dir: *majors_art
+    symbols: BTCUSDT,ETHUSDT
+    <<: [*seg_bear_2022, *majors_q]
+    out: majors/bear_2022
+    filter_split: null
+
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp_majors
+    artifact_dir: *majors_art
+    symbols: BTCUSDT,ETHUSDT
+    <<: [*seg_bull_2023_2024, *majors_q]
+    out: majors/bull_2023_2024
+    filter_split: null
+
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp_majors
+    artifact_dir: *majors_art
+    symbols: BTCUSDT,ETHUSDT
+    <<: [*seg_recent_range, *majors_q]
+    out: majors/recent_range_to_bear
+    filter_split: null
+
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp_majors
+    predictions: *majors_preds
+    <<: [*seg_recent_6m, *majors_q]
+    out: majors/recent_6m_oos
+    filter_split: holdout
+
+research_scans: []

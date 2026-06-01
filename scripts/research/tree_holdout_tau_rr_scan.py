@@ -53,6 +53,28 @@ def _prepare_df(
     return df
 
 
+def _inject_feature_freq(
+    feature_loader: Any,
+    strategy_config: Any,
+    *,
+    timeframe: str,
+) -> None:
+    """Mirror train_strategy_pipeline freq injection for tick-aligned features."""
+    meta_timeframe = (strategy_config.meta or {}).get("timeframe") or timeframe
+    if not meta_timeframe:
+        return
+    feature_deps = feature_loader.feature_deps.get("features", {})
+    for feat_name in (
+        "vpin_base_aligned_features_f",
+        "trade_cluster_base_aligned_features_f",
+        "trade_cluster_semantic_scores_f",
+    ):
+        if feat_name not in feature_deps:
+            continue
+        compute_params = feature_deps[feat_name].setdefault("compute_params", {})
+        compute_params.setdefault("freq", meta_timeframe)
+
+
 def _predict_segment(
     *,
     artifact_dir: Path,
@@ -76,6 +98,7 @@ def _predict_segment(
     artifact = ModelArtifact.load(artifact_dir)
     strategy_config = StrategyConfigLoader(config_dir).load()
     feature_loader = StrategyFeatureLoader()
+    _inject_feature_freq(feature_loader, strategy_config, timeframe=timeframe)
     data_handler = DataHandler(data_path=data_path)
 
     parts: list[pd.DataFrame] = []
@@ -341,6 +364,8 @@ def run_tau_scan(
     data_path: str = "data/parquet_data",
     feature_store_layer: str | None = None,
     fixed_quantile: float | None = None,
+    long_entry_threshold: float | None = None,
+    short_entry_threshold: float | None = None,
     segment_label: str = "holdout",
     quantile_grid: str = "0.05,0.08,0.10,0.12,0.15,0.20,0.25,0.30",
     pred_grid: str | None = None,
@@ -432,25 +457,48 @@ def run_tau_scan(
         final["pred_plateau"] = _plateau_from_rows(pred_rows, "pred_threshold")
 
     final_bt_by_symbol: dict[str, Any] = {}
+    use_abs = long_entry_threshold is not None or short_entry_threshold is not None
     if "_symbol" in df.columns:
         for sym in sorted(df["_symbol"].dropna().unique()):
             part = df[df["_symbol"] == sym]
-            bt = _run_bt(
-                part, strategy_config, top_quantile=rec_q, bottom_quantile=rec_q
-            )
+            if use_abs:
+                bt = _run_bt(
+                    part,
+                    strategy_config,
+                    long_entry_threshold=long_entry_threshold,
+                    short_entry_threshold=short_entry_threshold,
+                )
+            else:
+                bt = _run_bt(
+                    part, strategy_config, top_quantile=rec_q, bottom_quantile=rec_q
+                )
             if bt:
                 final_bt_by_symbol[str(sym)] = bt
     else:
-        bt = _run_bt(df, strategy_config, top_quantile=rec_q, bottom_quantile=rec_q)
+        if use_abs:
+            bt = _run_bt(
+                df,
+                strategy_config,
+                long_entry_threshold=long_entry_threshold,
+                short_entry_threshold=short_entry_threshold,
+            )
+        else:
+            bt = _run_bt(df, strategy_config, top_quantile=rec_q, bottom_quantile=rec_q)
         if bt:
             final_bt_by_symbol["ALL"] = bt
 
     final["recommended"] = {
         "top_quantile": rec_q,
         "bottom_quantile": rec_q,
-        "pred_threshold_long": float(df["pred"].quantile(1 - rec_q)),
-        "pred_threshold_short": float(df["pred"].quantile(rec_q)),
     }
+    if use_abs:
+        final["recommended"]["long_entry_threshold"] = long_entry_threshold
+        final["recommended"]["short_entry_threshold"] = short_entry_threshold
+    else:
+        final["recommended"]["pred_threshold_long"] = float(
+            df["pred"].quantile(1 - rec_q)
+        )
+        final["recommended"]["pred_threshold_short"] = float(df["pred"].quantile(rec_q))
     final["holdout_rr_backtest"] = final_bt_by_symbol
 
     json_path = out_dir / "tau_scan_holdout_rr.json"
@@ -482,12 +530,22 @@ def run_tau_scan(
             )
     else:
         md_lines.append(f"_Scan skipped; fixed q={rec_q:.2f}_")
+    rec = final["recommended"]
+    if use_abs:
+        tau_desc = (
+            f"**Deploy τ (frozen)**: long≥{rec['long_entry_threshold']}, "
+            f"short≤{rec['short_entry_threshold']}"
+        )
+    else:
+        tau_desc = (
+            f"**Recommended q**: {rec_q:.2f} "
+            f"(long≥{rec['pred_threshold_long']:.4f}, "
+            f"short≤{rec['pred_threshold_short']:.4f})"
+        )
     md_lines.extend(
         [
             "",
-            f"**Recommended q**: {rec_q:.2f} "
-            f"(long≥{final['recommended']['pred_threshold_long']:.4f}, "
-            f"short≤{final['recommended']['pred_threshold_short']:.4f})",
+            tau_desc,
             "",
             "## Holdout RR backtest @ recommended τ",
             "",

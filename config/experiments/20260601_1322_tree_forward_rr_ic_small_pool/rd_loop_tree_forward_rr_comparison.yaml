@@ -1,0 +1,132 @@
+# label vs forward_rr IC target — small curated pools (fast_scalp + short_term_swing)
+#
+#   PYTHONPATH=src:scripts:. python scripts/rd_loop.py \
+#     --hypothesis-yaml config/experiments/20260601_1322_tree_forward_rr_ic_small_pool/rd_loop_tree_forward_rr_comparison.yaml
+
+topic: tree_forward_rr_ic_small_pool
+strategy: short_term_swing
+output_dir: results/rd_loop/tree_forward_rr_ic_small_pool
+timeframe: "120T"
+feature_store_layer: features_tree_full_120T_958f665062
+data_path: data/parquet_data
+
+holdout: &holdout
+  start: "2025-10-01"
+  end: "2026-03-31"
+
+symbols_6: &symbols_6 BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+train_dates: &train_dates
+  start_date: "2024-01-01"
+  end_date: "2026-03-31"
+  holdout_start_date: "2025-10-01"
+  holdout_end_date: "2026-03-31"
+
+train_root: &train_root results/train_final/tree_forward_rr_ic_small_pool
+prepare_fast: &prepare_fast results/train_final/tree_forward_rr_ic_small_pool/prepare_fast_scalp_20260601
+prepare_swing: &prepare_swing results/train_final/tree_forward_rr_ic_small_pool/prepare_short_term_swing_20260601
+
+tree_steps:
+  # ── fast_scalp: shared prepare (includes label + forward_rr_h3) ──
+  - mode: prepare-only
+    config: config/strategies/tree_strategies/fast_scalp_label_ic_small
+    symbols: *symbols_6
+    <<: *train_dates
+    output_root: *prepare_fast
+
+  - mode: ic-prune
+    config: config/strategies/tree_strategies/fast_scalp_label_ic_small
+    features_parquet: results/train_final/tree_forward_rr_ic_small_pool/prepare_fast_scalp_20260601/fast_scalp_label_ic_small/features_labeled.parquet
+    out: fast_scalp/ic_prune_label
+    holdout_start: "2025-10-01"
+    holdout_end: "2026-03-31"
+
+  - mode: ic-prune
+    config: config/strategies/tree_strategies/fast_scalp_forward_rr_ic_small
+    features_parquet: results/train_final/tree_forward_rr_ic_small_pool/prepare_fast_scalp_20260601/fast_scalp_label_ic_small/features_labeled.parquet
+    out: fast_scalp/ic_prune_forward_rr_h3
+    holdout_start: "2025-10-01"
+    holdout_end: "2026-03-31"
+
+  - mode: train
+    config: config/strategies/tree_strategies/fast_scalp_label_ic_small
+    symbols: *symbols_6
+    <<: *train_dates
+    output_root: results/train_final/tree_forward_rr_ic_small_pool/train_fast_scalp_label
+
+  - mode: train
+    config: config/strategies/tree_strategies/fast_scalp_forward_rr_ic_small
+    symbols: *symbols_6
+    <<: *train_dates
+    output_root: results/train_final/tree_forward_rr_ic_small_pool/train_fast_scalp_forward_rr
+
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp_label_ic_small
+    predictions: results/train_final/tree_forward_rr_ic_small_pool/train_fast_scalp_label/fast_scalp_label_ic_small/predictions.parquet
+    out: fast_scalp/tau_label
+    segment_label: recent_6m_oos
+    quantile_grid: "0.05,0.08,0.10,0.15,0.20,0.25,0.30"
+    filter_split: holdout
+
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp_forward_rr_ic_small
+    predictions: results/train_final/tree_forward_rr_ic_small_pool/train_fast_scalp_forward_rr/fast_scalp_forward_rr_ic_small/predictions.parquet
+    out: fast_scalp/tau_forward_rr_h3
+    segment_label: recent_6m_oos
+    quantile_grid: "0.05,0.08,0.10,0.15,0.20,0.25,0.30"
+    filter_split: holdout
+
+  # ── short_term_swing ──
+  - mode: prepare-only
+    config: config/strategies/tree_strategies/short_term_swing_label_ic_small
+    symbols: *symbols_6
+    <<: *train_dates
+    output_root: *prepare_swing
+
+  - mode: ic-prune
+    config: config/strategies/tree_strategies/short_term_swing_label_ic_small
+    features_parquet: results/train_final/tree_forward_rr_ic_small_pool/prepare_short_term_swing_20260601/short_term_swing_label_ic_small/features_labeled.parquet
+    out: short_term_swing/ic_prune_label
+    holdout_start: "2025-10-01"
+    holdout_end: "2026-03-31"
+
+  - mode: ic-prune
+    config: config/strategies/tree_strategies/short_term_swing_forward_rr_ic_small
+    features_parquet: results/train_final/tree_forward_rr_ic_small_pool/prepare_short_term_swing_20260601/short_term_swing_label_ic_small/features_labeled.parquet
+    out: short_term_swing/ic_prune_forward_rr_h20
+    holdout_start: "2025-10-01"
+    holdout_end: "2026-03-31"
+
+  - mode: train
+    config: config/strategies/tree_strategies/short_term_swing_label_ic_small
+    symbols: *symbols_6
+    <<: *train_dates
+    output_root: results/train_final/tree_forward_rr_ic_small_pool/train_swing_label
+
+  - mode: train
+    config: config/strategies/tree_strategies/short_term_swing_forward_rr_ic_small
+    symbols: *symbols_6
+    <<: *train_dates
+    output_root: results/train_final/tree_forward_rr_ic_small_pool/train_swing_forward_rr
+
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/short_term_swing_label_ic_small
+    predictions: results/train_final/tree_forward_rr_ic_small_pool/train_swing_label/short_term_swing_label_ic_small/predictions.parquet
+    out: short_term_swing/tau_label
+    segment_label: recent_6m_oos
+    quantile_grid: "0.05,0.08,0.10,0.15,0.20,0.25,0.30"
+    filter_split: holdout
+
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/short_term_swing_forward_rr_ic_small
+    predictions: results/train_final/tree_forward_rr_ic_small_pool/train_swing_forward_rr/short_term_swing_forward_rr_ic_small/predictions.parquet
+    out: short_term_swing/tau_forward_rr_h20
+    segment_label: recent_6m_oos
+    quantile_grid: "0.05,0.08,0.10,0.15,0.20,0.25,0.30"
+    filter_split: holdout
+
+research_scans: []
+
+# decision_doc disabled — tree comparison uses manual DECISION.md update
+# decision_doc:
+#   topic: tree_forward_rr_ic_small_pool
+#   out: config/experiments/20260601_1322_tree_forward_rr_ic_small_pool/DECISION.md

@@ -1,0 +1,53 @@
+# TPC Gate 最终锁定实验（使用官方三个市场阶段）
+#
+# 这是计划中确定 TPC gate 配置所剩的最后一个关键回测 grid。
+# 目标：确认 G1 是否在三个真实市场阶段都稳健，并给 vol_leverage 极低尾单边最后一次机会。
+#
+# 运行：
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260601_1130_tpc_gate_final_lock/tpc_gate_final_lock_grid.yaml \
+#     --quiet-signal-logs
+#
+# === 实际执行记录 ===
+# 启动: 2026-06-01 03:38 UTC (后台 PID 3035)
+# G10 策略树已就绪: vol_leverage 规则改为 value_lt: 0.03 + ema_1200_position>0.10 (disabled=false)
+# 等待首次 variant/segment 输出中...（数据加载阶段通常 5-12 分钟无打印）
+
+experiment_id: tpc_gate_final_lock_20260601_1130
+strategy: tpc
+market_segment_path: config/market_segment.yaml
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+
+segment_matrix:
+  segments:
+    - bear_2022
+    - bull_2023_2024
+    - recent_range_to_bear
+  variants:
+    # 基线（当前 prod）
+    - suffix: G0_prod
+      strategies_root: config_experiments/tpc_gate_ablate_G0_prod_strategies
+      output_dir: results/tpc/experiments/gate_final_lock/G0
+
+    # 当前已验证最好的方案（两条 bull vol 中间带 disabled）
+    - suffix: G1_best_so_far
+      strategies_root: config_experiments/tpc_gate_ablate_G1_no_bull_vol_strategies
+      output_dir: results/tpc/experiments/gate_final_lock/G1
+
+    # 唯一还剩一点 label 支持的单边单调候选（极低尾）
+    # 如需创建策略树，可执行：
+    #   cp -a config_experiments/tpc_gate_ablate_G1_no_bull_vol_strategies \
+    #        config_experiments/tpc_gate_G10_vla_lt003_bull_strategies
+    # 然后把 gate.yaml 里 vol_leverage 规则改成：
+    #   value_lt: 0.03 + ema_1200_position > 0.10
+    - suffix: G1_plus_vla_lt003_bull
+      strategies_root: config_experiments/tpc_gate_G10_vla_lt003_bull_strategies
+      output_dir: results/tpc/experiments/gate_final_lock/G1_vla_lt003
+
+# 说明：
+# - 本 grid 不再尝试 vol_persistence 的任何单边（label 已证伪方向反了）
+# - EVT 已彻底删除，不再出现
+# - Chop gate 暂不触碰（除非本 grid 跑完后你还想额外加一组 G1+关 chop）
+# - 跑完后即可最终决定 gate.yaml 的形态，并删除所有已 disabled 的历史规则

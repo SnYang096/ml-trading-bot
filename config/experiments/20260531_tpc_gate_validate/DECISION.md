@@ -54,10 +54,20 @@
 | vol_leverage bull 带 | **次要**；可 G5 单关复验 |
 | PE deny | **仍不 promote** |
 
-## Phase 2（待跑）
+## Phase 2（已完成）
 
-读完上表后再跑 `tpc_gate_validate_phase2_grid.yaml`（G0 vs G1_no_bull_vol [vs G5]），**不要**在 Phase 1 前跑完全 grid。
+BTC+ETH 2023–2025 · `results/tpc/experiments/gate_validate/`
+
+| Variant | trades | totR | CAGR | maxDD |
+|---------|--------|------|------|-------|
+| **G0** prod gate | 44 | **+6.71R** | 3.17% | **−6.32%** |
+| **G1** 关 bull vol×2 | 48 | **+7.88R** | 3.78% | −6.52% |
+| **G2** 关 chop | 63 | +8.54R | 3.81% | −6.72% |
+
+→ **G1**：相对 G0 **+1.17R / +4 笔**，maxDD 略差 **0.2pp** — 与 Phase 1「bull vol 可能过杀」一致。  
+→ **G2**：R 更高但 **笔数 +43%**、DD 更差；**不**因 smoke 单独关 chop promote。  
+→ **倾向**：prod 可试 **关闭 bull `vol_persistence` + `vol_leverage` 中间带**；等 0601 **G6/G7/G9** 后再定是否改形状或 EVT。
 
 ## Promote prod gate
 
-TODO（Phase 2 后）
+**已写入** `config/strategies/tpc/archetypes/gate.yaml` + `live/highcap/.../gate.yaml`（2026-06-01）：两条 bull vol 中间带 `disabled: true`；chop 保留；EVT 仍关。0601 G6/G7/G9 不采纳。

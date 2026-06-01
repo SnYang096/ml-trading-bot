@@ -1,0 +1,25 @@
+# fast_scalp: holdout IC prune → top-N column singletons (+ atr_f for label scale).
+# Column manifest: archetypes/model_features.yaml
+
+name: fast_scalp_label_ic_small
+description: 'IC-pruned @ holdout best_lag in {1,3,5}, |IC|>=0.02, target=label, top-20
+  columns (column singletons).
+
+  '
+feature_pipeline:
+  exclude_columns:
+  - atr
+  requested_features:
+  - atr_f
+  - box_stability_60
+  - macro_tp_vwap_1200_position
+  - evt_es_99
+  - evt_es_99_left
+  - evt_var_99
+  - evt_var_99_left
+  - hour_sin
+  - me_accel_5k_long
+  - me_accel_5k
+  - bpc_recovery_strength
+  - evt_tail_shape
+  - evt_tail_shape_left

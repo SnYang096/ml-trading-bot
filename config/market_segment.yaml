@@ -1,12 +1,24 @@
 # Canonical calendar segments for backtest / promote windows.
 #
 # - Dates here are the source of truth for segment labels.
-# - variant-grid YAML must copy start_date / end_date manually (no loader yet).
-# - `recent` overlaps `高位震荡/回落` on purpose: promote holdout vs segment diagnosis.
+# - variant-grid: use ``segment: <id>`` or ``segment_matrix`` (see scripts/event_backtest/market_segment.py).
+# Segments:
+#   bear_2022 (2022-01 → 2023-01)
+#   bull_2023_2024 (2023-01 → 2025-01)
+#   recent_range_to_bear (2025-01 → 2026-04) — long recent window
+#   recent_6m_oos (2025-10 → 2026-03) — focused >=6m very-recent OOS for current regime promote decisions
+#     (aligns with tree short_term_swing/fast_scalp holdout; data cutoff ~2026-03-30 as of 2026-06 builds)
+#
+# Usage example (tree IC/rd_loop):
+#   config/experiments/20260601_1210_short_term_swing_wide_top100/rd_loop_....yaml
+#     references recent_6m_oos dates for tau-scan holdout evaluation.
+#
+# Future: can be added to TPC gate variant-grid segment_matrix for focused current-regime G0/G1/G10 comparison.
 #
 # Usage (examples):
-#   bull_2023_2024: 2023-01-01 → 2025-01-01  (ETF rally main bull)
-#   recent:          2025-04-01 → 2026-04-01  (standard promote holdout)
+#   bear_2022:            2022-01-01 → 2023-01-01
+#   bull_2023_2024:       2023-01-01 → 2025-01-01
+#   recent_range_to_bear: 2025-01-01 → 2026-04-01
 
 segments:
   - id: bear_2022
@@ -21,14 +33,18 @@ segments:
     end_date: "2025-01-01"
     purpose: 牛市主段（含 ETF rally）
 
-  - id: 高位震荡/回落
+  - id: recent_range_to_bear
     label: Bear
     start_date: "2025-01-01"
-    end_date: "2025-07-01"
-    purpose: 高位震荡/回落
-
-  - id: recent
-    label: Recent
-    start_date: "2025-04-01"
     end_date: "2026-04-01"
-    purpose: promote 标准 holdout
+    purpose: High-range chop / pullback into bear (2025–2026)
+
+  # Focused very-recent OOS (>=6 months) for gate/promote decisions on current regime.
+  # Aligns with tree IC holdout windows (2025-10 → 2026-03). Use this (or a matrix including it)
+  # as the primary "live-like" OOS when deciding prod promote for TPC gate etc.
+  # Data max as of 20260601 builds: ~2026-03-30.
+  - id: recent_6m_oos
+    label: Recent6m
+    start_date: "2025-10-01"
+    end_date: "2026-03-31"
+    purpose: Very recent 6-month OOS (2025-10 to 2026-03) — primary current-regime evaluation window for promote decisions

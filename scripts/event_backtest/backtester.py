@@ -422,9 +422,12 @@ class EventBacktester:
                         _ip,
                     )
                     inject_scores_df = None
-                elif "add_ml_score" not in inject_scores_df.columns:
+                elif (
+                    "add_ml_score" not in inject_scores_df.columns
+                    and "score" not in inject_scores_df.columns
+                ):
                     logger.warning(
-                        "inject add_ml_scores parquet missing 'add_ml_score' column: %s",
+                        "inject scores parquet missing 'add_ml_score' or 'score' column: %s",
                         _ip,
                     )
                     inject_scores_df = None
@@ -436,7 +439,7 @@ class EventBacktester:
                         inject_scores_df["timestamp"], utc=True
                     )
                     logger.info(
-                        "Loaded add_ml_score injections: %d rows from %s",
+                        "Loaded score injections: %d rows from %s",
                         len(inject_scores_df),
                         _ip,
                     )
@@ -600,14 +603,17 @@ class EventBacktester:
                         sub2 = sub.sort_values("timestamp").drop_duplicates(
                             "timestamp", keep="last"
                         )
-                        ser = pd.Series(
-                            sub2["add_ml_score"].astype(float).values,
-                            index=pd.DatetimeIndex(sub2["timestamp"], tz="UTC"),
-                        ).sort_index()
-                        aligned = ser.reindex(features_df.index).ffill()
-                        features_df["add_ml_score"] = aligned.to_numpy(
-                            dtype=float, copy=False
-                        )
+                        for inj_col in ("score", "add_ml_score"):
+                            if inj_col not in sub2.columns:
+                                continue
+                            ser = pd.Series(
+                                sub2[inj_col].astype(float).values,
+                                index=pd.DatetimeIndex(sub2["timestamp"], tz="UTC"),
+                            ).sort_index()
+                            aligned = ser.reindex(features_df.index).ffill()
+                            features_df[inj_col] = aligned.to_numpy(
+                                dtype=float, copy=False
+                            )
 
                 if _anchor_en_ev and ANCHOR_COLUMN in features_df.columns:
                     if str(sym).strip().upper() == _anchor_u:

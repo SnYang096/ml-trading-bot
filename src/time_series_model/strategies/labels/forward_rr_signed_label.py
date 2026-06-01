@@ -31,6 +31,30 @@ import pandas as pd
 _EPS = 1e-9
 
 
+def forward_rr_column_name(horizon: int) -> str:
+    """Column name for unfloored signed forward RR at horizon H (IC / analysis)."""
+    return f"forward_rr_h{horizon}"
+
+
+def compute_raw_signed_forward_rr(
+    df: pd.DataFrame,
+    *,
+    horizon: int,
+    price_col: str = "close",
+    atr_col: str = "atr14",
+    drop_inf: bool = True,
+) -> pd.Series:
+    """Unfloored signed forward RR — aligns with execution-layer bar return."""
+    return compute_signed_forward_rr_label(
+        df,
+        horizon=horizon,
+        price_col=price_col,
+        atr_col=atr_col,
+        rr_floor=0.0,
+        drop_inf=drop_inf,
+    ).rename(forward_rr_column_name(horizon))
+
+
 def compute_signed_forward_rr_label(
     df: pd.DataFrame,
     *,

@@ -1,0 +1,192 @@
+# TPC gate 单调单边 — condition-set + plateau（Phase 1 only）
+#
+#   PYTHONPATH=src:scripts python scripts/rd_loop.py \
+#     --hypothesis-yaml config/experiments/20260602_tpc_gate_monotonic_validate/rd_loop_tpc_gate_monotonic.yaml
+
+topic: tpc_gate_monotonic_20260602
+strategy: tpc
+output_dir: results/rd_loop/tpc_gate_monotonic
+
+features_parquet: &parquet results/train_final/tpc/train_final_20260523_122438_rr_extreme/tpc/features_labeled.parquet
+label: &label success_no_rr_extreme
+
+base_filter: &base_filter
+  - tpc_semantic_chop<=0.40
+
+bull_filter: &bull_filter
+  - ema_1200_position>=0.10
+  - tpc_semantic_chop<=0.40
+
+bear_filter: &bear_filter
+  - ema_1200_position<=-0.10
+  - tpc_semantic_chop<=0.40
+
+quick_layer_scans:
+  # ── 1) tpc_semantic_chop：单调 = 高 chop 更差 → deny gt ──
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    feature: tpc_semantic_chop
+    operator: ">"
+    grid: "0.25,0.30,0.35,0.40,0.45,0.50,0.55"
+    filter: *base_filter
+    out: quick_scan/chop_gt_all.md
+
+  - mode: condition-set
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    filter: *base_filter
+    condition:
+      - "mono_deny_chop_gt_035: tpc_semantic_chop>0.35"
+      - "mono_deny_chop_gt_040: tpc_semantic_chop>0.40"
+      - "mono_deny_chop_gt_045: tpc_semantic_chop>0.45"
+      - "prod_chop_gt_040: tpc_semantic_chop>0.4"
+    out: quick_scan/mono_chop_deny_gt.md
+
+  # ── 2) vol_persistence：先扫方向，再列单边 deny / 中间带对照 ──
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    feature: vol_persistence
+    operator: ">"
+    grid: "0.001,0.003,0.006,0.01,0.02,0.04,0.062,0.08,0.10"
+    filter: *bull_filter
+    out: quick_scan/vol_persist_gt_bull.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    feature: vol_persistence
+    operator: "<"
+    grid: "0.01,0.02,0.03,0.04,0.05,0.062,0.08,0.10"
+    filter: *bull_filter
+    out: quick_scan/vol_persist_lt_bull.md
+
+  - mode: condition-set
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    filter: *bull_filter
+    condition:
+      - "prod_mid_bull: vol_persistence>0.0029 AND vol_persistence<0.0616 AND ema_1200_position>0.10"
+      - "mono_deny_vp_lt_003: vol_persistence<0.003 AND ema_1200_position>0.10"
+      - "mono_deny_vp_lt_010: vol_persistence<0.01 AND ema_1200_position>0.10"
+      - "mono_deny_vp_gt_062: vol_persistence>0.062 AND ema_1200_position>0.10"
+      - "mono_deny_vp_gt_080: vol_persistence>0.08 AND ema_1200_position>0.10"
+    out: quick_scan/mono_vol_persist_bull.md
+
+  - mode: condition-set
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    filter: *base_filter
+    condition:
+      - "mono_deny_vp_lt_003_all: vol_persistence<0.003"
+      - "mono_deny_vp_gt_062_all: vol_persistence>0.062"
+    out: quick_scan/mono_vol_persist_all.md
+
+  # ── 3) vol_leverage_asymmetry：单调假设 = 低尾更差 → deny lt（bull）──
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    feature: vol_leverage_asymmetry
+    operator: ">"
+    grid: "0.03,0.05,0.08,0.10,0.12,0.15,0.18"
+    filter: *bull_filter
+    out: quick_scan/vol_lev_gt_bull.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    feature: vol_leverage_asymmetry
+    operator: "<"
+    grid: "0.02,0.03,0.05,0.08,0.10,0.12,0.15"
+    filter: *bull_filter
+    out: quick_scan/vol_lev_lt_bull.md
+
+  - mode: condition-set
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    filter: *bull_filter
+    condition:
+      - "prod_mid_bull: vol_leverage_asymmetry>0.0558 AND vol_leverage_asymmetry<0.1482 AND ema_1200_position>0.10"
+      - "mono_deny_vla_lt_003: vol_leverage_asymmetry<0.03 AND ema_1200_position>0.10"
+      - "mono_deny_vla_lt_005: vol_leverage_asymmetry<0.05 AND ema_1200_position>0.10"
+      - "mono_deny_vla_lt_008: vol_leverage_asymmetry<0.08 AND ema_1200_position>0.10"
+      - "mono_deny_vla_gt_015: vol_leverage_asymmetry>0.15 AND ema_1200_position>0.10"
+    out: quick_scan/mono_vol_lev_bull.md
+
+  # ── 4) evt_var_99：单调假设 = 低 EVT 更差 → deny lt；高尾作反例 ──
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    feature: evt_var_99
+    operator: ">"
+    grid: "0.50,0.55,0.60,0.65,0.70,0.75,0.80,0.85"
+    filter: *base_filter
+    out: quick_scan/evt_gt_all.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    feature: evt_var_99
+    operator: "<"
+    grid: "0.40,0.45,0.50,0.55,0.60,0.65"
+    filter: *base_filter
+    out: quick_scan/evt_lt_all.md
+
+  - mode: condition-set
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    filter: *base_filter
+    condition:
+      - "prod_mid: evt_var_99>0.6706 AND evt_var_99<0.7976"
+      - "mono_deny_evt_lt_050: evt_var_99<0.50"
+      - "mono_deny_evt_lt_055: evt_var_99<0.55"
+      - "mono_deny_evt_lt_060: evt_var_99<0.60"
+      - "mono_deny_evt_gt_075: evt_var_99>0.75"
+      - "mono_deny_evt_gt_080: evt_var_99>0.80"
+    out: quick_scan/mono_evt_all.md
+
+  # ── 汇总表：四特征「推荐单调 deny」一行 condition-set ──
+  - mode: condition-set
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    filter: *bull_filter
+    condition:
+      - "stack_chop_gt_040: tpc_semantic_chop>0.40"
+      - "stack_vp_lt_003: vol_persistence<0.003 AND ema_1200_position>0.10"
+      - "stack_vla_lt_005: vol_leverage_asymmetry<0.05 AND ema_1200_position>0.10"
+      - "stack_evt_lt_055: evt_var_99<0.55"
+    out: quick_scan/mono_stack_bull.md
+
+  - mode: condition-set
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    filter: *base_filter
+    condition:
+      - "stack_chop_gt_040: tpc_semantic_chop>0.40"
+      - "stack_evt_lt_055: evt_var_99<0.55"
+    out: quick_scan/mono_stack_all.md
+
+decision_doc:
+  topic: tpc_gate_monotonic_20260602
+  experiment_index: results/tpc/experiments/EXPERIMENT_INDEX.json
+  out: ../../../config/experiments/20260602_tpc_gate_monotonic_validate/DECISION.md
+
+quick_scan_html:
+  enabled: true
+  scan_dir: quick_scan
+  out: quick_scan/report.html

@@ -43,6 +43,17 @@ InvertMode = Literal["none", "auto"]
 WritebackMode = Literal["nodes", "columns"]
 
 
+def _skip_ic_feature_column(name: str, target: str) -> bool:
+    """Exclude meta/target/leakage columns from IC feature screening."""
+    if name in _BASE_SKIP:
+        return True
+    if name == target:
+        return True
+    if name.startswith("forward_rr_h"):
+        return True
+    return False
+
+
 def load_feature_deps(path: Path | None = None) -> dict[str, Any]:
     deps_path = path or DEFAULT_FEATURE_DEPS
     data = yaml.safe_load(deps_path.read_text(encoding="utf-8")) or {}
@@ -260,7 +271,7 @@ def screen_features(
     feature_cols = [
         c
         for c in sub.columns
-        if c not in _BASE_SKIP
+        if not _skip_ic_feature_column(str(c), target)
         and not str(c).startswith(("binary_signal", "signal_"))
         and pd.api.types.is_numeric_dtype(sub[c])
     ]
