@@ -7,12 +7,9 @@ feature_pipeline:
   allowed_gate_deny_features:
     # TPC late-entry 保护 (策略层决策, 保留)
     - "ema_1200_position"
-    # TPC 专属 chop 语义
+    # TPC 专属 chop 语义（gate 仅保留 semantic_chop）
     - "tpc_semantic_chop"
     - "tpc_semantic_chop_ts_q"
-    # 波动率（与 gate: vol_persistence / vol_leverage_asymmetry 对齐）
-    - "vol_persistence"
-    - "vol_leverage_asymmetry"
     - "vol_regime_shift*"
     # Chop / 震荡噪声
     - "bb_width_normalized_pct"

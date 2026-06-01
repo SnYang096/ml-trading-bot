@@ -1,5 +1,5 @@
 # Promoted 2026-05-31 — deep_pullback E2_or (vol OR delta; Pass1 tau 0.45/0.15)
-# Gate 2026-06-01 — disabled bull vol_persistence + vol_leverage mid-bands (G1); chop on; EVT rule removed.
+# Gate 2026-06-01 locked (G1 canonical): chop only; vol_* / EVT gate rules removed from gate.yaml.
 # Smoke: E2_or + G1 gate (+7.88R, 48 closes BTC+ETH bull_2023_2024)
 
 filters:

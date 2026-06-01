@@ -1,14 +1,13 @@
-# TPC Gate — prod (promoted 2026-06-01)
-# 0530/0531/0601 gate ablation (E2_or entry, BTC+ETH): G1 关 bull vol×2 → +7.88R vs G0 +6.71R (2023–2025);
-# G6/G9 证伪（低尾 vol_lev、全 regime vol_persist）。EVT gate 已删除（G7 低尾/backtest 无收益）。chop 保留。
-# 分段复验: config/market_segment.yaml (bear_2022 / bull_2023_2024 / recent_range_to_bear)
+# TPC Gate — prod (locked 2026-06-01, canonical confirm 20260601_1300)
+# G1 vs G0 on market_segment.yaml (BTC+ETH): bear neutral; bull +1.17R; recent +4.76R; sum +5.93R.
+# vol_persistence / vol_leverage bull mid-bands removed (label+backtest overkill). EVT removed earlier.
+# Only chop gate remains; macro EMA1200 in archetypes/regime.yaml.
 
 schema:
   phases:
-  - system_safety
   - hard_gate
   - guardrail
-  evaluation_order: system_safety -> hard_gate -> guardrail
+  evaluation_order: hard_gate -> guardrail
   governance:
     selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
     min_gate_score: 0.0
@@ -29,44 +28,4 @@ hard_gates:
   promote_never_disable: true
   lock_reason: 波动区过滤 — 高 chop bar 上虚假回调/来回扫（TPC gate；宏观带由 regime EMA1200）
 guardrails: []
-system_safety:
-- id: gate_vol_persistence_vol_persistence_bull_only
-  tag: HARD_VOL_PERSISTENCE_VOL_PERSISTENCE
-  phase: system_safety
-  priority: 12
-  reason: 统计验证规则 (lift=1.24)；regime-conditional：仅在 ema_1200_position>0.10 强多头时启用，bear 段允许通过以避免误杀
-  when:
-    all_of:
-    - vol_persistence:
-        value_gt: 0.0029
-    - vol_persistence:
-        value_lt: 0.0616
-    - ema_1200_position:
-        value_gt: 0.10
-  then:
-    action: deny
-  comment: 'Variant H: vol gates only active in ema_strong_bull (ema_1200_position>0.10)'
-  locked: true
-  lock_reason: 波动率持久性：低波噪声切换/拖泥带水期对趋势策略不利（仅 bull 段）
-  disabled: true
-  disabled_reason: '20260601 G1 promote — bull vol_persist mid-band overkill on label+backtest'
-- id: gate_tpc_vol_leverage_asymmetry_mid_bull_only
-  tag: HARD_TPC_VOL_LEVERAGE_ASYMMETRY
-  phase: system_safety
-  priority: 13
-  reason: 与 BPC/ME/SRB 对齐：波动杠杆非对称严重时趋势容易被拖垮；regime-conditional：仅 bull 段启用
-  when:
-    all_of:
-    - vol_leverage_asymmetry:
-        value_gt: 0.0558
-    - vol_leverage_asymmetry:
-        value_lt: 0.1482
-    - ema_1200_position:
-        value_gt: 0.10
-  then:
-    action: deny
-  locked: true
-  promote_never_disable: true
-  lock_reason: 波动杠杆非对称安全门（仅 bull 段）
-  disabled: true
-  disabled_reason: '20260601 G1 promote — bull vol_lev mid-band; G6 low-tail shape rejected'
+system_safety: []

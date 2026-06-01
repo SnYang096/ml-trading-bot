@@ -71,3 +71,9 @@ nohup ... 2>&1 > /tmp/tpc_gate_final_1300.log &
 - 本实验只是用**最干净的 canonical 窗口 + 最新 market_segment 定义**把结论最后确认一次，避免任何命名/配置污染。
 
 跑完后即可彻底、干净地把 TPC gate 配置锁死，不再留任何 ambiguous disabled 包袱。
+
+---
+
+## 状态（2026-06-01）
+
+**已完成**。见 [`DECISION.md`](DECISION.md)：G1 promote，三阶段 +5.93R vs G0；prod/live `gate.yaml` 仅保留 chop。
