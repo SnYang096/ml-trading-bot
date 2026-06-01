@@ -1,0 +1,130 @@
+# Phase 2 — trend regime gate ablation (vector τ-scan 先行)
+#
+#   PYTHONPATH=src:scripts:. python scripts/rd_loop.py \
+#     --hypothesis-yaml config/experiments/20260530_fast_scalp_alts_majors/fast_scalp_trend_gate_ablation.yaml
+#
+# G0 baseline | G1 trend_confidence≥0.7 | G2 bpc_semantic_chop_ts_q≤0.25 | G3 both
+# holdout parquet 已含 trend_confidence / bpc_semantic_chop_ts_q（见 export 验证）
+
+experiment_id: fast_scalp_trend_gate_ablation_20260601
+topic: fast_scalp_trend_gate
+strategy: fast_scalp
+output_dir: results/rd_loop/fast_scalp_ic_plateau/trend_gate_ablation
+market_segment_path: config/market_segment.yaml
+timeframe: "120T"
+
+pooled_predictions: &pooled_preds results/train_final/fast_scalp/train_final_20260530_141451_ic_top35/fast_scalp/predictions.parquet
+majors_predictions: &majors_preds results/train_final/fast_scalp_majors/train_final_latest/fast_scalp_majors/predictions.parquet
+
+seg_recent_6m: &seg_recent_6m
+  start_date: "2025-10-01"
+  end_date: "2026-03-31"
+  segment_label: recent_6m_oos
+
+seg_bear_2022: &seg_bear_2022
+  start_date: "2022-01-01"
+  end_date: "2023-01-01"
+  segment_label: bear_2022
+
+seg_bull_2023_2024: &seg_bull_2023_2024
+  start_date: "2023-01-01"
+  end_date: "2025-01-01"
+  segment_label: bull_2023_2024
+
+seg_recent_range: &seg_recent_range
+  start_date: "2025-01-01"
+  end_date: "2026-04-01"
+  segment_label: recent_range_to_bear
+
+alts_q: &alts_q
+  fixed_quantile: 0.05
+
+majors_q: &majors_q
+  fixed_quantile: 0.08
+
+tree_steps:
+  # ── alts G0–G3 @ recent_6m_oos ──
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp_alts
+    predictions: *pooled_preds
+    symbols: SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+    regime_gate: G0
+    <<: [*seg_recent_6m, *alts_q]
+    out: alts/recent_6m_oos/G0
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp_alts
+    predictions: *pooled_preds
+    symbols: SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+    regime_gate: G1
+    <<: [*seg_recent_6m, *alts_q]
+    out: alts/recent_6m_oos/G1
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp_alts
+    predictions: *pooled_preds
+    symbols: SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+    regime_gate: G2
+    <<: [*seg_recent_6m, *alts_q]
+    out: alts/recent_6m_oos/G2
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp_alts
+    predictions: *pooled_preds
+    symbols: SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+    regime_gate: G3
+    <<: [*seg_recent_6m, *alts_q]
+    out: alts/recent_6m_oos/G3
+
+  # ── majors G0–G3 @ recent_6m_oos ──
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp_majors
+    predictions: *majors_preds
+    symbols: BTCUSDT,ETHUSDT
+    regime_gate: G0
+    <<: [*seg_recent_6m, *majors_q]
+    out: majors/recent_6m_oos/G0
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp_majors
+    predictions: *majors_preds
+    symbols: BTCUSDT,ETHUSDT
+    regime_gate: G1
+    <<: [*seg_recent_6m, *majors_q]
+    out: majors/recent_6m_oos/G1
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp_majors
+    predictions: *majors_preds
+    symbols: BTCUSDT,ETHUSDT
+    regime_gate: G2
+    <<: [*seg_recent_6m, *majors_q]
+    out: majors/recent_6m_oos/G2
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp_majors
+    predictions: *majors_preds
+    symbols: BTCUSDT,ETHUSDT
+    regime_gate: G3
+    <<: [*seg_recent_6m, *majors_q]
+    out: majors/recent_6m_oos/G3
+
+  # ── segment matrix stability @ G0 vs best gate (G3) alts ──
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp_alts
+    predictions: *pooled_preds
+    symbols: SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+    regime_gate: G3
+    <<: [*seg_bear_2022, *alts_q]
+    out: alts/bear_2022/G3
+    filter_split: null
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp_alts
+    predictions: *pooled_preds
+    symbols: SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+    regime_gate: G3
+    <<: [*seg_bull_2023_2024, *alts_q]
+    out: alts/bull_2023_2024/G3
+    filter_split: null
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp_alts
+    predictions: *pooled_preds
+    symbols: SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+    regime_gate: G3
+    <<: [*seg_recent_range, *alts_q]
+    out: alts/recent_range_to_bear/G3
+    filter_split: null

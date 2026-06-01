@@ -1,0 +1,88 @@
+# Phase 1 — vectorbt τ-scan trades vs event_backtest (recent_6m_oos)
+#
+# 前置：holdout predictions + deploy 冻结 τ（见 fast_scalp_deploy_slugs.yaml）
+#
+# 一键（rd_loop tree_steps）：
+#   PYTHONPATH=src:scripts:. python scripts/rd_loop.py \
+#     --hypothesis-yaml config/experiments/20260530_fast_scalp_alts_majors/fast_scalp_vector_event_align.yaml
+#
+# 手工：
+#   PYTHONPATH=src:scripts python scripts/research/export_tree_vector_trades.py ...
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest --variant-grid ...
+#   PYTHONPATH=src:scripts python scripts/research/diagnose_tree_vector_event_gap.py ...
+
+experiment_id: fast_scalp_vector_event_align_20260601
+topic: fast_scalp_vector_event_align
+strategy: fast_scalp
+output_dir: results/rd_loop/fast_scalp_ic_plateau/vector_event_align
+
+holdout:
+  start_date: "2025-10-01"
+  end_date: "2026-03-31"
+
+pooled_predictions: &pooled_preds results/train_final/fast_scalp/train_final_20260530_141451_ic_top35/fast_scalp/predictions.parquet
+majors_predictions: &majors_preds results/train_final/fast_scalp_majors/train_final_latest/fast_scalp_majors/predictions.parquet
+
+alts_tau: &alts_tau
+  long_entry_threshold: 0.3701
+  short_entry_threshold: -0.0074
+  entry_mode: cross
+
+majors_tau: &majors_tau
+  long_entry_threshold: 0.3536
+  short_entry_threshold: 0.0672
+  entry_mode: cross
+
+tree_steps:
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/research/export_tree_scores_for_event_backtest.py \
+        --predictions results/train_final/fast_scalp/train_final_20260530_141451_ic_top35/fast_scalp/predictions.parquet \
+        --symbols SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT \
+        --start-date 2025-10-01 --end-date 2026-03-31 \
+        --output results/rd_loop/fast_scalp_ic_plateau/vector_event_align/scores/alts_holdout.parquet
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/research/export_tree_scores_for_event_backtest.py \
+        --predictions results/train_final/fast_scalp_majors/train_final_latest/fast_scalp_majors/predictions.parquet \
+        --symbols BTCUSDT,ETHUSDT \
+        --start-date 2025-10-01 --end-date 2026-03-31 \
+        --output results/rd_loop/fast_scalp_ic_plateau/vector_event_align/scores/majors_holdout.parquet
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/research/export_tree_vector_trades.py \
+        --config config/strategies/tree_strategies/fast_scalp_alts \
+        --predictions results/train_final/fast_scalp/train_final_20260530_141451_ic_top35/fast_scalp/predictions.parquet \
+        --symbols SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT \
+        --start-date 2025-10-01 --end-date 2026-03-31 \
+        --fixed-quantile 0.05 --entry-mode cross \
+        --output-csv results/rd_loop/fast_scalp_ic_plateau/vector_event_align/alts/vector_trades.csv \
+        --summary-json results/rd_loop/fast_scalp_ic_plateau/vector_event_align/alts/vector_summary.json
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/research/export_tree_vector_trades.py \
+        --config config/strategies/tree_strategies/fast_scalp_majors \
+        --predictions results/train_final/fast_scalp_majors/train_final_latest/fast_scalp_majors/predictions.parquet \
+        --symbols BTCUSDT,ETHUSDT \
+        --start-date 2025-10-01 --end-date 2026-03-31 \
+        --fixed-quantile 0.08 --entry-mode cross \
+        --output-csv results/rd_loop/fast_scalp_ic_plateau/vector_event_align/majors/vector_trades.csv \
+        --summary-json results/rd_loop/fast_scalp_ic_plateau/vector_event_align/majors/vector_summary.json
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python -m scripts.event_backtest \
+        --variant-grid config/experiments/20260530_fast_scalp_alts_majors/fast_scalp_event_backtest_confirm.yaml
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/research/diagnose_tree_vector_event_gap.py \
+        --vector-csv results/rd_loop/fast_scalp_ic_plateau/vector_event_align/alts/vector_trades.csv \
+        --event-csv results/rd_loop/fast_scalp_ic_plateau/event_confirm/alts_recent_6m_oos/event_trades_fast_scalp_alts.csv \
+        --event-capital-json results/rd_loop/fast_scalp_ic_plateau/event_confirm/alts_recent_6m_oos/capital_report.json \
+        --output-dir results/rd_loop/fast_scalp_ic_plateau/vector_event_align/alts
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/research/diagnose_tree_vector_event_gap.py \
+        --vector-csv results/rd_loop/fast_scalp_ic_plateau/vector_event_align/majors/vector_trades.csv \
+        --event-csv results/rd_loop/fast_scalp_ic_plateau/event_confirm/majors_recent_6m_oos/event_trades_fast_scalp_majors.csv \
+        --event-capital-json results/rd_loop/fast_scalp_ic_plateau/event_confirm/majors_recent_6m_oos/capital_report.json \
+        --output-dir results/rd_loop/fast_scalp_ic_plateau/vector_event_align/majors

@@ -2103,9 +2103,14 @@ def run_vectorbt_backtest(
             n_trades = int(len(trades))
             n_win = int((trades["PnL"] > 0).sum())
             win_rate_manual = 100.0 * n_win / n_trades
-            trades_sample = (
-                trades.sort_values("Entry Timestamp").head(200).reset_index(drop=True)
-            )
+            trades_limit = params.get("debug_trades_limit", 200)
+            sorted_trades = trades.sort_values("Entry Timestamp")
+            if trades_limit is None:
+                trades_sample = sorted_trades.reset_index(drop=True)
+            else:
+                trades_sample = sorted_trades.head(int(trades_limit)).reset_index(
+                    drop=True
+                )
             debug_payload["trades"] = trades_sample.to_dict(orient="records")
             debug_payload["trades_meta"] = {
                 "n_trades": n_trades,

@@ -33,6 +33,14 @@ PYTHONPATH=src:scripts:. python scripts/rd_loop.py \
 # 分段稳定性（config/market_segment.yaml 四段，冻结 deploy τ）
 PYTHONPATH=src:scripts:. python scripts/rd_loop.py \
   --hypothesis-yaml config/experiments/20260530_fast_scalp_alts_majors/fast_scalp_segment_tau_grid.yaml
+
+# event_backtest 确认（1min 持仓管理 + 注入 holdout tree score）
+PYTHONPATH=src:scripts python scripts/research/export_tree_scores_for_event_backtest.py \
+  --predictions results/train_final/fast_scalp/train_final_20260530_141451_ic_top35/fast_scalp/predictions.parquet \
+  --symbols SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT \
+  --output results/rd_loop/fast_scalp_ic_plateau/event_confirm/scores/alts_holdout.parquet
+PYTHONPATH=src:scripts python -m scripts.event_backtest \
+  --variant-grid config/experiments/20260530_fast_scalp_alts_majors/fast_scalp_event_backtest_confirm.yaml
 ```
 
 Segment 窗口与 `config/market_segment.yaml` 对齐：`bear_2022` | `bull_2023_2024` | `recent_range_to_bear` | `recent_6m_oos`。  

@@ -13,14 +13,11 @@ holding:
 
 stop_loss:
   type: trailing
-  initial_r: 4.0
+  initial_r: 50.0
   atr_col: atr
   atr_window: 14
   trailing:
-    enabled: true
-    trail_r: 1.5
-    activation_r: 0.0
-    expand_with_primary_atr: true
+    enabled: false
   guardrails:
     min_stop_pct: 0.01
     max_stop_pct: 0.2

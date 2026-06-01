@@ -710,6 +710,7 @@ def _run_tree_step(step: Dict[str, Any], output_dir: Path, cfg: Dict[str, Any]) 
                 pred_grid=step.get("pred_grid"),
                 per_symbol=bool(step.get("per_symbol", True)),
                 filter_split=step.get("filter_split", "holdout"),
+                regime_gate=step.get("regime_gate"),
             )
         except (ValueError, KeyError, OSError) as exc:
             print(f"ERROR: tau-scan failed: {exc}", file=sys.stderr)
@@ -718,6 +719,13 @@ def _run_tree_step(step: Dict[str, Any], output_dir: Path, cfg: Dict[str, Any]) 
 
     if mode == "filter-predictions":
         return _run_filter_predictions_step(step, output_dir, cfg)
+
+    if mode == "shell":
+        cmd = step.get("cmd") or step.get("command")
+        if not cmd:
+            print("ERROR: shell step requires cmd", file=sys.stderr)
+            return 3
+        return _run_cmd(["bash", "-lc", str(cmd)], cwd=PROJECT_ROOT)
 
     print(f"ERROR: unknown tree step mode: {mode}", file=sys.stderr)
     return 3

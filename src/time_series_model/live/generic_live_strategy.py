@@ -63,6 +63,8 @@ class DirectionEvaluator:
     def __init__(self, direction_config: Dict[str, Any]):
         self.config = direction_config
         self.rules = direction_config.get("direction_rules", [])
+        self._prev_tree_score: Optional[float] = None
+        self._prev_tree_score_by_symbol: Dict[str, float] = {}
         # fixed_direction: long/short → 忽略 direction_rules，强制固定方向
         _fd = direction_config.get("fixed_direction", None)
         if _fd == "long":
@@ -81,7 +83,9 @@ class DirectionEvaluator:
         else:
             self._filter = None
 
-    def evaluate(self, features: Dict[str, Any]) -> Tuple[int, Optional[str]]:
+    def evaluate(
+        self, features: Dict[str, Any], *, symbol: str = ""
+    ) -> Tuple[int, Optional[str]]:
         """
         评估方向规则
 
@@ -93,7 +97,7 @@ class DirectionEvaluator:
         if self._fixed is not None:
             return self._fixed, "fixed_direction"
 
-        tree_hit = self._evaluate_tree_score_direction(features)
+        tree_hit = self._evaluate_tree_score_direction(features, symbol=symbol)
         if tree_hit is not None:
             direction, rule_id = tree_hit
             if (
@@ -268,7 +272,7 @@ class DirectionEvaluator:
         return 0, None
 
     def _evaluate_tree_score_direction(
-        self, features: Dict[str, Any]
+        self, features: Dict[str, Any], *, symbol: str = ""
     ) -> Optional[Tuple[int, Optional[str]]]:
         """Tree regression slug: direction.yaml ``source`` + ``thresholds`` block."""
         thr = self.config.get("thresholds")
@@ -285,11 +289,39 @@ class DirectionEvaluator:
             return 0, None
         if v != v:  # NaN
             return 0, None
+        sym_key = str(symbol or "").strip().upper()
         long_entry = thr.get("long_entry")
         short_entry = thr.get("short_entry")
-        if long_entry is not None and v >= float(long_entry):
+        ps = self.config.get("per_symbol_thresholds") or {}
+        if sym_key and isinstance(ps.get(sym_key), dict):
+            sym_thr = ps[sym_key]
+            if sym_thr.get("long_entry") is not None:
+                long_entry = sym_thr.get("long_entry")
+            if sym_thr.get("short_entry") is not None:
+                short_entry = sym_thr.get("short_entry")
+        entry_mode = str(thr.get("entry_mode", "level")).lower()
+        long_raw = long_entry is not None and v >= float(long_entry)
+        short_raw = short_entry is not None and v <= float(short_entry)
+        prev = (
+            self._prev_tree_score_by_symbol.get(sym_key)
+            if sym_key
+            else self._prev_tree_score
+        )
+        if sym_key:
+            self._prev_tree_score_by_symbol[sym_key] = v
+        else:
+            self._prev_tree_score = v
+        if entry_mode == "cross":
+            if prev is None or prev != prev:
+                return 0, "tree_dead_zone"
+            long_hit = long_raw and prev < float(long_entry)
+            short_hit = short_raw and prev > float(short_entry)
+        else:
+            long_hit = long_raw
+            short_hit = short_raw
+        if long_hit:
             return 1, "tree_score_long"
-        if short_entry is not None and v <= float(short_entry):
+        if short_hit:
             return -1, "tree_score_short"
         return 0, "tree_dead_zone"
 
@@ -1112,7 +1144,7 @@ class GenericLiveStrategy:
             )
             return []
 
-        direction, rule_id = self.direction_evaluator.evaluate(features)
+        direction, rule_id = self.direction_evaluator.evaluate(features, symbol=symbol)
         funnel["direction"] = direction != 0
         funnel["direction_value"] = direction  # 1=long, -1=short, 0=none
         funnel["direction_rule"] = rule_id
@@ -1383,7 +1415,7 @@ class GenericLiveStrategy:
         if self.direction_evaluator is None:
             return False, {"reject_reason": "no_direction_config"}
 
-        direction, rule_id = self.direction_evaluator.evaluate(features)
+        direction, rule_id = self.direction_evaluator.evaluate(features, symbol=symbol)
         if direction == 0:
             return False, {"reject_reason": "no_direction"}
 

@@ -199,3 +199,19 @@ PYTHONPATH=src:scripts:. python scripts/rd_loop.py \
   --hypothesis-yaml config/experiments/20260530_fast_scalp_alts_majors/fast_scalp_segment_tau_grid.yaml
 ```
 
+---
+
+## 7. event_backtest 确认（2026-06-01，1min 持仓管理）
+
+**配置：** `fast_scalp_event_backtest_confirm.yaml`  
+**方法：** holdout `predictions.parquet` → `score` 注入 → `DirectionEvaluator` 读 `direction.yaml` 冻结 τ → event_backtest（1min bar 执行）
+
+| Slug | 窗 | event 交易数 | event Return | vectorbt τ-scan (同窗) |
+|---|---|---:|---:|---|
+| **alts** | recent_6m_oos | 372 | **-19.6%** | +29.4% @ q=0.05 |
+| **majors** | recent_6m_oos | 186 | **-13.4%** | +10.7% @ q=0.08 |
+
+**解读：** score 注入已通（有成交、非 0 trades），但 **event 与 vectorbt 符号不一致**。主因：120T score ffill 到 1min 后 edge 触发更频繁、regime 过滤 + 同 bar 重复开仓拒绝、compound sizing 与 vectorbt 单腿 RR 路径不同。**promote 门禁仍以 vectorbt τ-scan 为准**；event 对齐需后续 `compare_vector_event_consistency` 调参（非本次 reject 依据）。
+
+产物：`results/rd_loop/fast_scalp_ic_plateau/event_confirm/`
+

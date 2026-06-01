@@ -181,6 +181,8 @@ def _run_bt(
     long_entry_threshold: float | None = None,
     short_entry_threshold: float | None = None,
     entry_mode: str = "cross",
+    debug: bool = False,
+    debug_trades_limit: int | None = 200,
 ) -> dict[str, Any] | None:
     bt_params = dict(strategy_config.backtest.params or {})
     if top_quantile is not None:
@@ -197,6 +199,9 @@ def _run_bt(
     )
     # RR path requires use_signal_direction=True for bidirectional strategies (validation only).
     bt_params["use_signal_direction"] = True
+    if debug:
+        bt_params["debug"] = True
+        bt_params["debug_trades_limit"] = debug_trades_limit
 
     preds = df["pred"].to_numpy(dtype=float)
     # Absolute-threshold mode: bypass regression quantile branch via binary thresholds.
@@ -215,6 +220,28 @@ def _run_bt(
         task_type=task_type,
         strategy_config=strategy_config,
     )
+
+
+def _apply_regime_gate(df: pd.DataFrame, gate: str | None) -> pd.DataFrame:
+    """Filter holdout rows for trend gate ablation (G0–G3)."""
+    if not gate or str(gate).upper() in {"G0", "NONE", ""}:
+        return df
+    g = str(gate).upper()
+    out = df.copy()
+    if g in {"G1", "G3"}:
+        if "trend_confidence" not in out.columns:
+            raise ValueError("regime gate G1/G3 requires trend_confidence column")
+        out = out[pd.to_numeric(out["trend_confidence"], errors="coerce") >= 0.7]
+    if g in {"G2", "G3"}:
+        chop_col = (
+            "bpc_semantic_chop_ts_q"
+            if "bpc_semantic_chop_ts_q" in out.columns
+            else "bpc_semantic_chop"
+        )
+        if chop_col not in out.columns:
+            raise ValueError(f"regime gate G2/G3 requires {chop_col} column")
+        out = out[pd.to_numeric(out[chop_col], errors="coerce") <= 0.25]
+    return out
 
 
 def _scan_quantile(
@@ -371,6 +398,7 @@ def run_tau_scan(
     pred_grid: str | None = None,
     per_symbol: bool = True,
     filter_split: str | None = "holdout",
+    regime_gate: str | None = None,
     project_root: Path | None = None,
 ) -> dict[str, Path]:
     """Run holdout τ quantile scan + per-symbol RR backtest."""
@@ -424,6 +452,8 @@ def run_tau_scan(
                 df = df.set_index("timestamp").sort_index()
         pred_path = pred
 
+    df = _apply_regime_gate(df, regime_gate)
+
     q_rows: list[dict[str, Any]] = []
     pred_rows: list[dict[str, Any]] = []
     q_plateau: dict[str, Any] = {}
@@ -448,6 +478,7 @@ def run_tau_scan(
 
     final: dict[str, Any] = {
         "segment": segment_label,
+        "regime_gate": regime_gate or "G0",
         "date_range": {"start": start_date, "end": end_date},
         "quantile_scan": q_rows,
         "quantile_plateau": q_plateau,

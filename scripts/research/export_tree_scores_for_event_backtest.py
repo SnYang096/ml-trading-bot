@@ -11,7 +11,7 @@ import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(str(PROJECT_ROOT)))
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 
 def export_scores(
@@ -21,10 +21,17 @@ def export_scores(
     symbols: list[str] | None = None,
     split: str | None = "holdout",
     score_col: str = "pred",
+    start_date: str | None = None,
+    end_date: str | None = None,
 ) -> Path:
     df = pd.read_parquet(predictions)
     if "timestamp" not in df.columns:
         raise ValueError(f"missing timestamp in {predictions}")
+    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+    if start_date:
+        df = df[df["timestamp"] >= pd.Timestamp(start_date, tz="UTC")]
+    if end_date:
+        df = df[df["timestamp"] <= pd.Timestamp(end_date, tz="UTC")]
     sym_col = "_symbol" if "_symbol" in df.columns else "symbol"
     if sym_col not in df.columns:
         raise ValueError(f"missing symbol column in {predictions}")
@@ -58,6 +65,8 @@ def main() -> int:
     ap.add_argument("--symbols", default=None, help="Comma-separated filter")
     ap.add_argument("--split", default="holdout")
     ap.add_argument("--score-col", default="pred")
+    ap.add_argument("--start-date", default=None)
+    ap.add_argument("--end-date", default=None)
     args = ap.parse_args()
     syms = (
         [s.strip() for s in args.symbols.split(",") if s.strip()]
@@ -70,6 +79,8 @@ def main() -> int:
         symbols=syms,
         split=args.split or None,
         score_col=args.score_col,
+        start_date=args.start_date,
+        end_date=args.end_date,
     )
     return 0
 
