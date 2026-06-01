@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>R&D 实验 · 本地研发</title>
+  <link rel="stylesheet" href="{{ dash_assets }}/dashboard.css"/>
+  <link rel="stylesheet" href="{{ dash_assets }}/rd.css"/>
+</head>
+<body class="rd-page">
+  <div class="wrap rd-wrap">
+    <nav class="dash-scope-nav rd-top-nav" aria-label="本地研发导航">
+      <span class="dash-scope-nav-label muted">本地</span>
+      <a href="/rd" class="active">R&D 实验</a>
+      <a href="/browse">浏览 results</a>
+      <a href="/dashboard">results 入口</a>
+    </nav>
+    <header class="rd-header">
+      <h1>R&D 实验管理</h1>
+      <p class="subhead muted">
+        索引 <code>{{ experiments_root }}</code>（README · DECISION · rd_loop / grid）；
+        产物路径链到 <code>results/</code>（本机 static 服务）。
+      </p>
+      <div class="rd-toolbar">
+        <label class="rd-filter">
+          策略
+          <select id="strategyFilter"><option value="">全部</option></select>
+        </label>
+        <label class="rd-filter">
+          搜索
+          <input id="searchInput" type="search" placeholder="topic / 假设 / id"/>
+        </label>
+        <label class="rd-filter">
+          <input id="decisionOnly" type="checkbox"/> 仅有 DECISION
+        </label>
+        <button id="refreshBtn" type="button" class="btn-secondary">刷新</button>
+        <span id="statusLine" class="muted rd-status">—</span>
+      </div>
+    </header>
+    <div class="rd-layout">
+      <div class="rd-list-pane">
+        <table class="rd-table" id="rdTable">
+          <thead>
+            <tr><th>日期</th><th>策略</th><th>实验</th><th>决策</th></tr>
+          </thead>
+          <tbody id="rdBody"><tr><td colspan="4" class="muted">加载中…</td></tr></tbody>
+        </table>
+      </div>
+      <aside class="rd-detail-pane" id="detailPane">
+        <p class="muted rd-detail-placeholder">点击左侧实验查看详情</p>
+      </aside>
+    </div>
+  </div>
+  <script defer src="{{ dash_assets }}/rd-page.js"></script>
+</body>
+</html>

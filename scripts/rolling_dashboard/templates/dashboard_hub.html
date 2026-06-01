@@ -11,9 +11,24 @@
     <h1>results 实验看板</h1>
     <p class="subhead muted">根目录 <code>{{ results_root }}</code>
       · Rolling <strong>{{ rolling_n }}</strong> · History（单次） <strong>{{ flat_n }}</strong></p>
-    <p class="muted" style="font-size:0.88rem;">选择管线视图；也可用环境变量隐藏某一侧：
-      <code>ROLLING_DASHBOARD_HIDE_RESEARCH=1</code> 或 <code>ROLLING_DASHBOARD_HIDE_PROD=1</code>。</p>
+    <p class="muted" style="font-size:0.88rem;">本地研发：<a href="/rd"><strong>R&D 实验</strong></a>（索引
+      <code>config/experiments/</code>）· <a href="/browse">浏览 results</a>。</p>
+    {% if not vis_research and not vis_prod %}
+    <p class="muted" style="font-size:0.88rem;">旧 research/prod 看板已默认关闭。如需临时恢复：
+      <code>ROLLING_DASHBOARD_ENABLE_LEGACY=1</code>。</p>
+    {% else %}
+    <p class="muted" style="font-size:0.88rem;">Legacy 管线视图（可选）：
+      <code>ROLLING_DASHBOARD_HIDE_RESEARCH=1</code> 或 <code>HIDE_PROD=1</code> 可单独隐藏。</p>
+    {% endif %}
     <div class="hub-grid">
+      <a class="hub-card" href="/rd">
+        <span class="hub-card-title">R&D 实验</span>
+        <span class="hub-card-desc">索引 <code>config/experiments/</code>：README · DECISION · rd_loop / grid</span>
+      </a>
+      <a class="hub-card" href="/browse">
+        <span class="hub-card-title">浏览 results</span>
+        <span class="hub-card-desc">静态文件、trading_map、report.json 等</span>
+      </a>
       {% if vis_research %}
       <a class="hub-card" href="/dashboard/research">
         <span class="hub-card-title">研究管线</span>

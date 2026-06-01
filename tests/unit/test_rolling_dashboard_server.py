@@ -58,12 +58,23 @@ def test_dashboard_html_has_tab_controller(tmp_path: Path) -> None:
     assert "浏览 results 根目录" in html
 
 
-def test_dashboard_hub_includes_scope_links(tmp_path: Path) -> None:
+def test_dashboard_hub_includes_scope_links(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     tmp_path.mkdir(exist_ok=True)
+    monkeypatch.setenv("ROLLING_DASHBOARD_ENABLE_LEGACY", "1")
     html = render_dashboard_hub(tmp_path)
     assert "/dashboard/research" in html
     assert "/dashboard/prod" in html
     assert "/dashboard/all" not in html
+
+
+def test_dashboard_hub_cutover_points_to_local_rd(tmp_path: Path) -> None:
+    tmp_path.mkdir(exist_ok=True)
+    html = render_dashboard_hub(tmp_path)
+    assert 'href="/rd"' in html
+    assert "MLBot Console" not in html
+    assert "/dashboard/research" not in html
 
 
 def test_flat_cards_include_adopt_buttons_when_flag(tmp_path: Path) -> None:
@@ -121,7 +132,10 @@ def test_research_dashboard_has_no_embedded_pipeline_runner(tmp_path: Path) -> N
     assert 'id="pipeline-runner-panel"' not in html
 
 
-def test_pipeline_run_page_includes_config_ui(tmp_path: Path) -> None:
+def test_pipeline_run_page_includes_config_ui(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ROLLING_DASHBOARD_ENABLE_LEGACY", "1")
     html = render_pipeline_run_page(tmp_path)
     assert 'id="strategy-run-cards"' in html
     assert "/dashboard/research/pipeline" in html
@@ -273,5 +287,19 @@ def test_http_browse_rejects_path_traversal(tmp_path: Path) -> None:
         with pytest.raises(urllib.error.HTTPError) as ei:
             urllib.request.urlopen(bad, timeout=5)
         assert ei.value.code == 403
+    finally:
+        server.shutdown()
+
+
+def test_http_rd_page_local(tmp_path: Path) -> None:
+    handler = build_request_handler(tmp_path)
+    server = _serve(handler, 0)
+    port = server.server_address[1]
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/rd")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            html = resp.read().decode("utf-8")
+        assert resp.status == 200
+        assert "R&D 实验" in html
     finally:
         server.shutdown()

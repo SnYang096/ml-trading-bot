@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TypedDict
 
 PACKAGE_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = PACKAGE_DIR.parents[2]
+PROJECT_ROOT = PACKAGE_DIR.parents[1]
 
 # Fewer DOM nodes + fewer `_ledger_summary` reads per request (分页卡片接口).
 DASHBOARD_CARD_PAGE_DEFAULT = 80
@@ -39,15 +39,25 @@ def dashboard_api_cache_ttl_s() -> float:
     return max(0.0, min(v, 600.0))
 
 
+def experiments_root_path() -> Path:
+    """Git-tracked experiment cards under ``config/experiments/``."""
+    raw = os.environ.get("ROLLING_DASHBOARD_EXPERIMENTS_ROOT", "").strip()
+    if raw:
+        p = Path(raw)
+        if not p.is_absolute():
+            p = PROJECT_ROOT / raw
+        return p.resolve()
+    return (PROJECT_ROOT / "config" / "experiments").resolve()
+
+
 def dashboard_visibility() -> DashboardVisibility:
-    """Hide one of the two pipeline pages for ops / UI clutter.
+    """Hide legacy research/prod pipeline pages by default (local /rd is the R&D entry).
 
-    - ``ROLLING_DASHBOARD_HIDE_RESEARCH=1`` — disable ``/dashboard/research`` (404).
-    - ``ROLLING_DASHBOARD_HIDE_PROD=1`` — disable ``/dashboard/prod`` (404).
-
-    If both are set, only ``/dashboard`` hub returns 503 when neither route exists.
+    - Legacy surfaces require ``ROLLING_DASHBOARD_ENABLE_LEGACY=1``.
+    - ``ROLLING_DASHBOARD_HIDE_RESEARCH=1`` / ``HIDE_PROD=1`` still apply when legacy is on.
     """
+    legacy = _env_truthy("ROLLING_DASHBOARD_ENABLE_LEGACY")
     return {
-        "research": not _env_truthy("ROLLING_DASHBOARD_HIDE_RESEARCH"),
-        "prod": not _env_truthy("ROLLING_DASHBOARD_HIDE_PROD"),
+        "research": legacy and not _env_truthy("ROLLING_DASHBOARD_HIDE_RESEARCH"),
+        "prod": legacy and not _env_truthy("ROLLING_DASHBOARD_HIDE_PROD"),
     }

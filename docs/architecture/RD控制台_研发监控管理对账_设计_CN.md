@@ -2,7 +2,7 @@
 
 > **定位**：替代已落伍的 `scripts/rolling_dashboard/`（绑定旧 `auto_research_pipeline` 管线），围绕新 ABC 研发流程（`mlbot research` / `rd_loop` → `event_backtest --variant-grid` → `calibrate`/`promote` → `watchdog`/`drift`/`pre_deploy`）重建一个**研发控制平面 (RD Control Plane)**，并与已有的 `mlbot_console`（实盘 CMS/对账）与 `deploy/monitoring`（Grafana 栈）拼成「研发 + 监控 + 管理 + 对账」四件套。
 >
-> **状态**：设计稿（v0，待评审）。本文只做设计，不动代码。
+> **状态**：MVP 已落地 — 只读实验浏览器在 **本地** `mlbot rolling-dashboard` 的 `/rd`；实盘 CMS（`mlbot console`）不含实验管理。
 >
 > **关联**：
 > - 流程口径：[`../strategy/方法论_R_and_D流程_CN.md`](../strategy/方法论_R_and_D流程_CN.md) · [`../strategy/R&D工具矩阵_CN.md`](../strategy/R&D工具矩阵_CN.md)
@@ -377,3 +377,17 @@ job 启动框架：把老 `scripts/rolling_dashboard/pipeline_jobs.py`（SQLite 
 - **学 qlib**：实验谱系可追溯、可复现（但不引入 MLflow，也不做自动 promote）。
 - **杠杆点**：决策文档加 YAML front-matter（P0），整条「假设→证据→双段→决策→promote→监控→对账」谱系就能贯通。
 - **先做 P0–P2**，最小可用即解决「新流程产物看不见」。
+
+---
+
+## 15. MVP 实现说明（2026-06-01）
+
+| 项 | 实现 |
+|---|---|
+| 主数据源 | **`config/experiments/`**（git 跟踪的实验卡片） |
+| 宿主 | **`scripts/rolling_dashboard/`** — 与本地 results 静态同进程；`/rd` + `/api/rd/*` |
+| 配置 | `ROLLING_DASHBOARD_EXPERIMENTS_ROOT`（默认 `config/experiments`） |
+| 实盘 CMS | **`mlbot console` :8800** — Trade Map / 订单 / 对账；**不含** `/rd` |
+| 老 `mlbot server` | 已 deprecated，转发到 `rolling-dashboard` |
+
+启动：`mlbot rolling-dashboard` → **http://127.0.0.1:8008/rd**

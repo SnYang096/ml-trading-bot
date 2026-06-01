@@ -34,8 +34,12 @@ from .paths import (
 from .scan import list_flat_run_paths, list_incomplete_rolling_paths
 from .stats import build_layer_stats_for_dashboard
 from . import pipeline_jobs
+from . import rd_http
+from .rd_render import render_rd_page
 
-_ALLOWED_ASSETS = frozenset({"dashboard.css", "dashboard.js", "pipeline_run.js"})
+_ALLOWED_ASSETS = frozenset(
+    {"dashboard.css", "dashboard.js", "pipeline_run.js", "rd.css", "rd-page.js"}
+)
 
 
 def _pipeline_post_allowed(client_host: str) -> bool:
@@ -168,6 +172,11 @@ def build_request_handler(results_root: Path):
                 self._send_html(body)
                 return
 
+            if path == "/rd":
+                body = render_rd_page().encode("utf-8")
+                self._send_html(body)
+                return
+
             vis = dashboard_visibility()
             qstr = parsed.query or ""
 
@@ -209,10 +218,8 @@ def build_request_handler(results_root: Path):
 
             if path in ("/", "/dashboard", "/index.html"):
                 if not vis["research"] and not vis["prod"]:
-                    self.send_error(
-                        503,
-                        "Dashboard disabled (set ROLLING_DASHBOARD_HIDE_* env)",
-                    )
+                    body = render_dashboard_hub(root).encode("utf-8")
+                    self._send_html(body)
                     return
                 if vis["research"] and not vis["prod"]:
                     loc = _redirect_location("/dashboard/research", qstr)
@@ -230,6 +237,17 @@ def build_request_handler(results_root: Path):
                     return
                 body = render_dashboard_hub(root).encode("utf-8")
                 self._send_html(body)
+                return
+
+            rd_resp = rd_http.dispatch_rd_get(path, qstr)
+            if rd_resp is not None:
+                status, payload, ctype = rd_resp
+                self.send_response(status)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(payload)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(payload)
                 return
 
             if path == "/api/dashboard-cards.html":
@@ -482,7 +500,12 @@ def build_request_handler(results_root: Path):
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             path = unquote(parsed.path)
-            if path not in ("/api/delete-run", "/api/bulk-delete", "/api/pipeline-run"):
+            if path not in (
+                "/api/delete-run",
+                "/api/bulk-delete",
+                "/api/pipeline-run",
+                "/api/rd/refresh",
+            ):
                 self.send_error(404)
                 return
             try:
@@ -575,6 +598,16 @@ def build_request_handler(results_root: Path):
                 self.send_header("Content-Length", str(len(out)))
                 self.end_headers()
                 self.wfile.write(out)
+                return
+
+            if path == "/api/rd/refresh":
+                body = rd_http.handle_rd_refresh()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
                 return
 
             if path == "/api/bulk-delete":

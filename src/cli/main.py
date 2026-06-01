@@ -712,8 +712,20 @@ def _serve_static_dir(*, port: int, directory: str, bind: str, force: bool) -> N
     help="If port is in use, kill the process listening on the port and retry",
 )
 def server(port: int, directory: str, bind: str, force: bool) -> None:
-    """Serve a directory via a local static server (HTML reports)."""
-    _serve_static_dir(port=port, directory=directory, bind=bind, force=force)
+    """DEPRECATED: use ``mlbot rolling-dashboard`` (results static + /browse + /rd)."""
+    click.echo(
+        "⚠️  DEPRECATED: `mlbot server` 请改用 `mlbot rolling-dashboard` "
+        "（含 /browse 与 /rd 实验管理）。"
+    )
+    from scripts.rolling_dashboard_server import run_from_project
+
+    run_from_project(
+        PROJECT_ROOT,
+        bind=bind,
+        port=int(port),
+        results_rel=directory,
+        force=force,
+    )
 
 
 @cli.command("rolling-dashboard")
@@ -738,7 +750,7 @@ def server(port: int, directory: str, bind: str, force: bool) -> None:
     help="If port is in use, kill the listener (requires psutil)",
 )
 def rolling_dashboard(port: int, directory: str, bind: str, force: bool) -> None:
-    """rolling_sim 批次汇总页 + 静态 results（浏览器打开 /dashboard）。"""
+    """本地研发：results 静态 + /browse + /rd 实验管理（与实盘 CMS 分离）。"""
     from scripts.rolling_dashboard_server import run_from_project
 
     run_from_project(
@@ -747,6 +759,61 @@ def rolling_dashboard(port: int, directory: str, bind: str, force: bool) -> None
         port=int(port),
         results_rel=directory,
         force=force,
+    )
+
+
+@cli.command("console")
+@click.option("--port", "-p", type=int, default=8800, show_default=True, help="Port")
+@click.option(
+    "--bind",
+    default="127.0.0.1",
+    show_default=True,
+    help="Bind address (use 0.0.0.0 for devcontainer port forwarding)",
+)
+@click.option("--reload", is_flag=True, help="Auto-reload on code changes (dev)")
+@click.option(
+    "--force",
+    is_flag=True,
+    help="If port is in use, kill the process listening on the port and retry",
+)
+def console_cmd(port: int, bind: str, reload: bool, force: bool) -> None:
+    """实盘 Business CMS（Trade Map / orders / account）；不含本地实验管理。"""
+    try:
+        import uvicorn  # type: ignore[import-untyped]
+    except ImportError as exc:
+        raise click.ClickException(
+            "uvicorn not installed. Run: pip install -r deploy/business-console/requirements.txt"
+        ) from exc
+
+    if force and _port_is_in_use(port, bind=bind):
+        pids = _find_listening_pids(port)
+        if pids:
+            click.echo(f"⚠️  Port {port} in use by PID(s) {pids}; terminating (--force)...")
+            _kill_pids(pids)
+            import time as _time
+
+            for _ in range(30):
+                if not _port_is_in_use(port, bind=bind):
+                    break
+                _time.sleep(0.1)
+
+    click.echo("🌐 MLBot Business Console — 实盘 CMS (FastAPI)")
+    click.echo(f"   bind:    http://{bind}:{port}/")
+    click.echo(f"   Trade Map: http://{bind if bind not in ('0.0.0.0', '::') else 'localhost'}:{port}/trade-map")
+    click.echo("   本地 R&D 实验: mlbot rolling-dashboard → /rd")
+    click.echo("   Ctrl+C 停止")
+
+    src_root = PROJECT_ROOT / "src"
+    if str(src_root) not in sys.path:
+        sys.path.insert(0, str(src_root))
+
+    from mlbot_console.main import app
+
+    uvicorn.run(
+        app,
+        host=bind,
+        port=int(port),
+        reload=bool(reload),
     )
 
 

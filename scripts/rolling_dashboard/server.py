@@ -37,17 +37,13 @@ def run_server(
             )
             sys.exit(1)
         raise
-    print("🌐 rolling_sim dashboard + static files")
+    print("🌐 本地研发服务（results 静态 + /browse + /rd 实验管理）")
     print(f"   root:    {results_root}")
     print(f"   bind:    http://{bind}:{port}/")
-    print(f"   看板入口: http://{bind}:{port}/dashboard")
-    print(f"   研究管线: http://{bind}:{port}/dashboard/research")
-    print(f"   运行管线: http://{bind}:{port}/dashboard/research/pipeline")
-    print(f"   上线管线: http://{bind}:{port}/dashboard/prod")
+    print(f"   R&D 实验: http://{bind}:{port}/rd")
     print(f"   浏览目录: http://{bind}:{port}/browse")
-    print(
-        f"   示例:    http://{bind}:{port}/me/calibrate_roll.default/_rolling_sim/…/trading_map_continuous.html"
-    )
+    print(f"   入口:    http://{bind}:{port}/dashboard")
+    print("   实盘 CMS（远程）: mlbot console → :8800/trade-map（与本地 /rd 分离）")
     print("   Ctrl+C 停止")
     try:
         httpd.serve_forever()

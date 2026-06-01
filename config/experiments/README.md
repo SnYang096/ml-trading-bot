@@ -39,6 +39,8 @@ PYTHONPATH=src:scripts python -m scripts.event_backtest \
   --variant-grid config/experiments/<dir>/*_grid.yaml --quiet-signal-logs
 ```
 
+**Web 浏览**：`mlbot rolling-dashboard`（默认 `:8008`）→ 打开 `/rd`。
+
 ## 实验索引
 
 | 目录 | 策略 | 主题 |
