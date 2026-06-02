@@ -490,13 +490,19 @@ def _summary_tables(
         tmp = trades.copy()
         tmp["exit_time"] = pd.to_datetime(tmp["exit_time"], utc=True)
         daily = tmp.set_index("exit_time")["pnl_per_capital"].resample("1D").sum()
+    from scripts.pipeline.multileg_portfolio_metrics import portfolio_pnl_from_trades
+
+    agg = portfolio_pnl_from_trades(trades)
     trade_summary = pd.DataFrame(
         [
             {
                 "trades": len(trades),
                 "win_rate": (trades["pnl_pct"] > 0).mean(),
-                "sum_pnl_per_capital": trades["pnl_per_capital"].sum(),
-                "return_pct": trades["pnl_per_capital"].sum() * 100.0,
+                "n_symbols": agg["n_symbols"],
+                "sum_pnl_per_capital": agg["portfolio_pnl_per_capital"],
+                "sum_pnl_per_capital_pooled": agg["sum_pnl_per_capital_pooled"],
+                "return_pct": agg["return_pct"],
+                "return_pct_pooled": agg["return_pct_pooled"],
                 "sum_r_equiv_per_capital": trades["r_equiv_per_capital"].sum(),
                 "mean_trade_pnl_pct": trades["pnl_pct"].mean(),
                 "median_trade_pnl_pct": trades["pnl_pct"].median(),
@@ -595,33 +601,26 @@ def summarize_dual_add_aligned(
     """
     if trades.empty or segments.empty:
         return pd.DataFrame()
-    sum_pc = float(trades["pnl_per_capital"].sum())
+    from scripts.pipeline.multileg_portfolio_metrics import dual_add_summary_fields
+
+    row = dual_add_summary_fields(trades, segments)
     risk_col = segments["risk_exits"] if "risk_exits" in segments.columns else None
     risk_stop_rate = float((risk_col > 0).mean()) if risk_col is not None else 0.0
     max_open = (
         segments["max_open_levels"] if "max_open_levels" in segments.columns else None
     )
     max_gross = int(max_open.max()) if max_open is not None else 0
-    return pd.DataFrame(
-        [
-            {
-                "segments": len(segments),
-                "trades": len(trades),
-                "trade_win_rate": (trades["pnl_pct"] > 0).mean(),
-                "segment_win_rate": (segments["pnl_per_capital"] > 0).mean(),
-                "sum_pnl_per_capital": sum_pc,
-                "return_pct": sum_pc * 100.0,
-                "worst_segment": segments["pnl_per_capital"].min(),
-                "median_drawdown": segments["max_drawdown"].median(),
-                "risk_stop_rate": risk_stop_rate,
-                "max_gross_units": max_gross,
-                "max_abs_net_units": float("nan"),
-                "loser_timeout_rate": 0.0,
-                "tp_rate": (trades["exit_reason"] == "grid_tp").mean(),
-                "forced_rate": (trades["exit_reason"] != "grid_tp").mean(),
-            }
-        ]
+    row.update(
+        {
+            "risk_stop_rate": risk_stop_rate,
+            "max_gross_units": max_gross,
+            "max_abs_net_units": float("nan"),
+            "loser_timeout_rate": 0.0,
+            "tp_rate": (trades["exit_reason"] == "grid_tp").mean(),
+            "forced_rate": (trades["exit_reason"] != "grid_tp").mean(),
+        }
     )
+    return pd.DataFrame([row])
 
 
 def build_metrics(

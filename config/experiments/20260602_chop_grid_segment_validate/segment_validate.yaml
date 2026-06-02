@@ -1,0 +1,24 @@
+# chop_grid prod — market_segment 四段验证 manifest
+
+experiment_id: chop_grid_segment_validate_20260602
+strategy: chop_grid
+market_segment_path: config/market_segment.yaml
+config: config/strategies/chop_grid/research/calibrate_roll.default.yaml
+output_dir: results/chop_grid/experiments/segment_validate_20260602
+
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - BNBUSDT
+  - XRPUSDT
+
+segment_matrix:
+  segments:
+    - bear_2022
+    - bull_2023_2024
+    - recent_range_to_bear
+    - recent_6m_oos
+  variants:
+    - suffix: prod_archetype
+      output_dir: results/chop_grid/experiments/segment_validate_20260602

@@ -1,0 +1,32 @@
+# trend_scalp prod — market_segment 四段验证 manifest
+#
+#   python scripts/experiment_trend_scalp_market_segment.py \
+#     --out-root results/trend_scalp/experiments/segment_validate_20260602 \
+#     --market-segment-path config/market_segment.yaml \
+#     -- \
+#     --config config/strategies/trend_scalp/research/calibrate_roll.default.yaml \
+#     ... (see README.md)
+
+experiment_id: trend_scalp_segment_validate_20260602
+strategy: trend_scalp
+market_segment_path: config/market_segment.yaml
+data_path: data/parquet_data
+config: config/strategies/trend_scalp/research/calibrate_roll.default.yaml
+output_dir: results/trend_scalp/experiments/segment_validate_20260602
+
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - BNBUSDT
+  - XRPUSDT
+
+segment_matrix:
+  segments:
+    - bear_2022
+    - bull_2023_2024
+    - recent_range_to_bear
+    - recent_6m_oos
+  variants:
+    - suffix: prod_archetype
+      output_dir: results/trend_scalp/experiments/segment_validate_20260602

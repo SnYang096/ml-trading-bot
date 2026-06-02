@@ -798,39 +798,28 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
 def summarize(trades: pd.DataFrame, segments: pd.DataFrame) -> pd.DataFrame:
     if trades.empty or segments.empty:
         return pd.DataFrame()
-    sum_pc = float(trades["pnl_per_capital"].sum())
-    return pd.DataFrame(
-        [
-            {
-                "segments": len(segments),
-                "trades": len(trades),
-                "trade_win_rate": (trades["pnl_pct"] > 0).mean(),
-                "segment_win_rate": (segments["pnl_per_capital"] > 0).mean(),
-                "sum_pnl_per_capital": sum_pc,
-                # Same convention as chop_grid_backtest trade summary: sum of per-trade
-                # capital-normalized PnL, expressed as percentage points.
-                "return_pct": sum_pc * 100.0,
-                "fee_bps_charged_sum": float(
-                    trades.get("fee_bps_charged", pd.Series(dtype=float)).sum()
-                ),
-                "slippage_bps_charged_sum": float(
-                    trades.get("slippage_bps_charged", pd.Series(dtype=float)).sum()
-                ),
-                "worst_segment": segments["pnl_per_capital"].min(),
-                "median_drawdown": segments["max_drawdown"].median(),
-                # Fraction of segments that hit max_loss_per_segment (mtm stop) before
-                # the segment would otherwise end; see simulate_dual_add_segment risk_stop.
-                "risk_stop_rate": segments["risk_stop"].mean(),
-                "max_gross_units": segments["max_gross_units"].max(),
-                "max_abs_net_units": segments["max_abs_net_units"].max(),
-                "loser_timeout_rate": (trades["exit_reason"] == "loser_timeout").mean(),
-                "tp_rate": trades["exit_reason"].isin(["tp", "basket_tp"]).mean(),
-                "forced_rate": (
-                    ~trades["exit_reason"].isin(["tp", "basket_tp"])
-                ).mean(),
-            }
-        ]
+    from scripts.pipeline.multileg_portfolio_metrics import dual_add_summary_fields
+
+    row = dual_add_summary_fields(trades, segments)
+    row.update(
+        {
+            "fee_bps_charged_sum": float(
+                trades.get("fee_bps_charged", pd.Series(dtype=float)).sum()
+            ),
+            "slippage_bps_charged_sum": float(
+                trades.get("slippage_bps_charged", pd.Series(dtype=float)).sum()
+            ),
+            # Fraction of segments that hit max_loss_per_segment (mtm stop) before
+            # the segment would otherwise end; see simulate_dual_add_segment risk_stop.
+            "risk_stop_rate": segments["risk_stop"].mean(),
+            "max_gross_units": segments["max_gross_units"].max(),
+            "max_abs_net_units": segments["max_abs_net_units"].max(),
+            "loser_timeout_rate": (trades["exit_reason"] == "loser_timeout").mean(),
+            "tp_rate": trades["exit_reason"].isin(["tp", "basket_tp"]).mean(),
+            "forced_rate": (~trades["exit_reason"].isin(["tp", "basket_tp"])).mean(),
+        }
     )
+    return pd.DataFrame([row])
 
 
 def write_trading_maps(
@@ -1235,6 +1224,13 @@ def main() -> None:
     trades, segments = run(args)
     summary = summarize(trades, segments)
     resolved_hold = _effective_max_loser_hold_bars(args)
+    from scripts.pipeline.multileg_portfolio_metrics import portfolio_pnl_from_trades
+
+    portfolio_total_r = (
+        float(portfolio_pnl_from_trades(trades)["portfolio_pnl_per_capital"])
+        if not trades.empty
+        else 0.0
+    )
     if not summary.empty:
         summary["signal_timeframe"] = str(args.timeframe)
         summary["execution_timeframe"] = str(args.execution_timeframe or args.timeframe)
@@ -1252,7 +1248,7 @@ def main() -> None:
         title="Dual Add Trend Capital Report",
         start_date=args.start,
         end_date=args.end,
-        total_r=float(trades["pnl_per_capital"].sum()) if not trades.empty else 0.0,
+        total_r=portfolio_total_r,
     )
     if not args.no_maps:
         write_trading_maps(out_dir, args, trades, segments)
