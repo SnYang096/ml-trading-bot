@@ -47,6 +47,18 @@ def evaluate_strategy_drift(
 ) -> Dict[str, Any]:
     """检查 last_calibration.plateaus 下的 feature 当前分位是否漂出 plateau。"""
     plateaus = (regime_yaml.get("last_calibration") or {}).get("plateaus") or []
+    if not plateaus:
+        return {
+            "strategy": strategy,
+            "any_alert": False,
+            "status": "NO_PLATEAUS",
+            "skipped": (
+                "last_calibration.plateaus empty — "
+                "Tier-0 calibration required before plateau drift can run"
+            ),
+            "items": [],
+        }
+
     items: List[Dict[str, Any]] = []
     any_alert = False
     for entry in plateaus:
@@ -91,6 +103,7 @@ def evaluate_strategy_drift(
     return {
         "strategy": strategy,
         "any_alert": any_alert,
+        "status": "ALERT" if any_alert else "OK",
         "items": items,
     }
 

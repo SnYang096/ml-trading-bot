@@ -8,6 +8,7 @@ from pathlib import Path
 from src.monitoring.dashboard import (
     build_monitoring_dashboard,
     strategy_alerts_by_cadence,
+    strategy_uncalibrated_by_cadence,
 )
 from src.monitoring.store import init_registry_db, upsert_monitor_events_from_run
 
@@ -69,6 +70,29 @@ def test_strategy_alerts_filters_by_latest_run_ts():
         },
     ]
     out = strategy_alerts_by_cadence(events, cards)
+    assert len(out["weekly"]) == 1
+    assert out["weekly"][0]["strategy"] == "tpc"
+
+
+def test_strategy_uncalibrated_filters_no_plateaus():
+    cards = [{"cadence": "weekly", "run_ts": "20260102_0000"}]
+    events = [
+        {
+            "cadence": "weekly",
+            "run_ts": "20260102_0000",
+            "source": "drift",
+            "strategy": "tpc",
+            "status": "NO_PLATEAUS",
+        },
+        {
+            "cadence": "weekly",
+            "run_ts": "20260102_0000",
+            "source": "drift",
+            "strategy": "bpc",
+            "status": "OK",
+        },
+    ]
+    out = strategy_uncalibrated_by_cadence(events, cards)
     assert len(out["weekly"]) == 1
     assert out["weekly"][0]["strategy"] == "tpc"
 

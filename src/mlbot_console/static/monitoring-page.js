@@ -43,7 +43,10 @@ function renderCards(cards) {
       const label = CADENCE_LABELS[c.cadence] || c.cadence;
       const st = c.display_status || "—";
       const wd = c.watchdog_any_alert ? "ALERT" : "OK";
-      const dr = c.drift_any_alert ? "ALERT" : c.drift_any_alert === false ? "OK" : "—";
+      let dr = "—";
+      if (c.drift_any_alert) dr = "ALERT";
+      else if (c.drift_no_plateaus) dr = "未校准";
+      else if (c.drift_any_alert === false) dr = "OK";
       const out = c.output_dir
         ? `<div class="monitor-card-meta"><code>${esc(c.output_dir)}</code></div>`
         : "";
@@ -68,10 +71,13 @@ function renderBanner(summary, indexUpdated) {
   const parts = [];
   if (summary.any_alert) parts.push('<strong class="pnl-neg">存在 ALERT</strong>');
   if (summary.any_missed) parts.push('<strong class="monitor-missed-text">存在缺勤</strong>');
+  if (summary.any_uncalibrated) {
+    parts.push('<strong class="monitor-uncal-text">plateau 未校准（需 Tier-0）</strong>');
+  }
   if (!parts.length) parts.push('<strong class="pnl-pos">全部 cadence 正常</strong>');
   const ts = indexUpdated ? ` · 索引 ${esc(indexUpdated)}` : "";
   el.innerHTML = `${parts.join(" · ")}${ts}`;
-  el.className = summary.any_alert || summary.any_missed
+  el.className = summary.any_alert || summary.any_missed || summary.any_uncalibrated
     ? "monitoring-banner monitor-banner-warn"
     : "monitoring-banner monitor-banner-ok";
 }

@@ -65,11 +65,13 @@ def test_alert_when_too_few_rows():
     assert r["items"][0]["status"] == "INSUFFICIENT_DATA"
 
 
-def test_no_plateaus_returns_ok():
+def test_no_plateaus_reports_uncalibrated_not_ok():
     df = pd.DataFrame({"tpc_semantic_chop": [0.4] * 50})
     cfg = {"rules": []}  # 没 last_calibration → no plateaus
     r = evaluate_strategy_drift(
         strategy="bpc", regime_yaml=cfg, window_df=df, drift_quantile=0.5
     )
     assert r["any_alert"] is False
+    assert r["status"] == "NO_PLATEAUS"
     assert r["items"] == []
+    assert "plateaus" in (r.get("skipped") or "")

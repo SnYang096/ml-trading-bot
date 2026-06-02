@@ -84,6 +84,46 @@ def test_upsert_monitor_events_sqlite(tmp_path):
     assert strategies["tpc"][0] == "ALERT"
 
 
+def test_drift_no_plateaus_status_in_sqlite(tmp_path):
+    out = tmp_path / "out" / "20260101_1200"
+    (out / "drift" / "dr1").mkdir(parents=True)
+    (out / "heartbeat.json").write_text(
+        json.dumps({"task": "monthly", "status": "OK"}), encoding="utf-8"
+    )
+    (out / "drift" / "dr1" / "drift_report.json").write_text(
+        json.dumps(
+            {
+                "any_alert": False,
+                "report": [
+                    {
+                        "strategy": "tpc",
+                        "any_alert": False,
+                        "status": "NO_PLATEAUS",
+                        "skipped": "plateaus empty",
+                        "items": [],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    db = init_registry_db(tmp_path / "registry.sqlite")
+    upsert_monitor_events_from_run(
+        cadence="monthly",
+        run_ts="20260101_1200",
+        output_dir=out,
+        db_path=db,
+    )
+    conn = sqlite3.connect(db)
+    try:
+        row = conn.execute(
+            "SELECT status FROM monitor_event WHERE strategy = 'tpc'"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row[0] == "NO_PLATEAUS"
+
+
 def test_index_monitor_run_combined(tmp_path):
     out = _fake_run_dir(tmp_path)
     meta = index_monitor_run(

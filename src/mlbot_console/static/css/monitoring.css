@@ -35,6 +35,10 @@
   color: #f0883e;
 }
 
+.monitor-uncal-text {
+  color: #d29922;
+}
+
 .monitoring-cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));

@@ -62,6 +62,29 @@ def test_series_percentile_insufficient():
     assert series_percentile(pd.Series([1.0, 2.0]), 0.5, min_n=5) is None
 
 
+def test_ic_missing_target_skips_without_alert():
+    baseline = {
+        "target": "forward_rr",
+        "rows": [{"bucket": "all", "feature": "feat_a", "rank_ic": 0.5}],
+    }
+    df = pd.DataFrame({"feat_a": [1.0, 2.0, 3.0]})
+    items, alerts = evaluate_ic_drift_vs_baseline(window_df=df, ic_baseline=baseline)
+    assert not alerts
+    assert items[0].get("skipped")
+
+
+def test_evaluate_psi_skips_without_reference():
+    df = pd.DataFrame({"f1": [1.0, 2.0, 3.0, 4.0, 5.0]})
+    items, alerts = evaluate_psi_features(
+        window_df=df,
+        reference_df=None,
+        psi_features=["f1"],
+        psi_tol=0.01,
+    )
+    assert not alerts
+    assert items[0]["skipped"]
+
+
 def test_evaluate_psi_features_alert():
     ref = pd.Series(np.random.default_rng(0).normal(0, 1, 300))
     cur = pd.Series(np.random.default_rng(1).normal(3, 1, 200))

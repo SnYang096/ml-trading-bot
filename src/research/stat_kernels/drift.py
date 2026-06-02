@@ -105,7 +105,16 @@ def evaluate_ic_drift_vs_baseline(
         if isinstance(r, dict) and r.get("bucket") == "all"
     ]
     if target not in window_df.columns:
-        alerts.append(f"MISSING_TARGET: {target}")
+        # Live feature bus has no forward labels — skip IC (not an ALERT).
+        items.append(
+            {
+                "kind": "ic_drift",
+                "skipped": (
+                    f"target {target!r} not in window "
+                    "(expected on live bus; IC drift disabled)"
+                ),
+            }
+        )
         return items, alerts
 
     y_win = window_df[target]
@@ -142,7 +151,26 @@ def evaluate_psi_features(
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
     items: List[Dict[str, Any]] = []
     alerts: List[str] = []
-    ref_df = reference_df if reference_df is not None else window_df
+    if reference_df is None:
+        for feat in psi_features:
+            if feat not in window_df.columns:
+                items.append(
+                    {"kind": "psi", "feature": feat, "skipped": "missing in window"}
+                )
+            else:
+                items.append(
+                    {
+                        "kind": "psi",
+                        "feature": feat,
+                        "skipped": (
+                            "no reference parquet on host "
+                            "(PSI disabled; deploy train_final baseline or ref snapshot)"
+                        ),
+                    }
+                )
+        return items, alerts
+
+    ref_df = reference_df
     for feat in psi_features:
         if feat not in window_df.columns:
             items.append(

@@ -72,14 +72,20 @@ def test_factor_health_ic_sign_flip_alert():
     assert any("IC_SIGN_FLIP" in a for a in r["alerts"])
 
 
-def test_factor_health_missing_target_alerts():
+def test_factor_health_missing_target_skips_not_alerts():
+    """Live bus has no forward_rr — IC drift disabled, not a false ALERT."""
     window = pd.DataFrame({"feat_a": [1.0, 2.0, 3.0]})
     r = evaluate_factor_health(
         window_df=window,
         reference_df=None,
         ic_baseline=_ic_baseline("feat_a", 0.1),
-        psi_features=[],
+        psi_features=["feat_a"],
         psi_tol=0.25,
         ic_flip_min_abs=0.02,
     )
-    assert any("MISSING_TARGET" in a for a in r["alerts"])
+    assert r["any_alert"] is False
+    assert not r["alerts"]
+    ic_items = [it for it in r["items"] if it.get("kind") == "ic_drift"]
+    assert ic_items and "skipped" in ic_items[0]
+    psi_items = [it for it in r["items"] if it.get("kind") == "psi"]
+    assert psi_items and "skipped" in psi_items[0]

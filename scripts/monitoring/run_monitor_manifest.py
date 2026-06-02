@@ -68,6 +68,50 @@ def _use_subprocess_fallback() -> bool:
     }
 
 
+def _watchdog_namespace(
+    *,
+    pq: Path,
+    baseline: Path,
+    wd_out: Path,
+    strategies_csv: str,
+    step_cfg: Dict[str, Any],
+    manifest: Dict[str, Any],
+) -> "argparse.Namespace":
+    """Build watchdog args from manifest step + optional manifest.watchdog_defaults."""
+    import argparse
+
+    defaults = manifest.get("watchdog_defaults") or {}
+    if not isinstance(defaults, dict):
+        defaults = {}
+    cfg = {**defaults, **step_cfg}
+
+    ic_json = str(
+        cfg.get("ic_baseline_json")
+        or "config/monitoring/factor_ic_baseline_tpc_20260526.json"
+    )
+    psi_raw = cfg.get("psi_features")
+    if isinstance(psi_raw, list):
+        psi_features = ",".join(str(x) for x in psi_raw)
+    else:
+        psi_features = str(
+            psi_raw or "ema_1200_position,vol_persistence,vol_leverage_asymmetry"
+        )
+
+    return argparse.Namespace(
+        window_parquet=str(pq),
+        baseline_json=str(baseline),
+        out_dir=str(wd_out),
+        strategies=strategies_csv,
+        strategies_root=str(cfg.get("strategies_root") or "config/strategies"),
+        bull_share_tol=float(cfg.get("bull_share_tol", 0.10)),
+        trigger_drift_tol_rel=float(cfg.get("trigger_drift_tol_rel", 0.50)),
+        ic_baseline_json=ic_json,
+        psi_features=psi_features,
+        psi_tol=float(cfg.get("psi_tol", 0.25)),
+        ic_flip_min_abs=float(cfg.get("ic_flip_min_abs", 0.02)),
+    )
+
+
 def execute_manifest(
     manifest: Dict[str, Any],
     *,
@@ -235,23 +279,38 @@ def execute_manifest(
                 print(f"[dry-run] watchdog {pq}")
                 continue
             if _use_subprocess_fallback():
-                rc = _run_monitor_script("regime_watchdog.py", argv)
+                wd_cfg = {**(manifest.get("watchdog_defaults") or {}), **cfg}
+                extra = [
+                    "--ic-baseline-json",
+                    str(
+                        wd_cfg.get("ic_baseline_json")
+                        or "config/monitoring/factor_ic_baseline_tpc_20260526.json"
+                    ),
+                    "--psi-features",
+                    str(
+                        wd_cfg.get("psi_features")
+                        or "ema_1200_position,vol_persistence,vol_leverage_asymmetry"
+                    ),
+                    "--psi-tol",
+                    str(wd_cfg.get("psi_tol", 0.25)),
+                    "--ic-flip-min-abs",
+                    str(wd_cfg.get("ic_flip_min_abs", 0.02)),
+                    "--bull-share-tol",
+                    str(wd_cfg.get("bull_share_tol", 0.10)),
+                    "--trigger-drift-tol-rel",
+                    str(wd_cfg.get("trigger_drift_tol_rel", 0.50)),
+                ]
+                rc = _run_monitor_script("regime_watchdog.py", argv + extra)
             else:
-                import argparse
                 from scripts.regime_watchdog import run_watchdog
 
-                ns = argparse.Namespace(
-                    window_parquet=str(pq),
-                    baseline_json=str(baseline),
-                    out_dir=str(wd_out),
-                    strategies=strategies_csv,
-                    strategies_root="config/strategies",
-                    bull_share_tol=0.10,
-                    trigger_drift_tol_rel=0.50,
-                    ic_baseline_json="config/monitoring/factor_ic_baseline_tpc_20260526.json",
-                    psi_features="ema_1200_position,vol_persistence,vol_leverage_asymmetry",
-                    psi_tol=0.25,
-                    ic_flip_min_abs=0.02,
+                ns = _watchdog_namespace(
+                    pq=pq,
+                    baseline=baseline,
+                    wd_out=wd_out,
+                    strategies_csv=strategies_csv,
+                    step_cfg=cfg,
+                    manifest=manifest,
                 )
                 rc = run_watchdog(ns)
             if rc != 0:

@@ -145,8 +145,11 @@ def update_monitoring_index(
             (artifacts["watchdog"] or {}).get("any_alert")
         )
     if artifacts.get("drift"):
-        cadence_row["drift_any_alert"] = bool(
-            (artifacts["drift"] or {}).get("any_alert")
+        drift_body = artifacts["drift"] or {}
+        cadence_row["drift_any_alert"] = bool(drift_body.get("any_alert"))
+        reports = drift_body.get("report") or []
+        cadence_row["drift_no_plateaus"] = any(
+            isinstance(r, dict) and r.get("status") == "NO_PLATEAUS" for r in reports
         )
 
     cadences = index.setdefault("cadences", {})
@@ -223,7 +226,12 @@ def upsert_monitor_events_from_run(
         strat = str(r.get("strategy", ""))
         if not strat:
             continue
-        st = "ALERT" if r.get("any_alert") else "OK"
+        if r.get("any_alert"):
+            st = "ALERT"
+        elif r.get("status") == "NO_PLATEAUS":
+            st = "NO_PLATEAUS"
+        else:
+            st = "OK"
         eid = f"{cadence}:{run_ts}:drift:{strat}"
         rows.append(
             (
