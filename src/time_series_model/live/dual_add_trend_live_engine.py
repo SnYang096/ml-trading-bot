@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from src.config.multileg_config import load_multileg_effective_config
+from src.features.semantic_chop import as_finite_float, resolve_semantic_chop
 from src.time_series_model.live.regime_box_prefilter import (
     stable_box_blocks_trend_entry,
 )
@@ -279,10 +280,12 @@ class DualAddTrendLiveEngine:
     ) -> List[Dict[str, Any]]:
         """Process one completed bar and return desired order actions."""
         actions: List[Dict[str, Any]] = []
-        trend_conf = _as_float(features.get("trend_confidence"), 0.0)
-        chop = _as_float(
-            features.get("bpc_semantic_chop", features.get("semantic_chop")), 1.0
-        )
+        trend_conf = as_finite_float(features.get("trend_confidence"))
+        if trend_conf is None:
+            trend_conf = 0.0
+        chop = resolve_semantic_chop(features, default=1.0)
+        if chop is None:
+            chop = 1.0
         is_box = stable_box_blocks_trend_entry(
             features,
             self.regime,

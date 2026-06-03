@@ -38,3 +38,22 @@ rules:
 def test_live_tpc_has_regime_yaml() -> None:
     live_regime = Path("live/highcap/config/strategies/tpc/archetypes/regime.yaml")
     assert live_regime.is_file(), "deploy regime.yaml to live/highcap first"
+
+
+def test_multileg_trend_scalp_regime_pulls_trend_confidence_node() -> None:
+    arch = Path("config/strategies/trend_scalp/archetypes")
+    _cols, nodes = extract_features_from_archetypes(
+        arch,
+        feature_deps_path=Path("config/feature_dependencies.yaml"),
+    )
+    assert "trend_confidence_f" in nodes
+
+
+def test_multileg_chop_grid_regime_pulls_soft_phase_node() -> None:
+    arch = Path("config/strategies/chop_grid/archetypes")
+    cols, nodes = extract_features_from_archetypes(
+        arch,
+        feature_deps_path=Path("config/feature_dependencies.yaml"),
+    )
+    assert "bpc_semantic_chop" in cols or "semantic_chop" in cols
+    assert any(n in nodes for n in ("bpc_soft_phase_f", "tpc_soft_phase_f"))

@@ -302,27 +302,33 @@ def _materialize_chop_grid_from_store_columns(
     for dst, src in box_pairs:
         out[dst] = pd.to_numeric(out[src], errors="coerce")
 
-    if "bpc_semantic_chop" not in out.columns:
+    from src.features.semantic_chop import SEMANTIC_CHOP_COLUMNS
+
+    chop_src = next((c for c in SEMANTIC_CHOP_COLUMNS if c in out.columns), None)
+    if chop_src is None:
         raise KeyError(
-            "FeatureStore missing bpc_semantic_chop (bpc_soft_phase_f output)"
+            "FeatureStore missing semantic chop column "
+            f"(expected one of {SEMANTIC_CHOP_COLUMNS})"
         )
-    out["semantic_chop"] = pd.to_numeric(out["bpc_semantic_chop"], errors="coerce")
+    out["semantic_chop"] = pd.to_numeric(out[chop_src], errors="coerce")
+
+    ts_q_candidates = (
+        "semantic_chop_ts_q",
+        "bpc_semantic_chop_ts_q",
+        "tpc_semantic_chop_ts_q",
+        "me_semantic_chop_ts_q",
+    )
+    ts_q_src = next((c for c in ts_q_candidates if c in out.columns), None)
 
     if cfg.chop_signal == "ts_quantile":
-        if "bpc_semantic_chop_ts_q" not in out.columns:
+        if ts_q_src is None:
             raise KeyError(
-                "FeatureStore missing bpc_semantic_chop_ts_q "
-                "(required for chop_signal=ts_quantile)"
+                "FeatureStore missing semantic_chop_ts_q alias "
+                f"(expected one of {ts_q_candidates[1:]})"
             )
-        out["semantic_chop_ts_q"] = pd.to_numeric(
-            out["bpc_semantic_chop_ts_q"], errors="coerce"
-        )
-    elif "bpc_semantic_chop_ts_q" in out.columns and should_compute_semantic_chop_ts_q(
-        cfg
-    ):
-        out["semantic_chop_ts_q"] = pd.to_numeric(
-            out["bpc_semantic_chop_ts_q"], errors="coerce"
-        )
+        out["semantic_chop_ts_q"] = pd.to_numeric(out[ts_q_src], errors="coerce")
+    elif ts_q_src is not None and should_compute_semantic_chop_ts_q(cfg):
+        out["semantic_chop_ts_q"] = pd.to_numeric(out[ts_q_src], errors="coerce")
 
     if "atr" in out.columns:
         out["atr14"] = pd.to_numeric(out["atr"], errors="coerce")

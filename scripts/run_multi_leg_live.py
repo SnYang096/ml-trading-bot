@@ -461,9 +461,21 @@ def build_daemon(
             return None
 
     if args.bar_source == "feature-store":
+        from src.live_data_stream.feature_bus import resolve_disk_primary_timeframe
+
+        bus_tf, bus_legacy = resolve_disk_primary_timeframe(
+            args.feature_bus_root,
+            args.feature_store_timeframe,
+        )
+        if bus_legacy:
+            logger.warning(
+                "multi-leg feature bus: reading legacy features/primary/ "
+                "(requested tf=%s)",
+                args.feature_store_timeframe,
+            )
         provider = FeatureStoreBarProvider(
             feature_bus_root=args.feature_bus_root,
-            timeframe=args.feature_store_timeframe,
+            timeframe=bus_tf,
             execution_timeframe=args.feature_store_execution_timeframe,
             initial_backfill_bars=args.feature_store_initial_backfill_bars,
         )

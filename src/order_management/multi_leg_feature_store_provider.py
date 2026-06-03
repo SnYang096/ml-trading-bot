@@ -7,30 +7,32 @@ from typing import Any, Dict, Iterable, List
 
 import pandas as pd
 
+from src.features.semantic_chop import (
+    normalize_semantic_chop_aliases,
+    resolve_feature_float,
+    resolve_semantic_chop,
+)
 from src.live_data_stream.feature_bus import FeatureBusReader
 from src.order_management.multi_leg_daemon import MultiLegBarEvent
 
 
 def _as_float(row: pd.Series, keys: List[str], default: float = 0.0) -> float:
-    for key in keys:
-        if key in row:
-            try:
-                return float(row[key])
-            except (TypeError, ValueError):
-                pass
-    return float(default)
+    return resolve_feature_float(row, keys, default=default)
 
 
 def _features_from_row(row: pd.Series) -> Dict[str, Any]:
+    raw = {k: v for k, v in row.to_dict().items() if k != "timestamp"}
+    normalize_semantic_chop_aliases(raw)
+    chop = resolve_semantic_chop(raw, default=0.0)
     return {
-        "semantic_chop": _as_float(row, ["semantic_chop"], 0.0),
-        "bpc_semantic_chop": _as_float(
-            row, ["bpc_semantic_chop", "semantic_chop"], 0.0
-        ),
+        "semantic_chop": float(chop if chop is not None else 0.0),
+        "bpc_semantic_chop": float(chop if chop is not None else 0.0),
         "box_prefilter": bool(row.get("box_prefilter", False)),
-        "trend_confidence": _as_float(row, ["trend_confidence"], 0.0),
+        "trend_confidence": _as_float(
+            row, ["trend_confidence", "trend_confidence_f"], 0.0
+        ),
         "trend_direction": str(row.get("trend_direction", "UP")),
-        **{k: v for k, v in row.to_dict().items() if k != "timestamp"},
+        **raw,
     }
 
 

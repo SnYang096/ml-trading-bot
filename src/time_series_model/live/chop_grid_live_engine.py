@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from src.config.multileg_config import load_multileg_effective_config
+from src.features.semantic_chop import resolve_semantic_chop
 from src.config.strategy_layout import resolve_strategy_config_input
 from src.order_management.grid_execution_adapter import (
     GridExecutionResult,
@@ -887,9 +888,9 @@ class ChopGridLiveEngine:
     ) -> List[Dict[str, Any]]:
         """Process one completed bar and return dry-run order actions."""
         actions: List[Dict[str, Any]] = []
-        chop = _as_float(
-            features.get("bpc_semantic_chop", features.get("semantic_chop")), 0.0
-        )
+        chop = resolve_semantic_chop(features, default=0.0)
+        if chop is None:
+            chop = 0.0
         is_box = stable_box_blocks_chop_entry(
             features,
             self.regime,

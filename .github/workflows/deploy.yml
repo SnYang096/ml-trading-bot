@@ -502,7 +502,7 @@ jobs:
                 --universe highcap \
                 --bar-source feature-store \
                 --feature-bus-root live/shared_feature_bus \
-                --feature-store-timeframe primary \
+                --feature-store-timeframe 120T \
                 --feature-store-execution-timeframe 1min \
                 --poll-seconds 5 \
                 --state-dir data/multi_leg_live/state'

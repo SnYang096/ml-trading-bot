@@ -6,6 +6,11 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 import yaml
 
+from src.config.regime_layer import (
+    extract_features_from_multileg_regime,
+    multileg_regime_section,
+)
+
 
 def _load_yaml(path: str | Path) -> Dict[str, Any]:
     p = Path(path)
@@ -253,7 +258,13 @@ def extract_features_from_archetypes(
     # 0. Regime (慢变量数据空间，与 prefilter 同 rules schema，复用 extractor)
     regime_path = d / "regime.yaml"
     if regime_path.exists():
-        feature_columns |= _extract_features_from_prefilter(_load_yaml(regime_path))
+        regime_raw = _load_yaml(regime_path)
+        feature_columns |= _extract_features_from_prefilter(regime_raw)
+        multileg = multileg_regime_section(regime_raw)
+        if multileg:
+            feature_columns |= extract_features_from_multileg_regime(
+                {"regime": multileg}
+            )
 
     # 1. Prefilter
     prefilter_path = d / "prefilter.yaml"

@@ -15,9 +15,17 @@ from time_series_model.live.live_feature_plan import (
     _load_yaml,
 )
 
-from src.config.regime_layer import multileg_regime_section
+from src.config.regime_layer import (
+    extract_features_from_multileg_regime as _extract_features_from_multileg_regime,
+    multileg_regime_section,
+)
 
-# Default strategy slugs when constitution is unavailable (tests / offline).
+# Canonical alias map lives in src.features.semantic_chop; re-exported here for
+# console services (strategy_stage_regions) that read runtime aliases by column.
+from src.features.semantic_chop import (
+    _MULTILEG_RUNTIME_ALIASES as _MULTILEG_RUNTIME_ALIASES,
+)
+
 CONSOLE_STRATEGIES: Tuple[Dict[str, str], ...] = (
     {"id": "tpc", "account_layer": "trend", "title": "TPC"},
     {"id": "bpc", "account_layer": "trend", "title": "BPC"},
@@ -55,10 +63,7 @@ ACCOUNT_LAYER_LABELS: Dict[str, str] = {
 }
 
 # Multileg engines read these aliases at runtime (not always in YAML rules).
-_MULTILEG_RUNTIME_ALIASES: Dict[str, List[str]] = {
-    "bpc_semantic_chop": ["semantic_chop", "tpc_semantic_chop"],
-    "trend_confidence": ["trend_confidence_f"],
-}
+# Canonical alias map lives in src.features.semantic_chop.multileg_feature_aliases.
 
 
 def _extract_features_from_rule_block(rule: Any) -> Set[str]:
@@ -84,38 +89,6 @@ def _extract_features_from_prefilter_full(cfg: Dict[str, Any]) -> Set[str]:
     if isinstance(rules, list):
         for rule in rules:
             out |= _extract_features_from_rule_block(rule)
-    return out
-
-
-def _extract_features_from_multileg_regime(cfg: Dict[str, Any]) -> Set[str]:
-    out: Set[str] = set()
-    regime = cfg.get("regime")
-    if not isinstance(regime, dict):
-        return out
-    entry_feature = regime.get("entry_feature")
-    if entry_feature:
-        col = str(entry_feature)
-        out.add(col)
-        out.update(_MULTILEG_RUNTIME_ALIASES.get(col, []))
-    if (
-        regime.get("cap_entry") is not None
-        or regime.get("cap_hold") is not None
-        or regime.get("max_semantic_chop_entry") is not None
-        or regime.get("max_semantic_chop_hold") is not None
-    ):
-        cap_feat = str(regime.get("cap_feature") or "bpc_semantic_chop")
-        out.add(cap_feat)
-        out.update(_MULTILEG_RUNTIME_ALIASES.get(cap_feat, []))
-    if not regime.get("exclude_box_prefilter", True):
-        out.add("box_prefilter")
-    box = regime.get("box_prefilter")
-    if isinstance(box, dict):
-        if box.get("stability_min") is not None:
-            out.add("box_stability_60")
-        if box.get("width_min") is not None or box.get("width_max") is not None:
-            out.add("box_width_pct_60")
-        if box.get("touches_min") is not None:
-            out.update({"box_touches_hi_60", "box_touches_lo_60"})
     return out
 
 

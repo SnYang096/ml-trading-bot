@@ -23,10 +23,11 @@ there is no duplication.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Set, Tuple
 
 import yaml
 
+from src.features.semantic_chop import multileg_feature_aliases
 from src.time_series_model.archetype.loader import (
     RegimeConfig,
     _DEFAULT_ALLOWED_REGIMES,
@@ -131,6 +132,39 @@ def load_regime_layer(path: Path) -> Tuple[RegimeConfig, Dict[str, Any]]:
         return RegimeConfig(), {}
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return parse_regime_layer(raw)
+
+
+def extract_features_from_multileg_regime(cfg: Mapping[str, Any]) -> Set[str]:
+    """Feature columns referenced by extensions.multileg engine params."""
+    out: Set[str] = set()
+    regime = cfg.get("regime")
+    if not isinstance(regime, dict):
+        return out
+    entry_feature = regime.get("entry_feature")
+    if entry_feature:
+        col = str(entry_feature)
+        out.add(col)
+        out.update(multileg_feature_aliases(col))
+    if (
+        regime.get("cap_entry") is not None
+        or regime.get("cap_hold") is not None
+        or regime.get("max_semantic_chop_entry") is not None
+        or regime.get("max_semantic_chop_hold") is not None
+    ):
+        cap_feat = str(regime.get("cap_feature") or "bpc_semantic_chop")
+        out.add(cap_feat)
+        out.update(multileg_feature_aliases(cap_feat))
+    if not regime.get("exclude_box_prefilter", True):
+        out.add("box_prefilter")
+    box = regime.get("box_prefilter")
+    if isinstance(box, dict):
+        if box.get("stability_min") is not None:
+            out.add("box_stability_60")
+        if box.get("width_min") is not None or box.get("width_max") is not None:
+            out.add("box_width_pct_60")
+        if box.get("touches_min") is not None:
+            out.update({"box_touches_hi_60", "box_touches_lo_60"})
+    return out
 
 
 def multileg_extensions_section(doc: Dict[str, Any]) -> Dict[str, Any]:

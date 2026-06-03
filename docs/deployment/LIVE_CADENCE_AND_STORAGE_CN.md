@@ -161,7 +161,7 @@ trend 使用两类 SQLite：
 - `MLBOT_ACCOUNT_SCOPE=multi_leg`
 - `--bar-source feature-store`
 - `--feature-bus-root live/shared_feature_bus`
-- `--feature-store-timeframe primary`
+- `--feature-store-timeframe 120T`
 - `--feature-store-execution-timeframe 1min`
 - `--poll-seconds 5`
 - 未显式传 `--reconcile-interval-seconds`，使用默认 **60 秒**
@@ -181,8 +181,8 @@ trend 使用两类 SQLite：
 `FeatureStoreBarProvider.latest_closed_bars()` 每轮对每个 symbol：
 
 1. 读取 `latest_features(symbol, timeframe=self.timeframe)`；
-   - 线上传的是 `primary`；
-   - 如果 `primary` 没有对应数据，就不会产出事件。
+   - 线上传的是 `120T`（或 CLI 默认 `2h`，由 `resolve_disk_primary_timeframe` 解析到 `120T` 目录）；
+   - legacy `features/primary/` 自 2026-05 停更，读该目录会导致 stale 信号。
 2. 读取 `latest_bars_1m(symbol, after=last_seen)`；
    - 有新的 1min execution bars 时，每一根新 bar 都会和最新 signal feature 合成一个 `MultiLegBarEvent`；
    - 初次启动只回放 `initial_backfill_bars` 根，默认 1 根。
@@ -202,7 +202,7 @@ trend 使用两类 SQLite：
 
 - `--poll-seconds`：检查新数据的最大延迟；
 - `--feature-store-execution-timeframe 1min`：有新 1min execution bar 时可触发一轮；
-- `--feature-store-timeframe primary`：signal feature 更新时可触发一轮；
+- `--feature-store-timeframe 120T`：signal feature 更新时可触发一轮；
 - 策略自身是否在该 bar / feature 下产生 action。
 
 所以多腿不是每 5 秒发信号，而是 **每 5 秒检查；有新 1min bar 或新 signal feature 时才进入 engine；engine 决定是否输出 action**。

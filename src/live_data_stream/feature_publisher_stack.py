@@ -28,6 +28,7 @@ from src.live_data_stream.constitution_config import (
     resolve_constitution_yaml,
     spot_strategies_from_constitution,
 )
+from src.features.semantic_chop import set_canonical_semantic_chop
 from src.live_data_stream.feature_bus import FeatureBusWriter
 from src.live_data_stream.strategy_runtime_config import (
     load_strategy_timeframe,
@@ -80,6 +81,7 @@ class FeatureBusDecisionSink:
             by_tf = {self.default_timeframe_key: dict(features)}
         for tf, feat in by_tf.items():
             feat = dict(feat)
+            set_canonical_semantic_chop(feat)
             feat["_feature_timeframe"] = str(tf)
             feat["_feature_bus_published_at"] = pd.Timestamp.now(tz="UTC").isoformat()
             self.writer.append_features(
