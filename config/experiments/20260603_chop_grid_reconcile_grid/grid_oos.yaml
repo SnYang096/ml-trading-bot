@@ -1,0 +1,57 @@
+# chop_grid reconciliation grid — recent_6m_oos smoke
+#
+# Axes: execution (2h vs 1min) × all-in fee (4 vs 20 bps) × universe (5 vs 6 symbols)
+# Replenish fixed at research default (unlimited / null from archetype).
+
+experiment_id: chop_grid_reconcile_grid_oos_20260603
+segment_id: recent_6m_oos
+start_date: "2025-10-01"
+end_date: "2026-03-31"
+config: config/strategies/chop_grid/research/calibrate_roll.default.yaml
+output_root: results/chop_grid/experiments/reconcile_grid_20260603/oos
+
+symbols_5: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT
+symbols_6: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+
+# Cell IDs encode exec_fee_symbols
+cells:
+  - id: 2h_4bps_5sym
+    label: "2h exec · 4bps · 5 coins (legacy low-cost)"
+    execution_timeframe: null  # signal-only = 2h
+    fee_bps: 4
+    symbols: symbols_5
+  - id: 2h_4bps_6sym
+    label: "2h exec · 4bps · 6 coins (proxy-like)"
+    execution_timeframe: null
+    fee_bps: 4
+    symbols: symbols_6
+  - id: 2h_20bps_5sym
+    label: "2h exec · 20bps · 5 coins"
+    execution_timeframe: null
+    fee_bps: 20
+    symbols: symbols_5
+  - id: 2h_20bps_6sym
+    label: "2h exec · 20bps · 6 coins"
+    execution_timeframe: null
+    fee_bps: 20
+    symbols: symbols_6
+  - id: 1min_4bps_5sym
+    label: "1min exec · 4bps · 5 coins"
+    execution_timeframe: 1min
+    fee_bps: 4
+    symbols: symbols_5
+  - id: 1min_4bps_6sym
+    label: "1min exec · 4bps · 6 coins"
+    execution_timeframe: 1min
+    fee_bps: 4
+    symbols: symbols_6
+  - id: 1min_20bps_5sym
+    label: "1min exec · 20bps · 5 coins (current prod profile)"
+    execution_timeframe: 1min
+    fee_bps: 20
+    symbols: symbols_5
+  - id: 1min_20bps_6sym
+    label: "1min exec · 20bps · 6 coins"
+    execution_timeframe: 1min
+    fee_bps: 20
+    symbols: symbols_6
