@@ -916,7 +916,11 @@ class ChopGridLiveEngine:
 
         self.state.last_timestamp = timestamp
         if not self.state.active and should_enter:
-            actions.extend(self._start_grid(symbol, timestamp, close, atr))
+            gate = getattr(self, "_concurrency_gate", None)
+            if gate is not None and not gate.allow_new_segment(symbol):
+                should_enter = False
+            else:
+                actions.extend(self._start_grid(symbol, timestamp, close, atr))
 
         if self.state.active and self.state.symbol == symbol:
             if self.bar_simulation:

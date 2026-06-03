@@ -118,6 +118,9 @@ from src.order_management.multi_leg_risk_governor import (  # noqa: E402
     MultiLegPortfolioRiskGovernor,
     MultiLegRiskLimits,
 )
+from src.order_management.chop_grid_concurrency import (  # noqa: E402
+    ChopGridConcurrencyGate,
+)
 from src.live_data_stream.constitution_config import (  # noqa: E402
     apply_multi_leg_args_from_constitution,
     load_constitution_dict,
@@ -471,6 +474,8 @@ def build_daemon(
             lookback_days=args.lookback_days,
         )
     runtimes: List[StrategyRuntime] = []
+    max_cg = int(getattr(args, "max_concurrent_grid_symbols", 0) or 0)
+    chop_grid_gate = ChopGridConcurrencyGate(max_cg) if max_cg > 0 else None
     multi_engine_symbols = {
         s
         for s, n in Counter(
@@ -507,6 +512,8 @@ def build_daemon(
                 )
             )
             engine = _make_engine(strategy, symbol=symbol, args=args)
+            if strategy == "chop_grid" and chop_grid_gate is not None:
+                chop_grid_gate.register(symbol, engine)
             orchestrator = MultiLegLiveOrchestrator(
                 engine=engine,
                 governor=governor,
@@ -589,19 +596,22 @@ def _resolve_live_strategy_symbols(
 def _make_engine(strategy: str, *, symbol: str, args: argparse.Namespace) -> Any:
     state_dir = Path(args.state_dir)
     state_dir.mkdir(parents=True, exist_ok=True)
+    units = getattr(args, "unit_notional_by_strategy", None) or {}
     if strategy == "chop_grid":
+        unit = float(units.get("chop_grid", getattr(args, "unit_notional", 100.0)))
         return ChopGridLiveEngine(
             config_path=args.chop_grid_config,
             state_path=state_dir / f"chop_grid_{symbol}.json",
-            level_notional=args.unit_notional,
+            level_notional=unit,
             metrics_strategy=strategy,
             bar_simulation=args.mode == "shadow",
         )
     if strategy in ("dual_add_trend", "trend_scalp"):
+        unit = float(units.get("trend_scalp", getattr(args, "unit_notional", 100.0)))
         return DualAddTrendLiveEngine(
             config_path=args.dual_add_config,
             state_path=state_dir / f"trend_scalp_{symbol}.json",
-            unit_notional=args.unit_notional,
+            unit_notional=unit,
             metrics_strategy=strategy,
         )
     raise ValueError(f"unsupported strategy: {strategy}")
@@ -673,6 +683,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-symbol-gross-notional", type=float, default=800.0)
     p.add_argument("--max-symbol-net-notional", type=float, default=400.0)
     p.add_argument("--max-resting-orders", type=int, default=60)
+    p.add_argument(
+        "--max-concurrent-grid-symbols",
+        type=int,
+        default=0,
+        help="Max chop_grid symbols with an active segment at once (0=constitution/default off)",
+    )
     p.add_argument(
         "--constitution-yaml",
         default="",

@@ -415,11 +415,78 @@ def _literal_from_env(name: str) -> Optional[float]:
     return _float_or_none(raw)
 
 
+def _chop_grid_execution_path_for_strategies_root(strategies_root: str) -> Path:
+    from pathlib import Path
+
+    root = Path(strategies_root)
+    return root / "chop_grid" / "archetypes" / "execution.yaml"
+
+
+def _trend_scalp_execution_path_for_strategies_root(strategies_root: str) -> Path:
+    from pathlib import Path
+
+    root = Path(strategies_root)
+    return root / "trend_scalp" / "archetypes" / "execution.yaml"
+
+
+def resolve_multi_leg_unit_notionals_from_constitution(
+    ml: Dict[str, Any],
+    *,
+    equity_usdt: float,
+    strategies_root: Optional[str] = None,
+    strategies: Optional[list[str]] = None,
+) -> Dict[str, float]:
+    from src.config.multileg_sizing import resolve_multi_leg_unit_notionals
+
+    sr = strategies_root or os.getenv(
+        "MLBOT_STRATEGIES_ROOT", "live/highcap/config/strategies"
+    )
+    chop_exe = _chop_grid_execution_path_for_strategies_root(sr)
+    trend_exe = _trend_scalp_execution_path_for_strategies_root(sr)
+    return resolve_multi_leg_unit_notionals(
+        ml,
+        equity_usdt=float(equity_usdt),
+        chop_grid_execution_path=chop_exe if chop_exe.is_file() else None,
+        trend_scalp_execution_path=trend_exe if trend_exe.is_file() else None,
+        strategies=strategies,
+    )
+
+
+def resolve_multi_leg_unit_notional_from_constitution(
+    ml: Dict[str, Any],
+    *,
+    equity_usdt: float,
+    strategies_root: Optional[str] = None,
+    strategy: str = "chop_grid",
+) -> float:
+    from src.config.multileg_sizing import resolve_multi_leg_unit_notional
+
+    sr = strategies_root or os.getenv(
+        "MLBOT_STRATEGIES_ROOT", "live/highcap/config/strategies"
+    )
+    exe = _chop_grid_execution_path_for_strategies_root(sr)
+    if strategy == "trend_scalp":
+        trend_exe = _trend_scalp_execution_path_for_strategies_root(sr)
+        return resolve_multi_leg_unit_notional(
+            ml,
+            equity_usdt=float(equity_usdt),
+            trend_scalp_execution_path=trend_exe if trend_exe.is_file() else None,
+            strategy="trend_scalp",
+        )
+    return resolve_multi_leg_unit_notional(
+        ml,
+        equity_usdt=float(equity_usdt),
+        chop_grid_execution_path=exe if exe.is_file() else None,
+        strategy="chop_grid",
+    )
+
+
 def load_multi_leg_backtest_risk_context(
     *,
     strategies_root: Optional[str] = None,
     constitution_yaml: Optional[str] = None,
     initial_capital: Optional[float] = None,
+    strategy: str = "chop_grid",
 ):
     """Build BacktestAccountRiskTracker + unit_notional for multi-leg research scripts."""
     from src.time_series_model.core.constitution.account_risk_guard import (
@@ -431,7 +498,12 @@ def load_multi_leg_backtest_risk_context(
     ml = multi_leg_section(load_constitution_dict(path))
     account = ml.get("account") or {}
     equity = float(initial_capital if initial_capital is not None else account.get("equity_usdt", 10000.0) or 10000.0)
-    unit = float(ml.get("unit_notional", 0.0) or 0.0)
+    if ml.get("unit_notional") is not None or isinstance(ml.get("sizing"), dict):
+        unit = resolve_multi_leg_unit_notional_from_constitution(
+            ml, equity_usdt=equity, strategies_root=sr, strategy=strategy
+        )
+    else:
+        unit = 0.0
     tracker = BacktestAccountRiskTracker(
         limits=dict(ml.get("account_risk_limits") or {}),
         equity_usdt=equity,
@@ -552,5 +624,36 @@ def apply_multi_leg_args_from_constitution(args: Any) -> None:
         setattr(args, "account_equity_usdt", float(limits["account_equity_usdt"] or 0.0))
     if limits.get("max_drawdown_pct") is not None:
         setattr(args, "max_drawdown_pct", float(limits["max_drawdown_pct"] or 0.0))
-    if "unit_notional" in ml:
-        args.unit_notional = float(ml["unit_notional"])
+    # Only override the argparse default when the constitution actually specifies
+    # sizing (explicit unit_notional or sizing.segment_dd_target); otherwise leave
+    # the CLI/default value untouched (backward compatible with legacy configs).
+    if ml.get("unit_notional") is not None or isinstance(ml.get("sizing"), dict):
+        equity_for_sizing = float(
+            getattr(args, "account_equity_usdt", None)
+            or limits.get("account_equity_usdt")
+            or 10000.0
+        )
+        strat_raw = getattr(args, "strategies", "") or ml.get("strategies") or ""
+        if isinstance(strat_raw, (list, tuple)):
+            strat_list = [str(x).strip() for x in strat_raw if str(x).strip()]
+        else:
+            strat_list = [
+                s.strip()
+                for s in str(strat_raw).replace("dual_add_trend", "trend_scalp").split(",")
+                if s.strip()
+            ]
+        units = resolve_multi_leg_unit_notionals_from_constitution(
+            ml,
+            equity_usdt=equity_for_sizing,
+            strategies_root=sr,
+            strategies=strat_list or None,
+        )
+        setattr(args, "unit_notional_by_strategy", dict(units))
+        args.unit_notional = float(
+            units.get("chop_grid") or units.get("trend_scalp") or next(iter(units.values()))
+        )
+    from src.config.multileg_sizing import max_concurrent_grid_symbols_from_ml
+
+    cap = max_concurrent_grid_symbols_from_ml(ml)
+    if cap is not None:
+        setattr(args, "max_concurrent_grid_symbols", int(cap))

@@ -1,10 +1,14 @@
-# chop_grid — market_segment 四段验证（timeline metrics）
+# chop_grid — market_segment 四段验证 (dense 3L / E7 stack)
+#
+# Canonical trades: results/chop_grid/experiments/stack_ablation_20260604/E7_four_segment/dense_3l_live/
+# Re-run: scripts/experiment_chop_grid_market_segment.py with calibrate_roll.default.yaml
+# (archetypes/execution.yaml = dense 3L, synced with live/highcap).
 
-experiment_id: chop_grid_segment_validate_20260603_timeline
+experiment_id: chop_grid_segment_validate_dense_3l
 strategy: chop_grid
 market_segment_path: config/market_segment.yaml
 config: config/strategies/chop_grid/research/calibrate_roll.default.yaml
-output_dir: results/chop_grid/experiments/segment_validate_20260603_timeline
+output_dir: results/chop_grid/experiments/stack_ablation_20260604/E7_four_segment/dense_3l_live
 initial_capital_per_symbol: 10000
 
 symbols:
@@ -21,8 +25,8 @@ segment_matrix:
     - recent_range_to_bear
     - recent_6m_oos
   variants:
-    - suffix: prod_archetype_timeline
-      output_dir: results/chop_grid/experiments/segment_validate_20260603_timeline
+    - suffix: dense_3l_live
+      output_dir: results/chop_grid/experiments/stack_ablation_20260604/E7_four_segment/dense_3l_live
       max_replenish_per_level_per_segment: 1
 
 metrics:

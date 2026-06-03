@@ -634,7 +634,8 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
     ]
     trend_horizons = tuple(int(x) for x in hparts) if hparts else (3, 5, 10)
     risk_tracker, unit_notional = load_multi_leg_backtest_risk_context(
-        initial_capital=float(getattr(args, "initial_capital", 10_000.0) or 10_000.0)
+        initial_capital=float(getattr(args, "initial_capital", 10_000.0) or 10_000.0),
+        strategy="trend_scalp",
     )
     cfg = DualAddConfig(
         regime=args.regime,

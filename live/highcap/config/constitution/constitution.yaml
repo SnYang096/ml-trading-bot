@@ -235,22 +235,16 @@ multi_leg:
   strategies:
     - chop_grid # C-layer chop grid (mean-reversion inventory); mutually exclusive per symbol with trend_scalp.
     - trend_scalp # C-layer regime trend scalp legs; mutually exclusive per symbol with chop_grid.
-  # Per-order / per-leg USDT notional used by multi-leg engines.
-  # - chop_grid: each grid level places qty = unit_notional / current_price.
-  # - trend_scalp: each seed/add leg places qty = unit_notional / order_price.
-  # Portfolio/symbol caps below can still reject orders after this sizing step.
-  #
-  # E7 dense 3L validate (2026-06-04) — REAL-ACCOUNT sim (scripts/sim_chop_grid_account.py,
-  # single shared 10k account, fixed unit_notional/level, entry/exit event timeline; NOT the
-  # per-symbol-bucket pnl_per_capital column). Per segment @ unit=400:
-  #   OOS 6mo        ret 3.7%   maxDD 0.27%   peak gross 52%   peak/symbol 12%
-  #   bull_23_24     ret 12.0%  maxDD 0.98%   peak gross 32%   peak/symbol 12%
-  #   range_to_bear  ret 6.3%   maxDD 0.78%   peak gross 52%   peak/symbol 12%
-  # 1% maxDD target: ~410 (worst bull segment) … ~1465 (calm OOS regime) — see aggressive overlay
-  #   config/experiments/20260604_chop_grid_stack_ablation/aggressive_sizing.yaml.
-  # Levels do NOT all fill at once: peak concurrent is ~3 levels/symbol (peak/symbol 12% = 3×400),
-  # ~13 legs portfolio-wide → portfolio gross cap below MUST cover ~52% or live fills get rejected.
-  unit_notional: 400.0 # 2× prior default; ~4% equity/leg @ 10k; peak ~52% gross (see real-account note).
+  # Per-strategy segment DD budgets (see config/constitution/constitution.yaml).
+  sizing:
+    chop_grid:
+      segment_dd_target: 0.010
+      max_loss_per_grid: 0.03
+      max_levels_per_side: 3
+    trend_scalp:
+      segment_dd_target: 0.006
+      max_loss_per_segment: 0.02
+      max_gross_exposure_units: 4
   account:
     # Offline budget anchor for pct-based risk_limits and validation reports.
     # In live trading, actual equity/drawdown should come from account sync / exchange
@@ -271,14 +265,12 @@ multi_leg:
   risk_limits:
     # Pct limits are resolved against account.equity_usdt unless absolute notional
     # limits are supplied. Example: 0.20 * 10000 = 2000 USDT max gross exposure.
-    # Real-account sim: dense 3L @ unit=400 peaks ~52% gross (~13 legs across 5 symbols).
-    # Cap 0.60 covers every single-segment peak (≤52%) so live fills aren't rejected, while
-    # still throttling pathological trend-breakout pile-ups (auto de-grosses above 60%).
-    # Stays well under account_risk_limits.max_gross_leverage=3.0 (margin layer).
-    max_gross_notional_pct: 0.60 # Sum |leg notionals| / equity_usdt ceiling (long+short legs).
-    max_net_notional_pct: 0.20 # |net long-short notional| / equity_usdt ceiling (grid is near-balanced; headroom vs gross).
-    max_symbol_gross_notional_pct: 0.15 # Per-symbol gross / equity (real-account peak/symbol ~12% @ unit=400 → 3% headroom).
-    max_symbol_net_notional_pct: 0.04 # Per-symbol net notional / equity_usdt ceiling.
+    # B-tier E7 dense 3L combined sim peak gross ~135%.
+    max_gross_notional_pct: 1.40
+    max_net_notional_pct: 0.20
+    max_symbol_gross_notional_pct: 0.20
+    max_symbol_net_notional_pct: 0.04
+    max_concurrent_grid_symbols: 3
     # Maximum number of resting open orders across all multi-leg strategies.
     max_resting_orders: 60 # Cap on open limit orders (grid + dual-add combined).
 

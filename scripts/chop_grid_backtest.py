@@ -452,7 +452,8 @@ def run_backtest(
     all_trades: List[dict] = []
     all_segments: List[dict] = []
     risk_tracker, unit_notional = load_multi_leg_backtest_risk_context(
-        initial_capital=float(getattr(args, "initial_capital", 10_000.0) or 10_000.0)
+        initial_capital=float(getattr(args, "initial_capital", 10_000.0) or 10_000.0),
+        strategy="chop_grid",
     )
 
     for symbol in symbols:

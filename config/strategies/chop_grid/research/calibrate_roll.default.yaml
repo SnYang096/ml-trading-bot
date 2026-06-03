@@ -136,7 +136,8 @@ event_backtest:
 grid_backtest:
   enabled: true
   calibrate_execution: true
-  # Live-aligned default: 2h signal, 1min execution (see subbar_replay.py).
+  # Default execution stack = dense 3L (archetypes/execution.yaml, E7 validate 2026-06-04).
+  # Segment validate / multi-leg sim should use E7 trade exports or re-run with this config.
   execution_timeframe: 1min
   agg_data_dir: data/agg_data
   # Keep research backtests on the same feature surface as the pipeline:
