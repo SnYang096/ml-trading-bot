@@ -410,11 +410,29 @@ def test_cancel_requires_symbol_and_calls_exchange() -> None:
         {
             "action": "cancel",
             "symbol": "BTCUSDT",
-            "order_id": "ex_123",
+            "exchange_order_id": "90489849398",
+            "order_id": "BTCUSDT_2026-05-19 08:40:00+00:00_L2",
         }
     )
 
-    api.cancel_order.assert_called_once_with("ex_123", "BTCUSDT")
+    api.cancel_order.assert_called_once_with("90489849398", "BTCUSDT")
+    assert result.status == "canceled"
+
+
+def test_cancel_skips_local_only_order_id_without_exchange_call() -> None:
+    api = _api()
+    adapter = GridExecutionAdapter(api)
+
+    result = adapter.execute_action(
+        {
+            "action": "cancel",
+            "symbol": "BNBUSDT",
+            "order_id": "BNBUSDT_2026-05-19 08:40:00+00:00_L2",
+            "reason": "regime_or_risk_exit",
+        }
+    )
+
+    api.cancel_order.assert_not_called()
     assert result.status == "canceled"
 
 

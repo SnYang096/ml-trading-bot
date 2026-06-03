@@ -1112,6 +1112,7 @@ class ChopGridLiveEngine:
                 {
                     "action": "cancel",
                     "order_id": order.order_id,
+                    "exchange_order_id": order.exchange_order_id,
                     "symbol": order.symbol,
                     "side": order.side,
                     "level": order.level,

@@ -47,6 +47,17 @@ def _market_exit_reason_bucket(action: Dict[str, Any]) -> str:
     return "other"
 
 
+def _resolve_live_cancel_order_id(action: Dict[str, Any]) -> str:
+    """Return an exchange order id suitable for cancel API calls, or empty."""
+    exchange_id = str(action.get("exchange_order_id") or "").strip()
+    if exchange_id:
+        return exchange_id
+    order_id = str(action.get("order_id") or "").strip()
+    if order_id.isdigit():
+        return order_id
+    return ""
+
+
 def _is_duplicate_client_order_id_error(exc: Exception) -> bool:
     text = str(exc).lower()
     return "-4116" in text or "clientorderid is duplicated" in text
@@ -383,8 +394,32 @@ class MultiLegExecutionAdapter:
 
     def _cancel(self, action: Dict[str, Any]) -> MultiLegExecutionResult:
         symbol = _required_str(action, "symbol", fallback="")
-        order_id = str(action.get("exchange_order_id") or action.get("order_id") or "")
+        local_order_id = str(action.get("order_id") or "").strip()
+        order_id = (
+            _resolve_live_cancel_order_id(action)
+            if not self.shadow
+            else str(action.get("exchange_order_id") or action.get("order_id") or "").strip()
+        )
         if not order_id:
+            if not self.shadow and local_order_id:
+                reason = str(action.get("reason") or "").strip()
+                logger.warning(
+                    "multi-leg cancel skipped (local-only order id): strategy=%s "
+                    "symbol=%s local_order_id=%s reason=%s",
+                    self.strategy_name,
+                    symbol,
+                    local_order_id,
+                    reason or "unspecified",
+                )
+                result = MultiLegExecutionResult(
+                    action="cancel",
+                    status="canceled",
+                    symbol=symbol,
+                    order_id=local_order_id,
+                    raw=dict(action),
+                )
+                self._persist_order_result(action, result, purpose="cancel")
+                return result
             raise MultiLegExecutionError(
                 "cancel action requires order_id or exchange_order_id"
             )
