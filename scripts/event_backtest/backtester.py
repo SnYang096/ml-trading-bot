@@ -85,6 +85,13 @@ from src.features.cross_symbol.macro_tp_vwap_anchor import (
 )
 
 
+def _inject_scores_has_usable_columns(df: pd.DataFrame) -> bool:
+    cols = {str(c).lower() for c in df.columns}
+    if "score" in cols or "add_ml_score" in cols:
+        return True
+    return "score_long" in cols and "score_short" in cols
+
+
 class EventBacktester:
     """
     事件驱动回测主类 — 完全模拟实盘多策略环境
@@ -422,12 +429,10 @@ class EventBacktester:
                         _ip,
                     )
                     inject_scores_df = None
-                elif (
-                    "add_ml_score" not in inject_scores_df.columns
-                    and "score" not in inject_scores_df.columns
-                ):
+                elif not _inject_scores_has_usable_columns(inject_scores_df):
                     logger.warning(
-                        "inject scores parquet missing 'add_ml_score' or 'score' column: %s",
+                        "inject scores parquet missing score columns "
+                        "(need score, add_ml_score, or score_long+score_short): %s",
                         _ip,
                     )
                     inject_scores_df = None
@@ -603,11 +608,12 @@ class EventBacktester:
                         sub2 = sub.sort_values("timestamp").drop_duplicates(
                             "timestamp", keep="last"
                         )
-                        for inj_col in ("score", "add_ml_score"):
-                            if inj_col not in sub2.columns:
+                        skip_cols = {"symbol", "timestamp"}
+                        for inj_col in sub2.columns:
+                            if inj_col in skip_cols:
                                 continue
                             ser = pd.Series(
-                                sub2[inj_col].astype(float).values,
+                                pd.to_numeric(sub2[inj_col], errors="coerce").values,
                                 index=pd.DatetimeIndex(sub2["timestamp"], tz="UTC"),
                             ).sort_index()
                             aligned = ser.reindex(features_df.index).ffill()

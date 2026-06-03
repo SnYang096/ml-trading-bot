@@ -36,6 +36,7 @@ from src.time_series_model.live.execution_profile_apply import (
     rr_constraints_from_exec_params,
 )
 from src.time_series_model.live.fer_diagnostics import record_fer_entry_eval
+from src.time_series_model.live.adverse_tree_gate_veto import AdverseTreeGateVeto
 from src.time_series_model.live.srb_regime import (
     pick_srb_true_sr_level,
     should_reject_srb_wide_entry,
@@ -380,8 +381,14 @@ class DirectionEvaluator:
 class GateEvaluator:
     """评估 gate.yaml 条件，进行结构性过滤"""
 
-    def __init__(self, archetype: StrategyArchetype):
+    def __init__(
+        self,
+        archetype: StrategyArchetype,
+        *,
+        tree_gate_veto: Optional[AdverseTreeGateVeto] = None,
+    ):
         self.archetype = archetype
+        self._tree_gate_veto = tree_gate_veto
 
     def evaluate(
         self, features: Dict[str, Any], quantiles: Optional[Dict[str, Any]] = None
@@ -395,7 +402,14 @@ class GateEvaluator:
         if self.archetype is None:
             return True, [], 1.0
 
-        return self.archetype.apply_gate(features, quantiles)
+        passed, reasons, weight = self.archetype.apply_gate(features, quantiles)
+        if not passed:
+            return passed, reasons, weight
+        if self._tree_gate_veto is not None:
+            ok, veto_reasons = self._tree_gate_veto.evaluate(features)
+            if not ok:
+                return False, list(reasons) + list(veto_reasons), 0.0
+        return passed, reasons, weight
 
 
 # =============================================================================
@@ -802,8 +816,14 @@ class GenericLiveStrategy:
             )
             logger.info("✅ Entry filter config loaded")
 
-            # 4. 初始化其他评估器
-            self.gate_evaluator = GateEvaluator(self.archetype)
+            # 4. 初始化其他评估器（when_then rules + optional adverse tree veto）
+            gate_yaml = self._strategy_package_root() / "archetypes" / "gate.yaml"
+            tree_veto = AdverseTreeGateVeto.from_gate_yaml(
+                gate_yaml, strategies_root=self.strategies_root
+            )
+            self.gate_evaluator = GateEvaluator(
+                self.archetype, tree_gate_veto=tree_veto
+            )
             self.execution_generator = ExecutionParamGenerator(
                 self.archetype.execution.raw or {}
             )
