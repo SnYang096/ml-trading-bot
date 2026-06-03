@@ -1,0 +1,28 @@
+# Trend scalp regime — trend confidence hysteresis + chop cap + stable-box gate.
+#
+# Prefilter rules (if any) live in archetypes/prefilter.yaml.
+
+regime:
+  lock: true
+  entry_feature: trend_confidence
+  entry_min: 0.7
+  exit_below: 0.4
+  max_semantic_chop_entry: 0.25
+  max_semantic_chop_hold: 0.4
+  exclude_box_prefilter: true
+  box_prefilter:
+    stability_min: 0.85
+    width_min: 0.04
+    width_max: 0.3
+    touches_min: 5
+
+last_multileg_evaluation:
+  run_id: "20260511_094225"
+  mode: "non_rolling"
+  candidate: "core"
+  key_metrics:
+    stitched_total_r: 5.24841862644468
+    stitched_total_trades: 8272
+    stitched_max_drawdown_r: -0.6262063382661447
+    count_months: 27
+  source_path: "results/trend_scalp/validate_static.full_study/_rolling_sim/20260511_094225/stitched_summary.json"

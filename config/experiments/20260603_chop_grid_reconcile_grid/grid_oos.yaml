@@ -17,22 +17,22 @@ symbols_6: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
 cells:
   - id: 2h_4bps_5sym
     label: "2h exec · 4bps · 5 coins (legacy low-cost)"
-    execution_timeframe: null  # signal-only = 2h
+    execution_timeframe: 2h
     fee_bps: 4
     symbols: symbols_5
   - id: 2h_4bps_6sym
     label: "2h exec · 4bps · 6 coins (proxy-like)"
-    execution_timeframe: null
+    execution_timeframe: 2h
     fee_bps: 4
     symbols: symbols_6
   - id: 2h_20bps_5sym
     label: "2h exec · 20bps · 5 coins"
-    execution_timeframe: null
+    execution_timeframe: 2h
     fee_bps: 20
     symbols: symbols_5
   - id: 2h_20bps_6sym
     label: "2h exec · 20bps · 6 coins"
-    execution_timeframe: null
+    execution_timeframe: 2h
     fee_bps: 20
     symbols: symbols_6
   - id: 1min_4bps_5sym

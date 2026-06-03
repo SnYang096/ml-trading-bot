@@ -146,6 +146,8 @@ def merge_chop_grid_yaml(path: Path) -> Dict[str, Any]:
             )
         ),
         "exclude_box": bool(regime.get("exclude_box_prefilter", True)),
+        # Live chop: exclude_box_prefilter=false → block entry on stable-box bars.
+        "block_stable_box": not bool(regime.get("exclude_box_prefilter", True)),
         "max_loss_per_grid": float(risk.get("max_loss_per_grid", 0.03)),
         "max_open_levels_total": int(risk.get("max_open_levels_total", 6)),
         "stability_min": float(box_pf.get("stability_min", 0.85)),
@@ -158,10 +160,58 @@ def merge_chop_grid_yaml(path: Path) -> Dict[str, Any]:
         "feature_store_dir": feature_store_dir,
         "feature_store_layer": feature_store_layer,
         "feature_store_timeframe": feature_store_timeframe,
+        "execution_timeframe": str(grid_bt.get("execution_timeframe", "1min")),
+        "agg_data_dir": resolve_optional_repo_path(
+            grid_bt.get("agg_data_dir") or "data/agg_data"
+        ),
         "prefilter_rules": cfg.get("rules", []) or [],
     }
     if "compute_semantic_chop_ts_q" in chop_series:
         out["compute_chop_ts_q"] = chop_series.get("compute_semantic_chop_ts_q")
+    return out
+
+
+def prefilter_box_range(lo: float, hi: float) -> Tuple[Dict[str, Any], ...]:
+    return (
+        {
+            "all_of": [
+                {"feature": "box_pos_60", "operator": ">=", "value": lo},
+                {"feature": "box_pos_60", "operator": "<=", "value": hi},
+            ]
+        },
+    )
+
+
+def resolve_prefilter_rules(
+    defaults: dict,
+    *,
+    box_pos_min: float | None = None,
+    box_pos_max: float | None = None,
+) -> Tuple[Dict[str, Any], ...]:
+    if box_pos_min is not None and box_pos_max is not None:
+        return prefilter_box_range(box_pos_min, box_pos_max)
+    return tuple(
+        x for x in (defaults.get("prefilter_rules", []) or []) if isinstance(x, dict)
+    )
+
+
+def recompute_box_prefilter_column(
+    df: pd.DataFrame,
+    *,
+    stability_min: float,
+    width_min: float,
+    width_max: float,
+    touches_min: int,
+) -> pd.DataFrame:
+    """Recompute ``box_prefilter`` from box_structure columns (FeatureStore path)."""
+    out = df.copy()
+    out["box_prefilter"] = (
+        (pd.to_numeric(out["box_stability"], errors="coerce") >= stability_min)
+        & (pd.to_numeric(out["box_width_pct"], errors="coerce") >= width_min)
+        & (pd.to_numeric(out["box_width_pct"], errors="coerce") <= width_max)
+        & (pd.to_numeric(out["box_touches_hi"], errors="coerce") >= touches_min)
+        & (pd.to_numeric(out["box_touches_lo"], errors="coerce") >= touches_min)
+    )
     return out
 
 

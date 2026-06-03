@@ -313,7 +313,7 @@ def main():
         import yaml as _yaml
 
         _ug_file = (
-            Path(__file__).resolve().parents[1]
+            Path(__file__).resolve().parents[2]
             / "config"
             / "download"
             / "crypto_4h_token_universe_groups.yaml"

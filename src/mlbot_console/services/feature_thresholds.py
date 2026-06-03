@@ -186,9 +186,11 @@ def build_reference_lines_by_column(
                 existing = out.setdefault(feat, [])
                 if not any(abs(x.get("y", 0) - line["y"]) < 1e-9 for x in existing):
                     existing.append(line)
-        # Multi-leg chop_grid: regime hysteresis + box gates live in prefilter.yaml.
+        # Multi-leg chop_grid / trend_scalp: regime hysteresis in regime.yaml.
+        reg_doc = _load_yaml_doc(strat_dir / "archetypes" / "regime.yaml")
         pre_doc = _load_yaml_doc(strat_dir / "archetypes" / "prefilter.yaml")
-        for item in _load_multileg_regime_thresholds(pre_doc):
+        regime_src = reg_doc if reg_doc.get("regime") else pre_doc
+        for item in _load_multileg_regime_thresholds(regime_src):
             feat = str(item.get("feature") or "")
             if not feat:
                 continue
@@ -201,7 +203,7 @@ def build_reference_lines_by_column(
             existing = out.setdefault(feat, [])
             if not any(abs(x.get("y", 0) - line["y"]) < 1e-9 for x in existing):
                 existing.append(line)
-        for item in _load_multileg_box_prefilter_thresholds(pre_doc):
+        for item in _load_multileg_box_prefilter_thresholds(regime_src):
             feat = str(item.get("feature") or "")
             if not feat:
                 continue

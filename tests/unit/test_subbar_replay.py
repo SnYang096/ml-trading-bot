@@ -1,7 +1,9 @@
 import pandas as pd
+import pytest
 
 from src.time_series_model.grid.subbar_replay import (
     merge_signal_features_onto_execution_bars,
+    segment_execution_bounds,
     slice_execution_window,
     timeframe_to_timedelta,
 )
@@ -9,6 +11,18 @@ from src.time_series_model.grid.subbar_replay import (
 
 def test_timeframe_to_timedelta_2h():
     assert timeframe_to_timedelta("2h") == pd.Timedelta(hours=2)
+
+
+def test_timeframe_to_timedelta_100ms():
+    assert timeframe_to_timedelta("100ms") == pd.Timedelta(milliseconds=100)
+
+
+def test_segment_execution_bounds_right_edge():
+    sig = pd.date_range("2024-01-01", periods=4, freq="2h", tz="UTC")
+    delta = pd.Timedelta(hours=2)
+    t_enter, t_exit = segment_execution_bounds(sig, 1, 2, delta)
+    assert t_enter == sig[1] + delta
+    assert t_exit == sig[2] + delta
 
 
 def test_merge_signal_features_onto_execution_bars_asof():
@@ -55,7 +69,7 @@ def test_merge_signal_features_waits_for_right_edge_when_delta_is_set():
     assert out.loc[idx1[6], "semantic_chop"] == 0.5
 
 
-def test_slice_execution_window_inclusive_signal_segment():
+def test_slice_execution_window_live_aligned():
     sig = pd.date_range("2024-01-01", periods=4, freq="2h", tz="UTC")
     df_signal = pd.DataFrame({"x": range(4)}, index=sig)
     idx1 = pd.date_range("2024-01-01", periods=20, freq="15min", tz="UTC")
@@ -65,5 +79,6 @@ def test_slice_execution_window_inclusive_signal_segment():
         df_exec, df_signal, signal_bar_delta=delta
     )
     sub = slice_execution_window(merged, sig, 1, 2, delta)
-    assert sub.index[0] >= sig[1] + delta
-    assert sub.index[-1] < sig[2] + delta
+    t_enter, t_exit = segment_execution_bounds(sig, 1, 2, delta)
+    assert sub.index[0] >= t_enter
+    assert sub.index[-1] < t_exit

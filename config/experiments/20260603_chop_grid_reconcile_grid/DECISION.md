@@ -26,8 +26,11 @@
 
 **结论：策略在 OOS 上并非全面失效；当前 prod 研究 profile（1min 执行 + 20bps 全成本）把 edge 磨没。**
 
+> **2026-06-03 exec 对齐：** 旧表 `2h_4bps` 列含 entry-bar lookahead（在 2h 收盘确认前用 entry bar OHLC fill）。对齐 live 后 2h exec 仍走 `[t_enter, t_exit)` subbar 窗口，数值会低于旧表。Promote 决策以 **1min canonical** 为准。见 [`../20260603_chop_grid_exec_align/README.md`](../20260603_chop_grid_exec_align/README.md)。
+
 ## 决策
 
-- [ ] segment validate 报告应并列 **2h/4bps 对照列** 与 prod 列，避免只看 prod 误判「策略坏了」
-- [ ] promote 前：决定 live 用 2h 执行还是接受 1min+真实 fee 的更低期望
-- [ ] 长窗（2024-01→2026-05）复跑 `2h_4bps_6sym` 对齐 20260526 proxy 窗
+- [x] **Canonical promote 列：** 2h signal + **1min exec** + 右边界 segment 窗口（`calibrate_roll.default.yaml` `execution_timeframe: 1min`）
+- [ ] segment validate 报告应并列 **2h/4bps legacy** 与 **1min prod** 列
+- [ ] promote 前：100ms aggTrades smoke（若 `data/agg_data` 可用）
+- [ ] spacing sweep（对齐后 secondary）

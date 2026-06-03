@@ -74,7 +74,13 @@ def validate_strategy_package(
         for p in required_profiles
     )
     if st in _MULTILEG_TYPES:
-        required_files.extend(["archetypes/prefilter.yaml", "archetypes/execution.yaml"])
+        required_files.extend(
+            [
+                "archetypes/regime.yaml",
+                "archetypes/prefilter.yaml",
+                "archetypes/execution.yaml",
+            ]
+        )
         scfg = strategy_cfg or {}
         if bool(scfg.get("has_prefilter", False)):
             required_files.append("features_prefilter.yaml")

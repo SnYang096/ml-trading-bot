@@ -1,9 +1,9 @@
-# dual_add_trend archetypes
+# trend_scalp archetypes
 
 | File | Role |
 |------|------|
-| `prefilter.yaml` | Multi-leg prefilter layer (trend/chop/box regime gates). |
-| `execution.yaml` | Multi-leg execution/risk layer (inventory/add/tp/fees/risk caps). |
-| `regime_thresholds.yaml` | Trend vs chop regime thresholds for bounded multi-leg inventory (≈ first research ring). |
+| `regime.yaml` | Trend confidence hysteresis, chop caps, stable-box gate. |
+| `prefilter.yaml` | Optional feature rules (`rules:`). |
+| `execution.yaml` | Inventory, add spacing, basket TP, risk. |
 
-See `docs/z实验_011_chopgrid_dualadd/README.md` and ADR §12.3 for column and multi-leg calibration responsibilities.
+Same layout as TPC (`regime.yaml` + `prefilter.yaml` + …).

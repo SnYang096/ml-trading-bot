@@ -11,8 +11,8 @@
 inventory: # Inventory construction and order placement semantics.
   spacing: # Distance between adjacent grid prices; doubles as cell TP distance.
     primary: atr # Use ATR as the primary spacing unit.
-    atr_mult: 1.00 # Grid spacing = ATR * this multiplier, subject to min_pct.
-    min_pct: 0.010 # Minimum spacing as a fraction of price.
+    atr_mult: 1.18 # Grid spacing = ATR * this multiplier, subject to min_pct (phase2 OOS+4-seg validate 2026-06-03).
+    min_pct: 0.011 # Minimum spacing as a fraction of price.
   max_levels_per_side: 2 # Maximum long levels and maximum short levels around center.
   max_replenish_per_level_per_segment: 1 # Post-TP limit replenishes per level per segment (live + research default; see docs/experiments/chop_grid_replenish_sweep_20260526.md).
   order_type: limit # Intended order type for resting grid entries.

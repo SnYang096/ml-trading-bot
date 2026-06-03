@@ -2,7 +2,9 @@
 
 **状态：** 已完成（2026-06-03，`max_replenish_per_level_per_segment: 1`）  
 **产物：** `results/chop_grid/experiments/segment_validate_20260603_timeline/`  
-**配置：** prod archetype + `calibrate_roll.default.yaml`（2h / 1min exec，20bps fee+funding，5 币）
+**配置：** prod archetype + `calibrate_roll.default.yaml`（2h signal / **1min exec（canonical）**，20bps fee+funding，5 币）
+
+> **Exec 对齐（2026-06-03 后）：** 回测默认 `execution_timeframe: 1min`；2h exec 仅作 legacy sensitivity，且与 live 一样使用右边界确认窗口。见 [`../../20260603_chop_grid_exec_align/README.md`](../../20260603_chop_grid_exec_align/README.md)。
 
 ## 判决标准
 

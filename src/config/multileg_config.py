@@ -25,8 +25,17 @@ def load_multileg_layers(
     profile: str = "calibrate_roll.default",
     profile_path: Optional[Path] = None,
     engine_path: Optional[Path] = None,
-) -> Tuple[Path, Dict[str, Any], Path, Dict[str, Any], Path, Dict[str, Any]]:
-    """Load profile YAML + optional extra engine YAML + archetype layers."""
+) -> Tuple[
+    Path,
+    Dict[str, Any],
+    Path,
+    Dict[str, Any],
+    Path,
+    Dict[str, Any],
+    Path,
+    Dict[str, Any],
+]:
+    """Load profile YAML + optional engine YAML + archetype layers (regime, prefilter, execution)."""
     root: Dict[str, Any] = {
         "strategy_type": str(strategy_type).strip().lower(),
         "status": "research",
@@ -53,12 +62,16 @@ def load_multileg_layers(
         engine_path = prof_path
 
     arch = root.get("archetypes", {}) or {}
+    regime_rel = str(arch.get("regime", "archetypes/regime.yaml") or "").strip()
     prefilter_rel = str(
         arch.get("prefilter", "archetypes/prefilter.yaml") or ""
     ).strip()
     execution_rel = str(
         arch.get("execution", "archetypes/execution.yaml") or ""
     ).strip()
+    regime_path = (
+        config_dir / regime_rel if regime_rel else config_dir / "archetypes/regime.yaml"
+    )
     prefilter_path = (
         config_dir / prefilter_rel
         if prefilter_rel
@@ -69,9 +82,19 @@ def load_multileg_layers(
         if execution_rel
         else config_dir / "archetypes/execution.yaml"
     )
+    regime = load_yaml_dict(regime_path, strict=False) if regime_path.exists() else {}
     prefilter = load_yaml_dict(prefilter_path, strict=False)
     execution = load_yaml_dict(execution_path, strict=False)
-    return engine_path, root, prefilter_path, prefilter, execution_path, execution
+    return (
+        engine_path,
+        root,
+        regime_path,
+        regime,
+        prefilter_path,
+        prefilter,
+        execution_path,
+        execution,
+    )
 
 
 def load_multileg_effective_config(
@@ -83,7 +106,7 @@ def load_multileg_effective_config(
     engine_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Build effective runtime config from research profile + archetype overlays."""
-    _, root, _, prefilter, _, execution = load_multileg_layers(
+    _, root, _, regime, _, prefilter, _, execution = load_multileg_layers(
         config_dir=config_dir,
         strategy_type=strategy_type,
         profile=profile,
@@ -91,6 +114,8 @@ def load_multileg_effective_config(
         engine_path=engine_path,
     )
     merged = dict(root)
+    if regime:
+        merged = deep_merge_dicts(merged, regime)
     if prefilter:
         merged = deep_merge_dicts(merged, prefilter)
     if execution:
@@ -111,6 +136,8 @@ def update_multileg_calibration_candidate(
     (
         engine_path,
         root,
+        regime_path,
+        regime,
         prefilter_path,
         prefilter,
         execution_path,
@@ -122,19 +149,24 @@ def update_multileg_calibration_candidate(
         profile_path=profile_path,
         engine_path=engine_path,
     )
+    regime_doc = regime if regime else {}
     pre = prefilter if prefilter else root
     exe = execution if execution else root
+    regime_section = regime_doc.setdefault("regime", {})
+    if not regime_section and isinstance(pre.get("regime"), dict):
+        regime_section = pre.setdefault("regime", {})
 
     if strategy_type == "grid":
-        regime = pre.setdefault("regime", {})
         inv = exe.setdefault("inventory", {})
         spacing = inv.setdefault("spacing", {})
         if "entry_chop_min" in candidate:
-            regime["entry_chop_min"] = float(candidate["entry_chop_min"])
+            regime_section["entry_chop_min"] = float(candidate["entry_chop_min"])
         if "exit_chop_below" in candidate:
-            regime["exit_chop_below"] = float(candidate["exit_chop_below"])
+            regime_section["exit_chop_below"] = float(candidate["exit_chop_below"])
         if "exclude_box_prefilter" in candidate:
-            regime["exclude_box_prefilter"] = bool(candidate["exclude_box_prefilter"])
+            regime_section["exclude_box_prefilter"] = bool(
+                candidate["exclude_box_prefilter"]
+            )
         if "atr_mult" in candidate:
             spacing["atr_mult"] = float(candidate["atr_mult"])
         if "min_pct" in candidate:
@@ -151,20 +183,19 @@ def update_multileg_calibration_candidate(
             risk = exe.setdefault("risk", {})
             risk["max_open_levels_total"] = int(candidate["max_open_levels_total"])
     elif strategy_type in ("dual_add_trend", "trend_scalp"):
-        regime = pre.setdefault("regime", {})
         inv = exe.setdefault("inventory", {})
         spacing = exe.setdefault("add_spacing", {})
         tp = exe.setdefault("take_profit", {})
         if "entry_min" in candidate:
-            regime["entry_min"] = float(candidate["entry_min"])
+            regime_section["entry_min"] = float(candidate["entry_min"])
         if "exit_below" in candidate:
-            regime["exit_below"] = float(candidate["exit_below"])
+            regime_section["exit_below"] = float(candidate["exit_below"])
         if "max_semantic_chop_entry" in candidate:
-            regime["max_semantic_chop_entry"] = float(
+            regime_section["max_semantic_chop_entry"] = float(
                 candidate["max_semantic_chop_entry"]
             )
         if "max_semantic_chop_hold" in candidate:
-            regime["max_semantic_chop_hold"] = float(
+            regime_section["max_semantic_chop_hold"] = float(
                 candidate["max_semantic_chop_hold"]
             )
         if "step_atr_mult" in candidate:
@@ -178,7 +209,11 @@ def update_multileg_calibration_candidate(
     else:
         raise ValueError(f"unsupported multi-leg strategy_type={strategy_type!r}")
 
-    if prefilter:
+    if regime_path.exists():
+        regime_doc["regime"] = regime_section
+        _write_yaml_dict(regime_path, regime_doc)
+    elif prefilter:
+        pre["regime"] = regime_section
         _write_yaml_dict(prefilter_path, pre)
     if execution:
         _write_yaml_dict(execution_path, exe)

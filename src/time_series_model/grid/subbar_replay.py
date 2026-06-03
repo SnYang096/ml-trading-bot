@@ -1,12 +1,25 @@
 """Signal timeframe vs execution timeframe replay for multi-leg research.
 
 Segments and regime masks are computed on a **signal** OHLCV series (e.g. 2h).
-Inventory simulation can then run on a **finer** OHLCV series (e.g. 1min) by
-asof-joining signal features onto each execution bar (no lookahead: last signal
-row with ``signal_ts <= exec_ts``).
+Inventory simulation runs on a **finer** OHLCV series (e.g. 1min, 100ms) with
+signal features asof-joined onto each execution bar.
 
-This mirrors the spirit of ``event_backtest`` / ``_iter_update_bars_1min``:
-decision clock vs fill clock are separated.
+Live-aligned segment clock (matches ``FeatureStoreBarProvider`` +
+``ChopGridLiveEngine``):
+
+- Regime features from a left-labelled signal bar ``k`` are only knowable after
+  that bar closes: ``t_confirm = signal_index[k] + signal_bar_delta``.
+- Grid inventory simulation for signal segment ``[s, e]`` runs on execution bars
+  in ``[t_enter, t_exit)`` where:
+
+  - ``t_enter = signal_index[s] + signal_bar_delta`` (entry bar confirmed)
+  - ``t_exit = signal_index[e] + signal_bar_delta`` (exit bar confirmed)
+
+Grid **pricing** (center / spacing) stays anchored to signal bar ``s`` close/ATR;
+only **fills and TP** use the execution path inside ``[t_enter, t_exit)``.
+
+This mirrors ``event_backtest`` / ``_iter_update_bars_1min``: decision clock vs
+fill clock are separated.
 """
 
 from __future__ import annotations
@@ -21,7 +34,24 @@ def timeframe_to_timedelta(timeframe: str) -> pd.Timedelta:
     tf = str(timeframe or "").strip()
     if not tf:
         raise ValueError("empty timeframe")
+    if tf.lower() in {"100ms", "100MS"}:
+        return pd.Timedelta(milliseconds=100)
     return pd.to_timedelta(tf)
+
+
+def segment_execution_bounds(
+    signal_index: pd.DatetimeIndex,
+    s: int,
+    e: int,
+    signal_bar_delta: pd.Timedelta,
+) -> Tuple[pd.Timestamp, pd.Timestamp]:
+    """Return live-aligned ``(t_enter, t_exit)`` for signal segment ``[s, e]``.
+
+    Execution bars use half-open interval ``[t_enter, t_exit)``.
+    """
+    t_enter = pd.Timestamp(signal_index[s]) + signal_bar_delta
+    t_exit = pd.Timestamp(signal_index[e]) + signal_bar_delta
+    return t_enter, t_exit
 
 
 def merge_signal_features_onto_execution_bars(
@@ -65,13 +95,12 @@ def slice_execution_window(
     e: int,
     signal_bar_delta: pd.Timedelta,
 ) -> pd.DataFrame:
-    """Return execution bars covering signal segment ``[s, e]`` (inclusive on signal).
+    """Return execution bars for live-aligned segment window ``[t_enter, t_exit)``.
 
     Signal bars use **left-labelled** indices spanning
     ``[signal_index[k], signal_index[k] + delta)`` (same convention as
     ``_resample_ohlcv(..., label='left', closed='left')``).
     """
-    t0 = pd.Timestamp(signal_index[s]) + signal_bar_delta
-    t1 = pd.Timestamp(signal_index[e]) + signal_bar_delta
-    sub = df_exec.loc[(df_exec.index >= t0) & (df_exec.index < t1)]
+    t_enter, t_exit = segment_execution_bounds(signal_index, s, e, signal_bar_delta)
+    sub = df_exec.loc[(df_exec.index >= t_enter) & (df_exec.index < t_exit)]
     return sub.copy()

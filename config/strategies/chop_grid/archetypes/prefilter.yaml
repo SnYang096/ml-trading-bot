@@ -1,43 +1,21 @@
-# Multi-leg prefilter: defines regime eligibility for inventory-style engines.
+# Chop grid prefilter — feature rules on top of regime (same shape as TPC/BPC prefilter).
 #
-# Why this is not the same shape as BPC prefilter:
-# - BPC prefilter belongs to a single-position signal pipeline (prefilter -> gate ->
-#   direction -> entry), and is designed around score/ranking contracts.
-# - chop_grid prefilter belongs to a multi-leg inventory engine and only decides
-#   whether "chop regime is tradable"; execution sizing/ladders are in execution.yaml.
-#
-# Should we force it into the same YAML format as BPC?
-# - Not recommended. A strict schema unification would couple two different runtime
-#   contracts and add adapter complexity without improving behavior.
-# - Better approach: keep internal schemas strategy-specific, but share the external
-#   loader/validation contract (already unified in src/config/strategy_layout.py and
-#   src/config/strategy_validation.py).
-regime: # Regime-level eligibility gate for starting/holding a grid segment.
-  lock: true # Keep chop as the semantic anchor; selectors may add filters, not replace it.
-  entry_feature: bpc_semantic_chop # Feature column used as the primary chop signal.
-  entry_chop_min: 0.50 # Enter grid only when chop score is at or above this level.
-  exit_chop_below: 0.32 # Exit/stop opening grids when chop score falls below this level.
-  exclude_box_prefilter: false # Selected with the box-position prefilter candidate.
-  box_prefilter: # Optional box-quality thresholds used only when box filtering is evaluated.
-    stability_min: 0.85 # Minimum range stability score for a detected box.
-    width_min: 0.04 # Minimum normalized box width to avoid micro ranges.
-    width_max: 0.30 # Maximum normalized box width to avoid loose/noisy ranges.
-    touches_min: 5 # Minimum boundary touches required for a credible box.
+# Regime chop thresholds and box-quality gates: archetypes/regime.yaml.
 
 rules:
   - all_of:
       - feature: box_pos_60
         operator: ">="
-        value: 0.35
+        value: 0.40
       - feature: box_pos_60
         operator: <=
-        value: 0.65
+        value: 0.60
 
 _multileg_feature_selection:
   timestamp: "2026-05-10T23:28:57.428964"
   strategy_type: grid
   source: slow_snapshot
-  candidate_name: core_plus_box_structure_f__box_pos_60_range_0p35_0p65
+  candidate_name: core_plus_box_structure_f__box_pos_60_range_0p40_0p60
   rule_count: 1
 
 last_multileg_evaluation:

@@ -36,6 +36,7 @@ from scripts.diagnose_chop_grid import (  # noqa: E402
     regime_chop_column,
     regime_chop_series,
     resolve_optional_repo_path,
+    resolve_prefilter_rules,
 )
 from scripts.capital_report import write_capital_report_from_trades  # noqa: E402
 from scripts.pipeline.multileg_portfolio_metrics import (  # noqa: E402
@@ -59,8 +60,12 @@ from src.time_series_model.grid.chop_grid_engine import (  # noqa: E402
     GridEngineConfig,
     hysteresis_segments,
 )
+from src.time_series_model.grid.agg100ms_replay import (  # noqa: E402
+    load_segment_100ms_bars,
+)
 from src.time_series_model.grid.subbar_replay import (  # noqa: E402
     merge_signal_features_onto_execution_bars,
+    segment_execution_bounds,
     slice_execution_window,
     timeframe_to_timedelta,
 )
@@ -270,7 +275,10 @@ def collect_chop_grid_trades_for_symbol(
     cfg: GridConfig,
     engine: ChopGridEngine,
     *,
-    exclude_box: bool,
+    block_stable_box: bool = False,
+    exec_timeframe: str = "1min",
+    agg_data_dir: Path | None = None,
+    parquet_data_dir: Path | None = None,
     account_risk_tracker=None,
     unit_notional_usdt: float = 0.0,
 ) -> Tuple[List[dict], List[dict], int, float]:
@@ -293,7 +301,7 @@ def collect_chop_grid_trades_for_symbol(
     )
     entry_mask &= rule_mask
     hold_mask &= rule_mask
-    if exclude_box:
+    if block_stable_box:
         entry_mask &= ~df["box_prefilter"]
         hold_mask &= ~df["box_prefilter"]
         regime = "chop_not_box"
@@ -308,12 +316,39 @@ def collect_chop_grid_trades_for_symbol(
     entry_rate = float(entry_mask.mean()) if len(entry_mask) else 0.0
     trades_out: List[dict] = []
     summaries_out: List[dict] = []
+    exec_tf = str(exec_timeframe or "1min").strip().lower()
     for seq, (s, e) in enumerate(segs, start=1):
         seg_id = f"{symbol}_{seq:04d}_{df.index[s].strftime('%Y%m%d%H%M')}"
-        if df_exec is not None and sig_delta is not None:
-            seg_slice = slice_execution_window(df_exec, df.index, s, e, sig_delta)
-            anchor_c = float(df.iloc[s]["close"])
-            anchor_a = float(df.iloc[s]["atr14"])
+        anchor_c = float(df.iloc[s]["close"])
+        anchor_a = float(df.iloc[s]["atr14"])
+        if sig_delta is not None:
+            if exec_tf in {"100ms"}:
+                t_enter, t_exit = segment_execution_bounds(df.index, s, e, sig_delta)
+                seg_slice = load_segment_100ms_bars(
+                    symbol=symbol,
+                    agg_data_dir=agg_data_dir,
+                    parquet_data_dir=parquet_data_dir,
+                    t_enter=t_enter,
+                    t_exit=t_exit,
+                )
+                seg_slice = merge_signal_features_onto_execution_bars(
+                    seg_slice, df, signal_bar_delta=sig_delta
+                )
+            elif df_exec is not None:
+                seg_slice = slice_execution_window(df_exec, df.index, s, e, sig_delta)
+            else:
+                result = engine.simulate_segment(
+                    df.iloc[s : e + 1],
+                    symbol=symbol,
+                    regime=regime,
+                    segment_id=seg_id,
+                    regime_chop_col=chop_col,
+                    account_risk_tracker=account_risk_tracker,
+                    unit_notional_usdt=unit_notional_usdt,
+                )
+                trades_out.extend(t.to_dict() for t in result.trades)
+                summaries_out.append(result.summary)
+                continue
             result = engine.simulate_segment(
                 seg_slice,
                 symbol=symbol,
@@ -380,10 +415,10 @@ def run_backtest(
             else None
         )
         or None,
-        prefilter_rules=tuple(
-            x
-            for x in (defaults.get("prefilter_rules", []) or [])
-            if isinstance(x, dict)
+        prefilter_rules=resolve_prefilter_rules(
+            defaults,
+            box_pos_min=getattr(args, "box_pos_min", None),
+            box_pos_max=getattr(args, "box_pos_max", None),
         ),
     )
     engine_cfg = GridEngineConfig(
@@ -431,16 +466,20 @@ def run_backtest(
         if df.empty:
             continue
 
-        exec_tf = args.execution_timeframe or args.timeframe
-        if exec_tf != args.timeframe:
+        exec_tf = str(
+            args.execution_timeframe or defaults.get("execution_timeframe", "1min")
+        )
+        sig_delta = timeframe_to_timedelta(args.timeframe)
+        agg_dir = resolve_optional_repo_path(
+            getattr(args, "agg_data_dir", None) or defaults.get("agg_data_dir")
+        )
+        if exec_tf.lower() == "100ms":
+            df_exec = None
+        else:
             bars_exec = _resample_ohlcv(raw, exec_tf)
-            sig_delta = timeframe_to_timedelta(args.timeframe)
             df_exec = merge_signal_features_onto_execution_bars(
                 bars_exec, df, signal_bar_delta=sig_delta
             )
-        else:
-            df_exec = None
-            sig_delta = None
 
         tlist, slist, n_seg, entry_rate = collect_chop_grid_trades_for_symbol(
             symbol,
@@ -449,7 +488,14 @@ def run_backtest(
             sig_delta,
             cfg,
             engine,
-            exclude_box=bool(args.exclude_box),
+            block_stable_box=bool(
+                getattr(args, "block_stable_box", None)
+                if getattr(args, "block_stable_box", None) is not None
+                else defaults.get("block_stable_box", False)
+            ),
+            exec_timeframe=exec_tf,
+            agg_data_dir=Path(agg_dir) if agg_dir else None,
+            parquet_data_dir=data_dir,
             account_risk_tracker=risk_tracker,
             unit_notional_usdt=unit_notional,
         )
@@ -1042,15 +1088,19 @@ def main() -> None:
     )
     parser.add_argument(
         "--execution-timeframe",
-        default=None,
+        default=str(defaults.get("execution_timeframe", "1min")),
         help=(
-            "Optional finer resample for high/low path (e.g. 1min). When set and "
-            "different from --timeframe, segment boundaries stay on the signal grid "
-            "but grid fills use execution bars with signal features asof-joined "
-            "(see src/time_series_model/grid/subbar_replay.py). "
-            "max_loser_hold_bars / segment bar counts in other tools still refer to "
-            "signal bars unless you scale them manually."
+            "Execution OHLC path (default 1min, live-aligned). Segment boundaries "
+            "stay on the signal grid; fills run on execution bars in "
+            "[signal_close, exit_signal_close) with features asof-joined "
+            "(see src/time_series_model/grid/subbar_replay.py). Use 100ms for "
+            "aggTrades replay (--agg-data-dir required)."
         ),
+    )
+    parser.add_argument(
+        "--agg-data-dir",
+        default=str(defaults.get("agg_data_dir") or "data/agg_data"),
+        help="Binance aggTrades zip root for --execution-timeframe 100ms.",
     )
     parser.add_argument(
         "--box-window",
@@ -1114,9 +1164,31 @@ def main() -> None:
         default=defaults.get("funding_cost_bps_per_8h", 0.0),
     )
     parser.add_argument(
+        "--block-stable-box",
+        action=argparse.BooleanOptionalAction,
+        default=defaults.get("block_stable_box"),
+        help=(
+            "Block chop entry on stable-box bars (live-aligned when "
+            "regime.exclude_box_prefilter is false)."
+        ),
+    )
+    parser.add_argument(
         "--exclude-box",
         action=argparse.BooleanOptionalAction,
         default=defaults.get("exclude_box", True),
+        help="Deprecated alias; use --block-stable-box for chop grid.",
+    )
+    parser.add_argument(
+        "--box-pos-min",
+        type=float,
+        default=None,
+        help="Override prefilter box_pos_60 lower bound (requires --box-pos-max).",
+    )
+    parser.add_argument(
+        "--box-pos-max",
+        type=float,
+        default=None,
+        help="Override prefilter box_pos_60 upper bound (requires --box-pos-min).",
     )
     parser.add_argument(
         "--max-loss-per-grid",
