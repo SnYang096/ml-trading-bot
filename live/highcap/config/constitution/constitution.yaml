@@ -249,7 +249,7 @@ multi_leg:
     # Offline budget anchor for pct-based risk_limits and validation reports.
     # In live trading, actual equity/drawdown should come from account sync / exchange
     # state; this value is not a replacement for real account balance.
-    equity_usdt: 10000 # Offline anchor for pct caps (same key as spot.account; live uses exchange sync).
+    equity_usdt: 500 # Offline fallback anchor; live sizing/caps use synced exchange equity (run_multi_leg_live._sync_multi_leg_sizing_equity).
     # Live/shadow kill-switch threshold; checked against synced or supplied drawdown.
     # trend_scalp ablation portfolio_cum_dd ~3.9% (docs/strategy/trend_scalp_翻转reseed实验.md); 5% headroom.
     max_drawdown_pct: 0.05 # Halt new multi-leg risk if account drawdown from peak exceeds 5%.
@@ -263,13 +263,16 @@ multi_leg:
     fail_closed: true
 
   risk_limits:
-    # Pct limits are resolved against account.equity_usdt unless absolute notional
-    # limits are supplied. Example: 0.20 * 10000 = 2000 USDT max gross exposure.
-    # B-tier E7 dense 3L combined sim peak gross ~135%.
+    # Pct limits resolve against synced equity (fallback account.equity_usdt).
+    # Per-symbol caps MUST cover one strategy's max legs × per-leg notional or the
+    # governor vetoes legitimately-sized entries:
+    #   chop_grid level  = 0.010/(0.03×6) ≈ 5.56% equity; 6 levels gross ≈ 33%, net ≈ 17%.
+    #   trend_scalp leg  = 0.006/(0.02×4) = 7.5% equity; 2 net legs = 15%, 4 gross = 30%.
+    # 3 concurrent symbols → portfolio gross ≈ 100%, net ≈ 50%.
     max_gross_notional_pct: 1.40
-    max_net_notional_pct: 0.20
-    max_symbol_gross_notional_pct: 0.20
-    max_symbol_net_notional_pct: 0.04
+    max_net_notional_pct: 0.55
+    max_symbol_gross_notional_pct: 0.36 # ≥ chop 6-level gross (~33%) / trend 4-leg gross (30%).
+    max_symbol_net_notional_pct: 0.18 # ≥ chop net (~17%) / trend 2-leg net (15%).
     max_concurrent_grid_symbols: 3
     # Maximum number of resting open orders across all multi-leg strategies.
     max_resting_orders: 60 # Cap on open limit orders (grid + dual-add combined).

@@ -353,9 +353,54 @@ def _multi_leg_account_snapshot_provider(api: Any):
     return provider
 
 
+def _sync_multi_leg_sizing_equity(api: Any, args: argparse.Namespace) -> None:
+    """Scale unit notionals + pct caps to the real account equity.
+
+    Sizing and ``*_notional_pct`` caps otherwise resolve against the offline
+    ``multi_leg.account.equity_usdt`` anchor, which can be far from the live
+    balance. Export the synced equity so both the derived unit notionals and the
+    pct-based exposure caps track the real account. Opt out (keep the offline
+    anchor) with ``MLBOT_MULTI_LEG_SIZING_USE_ANCHOR=1``.
+    """
+    if args.mode not in ("mainnet", "testnet") or not isinstance(api, BinanceAPI):
+        return
+    if _env_truthy("MLBOT_MULTI_LEG_SIZING_USE_ANCHOR"):
+        return
+    if os.getenv("MULTI_LEG_ACCOUNT_EQUITY_USDT"):
+        # Explicit operator override already pins equity; respect it.
+        return
+    try:
+        snap = snapshot_from_binance_balance(
+            balance=api.get_account_balance(),
+            positions=api.get_positions(),
+        )
+        equity = float(snap.equity or 0.0)
+    except Exception:
+        logger.warning(
+            "multi-leg sizing: real equity fetch failed; falling back to offline "
+            "anchor (multi_leg.account.equity_usdt)",
+            exc_info=True,
+        )
+        return
+    if equity <= 0.0:
+        logger.warning(
+            "multi-leg sizing: synced equity <= 0; falling back to offline anchor"
+        )
+        return
+    os.environ["MULTI_LEG_ACCOUNT_EQUITY_USDT"] = repr(equity)
+    setattr(args, "account_equity_usdt", equity)
+    logger.info(
+        "multi-leg sizing: scaling unit notionals + pct caps to real account "
+        "equity=%.2f USDT",
+        equity,
+    )
+
+
 def build_daemon(
     args: argparse.Namespace,
 ) -> Tuple[MultiLegLiveDaemon, Any, MultiLegStorage | None, str | None]:
+    api = _make_api(args.mode, allow_shared_account=args.allow_shared_account)
+    _sync_multi_leg_sizing_equity(api, args)
     apply_multi_leg_args_from_constitution(args)
     resolved_csv = resolve_multi_leg_base_symbols_csv(args)
     setattr(args, "symbols", resolved_csv)
@@ -380,7 +425,6 @@ def build_daemon(
     if not strategy_symbols:
         raise RuntimeError("No active strategy symbols after meta symbol filters")
     symbols = sorted(active_symbol_set)
-    api = _make_api(args.mode, allow_shared_account=args.allow_shared_account)
     if (
         args.mode in ("mainnet", "testnet")
         and isinstance(api, BinanceAPI)
