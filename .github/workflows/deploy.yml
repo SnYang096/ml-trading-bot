@@ -722,10 +722,14 @@ jobs:
           for p in \
             deploy/business-console \
             deploy/systemd/quant-business-console.service \
+            src/__init__.py \
             src/mlbot_console \
             src/live_data_stream \
             src/time_series_model \
+            src/monitoring \
             src/config \
+            config/strategies \
+            config/monitoring \
             live/highcap/universe.yaml \
             live/highcap/config; do
             test -e "${ROOT}/${p}" || { echo "::error::missing ${ROOT}/${p}"; exit 1; }
@@ -739,10 +743,14 @@ jobs:
             -C "${ROOT}" \
               deploy/business-console \
               deploy/systemd/quant-business-console.service \
+              src/__init__.py \
               src/mlbot_console \
               src/live_data_stream \
               src/time_series_model \
+              src/monitoring \
               src/config \
+              config/strategies \
+              config/monitoring \
               live/highcap/universe.yaml \
               live/highcap/config
 

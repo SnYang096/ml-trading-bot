@@ -6,6 +6,7 @@ WORKDIR /app
 COPY deploy/business-console/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
+COPY src/__init__.py /app/src/__init__.py
 COPY src/mlbot_console /app/src/mlbot_console
 COPY src/live_data_stream /app/src/live_data_stream
 COPY src/time_series_model /app/src/time_series_model

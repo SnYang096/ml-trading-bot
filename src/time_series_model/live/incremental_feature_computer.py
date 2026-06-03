@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from typing import Dict, Optional, Any, Deque, Set, List
+from typing import Dict, Optional, Any, Deque, Set, List, Mapping
 from collections import deque
 from datetime import datetime, timedelta
 import time
@@ -31,6 +31,11 @@ from src.features.time_series.utils_interaction_features import (
 )
 from src.features.time_series.utils_volatility_features import (
     extract_volume_profile_volatility_features_from_series,
+)
+from src.time_series_model.live.multileg_runtime_features import (
+    enrich_multileg_runtime_features,
+    is_string_live_column,
+    live_feature_satisfied,
 )
 
 # Nautilus Trader types (optional — dict format is always supported)
@@ -178,7 +183,7 @@ class IncrementalFeatureComputer:
         self._last_missing_log_ts: Optional[float] = None
         self._last_skipped_nodes: List[str] = []
         self._warmup_mode: bool = False  # warmup 期间跳过重型特征计算
-        self._batch_features: Dict[str, float] = {}  # 批量计算结果缓存
+        self._batch_features: Dict[str, Any] = {}  # 批量计算结果缓存
         if self.live_feature_nodes:
             try:
                 from src.features.loader.strategy_feature_loader import (
@@ -1637,15 +1642,25 @@ class IncrementalFeatureComputer:
             return {}
 
         # ── 4. 提取最后一行 ──
-        features: Dict[str, float] = {}
+        features: Dict[str, Any] = {}
         last_row = bars_tf.iloc[-1].to_dict()
         for k, v in last_row.items():
-            if self._want(str(k)):
-                try:
-                    if v is not None and np.isscalar(v) and not pd.isna(v):
-                        features[str(k)] = float(v)
-                except (ValueError, TypeError):
-                    continue
+            key = str(k)
+            if not self._want(key):
+                continue
+            if v is None or (np.isscalar(v) and pd.isna(v)):
+                continue
+            if is_string_live_column(key):
+                features[key] = str(v)
+                continue
+            try:
+                if np.isscalar(v):
+                    features[key] = float(v)
+            except (ValueError, TypeError):
+                continue
+
+        if self.live_feature_set:
+            enrich_multileg_runtime_features(features, wanted=self.live_feature_set)
 
         # ── 5. 校验大窗口百分位特征 (基于 feature_dependencies 元数据) ──
         self._validate_warmup(bars_tf, features)
@@ -1710,10 +1725,12 @@ class IncrementalFeatureComputer:
         )
         return bars_tf
 
-    def _log_missing_features(self, features: Dict[str, float]) -> None:
+    def _log_missing_features(self, features: Mapping[str, Any]) -> None:
         if not self.live_feature_set:
             return
-        missing = [k for k in self.live_feature_set if k not in features]
+        missing = [
+            k for k in self.live_feature_set if not live_feature_satisfied(k, features)
+        ]
         now = time.time()
         if self._last_missing_log_ts is None or now - self._last_missing_log_ts >= 60:
             if missing:

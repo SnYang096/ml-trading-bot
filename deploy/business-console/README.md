@@ -25,7 +25,7 @@ docker compose up -d --build
 
 Build context is the **repository root** (`../..` → `/opt/quant-engine`): image includes `src/mlbot_console`, `src/time_series_model`, `src/config` (archetype prefilter/gate regions), and `config/strategies`. Account overview uses `requests`, `ccxt`, and `python-dotenv` via `mlbot_console.services.spot_ccxt` (no `order_management` copy).
 
-CI packs `deploy/business-console`, `src/`, `live/highcap/universe.yaml`, and **`live/highcap/config/`** (constitution + live strategy YAML: tpc, chop_grid, trend_scalp, spot_accum_simple) under `/opt/quant-engine/`. The console reads strategies from `/data/live_root/config/strategies`, not research `config/strategies`.
+CI packs `deploy/business-console`, `src/{mlbot_console,live_data_stream,time_series_model,monitoring,config}`, `config/{strategies,monitoring}`, `live/highcap/universe.yaml`, and **`live/highcap/config/`** (constitution + live strategy YAML) under `/opt/quant-engine/`. Compose build context is that tree; image also embeds research `config/strategies` + `config/monitoring` for defaults. Runtime strategies come from the volume `/data/live_root/config/strategies`.
 
 **Pre-deploy smoke** (no CI wait):
 
