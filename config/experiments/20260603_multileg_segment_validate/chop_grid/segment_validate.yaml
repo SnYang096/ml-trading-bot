@@ -23,6 +23,7 @@ segment_matrix:
   variants:
     - suffix: prod_archetype_timeline
       output_dir: results/chop_grid/experiments/segment_validate_20260603_timeline
+      max_replenish_per_level_per_segment: null  # research default; see replenish_ablation
 
 metrics:
   canonical: return_pct_timeline

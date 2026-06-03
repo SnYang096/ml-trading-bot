@@ -1,0 +1,49 @@
+# chop_grid — post-TP replenish ablation (2026-06-03)
+
+**背景：** 研究默认 `max_replenish_per_level_per_segment: null`（TP 后无限补挂）与 live 默认 `0`（每档每 segment 仅一次 fill）/ `1`（prod）行为不一致。segment validate 20260603 在 **unlimited** 下 OOS **-0.75%**。
+
+**目标：** 关闭 TP 后补挂（`max_replenish=0`），看能否接近历史较好窗口（如 20260526 proxy +38% pooled 口径需对照解读）。
+
+## 变体
+
+| ID | CLI | 含义 | output_dir |
+|----|-----|------|------------|
+| `replenish_unlimited` | _(default from archetype)_ | TP 后同档无限补挂（research 默认） | `.../replenish_unlimited/` |
+| `replenish_off` | `--max-replenish-per-level 0` | **禁用** TP 后补挂（legacy one-shot） | `.../replenish_off/` |
+| `replenish_live` | `--max-replenish-per-level 1` | 对齐 live prod（每档最多 1 次补挂） | `.../replenish_live/` |
+
+配置语义见 [`docs/experiments/chop_grid_replenish_sweep_20260526.md`](../../../docs/experiments/chop_grid_replenish_sweep_20260526.md)。
+
+## 跑法（单段 smoke：recent_6m_oos）
+
+```bash
+BASE=results/chop_grid/experiments/replenish_ablation_20260603
+CFG=config/strategies/chop_grid/research/calibrate_roll.default.yaml
+SYM=BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT
+FWD=(--config "$CFG" --symbols "$SYM" --timeframe 2h --execution-timeframe 1min
+     --initial-capital 10000 --no-maps)
+
+# unlimited（与 segment_validate_20260603_timeline 相同 replenish 语义）
+python scripts/experiment_chop_grid_market_segment.py \
+  --out-root "$BASE/replenish_unlimited" --segments recent_6m_oos -- "${FWD[@]}"
+
+# 关闭 TP 后补挂
+python scripts/experiment_chop_grid_market_segment.py \
+  --out-root "$BASE/replenish_off" --segments recent_6m_oos -- \
+  "${FWD[@]}" --max-replenish-per-level 0
+
+# live prod 对齐
+python scripts/experiment_chop_grid_market_segment.py \
+  --out-root "$BASE/replenish_live" --segments recent_6m_oos -- \
+  "${FWD[@]}" --max-replenish-per-level 1
+```
+
+四段全量：去掉 `--segments recent_6m_oos`，或分别改 `segment_matrix` manifest。
+
+## 指标
+
+Timeline 组合口径（与 [`../20260603_multileg_segment_validate/METRICS.md`](../20260603_multileg_segment_validate/METRICS.md) 一致）。对比时额外记录 segment 级 `replenish_trades`（若需可从 `grid_segments.csv` 汇总）。
+
+## 结论
+
+见 [`DECISION.md`](DECISION.md)。

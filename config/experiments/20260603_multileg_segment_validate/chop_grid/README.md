@@ -1,7 +1,8 @@
 # chop_grid — segment validate (timeline)
 
 **Manifest：** [`segment_validate.yaml`](segment_validate.yaml)  
-**父实验：** [`../README.md`](../README.md)
+**父实验：** [`../README.md`](../README.md)  
+**Replenish 对照：** [`../../20260603_chop_grid_replenish_ablation/`](../../20260603_chop_grid_replenish_ablation/)（TP 后补挂 on/off）
 
 ## 跑法
 
@@ -15,6 +16,8 @@ python scripts/experiment_chop_grid_market_segment.py \
   --initial-capital 10000 \
   --no-maps
 ```
+
+默认 **replenish=unlimited**（`archetypes/execution.yaml` 的 `max_replenish_per_level_per_segment: null`）。关闭补挂加：`--max-replenish-per-level 0`。
 
 ## 结论
 
