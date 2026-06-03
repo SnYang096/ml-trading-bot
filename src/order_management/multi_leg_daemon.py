@@ -40,6 +40,8 @@ def _risk_reject_metric_code(reason: str) -> str:
         return "unsupported_side"
     if "max_symbol_gross_notional" in r:
         return "symbol_gross_limit"
+    if "exchange_min_qty" in r or "exchange_min_notional" in r:
+        return "exchange_min_order"
     if "max_symbol_net_notional" in r:
         return "symbol_net_limit"
     if "max_gross_notional" in r:

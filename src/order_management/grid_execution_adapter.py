@@ -47,6 +47,65 @@ def _market_exit_reason_bucket(action: Dict[str, Any]) -> str:
     return "other"
 
 
+def _exchange_place_reject_reason(
+    api: Any,
+    symbol: str,
+    quantity: float,
+    *,
+    price: Optional[float] = None,
+) -> str:
+    """Return a rejection reason when qty/notional is below exchange limits, else ''."""
+    getter = getattr(api, "get_symbol_info", None)
+    if not callable(getter):
+        return ""
+    try:
+        info = getter(symbol)
+    except Exception:
+        logger.debug("exchange min-order check: get_symbol_info failed", exc_info=True)
+        return ""
+    if not info:
+        return ""
+    limits = info.get("limits") if isinstance(info, dict) else None
+    if not isinstance(limits, dict):
+        return ""
+    amount_limits = limits.get("amount") or {}
+    min_amount = amount_limits.get("min")
+    if min_amount is not None:
+        try:
+            min_qty = float(min_amount)
+        except (TypeError, ValueError):
+            min_qty = 0.0
+        if min_qty > 0.0 and float(quantity) < min_qty:
+            return (
+                f"exchange_min_qty: quantity {float(quantity):.8f} < "
+                f"min {min_qty:.8f} for {symbol}"
+            )
+    cost_limits = limits.get("cost") or {}
+    min_cost = cost_limits.get("min")
+    if min_cost is not None and price is not None and float(price) > 0:
+        try:
+            min_notional = float(min_cost)
+        except (TypeError, ValueError):
+            min_notional = 0.0
+        notional = float(quantity) * float(price)
+        if min_notional > 0.0 and notional < min_notional:
+            return (
+                f"exchange_min_notional: notional {notional:.4f} < "
+                f"min {min_notional:.4f} for {symbol}"
+            )
+    return ""
+
+
+def _is_invalid_order_size_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return (
+        "invalidorder" in text
+        or "minimum amount" in text
+        or "must be greater than minimum" in text
+        or "min notional" in text
+    )
+
+
 def _resolve_live_cancel_order_id(action: Dict[str, Any]) -> str:
     """Return an exchange order id suitable for cancel API calls, or empty."""
     exchange_id = str(action.get("exchange_order_id") or "").strip()
@@ -359,15 +418,62 @@ class MultiLegExecutionAdapter:
             time_in_force,
             str(action.get("order_id") or ""),
         )
-        order = self.binance_api.place_order(
-            symbol=symbol,
-            side=side,
-            order_type=order_type,
-            quantity=quantity,
-            price=price,
-            client_order_id=client_order_id,
-            time_in_force=time_in_force,
+        reject = _exchange_place_reject_reason(
+            self.binance_api, symbol, quantity, price=price
         )
+        if reject:
+            logger.warning(
+                "multi-leg place rejected (%s): strategy=%s symbol=%s "
+                "qty=%s price=%s local_order_id=%s",
+                reject,
+                self.strategy_name,
+                symbol,
+                quantity,
+                price,
+                str(action.get("order_id") or ""),
+            )
+            result = MultiLegExecutionResult(
+                action="place",
+                status="rejected",
+                symbol=symbol,
+                client_order_id=client_order_id,
+                reason=reject,
+                raw={**dict(action), "reject_reason": reject},
+            )
+            self._persist_order_result(action, result, purpose="entry")
+            return result
+        try:
+            order = self.binance_api.place_order(
+                symbol=symbol,
+                side=side,
+                order_type=order_type,
+                quantity=quantity,
+                price=price,
+                client_order_id=client_order_id,
+                time_in_force=time_in_force,
+            )
+        except Exception as exc:
+            if _is_invalid_order_size_error(exc):
+                reject = str(exc)
+                logger.warning(
+                    "multi-leg place rejected (exchange): strategy=%s symbol=%s "
+                    "qty=%s reason=%s",
+                    self.strategy_name,
+                    symbol,
+                    quantity,
+                    reject,
+                )
+                result = MultiLegExecutionResult(
+                    action="place",
+                    status="rejected",
+                    symbol=symbol,
+                    client_order_id=client_order_id,
+                    reason=reject,
+                    raw={**dict(action), "reject_reason": reject},
+                )
+                self._persist_order_result(action, result, purpose="entry")
+                return result
+            raise
         result = MultiLegExecutionResult(
             action="place",
             status=str(order.get("status", "submitted")),
@@ -510,14 +616,70 @@ class MultiLegExecutionAdapter:
             self._persist_order_result(action, result, purpose="market_exit")
             return result
 
-        order = self.binance_api.place_order(
-            symbol=symbol,
-            side=side,
-            order_type=OrderType.MARKET,
-            quantity=quantity,
-            reduce_only=True,
-            client_order_id=client_order_id,
+        mark: Optional[float] = None
+        for key in ("exit_price", "mark_price", "price"):
+            raw = action.get(key)
+            if raw is None:
+                continue
+            try:
+                candidate = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if candidate > 0:
+                mark = candidate
+                break
+        reject = _exchange_place_reject_reason(
+            self.binance_api, symbol, quantity, price=mark
         )
+        if reject:
+            logger.warning(
+                "multi-leg market_exit rejected (%s): strategy=%s symbol=%s qty=%s",
+                reject,
+                self.strategy_name,
+                symbol,
+                quantity,
+            )
+            result = MultiLegExecutionResult(
+                action="market_exit",
+                status="rejected",
+                symbol=symbol,
+                client_order_id=client_order_id,
+                reason=reject,
+                raw={**dict(action), "reject_reason": reject},
+            )
+            self._persist_order_result(action, result, purpose="market_exit")
+            return result
+        try:
+            order = self.binance_api.place_order(
+                symbol=symbol,
+                side=side,
+                order_type=OrderType.MARKET,
+                quantity=quantity,
+                reduce_only=True,
+                client_order_id=client_order_id,
+            )
+        except Exception as exc:
+            if _is_invalid_order_size_error(exc):
+                reject = str(exc)
+                logger.warning(
+                    "multi-leg market_exit rejected (exchange): strategy=%s "
+                    "symbol=%s qty=%s reason=%s",
+                    self.strategy_name,
+                    symbol,
+                    quantity,
+                    reject,
+                )
+                result = MultiLegExecutionResult(
+                    action="market_exit",
+                    status="rejected",
+                    symbol=symbol,
+                    client_order_id=client_order_id,
+                    reason=reject,
+                    raw={**dict(action), "reject_reason": reject},
+                )
+                self._persist_order_result(action, result, purpose="market_exit")
+                return result
+            raise
         result = MultiLegExecutionResult(
             action="market_exit",
             status=str(order.get("status", "submitted")),
@@ -633,6 +795,31 @@ class MultiLegExecutionAdapter:
             self._persist_order_result(action, result, purpose=purpose)
             return result
 
+        prot_price = order_price if order_price is not None else protection_price
+        reject = _exchange_place_reject_reason(
+            self.binance_api, symbol, quantity, price=prot_price
+        )
+        if reject:
+            logger.warning(
+                "multi-leg place_protection rejected (%s): strategy=%s symbol=%s "
+                "qty=%s leg_id=%s",
+                reject,
+                self.strategy_name,
+                symbol,
+                quantity,
+                action.get("leg_id") or action.get("order_id"),
+            )
+            result = MultiLegExecutionResult(
+                action="place_protection",
+                status="rejected",
+                symbol=symbol,
+                client_order_id=client_order_id,
+                reason=reject,
+                raw={**dict(action), "reject_reason": reject, "purpose": purpose},
+            )
+            self._persist_order_result(action, result, purpose=purpose)
+            return result
+
         try:
             order = self.binance_api.place_order(
                 symbol=symbol,
@@ -681,6 +868,26 @@ class MultiLegExecutionAdapter:
                         "leg_id": action.get("leg_id") or action.get("order_id"),
                         "error": str(exc),
                     },
+                )
+                self._persist_order_result(action, result, purpose=purpose)
+                return result
+            if _is_invalid_order_size_error(exc):
+                reject = str(exc)
+                logger.warning(
+                    "multi-leg place_protection rejected (exchange): strategy=%s "
+                    "symbol=%s qty=%s reason=%s",
+                    self.strategy_name,
+                    symbol,
+                    quantity,
+                    reject,
+                )
+                result = MultiLegExecutionResult(
+                    action="place_protection",
+                    status="rejected",
+                    symbol=symbol,
+                    client_order_id=client_order_id,
+                    reason=reject,
+                    raw={**dict(action), "reject_reason": reject, "purpose": purpose},
                 )
                 self._persist_order_result(action, result, purpose=purpose)
                 return result

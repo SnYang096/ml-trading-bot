@@ -419,6 +419,32 @@ def test_cancel_requires_symbol_and_calls_exchange() -> None:
     assert result.status == "canceled"
 
 
+def test_place_rejects_below_exchange_min_qty_without_crash() -> None:
+    api = _api()
+    api.get_symbol_info.return_value = {
+        "limits": {
+            "amount": {"min": 0.001, "max": None},
+            "cost": {"min": 5.0, "max": None},
+        }
+    }
+    adapter = GridExecutionAdapter(api)
+
+    result = adapter.execute_action(
+        {
+            "action": "place",
+            "symbol": "BTCUSDT",
+            "side": "BUY",
+            "quantity": 0.0003,
+            "price": 100000.0,
+            "order_id": "BTCUSDT_test_L1",
+        }
+    )
+
+    api.place_order.assert_not_called()
+    assert result.status == "rejected"
+    assert "exchange_min_qty" in (result.reason or "")
+
+
 def test_cancel_skips_local_only_order_id_without_exchange_call() -> None:
     api = _api()
     adapter = GridExecutionAdapter(api)
