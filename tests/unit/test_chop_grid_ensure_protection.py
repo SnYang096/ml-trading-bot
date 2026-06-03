@@ -335,6 +335,51 @@ def test_foreign_exchange_position_does_not_activate_chop_grid(tmp_path: Path) -
     assert engine.state.inventory == []
 
 
+def test_foreign_position_with_stale_active_chop_does_not_market_exit(
+    tmp_path: Path,
+) -> None:
+    """Regression: trend-only exchange qty must not be closed via chop exit_grid."""
+    state_path = tmp_path / "btc_stale.json"
+    state_path.write_text(
+        """
+{
+  "grid_id": "BTCUSDT_stale",
+  "symbol": "BTCUSDT",
+  "active": true,
+  "center": 65000.0,
+  "spacing": 650.0,
+  "pending_orders": [],
+  "inventory": [],
+  "last_timestamp": "2026-06-04T00:00:00+00:00",
+  "current_regime": "chop_grid"
+}
+""",
+        encoding="utf-8",
+    )
+    engine = ChopGridLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=state_path,
+        bar_simulation=False,
+    )
+    engine.sync_live_exchange_state(
+        exchange_positions=[
+            _exchange_pos(side="long", quantity=0.001, entry_price=65000.0)
+        ],
+        exchange_orders=[],
+    )
+    actions = engine.on_bar(
+        symbol="BTCUSDT",
+        timestamp="2026-06-04T01:00:00+00:00",
+        high=65100.0,
+        low=64900.0,
+        close=65050.0,
+        atr=500.0,
+        features={"semantic_chop": 0.1, "box_prefilter": False},
+    )
+    assert not any(a.get("action") == "market_exit" for a in actions)
+    assert engine.state.inventory == []
+
+
 def test_live_exchange_orders_block_stale_reset_and_new_grid(tmp_path: Path) -> None:
     state_path = tmp_path / "bnb.json"
     state_path.write_text(
