@@ -8,9 +8,9 @@
 
 | ID | CLI | 含义 | output_dir |
 |----|-----|------|------------|
-| `replenish_unlimited` | _(default from archetype)_ | TP 后同档无限补挂（research 默认） | `.../replenish_unlimited/` |
+| `replenish_unlimited` | `--max-replenish-per-level null` | TP 后同档无限补挂（历史研究对照） | `.../replenish_unlimited/` |
 | `replenish_off` | `--max-replenish-per-level 0` | **禁用** TP 后补挂（legacy one-shot） | `.../replenish_off/` |
-| `replenish_live` | `--max-replenish-per-level 1` | 对齐 live prod（每档最多 1 次补挂） | `.../replenish_live/` |
+| `replenish_live` | _(archetype default=1)_ | **当前默认** — 每档 TP 后最多补挂 1 次 | `.../replenish_live/` |
 
 配置语义见 [`docs/experiments/chop_grid_replenish_sweep_20260526.md`](../../../docs/experiments/chop_grid_replenish_sweep_20260526.md)。
 
