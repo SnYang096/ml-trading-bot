@@ -646,10 +646,16 @@ class ChopGridLiveEngine:
             if (not sym or _normalize_symbol(p.get("symbol")) == sym)
             and _exchange_position_quantity(p) > 0
         ]
-        self._live_exchange_has_activity = bool(open_grid_orders or positions)
+        has_local_chop = bool(self.state.inventory or self.state.pending_orders)
+        # Do not treat foreign legs (e.g. trend_scalp) as chop-owned exposure.
+        self._live_exchange_has_activity = bool(open_grid_orders) or (
+            bool(positions) and has_local_chop
+        )
         if not self._live_exchange_has_activity:
             return
         if not self.state.active:
+            if not open_grid_orders:
+                return
             logger.warning(
                 "chop_grid live exchange activity blocks new grid: symbol=%s "
                 "open_orders=%d positions=%d",

@@ -140,6 +140,50 @@ def test_dual_add_maps_execution_result_and_fill_to_position(tmp_path: Path) -> 
     assert all(a["action"] == "place_protection" for a in follow_ups)
 
 
+def test_dual_add_immediate_closed_place_records_inventory(tmp_path: Path) -> None:
+    engine = DualAddTrendLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        unit_notional=100.0,
+    )
+    actions = engine.on_bar(
+        symbol="BTCUSDT",
+        timestamp="2026-01-01T00:00:00Z",
+        high=101.0,
+        low=99.0,
+        close=100.0,
+        atr=2.0,
+        features={
+            "trend_confidence": 1.0,
+            "trend_direction": "UP",
+            "semantic_chop": 0.0,
+            "box_prefilter": False,
+        },
+    )
+    engine.on_execution_results(
+        [
+            GridExecutionResult(
+                action="place",
+                status="closed",
+                symbol="BTCUSDT",
+                order_id="ex_ioc_1",
+                client_order_id=actions[0].get("client_order_id"),
+                raw={
+                    **actions[0],
+                    "filled": actions[0]["quantity"],
+                    "price": 100.02,
+                },
+            )
+        ]
+    )
+
+    assert len(engine.local_order_snapshots()) == 1
+    positions = engine.local_position_snapshots()
+    assert len(positions) == 1
+    assert positions[0].side == "LONG"
+    assert actions[0]["side"] == "BUY"
+
+
 def test_dual_add_cancels_stale_pending_orders(tmp_path: Path) -> None:
     engine = DualAddTrendLiveEngine(
         config_path=_config(tmp_path),

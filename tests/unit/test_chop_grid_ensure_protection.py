@@ -301,6 +301,40 @@ def test_bar_simulation_skips_simulate_targets(tmp_path: Path) -> None:
     )
 
 
+def test_foreign_exchange_position_does_not_activate_chop_grid(tmp_path: Path) -> None:
+    state_path = tmp_path / "btc.json"
+    state_path.write_text(
+        """
+{
+  "grid_id": "",
+  "symbol": "BTCUSDT",
+  "active": false,
+  "center": 0.0,
+  "spacing": 0.0,
+  "pending_orders": [],
+  "inventory": [],
+  "last_timestamp": "",
+  "current_regime": "idle"
+}
+""",
+        encoding="utf-8",
+    )
+    engine = ChopGridLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=state_path,
+        bar_simulation=False,
+    )
+    engine.sync_live_exchange_state(
+        exchange_positions=[
+            _exchange_pos(side="long", quantity=0.001, entry_price=65000.0)
+        ],
+        exchange_orders=[],
+    )
+    assert engine.state.active is False
+    assert engine._live_exchange_has_activity is False
+    assert engine.state.inventory == []
+
+
 def test_live_exchange_orders_block_stale_reset_and_new_grid(tmp_path: Path) -> None:
     state_path = tmp_path / "bnb.json"
     state_path.write_text(

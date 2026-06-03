@@ -393,8 +393,34 @@ class DualAddTrendLiveEngine:
                     order.exchange_order_id = result.order_id
                     order.client_order_id = result.client_order_id
                     order.status = str(result.status or "submitted")
-                    if order.status.lower() in {"canceled", "expired", "rejected"}:
+                    st = order.status.lower()
+                    if st in {"canceled", "expired", "rejected"}:
                         order.status = "canceled"
+                    elif st in {"closed", "filled"} and result.order_id:
+                        filled_qty = _as_float(raw.get("filled"), order.quantity)
+                        if filled_qty <= 0:
+                            filled_qty = order.quantity
+                        fill_px = _as_float(
+                            raw.get("average")
+                            or raw.get("price")
+                            or raw.get("last_filled_price"),
+                            order.price,
+                        )
+                        self.on_execution_report(
+                            {
+                                "order_id": str(result.order_id),
+                                "client_order_id": str(
+                                    result.client_order_id
+                                    or order.client_order_id
+                                    or ""
+                                ),
+                                "status": "FILLED",
+                                "filled_qty": filled_qty,
+                                "last_filled_price": fill_px,
+                                "trade_time": raw.get("trade_time")
+                                or self.state.last_timestamp,
+                            }
+                        )
             elif result.action == "cancel":
                 order = self._find_order(
                     local_id=local_id,
