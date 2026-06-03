@@ -189,8 +189,8 @@ def _last_calibration_for_display(
     notes: List[str] = []
     regime = data.get("regime")
     if isinstance(regime, dict):
-        entry = regime.get("entry_chop_min")
-        exit_b = regime.get("exit_chop_below")
+        entry = regime.get("entry_min", regime.get("entry_chop_min"))
+        exit_b = regime.get("exit_below", regime.get("exit_chop_below"))
         if entry is not None and exit_b is not None:
             notes.append(f"chop≥{entry} 退出<{exit_b}")
         elif regime.get("entry_feature"):

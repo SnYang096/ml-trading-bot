@@ -328,8 +328,8 @@ def load_chop_grid_prefilter_regions(
     if df.empty:
         return []
 
-    entry_min = float(regime_cfg.get("entry_chop_min", 0.50))
-    exit_below = float(regime_cfg.get("exit_chop_below", 0.32))
+    entry_min = float(regime_cfg.get("entry_min", regime_cfg.get("entry_chop_min", 0.50)))
+    exit_below = float(regime_cfg.get("exit_below", regime_cfg.get("exit_chop_below", 0.32)))
     chop_vals: List[Optional[float]] = []
     times: List[int] = []
     feature_rows: List[Dict[str, float]] = []
@@ -361,12 +361,19 @@ def load_chop_grid_prefilter_regions(
 def _chop_grid_regime_params(
     strategies_root: Path,
 ) -> Tuple[str, float, float]:
+    from src.config.regime_layer import multileg_regime_section
+
+    reg_path = strategies_root / "chop_grid" / "archetypes" / "regime.yaml"
     pre_path = strategies_root / "chop_grid" / "archetypes" / "prefilter.yaml"
-    raw = _load_yaml(pre_path)
-    regime_cfg = raw.get("regime") if isinstance(raw.get("regime"), dict) else {}
+    raw = _load_yaml(reg_path) if reg_path.is_file() else _load_yaml(pre_path)
+    regime_cfg = multileg_regime_section(raw)
     entry_feat = str(regime_cfg.get("entry_feature") or "bpc_semantic_chop")
-    entry_min = float(regime_cfg.get("entry_chop_min", 0.50))
-    exit_below = float(regime_cfg.get("exit_chop_below", 0.32))
+    entry_min = float(
+        regime_cfg.get("entry_min", regime_cfg.get("entry_chop_min", 0.50))
+    )
+    exit_below = float(
+        regime_cfg.get("exit_below", regime_cfg.get("exit_chop_below", 0.32))
+    )
     return entry_feat, entry_min, exit_below
 
 
@@ -434,8 +441,8 @@ def load_chop_grid_regime_exit_markers(
                     "exit_kind": "regime_or_risk_exit",
                     "exit_reason": "regime_or_risk_exit",
                     "chop": val,
-                    "entry_chop_min": entry_min,
-                    "exit_chop_below": exit_below,
+                    "entry_min": entry_min,
+                    "exit_below": exit_below,
                     "source": "feature_bus_hysteresis",
                 },
             }

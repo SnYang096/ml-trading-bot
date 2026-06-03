@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import yaml
 
@@ -524,11 +524,8 @@ class RegimeConfig(PrefilterConfig):
     )
 
     @classmethod
-    def from_yaml(cls, path: Path) -> "RegimeConfig":
-        """从 regime.yaml 加载（缺失文件 → 全开放默认值）"""
-        if not path.exists():
-            return cls()
-        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    def from_mapping(cls, raw: Mapping[str, Any]) -> "RegimeConfig":
+        """从 regime.yaml 映射加载（缺失键 → 全开放默认值）"""
         return cls(
             rules=list(raw.get("rules") or []),
             allowed_regimes=list(
@@ -538,6 +535,14 @@ class RegimeConfig(PrefilterConfig):
                 raw.get("allowed_sides") or list(_DEFAULT_ALLOWED_SIDES)
             ),
         )
+
+    @classmethod
+    def from_yaml(cls, path: Path) -> "RegimeConfig":
+        """从 regime.yaml 加载（缺失文件 → 全开放默认值）"""
+        if not path.exists():
+            return cls()
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return cls.from_mapping(raw)
 
     def evaluate(self, features: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
         """评估 regime 阈值规则；reject_reason 以 'regime_' 前缀替代 'prefilter_'"""

@@ -1,15 +1,17 @@
-# Trend scalp regime — see config/strategies/trend_scalp/archetypes/regime.yaml (research).
+# Trend scalp regime (live) — see config/strategies/trend_scalp for research defaults.
 
-regime:
-  lock: true
-  entry_feature: trend_confidence
-  entry_min: 0.7
-  exit_below: 0.4
-  max_semantic_chop_entry: 0.25
-  max_semantic_chop_hold: 0.4
-  exclude_box_prefilter: true
-  box_prefilter:
-    stability_min: 0.85
-    width_min: 0.04
-    width_max: 0.3
-    touches_min: 5
+extensions:
+  multileg:
+    lock: true
+    entry_feature: trend_confidence
+    entry_min: 0.7
+    exit_below: 0.4
+    cap_feature: bpc_semantic_chop
+    cap_entry: 0.25
+    cap_hold: 0.4
+    exclude_box_prefilter: true
+    box_prefilter:
+      stability_min: 0.85
+      width_min: 0.04
+      width_max: 0.3
+      touches_min: 5

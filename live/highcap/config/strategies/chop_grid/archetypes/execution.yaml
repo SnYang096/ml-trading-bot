@@ -1,25 +1,20 @@
-# Multi-leg execution layer: inventory spacing and risk controls.
-# Backtest/report cost assumptions live in grid_backtest.costs, not here.
+# Multi-leg execution — dense 3L (E7 four-segment validate @ live 2bps costs).
+# Spacing min_pct binds (atr_mult low); grid fits inside chop box (~±1% per side).
 #
-# Unlike dual_add_trend, there is no add_spacing: levels are symmetric around a
-# center and capped by max_levels_per_side, not pyramid adds on trend drift.
-#
-# There is no take_profit block: engine semantics exit each filled cell toward
-# the next grid step (effective per-cell TP distance is the same as spacing).
-# Basket-style TP does not apply. Flattening still uses regime loss and caps
-# under risk below.
-inventory: # Inventory construction and order placement semantics.
-  spacing: # Distance between adjacent grid prices; doubles as cell TP distance.
-    primary: atr # Use ATR as the primary spacing unit.
-    atr_mult: 1.00 # Grid spacing = ATR * this multiplier, subject to min_pct.
-    min_pct: 0.010 # Minimum spacing as a fraction of price.
-  max_levels_per_side: 2 # Maximum long levels and maximum short levels around center.
-  max_replenish_per_level_per_segment: 1 # Post-TP limit replenishes per level per segment (see docs/experiments/chop_grid_replenish_sweep_20260526.md).
-  order_type: limit # Intended order type for resting grid entries.
+# Backtest reference: config/experiments/20260604_chop_grid_stack_ablation/dense_3l_execution.yaml
 
-risk: # Runtime inventory limits and forced-exit rules, not report cost assumptions.
-  min_segment_bars: 6 # Ignore very short chop segments below this length.
-  max_segment_bars: 120 # Force segment end after this many signal bars.
-  force_exit_on_regime_loss: true # Market-exit all inventory when chop regime is lost.
-  max_loss_per_grid: 0.03 # Grid-level catastrophic loss cap, normalized by level notional.
-  max_open_levels_total: 4 # Maximum total filled inventory levels across both sides.
+inventory:
+  spacing:
+    primary: atr
+    atr_mult: 0.01
+    min_pct: 0.0033
+  max_levels_per_side: 3
+  max_replenish_per_level_per_segment: 1
+  order_type: limit
+
+risk:
+  min_segment_bars: 6
+  max_segment_bars: 120
+  force_exit_on_regime_loss: true
+  max_loss_per_grid: 0.03
+  max_open_levels_total: 6

@@ -7,6 +7,8 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
+from src.config.regime_layer import multileg_regime_section
+
 # Built-in fallbacks when YAML is missing (match locked archetype values).
 _BUILTIN_REFERENCE_LINES: Dict[str, List[Dict[str, Any]]] = {
     "tpc_semantic_chop": [
@@ -89,35 +91,37 @@ def _load_yaml_rules(path: Path) -> List[Dict[str, Any]]:
 
 
 def _load_multileg_regime_thresholds(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Chop-grid regime hysteresis from prefilter.yaml ``regime:`` block."""
-    regime = doc.get("regime")
-    if not isinstance(regime, dict):
+    """Multileg regime hysteresis from regime.yaml (TPC or legacy nested block)."""
+    regime = multileg_regime_section(doc)
+    if not regime:
         return []
     out: List[Dict[str, Any]] = []
     entry_feat = str(regime.get("entry_feature") or "bpc_semantic_chop").strip()
-    if regime.get("entry_chop_min") is not None:
+    entry_val = regime.get("entry_min", regime.get("entry_chop_min"))
+    if entry_val is not None:
         _append_rule_threshold(
             out,
             feature=entry_feat,
             operator=">=",
-            value=regime["entry_chop_min"],
-            label=f"regime enter ≥{float(regime['entry_chop_min']):g}",
+            value=entry_val,
+            label=f"regime enter ≥{float(entry_val):g}",
         )
-    if regime.get("exit_chop_below") is not None:
+    exit_val = regime.get("exit_below", regime.get("exit_chop_below"))
+    if exit_val is not None:
         _append_rule_threshold(
             out,
             feature=entry_feat,
             operator="<",
-            value=regime["exit_chop_below"],
-            label=f"regime exit <{float(regime['exit_chop_below']):g}",
+            value=exit_val,
+            label=f"regime exit <{float(exit_val):g}",
         )
     return out
 
 
 def _load_multileg_box_prefilter_thresholds(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Box-quality gates from prefilter.yaml ``regime.box_prefilter`` (60-bar series)."""
-    regime = doc.get("regime")
-    if not isinstance(regime, dict):
+    """Box-quality gates from regime.yaml ``extensions.multileg.box_prefilter``."""
+    regime = multileg_regime_section(doc)
+    if not regime:
         return []
     box = regime.get("box_prefilter")
     if not isinstance(box, dict):
@@ -189,7 +193,7 @@ def build_reference_lines_by_column(
         # Multi-leg chop_grid / trend_scalp: regime hysteresis in regime.yaml.
         reg_doc = _load_yaml_doc(strat_dir / "archetypes" / "regime.yaml")
         pre_doc = _load_yaml_doc(strat_dir / "archetypes" / "prefilter.yaml")
-        regime_src = reg_doc if reg_doc.get("regime") else pre_doc
+        regime_src = reg_doc if multileg_regime_section(reg_doc) else pre_doc
         for item in _load_multileg_regime_thresholds(regime_src):
             feat = str(item.get("feature") or "")
             if not feat:

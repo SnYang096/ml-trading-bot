@@ -195,8 +195,8 @@
             exit_kind: "regime_or_risk_exit",
             exit_reason: "regime_or_risk_exit",
             chop: val,
-            entry_chop_min: entryMin,
-            exit_chop_below: exitBelow,
+            entry_min: entryMin,
+            exit_below: exitBelow,
             source: "overlay_hysteresis",
           },
         });

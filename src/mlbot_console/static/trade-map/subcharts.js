@@ -366,14 +366,14 @@ function updateFeatureBarInspector(timeSec, overlays) {
     const enter = refs.find((r) => String(r.operator).includes(">="));
     const exitR = refs.find((r) => String(r.operator).includes("<"));
     chopRows2.push({
-      yaml: "regime.entry_chop_min",
+      yaml: "regime.entry_min",
       label: "enter",
       value: v != null ? v.toFixed(3) : null,
       threshold: enter ? enter.label : "≥0.50",
       pass: enter && v != null ? Core.valuePassesRefLine(v, enter) : null,
     });
     chopRows2.push({
-      yaml: "regime.exit_chop_below",
+      yaml: "regime.exit_below",
       label: "exit",
       value: v != null ? v.toFixed(3) : null,
       threshold: exitR ? exitR.label : "<0.32",

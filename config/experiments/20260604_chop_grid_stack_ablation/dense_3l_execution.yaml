@@ -1,0 +1,17 @@
+# Dense 3L experiment execution overlay (E7).
+# Merge onto prod regime + prefilter; do NOT promote until four-segment validate passes.
+#
+# CLI equivalent (chop_grid_backtest / experiment_chop_grid_market_segment forward args):
+#   --max-levels 3 --grid-atr-mult 0.01 --grid-pct 0.0033
+#   --maker-fee-bps 2 --taker-fee-bps 5 --forced-exit-slippage-bps 5
+#
+# live_binance_perp cost assumption: maker 2bps; regime forced exit taker 5bps + 5bps slippage.
+
+inventory:
+  spacing:
+    atr_mult: 0.01
+    min_pct: 0.0033
+  max_levels_per_side: 3
+
+risk:
+  max_open_levels_total: 6

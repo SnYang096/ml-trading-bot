@@ -161,8 +161,12 @@ def _load_grid_config(path: str | Path) -> GridEngineConfig:
         expected_costs = {}
     return GridEngineConfig(
         box_window=int(regime.get("box_window", 120)),
-        entry_chop_min=float(regime.get("entry_chop_min", 0.40)),
-        exit_chop_below=float(regime.get("exit_chop_below", 0.25)),
+        entry_chop_min=float(
+            regime.get("entry_min", regime.get("entry_chop_min", 0.40))
+        ),
+        exit_chop_below=float(
+            regime.get("exit_below", regime.get("exit_chop_below", 0.25))
+        ),
         min_segment_bars=int(risk.get("min_segment_bars", 6)),
         max_segment_bars=int(risk.get("max_segment_bars", 120)),
         grid_atr_mult=float(spacing.get("atr_mult", 0.50)),

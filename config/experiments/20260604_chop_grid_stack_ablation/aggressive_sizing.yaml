@@ -1,0 +1,55 @@
+# Aggressive sizing overlay — chop_grid dense 3L, 1% maxDD target.
+# =============================================================================
+# NOT auto-loaded. This is a documented constitution overlay for the dedicated
+# multi-leg perp account when you want to size the dense-3L grid up to a ~1%
+# drawdown budget. Apply by copying these values into
+#   live/highcap/config/constitution/constitution.yaml (multi_leg block)
+# and only while the chop regime is confirmed (see RISK section).
+#
+# Source: scripts/sim_chop_grid_account.py over E7 four-segment dense_3l_live,
+#   single shared 10k account, fixed unit_notional/level, entry/exit timeline.
+#
+# 1% maxDD target unit_notional by window (equity = 10,000 USDT):
+#   recent_6m_oos (calm chop) : unit ~1465  ret ~13.6%  peak gross 190%  peak/sym 44%
+#   recent_range_to_bear      : unit ~514   ret  ~8.1%  peak gross  67%  peak/sym 15%
+#   bear_2022                 : unit ~506   ret  ~9.1%  peak gross  46%  peak/sym 15%
+#   bull_2023_2024 (worst DD) : unit ~410   ret ~12.3%  peak gross  33%  peak/sym 12%
+#
+# Two operating points:
+#   (A) REGIME-AWARE aggressive — unit 1465, sized to OOS/current chop regime.
+#       Highest return but if a trend-breakout regime returns, replayed DD on the
+#       bull_2023_2024 segment is ~3.6% (1465/400 × 0.98%). Only run while the
+#       chop regime is live; the account max_drawdown_pct=5% kill switch backstops.
+#   (B) ALL-WEATHER aggressive — unit ~410, sized to the worst (bull) segment so
+#       1% maxDD holds across every regime. This is essentially the current prod
+#       unit_notional=400 — prod is already the all-weather 1% DD point.
+#
+# Default below = (A) regime-aware. Switch unit_notional to 410 for (B).
+# =============================================================================
+
+multi_leg:
+  # (A) regime-aware aggressive: ~13.6% / 6mo at ~1% OOS DD.
+  unit_notional: 1465.0 # ~14.6% equity/leg; peak ~3 levels/symbol → ~44% gross/symbol.
+
+  account:
+    equity_usdt: 10000
+    # Tighter kill switch for the aggressive book: OOS DD budget is 1%, halt at 2%
+    # (catches the case where a trend regime sneaks in before manual de-sizing).
+    max_drawdown_pct: 0.02
+
+  account_risk_limits:
+    enabled: true
+    max_gross_leverage: 3.0 # peak gross ~190% (1.9x) stays under 3.0x margin ceiling.
+    margin_stress_leverage: 5.0
+    max_projected_initial_margin_pct: 0.65
+    min_projected_available_margin_pct: 0.30
+    fail_closed: true
+
+  risk_limits:
+    # peak portfolio gross ~190% @ unit=1465 → cap 2.0 covers it with headroom.
+    max_gross_notional_pct: 2.00
+    max_net_notional_pct: 0.60
+    # peak/symbol ~44% @ unit=1465 (3 levels × 1465 / 10000) → 0.50 leaves headroom.
+    max_symbol_gross_notional_pct: 0.50
+    max_symbol_net_notional_pct: 0.15
+    max_resting_orders: 60

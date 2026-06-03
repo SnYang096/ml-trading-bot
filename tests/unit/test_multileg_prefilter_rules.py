@@ -10,6 +10,26 @@ def test_apply_simple_rule():
     assert mask.tolist() == [True, False]
 
 
+def test_flat_box_pos_range_matches_all_of():
+    df = pd.DataFrame({"box_pos_60": [0.35, 0.50, 0.65, 0.70]})
+    flat = [
+        {"feature": "box_pos_60", "operator": ">=", "value": 0.40},
+        {"feature": "box_pos_60", "operator": "<=", "value": 0.60},
+    ]
+    nested = [
+        {
+            "all_of": [
+                {"feature": "box_pos_60", "operator": ">=", "value": 0.40},
+                {"feature": "box_pos_60", "operator": "<=", "value": 0.60},
+            ]
+        }
+    ]
+    assert (
+        apply_prefilter_rules(df, flat).tolist()
+        == apply_prefilter_rules(df, nested).tolist()
+    )
+
+
 def test_apply_any_of_and_all_of_rules():
     df = pd.DataFrame(
         {

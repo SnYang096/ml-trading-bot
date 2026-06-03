@@ -128,8 +128,12 @@ def _load_dual_add_config(path: str | Path) -> DualAddEngineConfig:
     return DualAddEngineConfig(
         entry_trend_min=float(regime.get("entry_min", 0.80)),
         exit_trend_below=float(regime.get("exit_below", 0.50)),
-        max_entry_chop=float(regime.get("max_semantic_chop_entry", 0.25)),
-        max_hold_chop=float(regime.get("max_semantic_chop_hold", 0.40)),
+        max_entry_chop=float(
+            regime.get("cap_entry", regime.get("max_semantic_chop_entry", 0.25))
+        ),
+        max_hold_chop=float(
+            regime.get("cap_hold", regime.get("max_semantic_chop_hold", 0.40))
+        ),
         exclude_box_prefilter=bool(regime.get("exclude_box_prefilter", True)),
         step_atr_mult=float(spacing.get("atr_mult", 0.50)),
         tp_atr_mult=float(tp.get("atr_mult", 0.25)),
@@ -276,7 +280,9 @@ class DualAddTrendLiveEngine:
         """Process one completed bar and return desired order actions."""
         actions: List[Dict[str, Any]] = []
         trend_conf = _as_float(features.get("trend_confidence"), 0.0)
-        chop = _as_float(features.get("semantic_chop"), 1.0)
+        chop = _as_float(
+            features.get("bpc_semantic_chop", features.get("semantic_chop")), 1.0
+        )
         is_box = stable_box_blocks_trend_entry(
             features,
             self.regime,

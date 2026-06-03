@@ -71,6 +71,10 @@ PYTHONPATH=src:scripts python -m scripts.event_backtest \
 | [**`20260602_fast_scalp_tree_validate/`**](20260602_fast_scalp_tree_validate/) | **fast_scalp** | **双 head + exec-aligned/gate 两轨验证**（[`TRAINING.md`](20260602_fast_scalp_tree_validate/TRAINING.md)） |
 | [`20260602_trend_scalp_segment_validate/`](20260602_trend_scalp_segment_validate/) | trend_scalp | market_segment 四段 multi-leg 稳定性（prod archetype） |
 | [`20260602_chop_grid_segment_validate/`](20260602_chop_grid_segment_validate/) | chop_grid | market_segment 四段 + 等权 portfolio return 口径 |
+| [`20260603_chop_grid_oos_tune/`](20260603_chop_grid_oos_tune/) | chop_grid | OOS spacing/regime/box_pos promote |
+| [`20260603_chop_grid_exec_align/`](20260603_chop_grid_exec_align/) | chop_grid | 1min exec 与 live 对齐 |
+| [`20260603_chop_grid_replenish_ablation/`](20260603_chop_grid_replenish_ablation/) | chop_grid | post-TP replenish 0/1/unlimited |
+| [**`20260604_chop_grid_stack_ablation/`**](20260604_chop_grid_stack_ablation/) | **chop_grid** | **入场栈分层 ablation + dense 3L @2bps** |
 | [`20260529_short_term_swing_ic_plateau/`](20260529_short_term_swing_ic_plateau/) | short_term_swing | IC plateau |
 | [`20260529_tpc_direction_ema_align/`](20260529_tpc_direction_ema_align/) | tpc | direction EMA1200 对齐 + trail |
 | [`20260529_tpc_gate_plateau/`](20260529_tpc_gate_plateau/) | tpc | gate plateau |

@@ -5,6 +5,10 @@ from typing import Any, Dict, Optional, Tuple
 
 import yaml
 
+from src.config.regime_layer import (
+    multileg_extensions_section,
+    regime_layer_effective_fragment,
+)
 from src.config.strategy_layout import (
     deep_merge_dicts,
     load_yaml_dict,
@@ -115,7 +119,7 @@ def load_multileg_effective_config(
     )
     merged = dict(root)
     if regime:
-        merged = deep_merge_dicts(merged, regime)
+        merged = deep_merge_dicts(merged, regime_layer_effective_fragment(regime))
     if prefilter:
         merged = deep_merge_dicts(merged, prefilter)
     if execution:
@@ -149,20 +153,27 @@ def update_multileg_calibration_candidate(
         profile_path=profile_path,
         engine_path=engine_path,
     )
-    regime_doc = regime if regime else {}
+    regime_doc = dict(regime) if regime else {}
     pre = prefilter if prefilter else root
     exe = execution if execution else root
-    regime_section = regime_doc.setdefault("regime", {})
-    if not regime_section and isinstance(pre.get("regime"), dict):
+    regime_section: Dict[str, Any] = {}
+    if regime_path.exists():
+        regime_section = multileg_extensions_section(regime_doc)
+    elif isinstance(pre.get("regime"), dict):
         regime_section = pre.setdefault("regime", {})
 
     if strategy_type == "grid":
         inv = exe.setdefault("inventory", {})
         spacing = inv.setdefault("spacing", {})
-        if "entry_chop_min" in candidate:
-            regime_section["entry_chop_min"] = float(candidate["entry_chop_min"])
-        if "exit_chop_below" in candidate:
-            regime_section["exit_chop_below"] = float(candidate["exit_chop_below"])
+        # Accept legacy key names from old sweep scripts.
+        if "entry_min" in candidate or "entry_chop_min" in candidate:
+            regime_section["entry_min"] = float(
+                candidate.get("entry_min", candidate.get("entry_chop_min"))
+            )
+        if "exit_below" in candidate or "exit_chop_below" in candidate:
+            regime_section["exit_below"] = float(
+                candidate.get("exit_below", candidate.get("exit_chop_below"))
+            )
         if "exclude_box_prefilter" in candidate:
             regime_section["exclude_box_prefilter"] = bool(
                 candidate["exclude_box_prefilter"]
@@ -190,13 +201,13 @@ def update_multileg_calibration_candidate(
             regime_section["entry_min"] = float(candidate["entry_min"])
         if "exit_below" in candidate:
             regime_section["exit_below"] = float(candidate["exit_below"])
-        if "max_semantic_chop_entry" in candidate:
-            regime_section["max_semantic_chop_entry"] = float(
-                candidate["max_semantic_chop_entry"]
+        if "cap_entry" in candidate or "max_semantic_chop_entry" in candidate:
+            regime_section["cap_entry"] = float(
+                candidate.get("cap_entry", candidate.get("max_semantic_chop_entry"))
             )
-        if "max_semantic_chop_hold" in candidate:
-            regime_section["max_semantic_chop_hold"] = float(
-                candidate["max_semantic_chop_hold"]
+        if "cap_hold" in candidate or "max_semantic_chop_hold" in candidate:
+            regime_section["cap_hold"] = float(
+                candidate.get("cap_hold", candidate.get("max_semantic_chop_hold"))
             )
         if "step_atr_mult" in candidate:
             spacing["atr_mult"] = float(candidate["step_atr_mult"])
@@ -210,7 +221,6 @@ def update_multileg_calibration_candidate(
         raise ValueError(f"unsupported multi-leg strategy_type={strategy_type!r}")
 
     if regime_path.exists():
-        regime_doc["regime"] = regime_section
         _write_yaml_dict(regime_path, regime_doc)
     elif prefilter:
         pre["regime"] = regime_section

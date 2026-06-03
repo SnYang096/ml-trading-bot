@@ -1,15 +1,17 @@
-# Chop grid regime — chop hysteresis + stable-box gate (live: block_stable_box when exclude_box_prefilter=false).
+# Chop grid regime — multileg hysteresis params only.
 #
+# rules are auto-synthesised by parse_regime_layer() from extensions.multileg.entry_min.
 # Prefilter feature rules (box_pos band, etc.) live in archetypes/prefilter.yaml.
 
-regime:
-  lock: true
-  entry_feature: bpc_semantic_chop
-  entry_chop_min: 0.52
-  exit_chop_below: 0.33
-  exclude_box_prefilter: false
-  box_prefilter:
-    stability_min: 0.85
-    width_min: 0.04
-    width_max: 0.30
-    touches_min: 5
+extensions:
+  multileg:
+    lock: true
+    entry_feature: bpc_semantic_chop
+    entry_min: 0.52
+    exit_below: 0.33
+    exclude_box_prefilter: false
+    box_prefilter:
+      stability_min: 0.85
+      width_min: 0.04
+      width_max: 0.30
+      touches_min: 5

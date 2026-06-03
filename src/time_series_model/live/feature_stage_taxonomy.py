@@ -15,6 +15,8 @@ from time_series_model.live.live_feature_plan import (
     _load_yaml,
 )
 
+from src.config.regime_layer import multileg_regime_section
+
 # Default strategy slugs when constitution is unavailable (tests / offline).
 CONSOLE_STRATEGIES: Tuple[Dict[str, str], ...] = (
     {"id": "tpc", "account_layer": "trend", "title": "TPC"},
@@ -96,11 +98,14 @@ def _extract_features_from_multileg_regime(cfg: Dict[str, Any]) -> Set[str]:
         out.add(col)
         out.update(_MULTILEG_RUNTIME_ALIASES.get(col, []))
     if (
-        regime.get("max_semantic_chop_entry") is not None
+        regime.get("cap_entry") is not None
+        or regime.get("cap_hold") is not None
+        or regime.get("max_semantic_chop_entry") is not None
         or regime.get("max_semantic_chop_hold") is not None
     ):
-        out.add("semantic_chop")
-        out.update(_MULTILEG_RUNTIME_ALIASES.get("bpc_semantic_chop", []))
+        cap_feat = str(regime.get("cap_feature") or "bpc_semantic_chop")
+        out.add(cap_feat)
+        out.update(_MULTILEG_RUNTIME_ALIASES.get(cap_feat, []))
     if not regime.get("exclude_box_prefilter", True):
         out.add("box_prefilter")
     box = regime.get("box_prefilter")
@@ -137,9 +142,13 @@ def extract_strategy_stage_columns(archetypes_dir: Path) -> Dict[str, List[str]]
     # B-system trend / spot 单 leg：独立 archetypes/regime.yaml (rules schema 与 prefilter 一致)
     regime_path = d / "regime.yaml"
     if regime_path.is_file():
-        stages["regime"] |= _extract_features_from_prefilter_full(
-            _load_yaml(regime_path)
-        )
+        regime_raw = _load_yaml(regime_path)
+        stages["regime"] |= _extract_features_from_prefilter_full(regime_raw)
+        multileg = multileg_regime_section(regime_raw)
+        if multileg:
+            stages["regime"] |= _extract_features_from_multileg_regime(
+                {"regime": multileg}
+            )
 
     gate_path = d / "gate.yaml"
     if gate_path.is_file():

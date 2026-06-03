@@ -1,10 +1,13 @@
-# Chop grid prefilter — see config/strategies/chop_grid/archetypes/prefilter.yaml (research).
+# Chop grid prefilter (live/highcap) — E3 ablation: 0.40–0.60 required (+1.16% vs off −14.9%).
 
 rules:
-  - all_of:
-      - feature: box_pos_60
-        operator: ">="
-        value: 0.35
-      - feature: box_pos_60
-        operator: <=
-        value: 0.65
+  - feature: box_pos_60
+    operator: ">="
+    value: 0.40
+    locked: true
+    lock_reason: chop_grid box_pos_60 lower bound (OOS stack ablation 2026-06-04)
+  - feature: box_pos_60
+    operator: <=
+    value: 0.60
+    locked: true
+    lock_reason: chop_grid box_pos_60 upper bound (OOS stack ablation 2026-06-04)

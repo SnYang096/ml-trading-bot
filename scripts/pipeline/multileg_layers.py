@@ -6,13 +6,19 @@ from typing import Any, Dict, Mapping
 
 _PREFILTER_KEYS_BY_TYPE = {
     "grid": {
+        "entry_min",
+        "exit_below",
+        "exclude_box_prefilter",
+        # legacy aliases kept for old sweep-script candidate dicts
         "entry_chop_min",
         "exit_chop_below",
-        "exclude_box_prefilter",
     },
     "dual_add_trend": {
         "entry_min",
         "exit_below",
+        "cap_entry",
+        "cap_hold",
+        # legacy aliases
         "max_semantic_chop_entry",
         "max_semantic_chop_hold",
     },

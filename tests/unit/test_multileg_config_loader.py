@@ -82,7 +82,15 @@ def test_update_multileg_candidate_writes_archetype_layers(tmp_path: Path) -> No
             "strategy_type": "dual_add_trend",
         },
     )
-    _write_yaml(cfg_dir / "archetypes/regime.yaml", {"regime": {}})
+    _write_yaml(
+        cfg_dir / "archetypes/regime.yaml",
+        {
+            "allowed_regimes": ["bull", "bear", "neutral"],
+            "allowed_sides": ["long", "short"],
+            "rules": [],
+            "extensions": {"multileg": {}},
+        },
+    )
     _write_yaml(cfg_dir / "archetypes/prefilter.yaml", {"rules": []})
     _write_yaml(
         cfg_dir / "archetypes/execution.yaml",
@@ -99,10 +107,9 @@ def test_update_multileg_candidate_writes_archetype_layers(tmp_path: Path) -> No
             "flip_action": "close_offside_all",
         },
     )
-    pre = reg = exe = {}
     reg = yaml.safe_load((cfg_dir / "archetypes/regime.yaml").read_text()) or {}
     exe = yaml.safe_load((cfg_dir / "archetypes/execution.yaml").read_text()) or {}
-    assert reg["regime"]["entry_min"] == 0.82
+    assert reg["extensions"]["multileg"]["entry_min"] == 0.82
     assert exe["add_spacing"]["atr_mult"] == 0.65
     assert exe["take_profit"]["min_pct"] == 0.001
     assert exe["inventory"]["flip_action"] == "close_offside_all"

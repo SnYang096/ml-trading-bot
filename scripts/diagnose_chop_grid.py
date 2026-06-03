@@ -113,8 +113,10 @@ def merge_chop_grid_yaml(path: Path) -> Dict[str, Any]:
 
     out: Dict[str, Any] = {
         "box_window": int(regime.get("box_window", 120)),
-        "chop_min": float(regime.get("entry_chop_min", 0.40)),
-        "exit_chop_min": float(regime.get("exit_chop_below", 0.25)),
+        "chop_min": float(regime.get("entry_min", regime.get("entry_chop_min", 0.40))),
+        "exit_chop_min": float(
+            regime.get("exit_below", regime.get("exit_chop_below", 0.25))
+        ),
         "grid_atr_mult": float(spacing.get("atr_mult", 0.50)),
         "grid_pct": float(spacing.get("min_pct", 0.004)),
         "max_levels": int(inv.get("max_levels_per_side", 3)),
@@ -172,13 +174,10 @@ def merge_chop_grid_yaml(path: Path) -> Dict[str, Any]:
 
 
 def prefilter_box_range(lo: float, hi: float) -> Tuple[Dict[str, Any], ...]:
+    """Two flat AND rules (TPC/BPC prefilter shape); equivalent to one ``all_of`` block."""
     return (
-        {
-            "all_of": [
-                {"feature": "box_pos_60", "operator": ">=", "value": lo},
-                {"feature": "box_pos_60", "operator": "<=", "value": hi},
-            ]
-        },
+        {"feature": "box_pos_60", "operator": ">=", "value": lo},
+        {"feature": "box_pos_60", "operator": "<=", "value": hi},
     )
 
 
