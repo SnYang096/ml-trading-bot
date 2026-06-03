@@ -1,0 +1,139 @@
+# DEPRECATED — use rd_loop_track_exec_aligned_gate.yaml instead.
+# This file references obsolete strategy slugs fast_scalp_realized_g5/g10.
+#
+#   PYTHONPATH=src:scripts python scripts/rd_loop.py \
+#     --hypothesis-yaml config/experiments/20260530_fast_scalp_alts_majors/rd_loop_track_exec_aligned_gate.yaml
+
+experiment_id: fast_scalp_execution_aligned_labels_20260602
+topic: fast_scalp_execution_aligned_labels
+strategy: fast_scalp
+output_dir: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/execution_aligned
+timeframe: "120T"
+feature_store_layer: features_tree_core_120T_c005db49f7
+data_path: data/parquet_data
+
+holdout: &holdout
+  start: "2025-10-01"
+  end: "2026-04-01"
+
+symbols_6: &symbols_6 BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+train_dates: &train_dates
+  start_date: "2024-01-01"
+  end_date: "2026-04-01"
+  holdout_start_date: "2025-10-01"
+  holdout_end_date: "2026-04-01"
+
+prepare_g5: &prepare_g5 results/train_final/fast_scalp_realized_g5/prepare_execution_aligned
+prepare_g10: &prepare_g10 results/train_final/fast_scalp_realized_g10/prepare_execution_aligned
+train_g5: &train_g5 results/train_final/fast_scalp_realized_g5/train_execution_aligned
+train_g10: &train_g10 results/train_final/fast_scalp_realized_g10/train_execution_aligned
+
+tree_steps:
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/research/prepare_fast_scalp_alpha_snapshots.py \
+        --only fast_scalp_alpha_G14_g5label_g5exec_strategies \
+               fast_scalp_alpha_G15_g10label_g10exec_strategies \
+               fast_scalp_alpha_G16_g5label_g5exec_gate_strategies
+
+  - mode: prepare-only
+    config: config/strategies/tree_strategies/fast_scalp_realized_g5
+    symbols: *symbols_6
+    <<: *train_dates
+    output_root: *prepare_g5
+
+  - mode: ic-prune
+    config: config/strategies/tree_strategies/fast_scalp_realized_g5
+    features_parquet: results/train_final/fast_scalp_realized_g5/prepare_execution_aligned/fast_scalp_realized_g5/features_labeled.parquet
+    out: ic_prune_g5
+    holdout_start: "2025-10-01"
+    holdout_end: "2026-04-01"
+
+  - mode: train
+    config: config/strategies/tree_strategies/fast_scalp_realized_g5
+    symbols: *symbols_6
+    <<: *train_dates
+    output_root: *train_g5
+
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp_realized_g5
+    predictions: results/train_final/fast_scalp_realized_g5/train_execution_aligned/fast_scalp_realized_g5/predictions.parquet
+    out: tau_scan_g5
+    segment_label: recent_6m_oos
+    quantile_grid: "0.05,0.08,0.10,0.12,0.15,0.20,0.25,0.30"
+    filter_split: holdout
+
+  - mode: prepare-only
+    config: config/strategies/tree_strategies/fast_scalp_realized_g10
+    symbols: *symbols_6
+    <<: *train_dates
+    output_root: *prepare_g10
+
+  - mode: ic-prune
+    config: config/strategies/tree_strategies/fast_scalp_realized_g10
+    features_parquet: results/train_final/fast_scalp_realized_g10/prepare_execution_aligned/fast_scalp_realized_g10/features_labeled.parquet
+    out: ic_prune_g10
+    holdout_start: "2025-10-01"
+    holdout_end: "2026-04-01"
+
+  - mode: train
+    config: config/strategies/tree_strategies/fast_scalp_realized_g10
+    symbols: *symbols_6
+    <<: *train_dates
+    output_root: *train_g10
+
+  - mode: tau-scan
+    config: config/strategies/tree_strategies/fast_scalp_realized_g10
+    predictions: results/train_final/fast_scalp_realized_g10/train_execution_aligned/fast_scalp_realized_g10/predictions.parquet
+    out: tau_scan_g10
+    segment_label: recent_6m_oos
+    quantile_grid: "0.05,0.08,0.10,0.12,0.15,0.20,0.25,0.30"
+    filter_split: holdout
+
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/research/export_tree_scores_from_artifact.py \
+        --artifact-dir results/train_final/fast_scalp_realized_g5/train_execution_aligned/fast_scalp_realized_g5 \
+        --config config/strategies/tree_strategies/fast_scalp_realized_g5 \
+        --symbols SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT \
+        --start-date 2022-01-01 --end-date 2026-04-01 \
+        --output results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/scores/alts_g5label_full_history.parquet
+
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/research/export_tree_scores_from_artifact.py \
+        --artifact-dir results/train_final/fast_scalp_realized_g5/train_execution_aligned/fast_scalp_realized_g5 \
+        --config config/strategies/tree_strategies/fast_scalp_realized_g5 \
+        --symbols BTCUSDT,ETHUSDT \
+        --start-date 2022-01-01 --end-date 2026-04-01 \
+        --output results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/scores/majors_g5label_full_history.parquet
+
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/research/export_tree_scores_from_artifact.py \
+        --artifact-dir results/train_final/fast_scalp_realized_g10/train_execution_aligned/fast_scalp_realized_g10 \
+        --config config/strategies/tree_strategies/fast_scalp_realized_g10 \
+        --symbols SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT \
+        --start-date 2022-01-01 --end-date 2026-04-01 \
+        --output results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/scores/alts_g10label_full_history.parquet
+
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/research/export_execution_aligned_labels_1min_ablation.py \
+        --features-parquet results/train_final/fast_scalp_realized_g5/prepare_execution_aligned/fast_scalp_realized_g5/features_labeled.parquet \
+        --exec-profile g5_tight \
+        --start-date 2025-10-01 --end-date 2026-04-01 \
+        --symbols SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT \
+        --output results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/execution_aligned/labels_1min_ablation_g5.parquet
+
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python -m scripts.event_backtest \
+        --variant-grid config/experiments/20260530_fast_scalp_alts_majors/fast_scalp_execution_aligned_segment.yaml
+
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python -m scripts.event_backtest \
+        --variant-grid config/experiments/20260530_fast_scalp_alts_majors/fast_scalp_g16_gate_exec.yaml
+
+research_scans: []

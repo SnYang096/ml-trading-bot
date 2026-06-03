@@ -1,0 +1,15 @@
+# Dual-head direction block — merged into snapshot fast_scalp/archetypes/direction.yaml (G7).
+# Score columns come from train_tree_dual_head.py export.
+
+dual_head:
+  enabled: true
+  long:
+    score_column: score_long
+    entry_threshold: 0.55
+    exit_threshold: 0.45
+  short:
+    score_column: score_short
+    entry_threshold: 0.55
+    exit_threshold: 0.45
+  reject_if_both_high: true
+  reject_if_contradiction: true

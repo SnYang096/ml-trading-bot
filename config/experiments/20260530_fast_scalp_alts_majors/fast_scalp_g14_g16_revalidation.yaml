@@ -1,0 +1,39 @@
+# G14/G16 revalidation — g5-label τ + gate feature parity score export
+#
+# Prerequisite:
+#   PYTHONPATH=src:scripts python scripts/research/export_tree_scores_from_artifact.py \
+#     --artifact-dir results/train_final/fast_scalp_realized_g5/train_execution_aligned/fast_scalp_realized_g5 \
+#     --config config/strategies/tree_strategies/fast_scalp_realized_g5 \
+#     --symbols SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT \
+#     --start-date 2022-01-01 --end-date 2026-04-01 \
+#     --validate-short-entry -0.39530742466452556 \
+#     --output results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/scores/alts_g5label_full_history.parquet
+#
+#   PYTHONPATH=src:scripts python scripts/research/prepare_fast_scalp_alpha_snapshots.py \
+#     --only fast_scalp_alpha_G14_g5label_g5exec_strategies \
+#            fast_scalp_alpha_G16_g5label_g5exec_gate_strategies
+#
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260530_fast_scalp_alts_majors/fast_scalp_g14_g16_revalidation.yaml
+
+experiment_id: fast_scalp_g14_g16_revalidation_20260602
+strategy: fast_scalp
+data_path: data/parquet_data
+market_segment_path: config/market_segment.yaml
+
+segment_matrix:
+  segments: [bear_2022, bull_2023_2024, recent_range_to_bear, recent_6m_oos]
+  variants:
+    - suffix: alts_g14_g5label_tau
+      strategy: fast_scalp
+      strategies_root: config_experiments/fast_scalp_alpha_G14_g5label_g5exec_strategies
+      symbols: [SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+      inject_scores: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/scores/alts_g5label_full_history.parquet
+      output_dir: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/g14_g16_revalidation/alts_g14_g5label_tau
+
+    - suffix: alts_g16_g5label_tau_gate
+      strategy: fast_scalp
+      strategies_root: config_experiments/fast_scalp_alpha_G16_g5label_g5exec_gate_strategies
+      symbols: [SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+      inject_scores: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/scores/alts_g5label_full_history.parquet
+      output_dir: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/g14_g16_revalidation/alts_g16_g5label_tau_gate

@@ -1,0 +1,36 @@
+# G16 — g5-label score + OOS gate + G5 tight exec (recent + segment)
+#
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260530_fast_scalp_alts_majors/fast_scalp_g16_gate_exec.yaml
+
+experiment_id: fast_scalp_g16_gate_exec_20260602
+strategy: fast_scalp
+data_path: data/parquet_data
+market_segment_path: config/market_segment.yaml
+
+runs:
+  - variant: alts_g16_recent
+    strategy: fast_scalp
+    strategies_root: config_experiments/fast_scalp_alpha_G16_g5label_g5exec_gate_strategies
+    symbols: [SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+    start_date: "2025-10-01"
+    end_date: "2026-03-31"
+    inject_scores: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/scores/alts_g5label_full_history.parquet
+    output_dir: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/g16_gate_exec/alts_g16_recent
+
+segment_matrix:
+  segments: [bear_2022, bull_2023_2024, recent_range_to_bear, recent_6m_oos]
+  variants:
+    - suffix: alts_g16_gate_g5
+      strategy: fast_scalp
+      strategies_root: config_experiments/fast_scalp_alpha_G16_g5label_g5exec_gate_strategies
+      symbols: [SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+      inject_scores: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/scores/alts_g5label_full_history.parquet
+      output_dir: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/g16_gate_exec/alts_g16_segment
+
+    - suffix: alts_g14_g5label_no_gate
+      strategy: fast_scalp
+      strategies_root: config_experiments/fast_scalp_alpha_G14_g5label_g5exec_strategies
+      symbols: [SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+      inject_scores: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/scores/alts_g5label_full_history.parquet
+      output_dir: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/g16_gate_exec/alts_g14_no_gate_segment

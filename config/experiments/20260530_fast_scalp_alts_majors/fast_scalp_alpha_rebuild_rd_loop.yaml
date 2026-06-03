@@ -1,0 +1,85 @@
+# Phase 0 E0a decomposition + Phase 0-2 rd_loop driver
+#
+#   PYTHONPATH=src:scripts:. python scripts/rd_loop.py \
+#     --hypothesis-yaml config/experiments/20260530_fast_scalp_alts_majors/fast_scalp_alpha_rebuild_rd_loop.yaml
+
+experiment_id: fast_scalp_alpha_rebuild_20260601
+topic: fast_scalp_alpha_rebuild
+strategy: fast_scalp
+output_dir: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild
+
+tree_steps:
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/research/prepare_fast_scalp_alpha_snapshots.py
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/research/diagnose_tree_vector_event_gap.py \
+        --vector-csv results/rd_loop/fast_scalp_ic_plateau/vector_event_align/alts/vector_trades.csv \
+        --event-csv results/rd_loop/fast_scalp_ic_plateau/event_confirm/alts_recent_6m_oos/event_trades_fast_scalp_alts.csv \
+        --event-capital-json results/rd_loop/fast_scalp_ic_plateau/event_confirm/alts_recent_6m_oos/capital_report.json \
+        --output-dir results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/phase0/decompose/alts
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/research/diagnose_tree_vector_event_gap.py \
+        --vector-csv results/rd_loop/fast_scalp_ic_plateau/vector_event_align/majors/vector_trades.csv \
+        --event-csv results/rd_loop/fast_scalp_ic_plateau/event_confirm/majors_recent_6m_oos/event_trades_fast_scalp_majors.csv \
+        --event-capital-json results/rd_loop/fast_scalp_ic_plateau/event_confirm/majors_recent_6m_oos/capital_report.json \
+        --output-dir results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/phase0/decompose/majors
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python -m scripts.event_backtest \
+        --variant-grid config/experiments/20260530_fast_scalp_alts_majors/fast_scalp_alpha_phase0.yaml
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/research/profile_tree_entry_excursion.py \
+        --config config/strategies/tree_strategies/fast_scalp_alts \
+        --predictions results/train_final/fast_scalp/train_final_20260530_141451_ic_top35/fast_scalp/predictions.parquet \
+        --symbols SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT \
+        --start-date 2025-10-01 --end-date 2026-03-31 \
+        --output-dir results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/excursion/alts
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/research/profile_tree_entry_excursion.py \
+        --config config/strategies/tree_strategies/fast_scalp_majors \
+        --predictions results/train_final/fast_scalp_majors/train_final_latest/fast_scalp_majors/predictions.parquet \
+        --symbols BTCUSDT,ETHUSDT \
+        --start-date 2025-10-01 --end-date 2026-03-31 \
+        --output-dir results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/excursion/majors
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python -m scripts.event_backtest \
+        --variant-grid config/experiments/20260530_fast_scalp_alts_majors/fast_scalp_exec_grid.yaml
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/research/train_tree_dual_head.py \
+        --config config/strategies/tree_strategies/fast_scalp_alts \
+        --predictions results/train_final/fast_scalp/train_final_20260530_141451_ic_top35/fast_scalp/predictions.parquet \
+        --symbols SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT \
+        --output-dir results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/dual_head/alts
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/research/prepare_fast_scalp_alpha_snapshots.py --only fast_scalp_alpha_G7_dual_head_strategies
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python -m scripts.event_backtest \
+        --variant-grid config/experiments/20260530_fast_scalp_alts_majors/fast_scalp_dual_head_validate.yaml
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/research/train_tree_adverse_gate.py \
+        --config config/strategies/tree_strategies/fast_scalp_alts \
+        --predictions results/train_final/fast_scalp/train_final_20260530_141451_ic_top35/fast_scalp/predictions.parquet \
+        --symbols SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT \
+        --start-date 2025-10-01 --end-date 2026-03-31 \
+        --output-dir results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/gate/adverse_gate
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/research/prepare_fast_scalp_alpha_snapshots.py --only fast_scalp_alpha_G8_short_regimeoff_gate_strategies
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python -m scripts.event_backtest \
+        --variant-grid config/experiments/20260530_fast_scalp_alts_majors/fast_scalp_gate_validate.yaml
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python -m scripts.event_backtest \
+        --variant-grid config/experiments/20260530_fast_scalp_alts_majors/fast_scalp_alpha_phase4_validate.yaml

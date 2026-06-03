@@ -1,0 +1,11 @@
+# Symbol cohorts for fast_scalp experiments — NOT strategy templates.
+#
+# Train always on pooled_6. Event / score-export / gate train may subset via CLI
+# --symbol or grid `symbols:` without forking config/strategies/.
+
+pooled_6: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+alts_4: SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+majors_2: BTCUSDT,ETHUSDT
+
+# Historical Phase-2 ablation (optional grid rows — do not promote as separate slugs):
+#   compare pooled_6 artifact filtered to alts_4 vs majors_2 on holdout

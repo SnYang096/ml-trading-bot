@@ -1,0 +1,35 @@
+# Execution-aligned segment matrix — baseline A (Step 0 H=3+G5) vs B/C (new artifacts)
+#
+# Prerequisite: Step 0 snapshots + score export from rd_loop_execution_aligned_labels.yaml
+#
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260530_fast_scalp_alts_majors/fast_scalp_execution_aligned_segment.yaml
+
+experiment_id: fast_scalp_execution_aligned_segment_20260602
+strategy: fast_scalp
+data_path: data/parquet_data
+market_segment_path: config/market_segment.yaml
+
+segment_matrix:
+  segments: [bear_2022, bull_2023_2024, recent_range_to_bear, recent_6m_oos]
+  variants:
+    - suffix: alts_baseline_h3_g5
+      strategy: fast_scalp
+      strategies_root: config_experiments/fast_scalp_alpha_G5_short_regimeoff_tight_exec_strategies
+      symbols: [SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+      inject_scores: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/scores/alts_full_history_v2.parquet
+      output_dir: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/execution_aligned_segment/alts_baseline_h3_g5
+
+    - suffix: alts_g5label_g5exec
+      strategy: fast_scalp
+      strategies_root: config_experiments/fast_scalp_alpha_G14_g5label_g5exec_strategies
+      symbols: [SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+      inject_scores: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/scores/alts_g5label_full_history.parquet
+      output_dir: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/execution_aligned_segment/alts_g5label_g5exec
+
+    - suffix: alts_g10label_g10exec
+      strategy: fast_scalp
+      strategies_root: config_experiments/fast_scalp_alpha_G15_g10label_g10exec_strategies
+      symbols: [SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+      inject_scores: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/scores/alts_g10label_full_history.parquet
+      output_dir: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/execution_aligned_segment/alts_g10label_g10exec

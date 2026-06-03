@@ -1,0 +1,58 @@
+# Step 0 — take_profit.target_r fix validation (v2 scores)
+#
+#   PYTHONPATH=src:scripts:. python scripts/research/prepare_fast_scalp_alpha_snapshots.py \
+#     --only fast_scalp_alpha_G5_short_regimeoff_tight_exec_strategies \
+#            fast_scalp_alpha_G12_short_regimeoff_gate_tight_exec_strategies \
+#            fast_scalp_alpha_G13_short_regimeoff_gate_wide_tight_exec_strategies
+#
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260530_fast_scalp_alts_majors/fast_scalp_step0_tp_fix.yaml
+
+experiment_id: fast_scalp_step0_tp_fix_20260602
+strategy: fast_scalp
+data_path: data/parquet_data
+
+runs:
+  - variant: alts_g5_tight_recent
+    strategy: fast_scalp
+    strategies_root: config_experiments/fast_scalp_alpha_G5_short_regimeoff_tight_exec_strategies
+    symbols: [SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+    start_date: "2025-10-01"
+    end_date: "2026-03-31"
+    inject_scores: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/scores/alts_full_history_v2.parquet
+    output_dir: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/step0_tp_fix/alts_g5_tight_recent
+
+  - variant: alts_g12_gate_g5_recent
+    strategy: fast_scalp
+    strategies_root: config_experiments/fast_scalp_alpha_G12_short_regimeoff_gate_tight_exec_strategies
+    symbols: [SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+    start_date: "2025-10-01"
+    end_date: "2026-03-31"
+    inject_scores: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/scores/alts_full_history_v2.parquet
+    output_dir: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/step0_tp_fix/alts_g12_gate_g5_recent
+
+  - variant: alts_g13_gate_g10_recent
+    strategy: fast_scalp
+    strategies_root: config_experiments/fast_scalp_alpha_G13_short_regimeoff_gate_wide_tight_exec_strategies
+    symbols: [SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+    start_date: "2025-10-01"
+    end_date: "2026-03-31"
+    inject_scores: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/scores/alts_full_history_v2.parquet
+    output_dir: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/step0_tp_fix/alts_g13_gate_g10_recent
+
+segment_matrix:
+  segments: [bear_2022, bull_2023_2024, recent_range_to_bear, recent_6m_oos]
+  variants:
+    - suffix: alts_g5_tight
+      strategy: fast_scalp
+      strategies_root: config_experiments/fast_scalp_alpha_G5_short_regimeoff_tight_exec_strategies
+      symbols: [SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+      inject_scores: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/scores/alts_full_history_v2.parquet
+      output_dir: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/step0_tp_fix/alts_g5_tight_segment
+
+    - suffix: alts_g12_gate_g5
+      strategy: fast_scalp
+      strategies_root: config_experiments/fast_scalp_alpha_G12_short_regimeoff_gate_tight_exec_strategies
+      symbols: [SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+      inject_scores: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/scores/alts_full_history_v2.parquet
+      output_dir: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/step0_tp_fix/alts_g12_gate_g5_segment

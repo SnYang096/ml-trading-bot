@@ -1,0 +1,33 @@
+# Override: execution-aligned label under G5 tight exec (SL 1.5R / TP 1.0R / H=6).
+# Use with: --config config/strategies/tree_strategies/fast_scalp
+#           --labels config/experiments/20260530_fast_scalp_alts_majors/overrides/labels_execution_aligned_g5.yaml
+
+name: realized_r_g5_tight
+target_column: label
+
+label_generator:
+  module: src.time_series_model.strategies.labels.execution_realized_r_label
+  function: compute_execution_realized_r_label
+  params:
+    exec_profile: g5_tight
+    atr_col: atr
+    rr_floor: 0.30
+    bar_minutes: 120
+    holdout_embargo_minutes: 720
+    include_forward_rr: true
+    forward_horizon: 3
+    price_col: close
+
+label_meta:
+  label_type: continuous
+  semantic: |
+    label[t] = r_long[t] - r_short[t] under G5 tight simulate_rr_execution.
+  exec_profile: g5_tight
+  rr_floor: 0.30
+  holdout_embargo_minutes: 720
+
+filters:
+  - column: label
+    notna: true
+
+post_label_filters: []

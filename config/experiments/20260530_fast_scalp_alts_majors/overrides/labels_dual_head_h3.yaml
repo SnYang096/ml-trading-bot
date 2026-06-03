@@ -1,0 +1,32 @@
+# Override: dual binary heads (long_win / short_win) @ H=3.
+# Trained via train_tree_dual_head.py on prepared features parquet, NOT train_strategy_pipeline dual target.
+# Kept here for label semantics reference and future pipeline integration.
+
+name: fast_scalp_dual_head_win_h3
+target_columns:
+  - long_win
+  - short_win
+
+label_generator:
+  module: src.time_series_model.strategies.labels.long_short_win_label
+  function: compute_long_short_win_labels
+  params:
+    horizon: 3
+    price_col: close
+    atr_col: atr
+    rr_floor: 0.30
+
+label_meta:
+  label_type: binary_dual
+  semantic: |
+    long_win = fwd_rr >= rr_floor; short_win = fwd_rr <= -rr_floor
+  horizon: 3 bars
+  rr_floor: 0.30
+
+filters:
+  - column: long_win
+    notna: true
+  - column: short_win
+    notna: true
+
+post_label_filters: []

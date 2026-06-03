@@ -1,0 +1,26 @@
+# G5 full-history segment matrix (2022–2026 score injection from artifact)
+#
+#   PYTHONPATH=src:scripts python scripts/research/export_tree_scores_from_artifact.py \
+#     --artifact-dir results/train_final/fast_scalp/train_final_20260530_141451_ic_top35/fast_scalp \
+#     --config config/strategies/tree_strategies/fast_scalp_alts \
+#     --symbols SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT \
+#     --start-date 2022-01-01 --end-date 2026-03-31 \
+#     --output results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/scores/alts_full_history.parquet
+#
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260530_fast_scalp_alts_majors/fast_scalp_g5_segment_full.yaml
+
+experiment_id: fast_scalp_g5_segment_full_20260602
+strategy: fast_scalp
+data_path: data/parquet_data
+market_segment_path: config/market_segment.yaml
+
+segment_matrix:
+  segments: [bear_2022, bull_2023_2024, recent_range_to_bear, recent_6m_oos]
+  variants:
+    - suffix: alts_g5_short_regimeoff_tight
+      strategy: fast_scalp
+      strategies_root: config_experiments/fast_scalp_alpha_G5_short_regimeoff_tight_exec_strategies
+      symbols: [SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+      inject_scores: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/scores/alts_full_history_v2.parquet
+      output_dir: results/rd_loop/fast_scalp_ic_plateau/alpha_rebuild/phase4_full/alts_g5_short_regimeoff_tight

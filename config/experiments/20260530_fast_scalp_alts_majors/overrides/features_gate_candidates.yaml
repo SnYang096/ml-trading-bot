@@ -1,0 +1,42 @@
+# Override: wide gate candidate pool (risk/tail/vol/orderflow/chop).
+# Use with: --config config/strategies/tree_strategies/fast_scalp
+#           --features config/experiments/20260530_fast_scalp_alts_majors/overrides/features_gate_candidates.yaml
+#           --prepare-only  (gate feature parquet, NOT entry model features)
+#
+# IC-prune + adverse MAE lift selection happens in train_tree_adverse_gate.py.
+# Leakage guard: no mae_atr / mfe_atr / forward_rr / realized_r_* as features.
+
+name: fast_scalp_gate_candidates
+description: |
+  Wide risk candidate pool for adverse-excursion gate. Wider than entry IC-pruned
+  features; selection downstream via IC + lift on entry-point adverse label.
+
+feature_pipeline:
+  exclude_columns:
+    - mae_atr
+    - mfe_atr
+    - forward_rr
+    - realized_r_long
+    - realized_r_short
+  requested_features:
+    - atr_f
+    - evt_var_99
+    - evt_var_99_left
+    - evt_var_99_right
+    - evt_es_99
+    - evt_es_99_left
+    - evt_tail_shape
+    - evt_tail_shape_left
+    - evt_scale
+    - evt_scale_left
+    - vol_accel
+    - spectrum_cvd_low_freq_ratio
+    - spectrum_price_centroid
+    - liquidity_void_retracement
+    - box_stability_60
+    - shd_pct
+    - me_accel_5k
+    - me_accel_5k_long
+    - bpc_recovery_strength
+    - macro_tp_vwap_1200_position
+    - hour_sin
