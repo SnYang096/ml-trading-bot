@@ -1,6 +1,6 @@
 # chop_grid — post-TP replenish ablation (2026-06-03)
 
-**背景：** 研究默认 `max_replenish_per_level_per_segment: null`（TP 后无限补挂）与 live 默认 `0`（每档每 segment 仅一次 fill）/ `1`（prod）行为不一致。segment validate 20260603 在 **unlimited** 下 OOS **-0.75%**。
+**背景：** 研究曾用 `null`（无限补挂）；live prod 与 20260526 sweep 推荐 **`max_replenish=1`**。segment validate 20260603 在 unlimited 下 OOS **-0.75%**。
 
 **目标：** 关闭 TP 后补挂（`max_replenish=0`），看能否接近历史较好窗口（如 20260526 proxy +38% pooled 口径需对照解读）。
 

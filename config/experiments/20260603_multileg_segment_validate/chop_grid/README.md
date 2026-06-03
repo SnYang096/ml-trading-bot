@@ -17,7 +17,7 @@ python scripts/experiment_chop_grid_market_segment.py \
   --no-maps
 ```
 
-默认 **replenish=unlimited**（`archetypes/execution.yaml` 的 `max_replenish_per_level_per_segment: null`）。关闭补挂加：`--max-replenish-per-level 0`。
+默认 **replenish=1**（`archetypes/execution.yaml` 的 `max_replenish_per_level_per_segment: 1`，与 live prod 一致）。对照：`--max-replenish-per-level 0`（关闭）或 `null`（无限，历史研究）。
 
 ## 结论
 

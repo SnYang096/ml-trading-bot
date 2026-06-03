@@ -20,7 +20,7 @@
 | **1min** | 4bps | `1min_4bps_5sym` | `1min_4bps_6sym` |
 | **1min** | 20bps | `1min_20bps_5sym` ← **当前 prod** | `1min_20bps_6sym` |
 
-Replenish：研究默认 **unlimited**（与 prior segment validate 一致）。补挂对照见 [`../20260603_chop_grid_replenish_ablation/`](../20260603_chop_grid_replenish_ablation/)。
+Replenish：默认 **`max_replenish=1`**（与 live prod 一致）。补挂对照见 [`../20260603_chop_grid_replenish_ablation/`](../20260603_chop_grid_replenish_ablation/)。
 
 ## 跑法
 

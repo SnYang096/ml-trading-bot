@@ -38,9 +38,9 @@ Research-only prototype for trading broad no-trend crypto regimes.
 同档补挂（`inventory.max_replenish_per_level_per_segment`）：
 
 - 含义：每个 regime 段、每个网格档位（L1/L2/…、S1/S2/…）在**止盈后**是否再挂同价限价单。
-- `0`：每档只成交一次（当前 live 默认，直到 sweep 后调高）。
-- `N>0`：止盈后最多再补挂 **N** 次（总入场 ≤ **1+N**）。
-- `null` / 省略：不限制补挂（研究回测默认，与历史 `ChopGridEngine` 行为一致）。
+- **`1`（默认）：** 止盈后最多再补挂 **1** 次（总入场 ≤ **2**）；与 live prod 及 20260526 全窗 sweep 推荐一致。
+- `0`：每档只成交一次（legacy one-shot）。
+- `null`：不限制补挂（仅对照/历史回测）。
 - 补挂价位固定为段内首次 `_start_grid` 的 `center ± spacing × level`，不随 bar 的 `close` 重锚。
 - 历史选参：`python scripts/sweep_chop_grid_replenish.py`（见 `results/chop_grid/sweep_replenish*.csv`）。
 

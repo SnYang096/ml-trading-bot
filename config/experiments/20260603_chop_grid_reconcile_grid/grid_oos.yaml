@@ -1,7 +1,7 @@
 # chop_grid reconciliation grid — recent_6m_oos smoke
 #
 # Axes: execution (2h vs 1min) × all-in fee (4 vs 20 bps) × universe (5 vs 6 symbols)
-# Replenish fixed at research default (unlimited / null from archetype).
+# Replenish: default max_replenish=1 (archetype); grid cells inherit unless overridden.
 
 experiment_id: chop_grid_reconcile_grid_oos_20260603
 segment_id: recent_6m_oos
