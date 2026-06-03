@@ -8,14 +8,16 @@
 
 ## 1. 四段汇总（等权 portfolio 口径）
 
-| Segment | 窗 | return_pct (eq-weight) | return_pct_pooled | segment_win_rate | worst_segment | portfolio_cum_dd |
+**口径（2026-06-03）：** `return_pct` = timeline 组合 equity（canonical）；`return_pct_eq_mean` = 下表 eq-weight 列；`return_pct_pooled` = 五币 trade 直接相加。下表为 **eq-weight 时代** 结果，复跑后 timeline 终值通常接近 eq-mean，但 `max_drawdown_portfolio` 会反映真实路径。
+
+| Segment | 窗 | return_pct (eq-weight†) | return_pct_pooled | segment_win_rate | worst_segment | portfolio_cum_dd |
 |---------|-----|----------------------:|------------------:|-----------------:|--------------:|-----------------:|
 | bear_2022 | 2022-01 → 2023-01 | **+3.6%** | 18.2% | 41.9% | -1.14% | -4.3% |
 | bull_2023_2024 | 2023-01 → 2025-01 | **+5.2%** | 26.1% | 39.4% | -3.46% | -6.0% |
 | recent_range_to_bear | 2025-01 → 2026-04 | **+2.2%** | 11.1% | 39.2% | -3.34% | -9.2% |
 | **recent_6m_oos** | 2025-10 → 2026-03 | **-0.75%** | -3.7% | 37.3% | -3.34% | -5.2% |
 
-**口径：** `return_pct` = 每币独立 capital bucket 的 per-symbol 累加再 **÷ 5**；`return_pct_pooled` 为旧「五币 trade 直接相加」（约 5× 放大）。
+**口径（2026-06-03）：** 见 §1。旧句「return_pct = per-symbol ÷ 5」已 supersede 为 timeline equity。
 
 ---
 

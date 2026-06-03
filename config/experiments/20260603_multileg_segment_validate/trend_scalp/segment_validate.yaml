@@ -1,0 +1,34 @@
+# trend_scalp — market_segment 四段验证（timeline metrics）
+#
+# Parent: config/experiments/20260603_multileg_segment_validate/
+
+experiment_id: trend_scalp_segment_validate_20260603_timeline
+strategy: trend_scalp
+market_segment_path: config/market_segment.yaml
+config: config/strategies/trend_scalp/research/calibrate_roll.default.yaml
+output_dir: results/trend_scalp/experiments/segment_validate_20260603_timeline
+initial_capital_per_symbol: 10000
+
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - BNBUSDT
+  - XRPUSDT
+
+segment_matrix:
+  segments:
+    - bear_2022
+    - bull_2023_2024
+    - recent_range_to_bear
+    - recent_6m_oos
+  variants:
+    - suffix: prod_archetype_timeline
+      output_dir: results/trend_scalp/experiments/segment_validate_20260603_timeline
+
+metrics:
+  canonical: return_pct_timeline
+  legacy:
+    - return_pct_eq_mean
+    - return_pct_pooled
+    - portfolio_cum_dd

@@ -20,9 +20,12 @@ python scripts/experiment_chop_grid_market_segment.py \
 
 ## 指标口径
 
-- **`return_pct`**：等权 multileg 组合（per-symbol `pnl_per_capital` 均值 × 100）
-- **`return_pct_pooled`**：旧口径（五币 trade 直接相加，仅作对照）
+- **`return_pct`**：timeline 组合 equity（按 exit 时间序，每笔 `pnl_per_capital / n_symbols` 累加 × 100）
+- **`return_pct_eq_mean`**：per-symbol 终值等权均值（忽略路径）
+- **`return_pct_pooled`**：五币 trade 直接相加（仅对照）
+- **`max_drawdown_portfolio`**：timeline equity 路径最大回撤
 
 ## 结论
 
-见 [`DECISION.md`](DECISION.md)。**OOS eq-weight -0.75%** — pooled 口径会误读为 -3.7%，修正后接近 flat。
+**历史（eq-weight 时代，2026-06-02）：** 见 [`DECISION.md`](DECISION.md)。  
+**Timeline 重跑：** [`../20260603_multileg_segment_validate/chop_grid/`](../20260603_multileg_segment_validate/chop_grid/)

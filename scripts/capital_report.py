@@ -33,6 +33,7 @@ def write_capital_report_from_trades(
     end_date: str = "",
     total_r: Optional[float] = None,
     compound_sizing: bool = True,
+    n_symbols: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Write ``capital_report.json/html`` from a trade CSV.
 
@@ -40,6 +41,8 @@ def write_capital_report_from_trades(
         unit: ``capital_normalized`` for ``pnl_per_capital``; ``r_multiple`` for
             ``pnl_r``. ``r_multiple`` converts to money as
             ``initial_capital * risk_per_r * pnl_r``.
+        n_symbols: When set (>1), ``initial_capital`` is total portfolio notional
+            and each trade applies ``pnl_per_capital`` to ``initial_capital / n_symbols``.
     """
     trades_path = Path(trades_path)
     out_dir = Path(out_dir)
@@ -120,13 +123,31 @@ def write_capital_report_from_trades(
             _write_report(report, report_path, html_path)
             return report
         returns = pd.to_numeric(trades[pnl_col], errors="coerce").fillna(0.0)
-        unit_explanation = (
-            "total_r equals sum(pnl_per_capital): capital-bucket-normalized net "
-            "return, not classic per-trade R. 1.0 means +100% on the strategy "
-            "capital bucket; 1.1355 means about +113.55%."
+        ns = n_symbols
+        if ns is None and "symbol" in trades.columns:
+            ns = int(trades["symbol"].nunique())
+        if ns and ns > 1:
+            # initial_capital is the total portfolio notional; each symbol owns a
+            # 1/ns bucket, so a trade's pnl_per_capital scales by 1/ns at the
+            # portfolio level.
+            portfolio_returns = returns / float(ns)
+            dollars = portfolio_returns * float(initial_capital)
+            unit_explanation = (
+                "total_r equals timeline portfolio pnl_per_capital (equal weight per "
+                "symbol). Money uses initial_capital as total portfolio notional split "
+                f"across {ns} symbols."
+            )
+        else:
+            portfolio_returns = returns
+            dollars = initial_capital * returns
+            unit_explanation = (
+                "total_r equals sum(pnl_per_capital): capital-bucket-normalized net "
+                "return, not classic per-trade R. 1.0 means +100% on the strategy "
+                "capital bucket; 1.1355 means about +113.55%."
+            )
+        effective_total_r = (
+            float(total_r) if total_r is not None else float(portfolio_returns.sum())
         )
-        effective_total_r = float(returns.sum())
-        dollars = initial_capital * returns
     elif unit == "r_multiple":
         pnl_col = "pnl_r"
         if pnl_col not in trades.columns:
@@ -154,7 +175,6 @@ def write_capital_report_from_trades(
         {
             "exit_time": pd.to_datetime(trades[time_col], utc=True, errors="coerce"),
             "pnl_usd_est": dollars,
-            "return_increment": returns,
         }
     ).dropna(subset=["exit_time"])
     df = df.sort_values("exit_time")

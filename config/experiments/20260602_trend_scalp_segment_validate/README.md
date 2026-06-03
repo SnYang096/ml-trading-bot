@@ -56,4 +56,5 @@ python scripts/backtest_trend_scalp_backtrader.py \
 
 ## 结论
 
-**稳定** — 四段 eq-weight return 均正（20%–59%），五币 × 四段 20/20 格全正；worst_segment ~2%、portfolio_cum_dd ~5% 跨段一致。详见 [`DECISION.md`](DECISION.md)。
+**历史（eq-weight 时代，2026-06-02）：** 见 [`DECISION.md`](DECISION.md)。  
+**Timeline 重跑：** [`../20260603_multileg_segment_validate/trend_scalp/`](../20260603_multileg_segment_validate/trend_scalp/)

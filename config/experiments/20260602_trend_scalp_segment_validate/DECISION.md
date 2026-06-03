@@ -9,9 +9,9 @@
 
 ## 1. 四段 pooled 汇总
 
-> **口径（2026-06-02 更新）：** `return_pct` = 等权 multileg 组合（每币一个 capital bucket，取 per-symbol 累加后 **÷ n_symbols**）。`return_pct_pooled` 保留旧「五币 trade 直接相加」作对照。
+> **口径（2026-06-03 更新）：** `return_pct` = **timeline 组合 equity**（按 `exit_time` 排序，每笔 trade 贡献 `pnl_per_capital / n_symbols`）。`return_pct_eq_mean` = 旧等权终值（per-symbol 累加 ÷ n）；`return_pct_pooled` = 五币 trade 直接相加。下表数字来自 **eq-weight 时代** 跑批，需复跑后更新 timeline / `max_drawdown_portfolio`。
 
-| Segment | 窗 | segments | trades | segment_win_rate | return_pct (eq-weight) | return_pct_pooled | worst_segment | portfolio_cum_dd |
+| Segment | 窗 | segments | trades | segment_win_rate | return_pct (eq-weight†) | return_pct_pooled | worst_segment | portfolio_cum_dd |
 |---------|-----|---------:|-------:|-----------------:|-----------------------:|------------------:|--------------:|-----------------:|
 | **bear_2022** | 2022-01 → 2023-01 | 611 | 3,115 | 72.3% | **59.4%** | 296.9 | -2.42% | -4.69% |
 | **bull_2023_2024** | 2023-01 → 2025-01 | 1,199 | 5,858 | 63.9% | **59.0%** | 294.9 | -2.53% | -5.30% |

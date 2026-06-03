@@ -38,6 +38,11 @@ from scripts.diagnose_chop_grid import (  # noqa: E402
     resolve_optional_repo_path,
 )
 from scripts.capital_report import write_capital_report_from_trades  # noqa: E402
+from scripts.pipeline.multileg_portfolio_metrics import (  # noqa: E402
+    build_portfolio_equity_curve,
+    portfolio_metrics_from_trades,
+    sharpe_from_returns,
+)
 from scripts.diagnose_crf_edge import (  # noqa: E402
     _load_symbol_1m,
     _resample_ohlcv,
@@ -88,16 +93,6 @@ def _max_drawdown(series: pd.Series) -> float:
         return 0.0
     s = pd.to_numeric(series, errors="coerce").fillna(0.0)
     return float((s - s.cummax()).min())
-
-
-def _sharpe(returns: pd.Series, periods_per_year: float) -> float:
-    r = pd.to_numeric(returns, errors="coerce").dropna()
-    if len(r) < 2:
-        return 0.0
-    std = float(r.std(ddof=1))
-    if std <= 0:
-        return 0.0
-    return float(r.mean() / std * np.sqrt(periods_per_year))
 
 
 def simulate_segment_detailed(
@@ -464,19 +459,7 @@ def run_backtest(
 
     trades_df = pd.DataFrame(all_trades)
     segments_df = pd.DataFrame(all_segments)
-    if trades_df.empty:
-        equity_df = pd.DataFrame(
-            columns=["exit_time", "pnl_per_capital", "cum_pnl_per_capital", "drawdown"]
-        )
-    else:
-        equity_df = trades_df.sort_values("exit_time").copy()
-        equity_df["cum_pnl_per_capital"] = equity_df["pnl_per_capital"].cumsum()
-        equity_df["drawdown"] = (
-            equity_df["cum_pnl_per_capital"] - equity_df["cum_pnl_per_capital"].cummax()
-        )
-        equity_df = equity_df[
-            ["exit_time", "pnl_per_capital", "cum_pnl_per_capital", "drawdown"]
-        ]
+    equity_df = build_portfolio_equity_curve(trades_df)
     return trades_df, segments_df, equity_df
 
 
@@ -485,34 +468,30 @@ def _summary_tables(
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     if trades.empty:
         return pd.DataFrame(), pd.DataFrame()
-    daily = pd.Series(dtype=float)
-    if not trades.empty:
-        tmp = trades.copy()
-        tmp["exit_time"] = pd.to_datetime(tmp["exit_time"], utc=True)
-        daily = tmp.set_index("exit_time")["pnl_per_capital"].resample("1D").sum()
-    from scripts.pipeline.multileg_portfolio_metrics import portfolio_pnl_from_trades
-
-    agg = portfolio_pnl_from_trades(trades)
+    agg = portfolio_metrics_from_trades(trades)
     trade_summary = pd.DataFrame(
         [
             {
                 "trades": len(trades),
                 "win_rate": (trades["pnl_pct"] > 0).mean(),
                 "n_symbols": agg["n_symbols"],
-                "sum_pnl_per_capital": agg["portfolio_pnl_per_capital"],
+                "sum_pnl_per_capital": agg["sum_pnl_per_capital"],
                 "sum_pnl_per_capital_pooled": agg["sum_pnl_per_capital_pooled"],
                 "return_pct": agg["return_pct"],
+                "return_pct_timeline": agg["return_pct_timeline"],
+                "return_pct_eq_mean": agg["return_pct_eq_mean"],
                 "return_pct_pooled": agg["return_pct_pooled"],
+                "max_drawdown_portfolio": agg["max_drawdown_portfolio"],
                 "sum_r_equiv_per_capital": trades["r_equiv_per_capital"].sum(),
                 "mean_trade_pnl_pct": trades["pnl_pct"].mean(),
                 "median_trade_pnl_pct": trades["pnl_pct"].median(),
                 "tp_rate": (trades["exit_reason"] == "grid_tp").mean(),
                 "forced_rate": (trades["exit_reason"] == "regime_exit").mean(),
-                "daily_sharpe": _sharpe(daily, 365.0),
-                "trade_sharpe": _sharpe(trades["pnl_per_capital"], 1.0),
+                "daily_sharpe": agg["daily_sharpe"],
+                "trade_sharpe": sharpe_from_returns(trades["pnl_per_capital"], 1.0),
                 "max_drawdown": (
-                    _max_drawdown(equity["cum_pnl_per_capital"])
-                    if not equity.empty
+                    float(equity["drawdown"].min())
+                    if not equity.empty and "drawdown" in equity.columns
                     else 0.0
                 ),
                 "gross_pnl_pct_sum": (
@@ -1237,14 +1216,19 @@ def main() -> None:
         trades["pnl_usd_realized"] = pd.to_numeric(
             trades["pnl_per_capital"], errors="coerce"
         ).fillna(0.0) * float(args.initial_capital)
-    if not equity.empty and "pnl_per_capital" in equity.columns:
-        equity["pnl_usd_realized"] = pd.to_numeric(
-            equity["pnl_per_capital"], errors="coerce"
-        ).fillna(0.0) * float(args.initial_capital)
+    n_sym = max(1, trades["symbol"].nunique()) if not trades.empty else 1
+    portfolio_initial = float(args.initial_capital) * n_sym
+    if not equity.empty and "portfolio_pnl_per_capital" in equity.columns:
+        equity["pnl_usd_realized"] = (
+            pd.to_numeric(equity["portfolio_pnl_per_capital"], errors="coerce").fillna(
+                0.0
+            )
+            * portfolio_initial
+        )
         if "cum_pnl_per_capital" in equity.columns:
-            equity["cum_pnl_usd_realized"] = pd.to_numeric(
+            equity["cum_pnl_usd_realized"] = portfolio_initial * pd.to_numeric(
                 equity["cum_pnl_per_capital"], errors="coerce"
-            ).fillna(0.0) * float(args.initial_capital)
+            ).fillna(0.0)
     trades.to_csv(out_dir / "grid_trades.csv", index=False)
     segments.to_csv(out_dir / "grid_segments.csv", index=False)
     equity.to_csv(out_dir / "equity_curve.csv", index=False)
@@ -1257,15 +1241,17 @@ def main() -> None:
         encoding="utf-8",
     )
     write_report(out_dir, args, trades, segments, equity)
+    portfolio_metrics = portfolio_metrics_from_trades(trades)
     write_capital_report_from_trades(
         trades_path=out_dir / "grid_trades.csv",
         out_dir=out_dir,
         unit="capital_normalized",
         title="Chop Grid Capital Report",
-        initial_capital=float(args.initial_capital),
+        initial_capital=portfolio_initial,
         start_date=args.start,
         end_date=args.end,
-        total_r=float(trades["pnl_per_capital"].sum()) if not trades.empty else 0.0,
+        total_r=portfolio_metrics["portfolio_pnl_per_capital_timeline"],
+        n_symbols=n_sym,
     )
     if not args.no_maps:
         write_trading_maps(out_dir, args, trades, segments)

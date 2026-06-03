@@ -27,8 +27,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.pipeline.multileg_portfolio_metrics import portfolio_pnl_from_trades
-
 BACKTEST = PROJECT_ROOT / "scripts" / "chop_grid_backtest.py"
 DEFAULT_SEGMENT_PATH = PROJECT_ROOT / "config" / "market_segment.yaml"
 
@@ -167,7 +165,11 @@ def main() -> None:
     cols = [
         "segment",
         "return_pct",
+        "return_pct_timeline",
+        "return_pct_eq_mean",
         "return_pct_pooled",
+        "max_drawdown_portfolio",
+        "daily_sharpe",
         "n_symbols",
         "segment_win_rate",
         "worst_segment",

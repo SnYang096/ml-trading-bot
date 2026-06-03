@@ -1214,6 +1214,12 @@ def main() -> None:
         default=defaults.get("exclude_box", True),
     )
     ap.add_argument("--out-dir", default="results/trend_scalp_diagnostic")
+    ap.add_argument(
+        "--initial-capital",
+        type=float,
+        default=10_000.0,
+        help="Per-symbol initial capital (USDT) for PnL projection and capital report",
+    )
     ap.add_argument("--map-symbols", default="BTCUSDT")
     ap.add_argument("--continuous-map-symbols", default="")
     ap.add_argument("--no-maps", action="store_true")
@@ -1224,13 +1230,6 @@ def main() -> None:
     trades, segments = run(args)
     summary = summarize(trades, segments)
     resolved_hold = _effective_max_loser_hold_bars(args)
-    from scripts.pipeline.multileg_portfolio_metrics import portfolio_pnl_from_trades
-
-    portfolio_total_r = (
-        float(portfolio_pnl_from_trades(trades)["portfolio_pnl_per_capital"])
-        if not trades.empty
-        else 0.0
-    )
     if not summary.empty:
         summary["signal_timeframe"] = str(args.timeframe)
         summary["execution_timeframe"] = str(args.execution_timeframe or args.timeframe)
@@ -1241,14 +1240,23 @@ def main() -> None:
     trades.to_csv(out_dir / "dual_add_trades.csv", index=False)
     segments.to_csv(out_dir / "dual_add_segments.csv", index=False)
     summary.to_csv(out_dir / "summary.csv", index=False)
+    from scripts.pipeline.multileg_portfolio_metrics import (
+        portfolio_metrics_from_trades,
+    )
+
+    portfolio_metrics = portfolio_metrics_from_trades(trades)
+    n_sym = max(int(portfolio_metrics.get("n_symbols") or 0), 1)
+    portfolio_initial = float(args.initial_capital) * n_sym
     write_capital_report_from_trades(
         trades_path=out_dir / "dual_add_trades.csv",
         out_dir=out_dir,
         unit="capital_normalized",
         title="Dual Add Trend Capital Report",
+        initial_capital=portfolio_initial,
         start_date=args.start,
         end_date=args.end,
-        total_r=portfolio_total_r,
+        total_r=portfolio_metrics["portfolio_pnl_per_capital_timeline"],
+        n_symbols=n_sym,
     )
     if not args.no_maps:
         write_trading_maps(out_dir, args, trades, segments)
