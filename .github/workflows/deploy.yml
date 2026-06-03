@@ -727,6 +727,7 @@ jobs:
             src/live_data_stream \
             src/time_series_model \
             src/monitoring \
+            src/features \
             src/config \
             config/strategies \
             config/monitoring \
@@ -748,6 +749,7 @@ jobs:
               src/live_data_stream \
               src/time_series_model \
               src/monitoring \
+              src/features \
               src/config \
               config/strategies \
               config/monitoring \
