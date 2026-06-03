@@ -51,6 +51,35 @@ def test_feature_store_bar_provider_returns_new_events_once(tmp_path):
     assert second == []
 
 
+def test_feature_store_bar_provider_decodes_numeric_trend_direction(tmp_path):
+    writer = FeatureBusWriter(tmp_path)
+    writer.append_bar_1m(
+        "BTCUSDT",
+        {
+            "timestamp": pd.Timestamp("2024-01-01T00:01:00Z"),
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.0,
+        },
+    )
+    writer.append_features(
+        symbol="BTCUSDT",
+        timeframe="2h",
+        timestamp=pd.Timestamp("2024-01-01T00:00:00Z"),
+        features={
+            "close": 100.0,
+            "atr14": 2.0,
+            "trend_confidence": 0.9,
+            "trend_direction": -1.0,
+            "trend_direction_raw": -1.0,
+        },
+    )
+    provider = FeatureStoreBarProvider(feature_bus_root=tmp_path, timeframe="2h")
+    events = provider.latest_closed_bars(["BTCUSDT"])
+    assert events[0].features["trend_direction"] == "DOWN"
+
+
 def test_feature_store_bar_provider_skips_historical_startup_bars(tmp_path):
     writer = FeatureBusWriter(tmp_path)
     for minute in range(1, 6):

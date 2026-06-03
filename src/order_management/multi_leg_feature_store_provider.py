@@ -12,6 +12,7 @@ from src.features.semantic_chop import (
     resolve_feature_float,
     resolve_semantic_chop,
 )
+from src.time_series_model.live.multileg_runtime_features import trend_direction_label
 from src.live_data_stream.feature_bus import FeatureBusReader
 from src.order_management.multi_leg_daemon import MultiLegBarEvent
 
@@ -25,14 +26,14 @@ def _features_from_row(row: pd.Series) -> Dict[str, Any]:
     normalize_semantic_chop_aliases(raw)
     chop = resolve_semantic_chop(raw, default=0.0)
     return {
+        **raw,
         "semantic_chop": float(chop if chop is not None else 0.0),
         "bpc_semantic_chop": float(chop if chop is not None else 0.0),
         "box_prefilter": bool(row.get("box_prefilter", False)),
         "trend_confidence": _as_float(
             row, ["trend_confidence", "trend_confidence_f"], 0.0
         ),
-        "trend_direction": str(row.get("trend_direction", "UP")),
-        **raw,
+        "trend_direction": trend_direction_label(raw),
     }
 
 

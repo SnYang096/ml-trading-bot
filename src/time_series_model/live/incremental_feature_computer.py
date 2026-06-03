@@ -34,7 +34,6 @@ from src.features.time_series.utils_volatility_features import (
 )
 from src.time_series_model.live.multileg_runtime_features import (
     enrich_multileg_runtime_features,
-    is_string_live_column,
     live_feature_satisfied,
 )
 
@@ -1650,8 +1649,8 @@ class IncrementalFeatureComputer:
                 continue
             if v is None or (np.isscalar(v) and pd.isna(v)):
                 continue
-            if is_string_live_column(key):
-                features[key] = str(v)
+            if key == "trend_direction" and isinstance(v, str):
+                # Coerced to ±1 in enrich_multileg_runtime_features for parquet.
                 continue
             try:
                 if np.isscalar(v):
