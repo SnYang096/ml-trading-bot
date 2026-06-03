@@ -1,7 +1,7 @@
 {
   "target": "forward_rr",
-  "source_parquet": "/home/yin/trading/ml_trading_bot/results/train_final/tpc/train_final_20260523_122438_rr_extreme/tpc/features_labeled.parquet",
-  "ts": "20260526",
+  "source_parquet": "config/monitoring/reference/tpc_psi_ref_recent_6m_oos.parquet",
+  "ts": "20260603_tier0_local",
   "rows": [
     {
       "feature": "ema_1200_position",

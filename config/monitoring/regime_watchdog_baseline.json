@@ -1,12 +1,9 @@
 {
   "factor_ic_baseline_ref": "config/monitoring/factor_ic_baseline_tpc_20260526.json",
   "tpc": {
-    "bull_share": 0.16911179031212373,
-    "trigger_rates": {
-      "gate_vol_persistence_vol_persistence_bull_only": 0.03450032416411966,
-      "gate_tpc_vol_leverage_asymmetry_mid_bull_only": 0.053737149208113365
-    },
-    "source": "results/train_final/tpc/train_final_20260523_122438_rr_extreme/tpc/features_labeled.parquet",
-    "n": 107970
+    "bull_share": 0.028650295069484105,
+    "trigger_rates": {},
+    "source": "results/monitoring/tier0/tpc_20260603/features_labeled_recent_6m_oos.parquet",
+    "n": 10506
   }
 }
