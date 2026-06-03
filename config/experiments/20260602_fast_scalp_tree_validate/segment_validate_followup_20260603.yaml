@@ -1,0 +1,54 @@
+# Follow-up: dual-head reg variants + G3+gate vs G3 baseline
+#
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260602_fast_scalp_tree_validate/segment_validate_followup_20260603.yaml
+
+experiment_id: fast_scalp_tree_validate_followup_20260603
+strategy: fast_scalp
+data_path: data/parquet_data
+market_segment_path: config/market_segment.yaml
+
+segment_matrix:
+  segments: [bear_2022, bull_2023_2024, recent_range_to_bear, recent_6m_oos]
+  variants:
+    - suffix: g3_baseline
+      strategy: fast_scalp
+      strategies_root: config_experiments/fast_scalp_alpha_G3_short_regime_off_strategies
+      symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+      inject_scores: results/rd_loop/fast_scalp_tree_validate/track_a/scores/h3_baseline_full_history.parquet
+      output_dir: results/rd_loop/fast_scalp_tree_validate/segment/followup/g3_baseline
+
+    - suffix: g18_g3_gate
+      strategy: fast_scalp
+      strategies_root: config_experiments/fast_scalp_alpha_G18_g3_h3_gate_strategies
+      symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+      inject_scores: results/rd_loop/fast_scalp_tree_validate/track_a/scores/h3_baseline_full_history.parquet
+      output_dir: results/rd_loop/fast_scalp_tree_validate/segment/followup/g18_g3_gate
+
+    - suffix: g7_dual_head_baseline
+      strategy: fast_scalp
+      strategies_root: config_experiments/fast_scalp_alpha_G7_dual_head_strategies
+      symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+      inject_scores: results/rd_loop/fast_scalp_tree_validate/track_a/dual_head/dual_head_event_scores.parquet
+      output_dir: results/rd_loop/fast_scalp_tree_validate/segment/followup/g7_baseline
+
+    - suffix: g17_dual_head_reg
+      strategy: fast_scalp
+      strategies_root: config_experiments/fast_scalp_alpha_G17_dual_head_reg_strategies
+      symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+      inject_scores: results/rd_loop/fast_scalp_tree_validate/track_a/dual_head_reg/dual_head_event_scores.parquet
+      output_dir: results/rd_loop/fast_scalp_tree_validate/segment/followup/g17_reg
+
+    - suffix: g17_dual_head_reg_regimeoff
+      strategy: fast_scalp
+      strategies_root: config_experiments/fast_scalp_alpha_G17_dual_head_reg_regimeoff_strategies
+      symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+      inject_scores: results/rd_loop/fast_scalp_tree_validate/track_a/dual_head_reg/dual_head_event_scores.parquet
+      output_dir: results/rd_loop/fast_scalp_tree_validate/segment/followup/g17_reg_regimeoff
+
+    - suffix: g17_dual_head_reg_ema_train
+      strategy: fast_scalp
+      strategies_root: config_experiments/fast_scalp_alpha_G17_dual_head_reg_strategies
+      symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+      inject_scores: results/rd_loop/fast_scalp_tree_validate/track_a/dual_head_reg_ema/dual_head_event_scores.parquet
+      output_dir: results/rd_loop/fast_scalp_tree_validate/segment/followup/g17_reg_ema_train

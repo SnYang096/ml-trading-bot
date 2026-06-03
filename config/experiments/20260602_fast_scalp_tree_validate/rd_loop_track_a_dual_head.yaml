@@ -1,0 +1,79 @@
+# Track A — dual binary head (G7 vs G3)
+#
+#   PYTHONPATH=src:scripts python scripts/rd_loop.py \
+#     --hypothesis-yaml config/experiments/20260602_fast_scalp_tree_validate/rd_loop_track_a_dual_head.yaml
+
+experiment_id: fast_scalp_tree_validate_track_a_20260602
+topic: fast_scalp_tree_validate_track_a
+strategy: fast_scalp
+output_dir: results/rd_loop/fast_scalp_tree_validate
+timeframe: "120T"
+feature_store_layer: features_tree_core_120T_c005db49f7
+data_path: data/parquet_data
+
+symbols_6: &symbols_6 BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+train_dates: &train_dates
+  start_date: "2024-01-01"
+  end_date: "2026-04-01"
+  holdout_start_date: "2025-10-01"
+  holdout_end_date: "2026-04-01"
+
+config: &config config/strategies/tree_strategies/fast_scalp
+
+tree_steps:
+  - mode: prepare-only
+    config: *config
+    symbols: *symbols_6
+    <<: *train_dates
+    output_root: results/train_final/fast_scalp/prepare_baseline_h3
+
+  - mode: ic-prune
+    config: *config
+    layer: entry
+    features_parquet: results/train_final/fast_scalp/prepare_baseline_h3/fast_scalp/features_labeled.parquet
+    out: shared/ic_prune_h3
+    holdout_start: "2025-10-01"
+    holdout_end: "2026-04-01"
+    min_ic: 0.02
+    top_n_columns: 20
+    writeback_mode: columns
+
+  - mode: train
+    config: *config
+    symbols: *symbols_6
+    <<: *train_dates
+    output_root: results/train_final/fast_scalp/train_baseline_h3
+
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/research/export_tree_scores_from_artifact.py \
+        --artifact-dir results/train_final/fast_scalp/train_baseline_h3/fast_scalp \
+        --config config/strategies/tree_strategies/fast_scalp \
+        --symbols BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT \
+        --start-date 2022-01-01 --end-date 2026-04-01 \
+        --validate-short-entry 0.45 \
+        --output results/rd_loop/fast_scalp_tree_validate/track_a/scores/h3_baseline_full_history.parquet \
+        --save-predictions results/rd_loop/fast_scalp_tree_validate/track_a/scores/h3_baseline_preds.parquet
+
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/research/train_tree_dual_head.py \
+        --config config/strategies/tree_strategies/fast_scalp \
+        --predictions results/rd_loop/fast_scalp_tree_validate/track_a/scores/h3_baseline_preds.parquet \
+        --symbols BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT \
+        --output-dir results/rd_loop/fast_scalp_tree_validate/track_a/dual_head \
+        --train-end-date 2025-10-01 --score-start-date 2022-01-01 \
+        --horizon 3 --rr-floor 0.30
+
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/research/prepare_fast_scalp_alpha_snapshots.py \
+        --only fast_scalp_alpha_G3_short_regime_off_strategies \
+               fast_scalp_alpha_G7_dual_head_strategies
+
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python -m scripts.event_backtest \
+        --variant-grid config/experiments/20260602_fast_scalp_tree_validate/segment_validate_dual_head.yaml
+
+research_scans: []

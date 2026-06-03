@@ -23,6 +23,7 @@ def export_scores(
     score_col: str = "pred",
     start_date: str | None = None,
     end_date: str | None = None,
+    extra_cols: list[str] | None = None,
 ) -> Path:
     df = pd.read_parquet(predictions)
     if "timestamp" not in df.columns:
@@ -49,6 +50,11 @@ def export_scores(
             "score": df[score_col].astype(float),
         }
     )
+    # Carry gate / overlay feature columns so the event-time gate can read them
+    # from the injected score parquet (aligned per symbol/timestamp).
+    for col in extra_cols or []:
+        if col in df.columns and col not in out.columns:
+            out[col] = pd.to_numeric(df[col], errors="coerce")
     out = out.sort_values(["symbol", "timestamp"]).drop_duplicates(
         ["symbol", "timestamp"], keep="last"
     )
@@ -67,6 +73,11 @@ def main() -> int:
     ap.add_argument("--score-col", default="pred")
     ap.add_argument("--start-date", default=None)
     ap.add_argument("--end-date", default=None)
+    ap.add_argument(
+        "--extra-cols",
+        default=None,
+        help="Comma-separated extra feature columns to carry into the inject parquet",
+    )
     args = ap.parse_args()
     syms = (
         [s.strip() for s in args.symbols.split(",") if s.strip()]
@@ -81,6 +92,11 @@ def main() -> int:
         score_col=args.score_col,
         start_date=args.start_date,
         end_date=args.end_date,
+        extra_cols=(
+            [c.strip() for c in args.extra_cols.split(",") if c.strip()]
+            if args.extra_cols
+            else None
+        ),
     )
     return 0
 

@@ -1,0 +1,9 @@
+# Minimal prepare for ema_1200_position merge into dual-head regime training.
+
+name: fast_scalp_ema1200_only
+description: EMA1200 macro position for regime-conditioned dual-head training.
+
+feature_pipeline:
+  requested_features:
+    - atr_f
+    - ema_1200_position_f

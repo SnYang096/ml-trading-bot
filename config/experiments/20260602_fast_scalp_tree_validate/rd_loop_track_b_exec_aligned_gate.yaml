@@ -1,0 +1,137 @@
+# Track B — execution-aligned g5-label + IC-prune gate (G14/G16 vs G5)
+#
+#   PYTHONPATH=src:scripts python scripts/rd_loop.py \
+#     --hypothesis-yaml config/experiments/20260602_fast_scalp_tree_validate/rd_loop_track_b_exec_aligned_gate.yaml
+#
+# Note: gate train needs FULL-HISTORY predictions (--save-predictions), not holdout-only
+# predictions.parquet. τ for ranker and gate must match (see G5LABEL_TAU in snapshot script).
+
+experiment_id: fast_scalp_tree_validate_track_b_20260602
+topic: fast_scalp_tree_validate_track_b
+strategy: fast_scalp
+output_dir: results/rd_loop/fast_scalp_tree_validate
+timeframe: "120T"
+feature_store_layer: features_tree_core_120T_c005db49f7
+data_path: data/parquet_data
+
+symbols_6: &symbols_6 BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
+train_dates: &train_dates
+  start_date: "2024-01-01"
+  end_date: "2026-04-01"
+  holdout_start_date: "2025-10-01"
+  holdout_end_date: "2026-04-01"
+
+config: &config config/strategies/tree_strategies/fast_scalp
+ovr: &ovr config/experiments/20260602_fast_scalp_tree_validate/overrides
+
+tree_steps:
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/train_strategy_pipeline.py \
+        --config config/strategies/tree_strategies/fast_scalp \
+        --labels config/experiments/20260602_fast_scalp_tree_validate/overrides/labels_execution_aligned_g5.yaml \
+        --symbol BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT --timeframe 120T \
+        --start-date 2024-01-01 --end-date 2026-04-01 \
+        --holdout-start-date 2025-10-01 --holdout-end-date 2026-04-01 \
+        --feature-store-layer features_tree_core_120T_c005db49f7 \
+        --output-root results/train_final/fast_scalp/prepare_exec_aligned_g5 \
+        --prepare-only
+
+  - mode: ic-prune
+    config: *config
+    layer: entry
+    features_parquet: results/train_final/fast_scalp/prepare_exec_aligned_g5/fast_scalp/features_labeled.parquet
+    out: track_b/ic_prune_g5
+    holdout_start: "2025-10-01"
+    holdout_end: "2026-04-01"
+    min_ic: 0.02
+    top_n_columns: 20
+    writeback_mode: columns
+
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/train_strategy_pipeline.py \
+        --config config/strategies/tree_strategies/fast_scalp \
+        --labels config/experiments/20260602_fast_scalp_tree_validate/overrides/labels_execution_aligned_g5.yaml \
+        --symbol BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT --timeframe 120T \
+        --start-date 2024-01-01 --end-date 2026-04-01 \
+        --holdout-start-date 2025-10-01 --holdout-end-date 2026-04-01 \
+        --feature-store-layer features_tree_core_120T_c005db49f7 \
+        --output-root results/train_final/fast_scalp/train_exec_aligned_g5
+
+  - mode: tau-scan
+    config: *config
+    predictions: results/train_final/fast_scalp/train_exec_aligned_g5/fast_scalp/predictions.parquet
+    out: track_b/tau_scan_g5
+    segment_label: recent_6m_oos
+    quantile_grid: "0.05,0.08,0.10,0.12,0.15,0.20,0.25,0.30"
+    filter_split: holdout
+
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/train_strategy_pipeline.py \
+        --config config/strategies/tree_strategies/fast_scalp \
+        --features config/experiments/20260602_fast_scalp_tree_validate/overrides/features_gate_candidates.yaml \
+        --symbol BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT --timeframe 120T \
+        --start-date 2024-01-01 --end-date 2026-04-01 \
+        --output-root results/train_final/fast_scalp/gate_features_wide \
+        --prepare-only
+
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/research/export_tree_scores_from_artifact.py \
+        --artifact-dir results/train_final/fast_scalp/train_exec_aligned_g5/fast_scalp \
+        --config config/strategies/tree_strategies/fast_scalp \
+        --symbols BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT \
+        --start-date 2022-01-01 --end-date 2026-04-01 \
+        --validate-short-entry -0.3090097524537344 \
+        --output results/rd_loop/fast_scalp_tree_validate/track_b/scores/g5label_full_history.parquet \
+        --save-predictions results/rd_loop/fast_scalp_tree_validate/track_b/scores/g5label_full_history_preds.parquet
+
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/research/train_tree_adverse_gate.py \
+        --config config/strategies/tree_strategies/fast_scalp \
+        --predictions results/rd_loop/fast_scalp_tree_validate/track_b/scores/g5label_full_history_preds.parquet \
+        --gate-features results/train_final/fast_scalp/gate_features_wide/fast_scalp/features_labeled.parquet \
+        --features-gate-yaml config/experiments/20260602_fast_scalp_tree_validate/overrides/features_gate_candidates.yaml \
+        --symbols BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT \
+        --start-date 2022-01-01 --end-date 2026-04-01 \
+        --train-end-date 2025-10-01 \
+        --long-entry -0.21338247736253388 --short-entry -0.3090097524537344 \
+        --min-abs-ic 0.03 --min-lift 0.05 --top-k 8 \
+        --output-dir results/rd_loop/fast_scalp_tree_validate/track_b/gate/ic_prune_v2
+
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python -c "
+      import yaml
+      from pathlib import Path
+      import pandas as pd
+      from scripts.research.export_tree_scores_for_event_backtest import export_scores
+      root = Path('results/rd_loop/fast_scalp_tree_validate/track_b')
+      tmp = root / 'scores/g5label_full_history_preds.parquet'
+      out = root / 'scores/g5label_full_history.parquet'
+      summary = yaml.safe_load((root / 'gate/ic_prune_v2/train_summary.json').read_text())
+      selected = summary.get('selected_features') or []
+      defaults = ['trend_confidence', 'bpc_semantic_chop_ts_q', 'macro_tp_vwap_1200_position', 'atr']
+      df = pd.read_parquet(tmp)
+      extra = [c for c in dict.fromkeys(list(selected) + defaults) if c in df.columns]
+      export_scores(tmp, out, symbols='BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT'.split(','),
+                    split=None, score_col='pred', start_date='2022-01-01', end_date='2026-04-01',
+                    extra_cols=extra)
+      print('rebuilt inject with gate cols:', extra)
+      "
+
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python scripts/research/prepare_fast_scalp_alpha_snapshots.py \
+        --only fast_scalp_alpha_G14_g5label_g5exec_strategies \
+               fast_scalp_alpha_G16_g5label_g5exec_gate_strategies
+
+  - mode: shell
+    cmd: |
+      PYTHONPATH=src:scripts python -m scripts.event_backtest \
+        --variant-grid config/experiments/20260602_fast_scalp_tree_validate/segment_validate_exec_gate.yaml
+
+research_scans: []

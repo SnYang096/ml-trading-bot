@@ -1,0 +1,34 @@
+# Wide gate candidate pool — IC-prune + adverse MAE lift in train_tree_adverse_gate.py
+
+name: fast_scalp_gate_candidates
+description: Risk/tail/vol/orderflow/chop candidates for adverse-excursion gate.
+
+feature_pipeline:
+  exclude_columns:
+    - mae_atr
+    - mfe_atr
+    - forward_rr
+    - realized_r_long
+    - realized_r_short
+  requested_features:
+    - atr_f
+    - evt_var_99
+    - evt_var_99_left
+    - evt_var_99_right
+    - evt_es_99
+    - evt_es_99_left
+    - evt_tail_shape
+    - evt_tail_shape_left
+    - evt_scale
+    - evt_scale_left
+    - vol_accel
+    - spectrum_cvd_low_freq_ratio
+    - spectrum_price_centroid
+    - liquidity_void_retracement
+    - box_stability_60
+    - shd_pct
+    - me_accel_5k
+    - me_accel_5k_long
+    - bpc_recovery_strength
+    - macro_tp_vwap_1200_position
+    - hour_sin

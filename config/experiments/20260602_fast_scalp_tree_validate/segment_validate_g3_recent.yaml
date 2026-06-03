@@ -1,0 +1,19 @@
+# G3 baseline — recent_6m_oos only (key OOS comparison vs G7)
+#
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260602_fast_scalp_tree_validate/segment_validate_g3_recent.yaml
+
+experiment_id: fast_scalp_tree_validate_g3_recent_20260602
+strategy: fast_scalp
+data_path: data/parquet_data
+market_segment_path: config/market_segment.yaml
+
+segment_matrix:
+  segments: [recent_6m_oos]
+  variants:
+    - suffix: g3_short_regimeoff_baseline
+      strategy: fast_scalp
+      strategies_root: config_experiments/fast_scalp_alpha_G3_short_regime_off_strategies
+      symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+      inject_scores: results/rd_loop/fast_scalp_tree_validate/track_a/scores/h3_baseline_full_history.parquet
+      output_dir: results/rd_loop/fast_scalp_tree_validate/segment/track_a/g3_baseline_recent

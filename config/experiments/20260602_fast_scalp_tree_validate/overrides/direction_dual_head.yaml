@@ -1,0 +1,14 @@
+# Merged into snapshot fast_scalp/archetypes/direction.yaml for G7.
+
+dual_head:
+  enabled: true
+  long:
+    score_column: score_long
+    entry_threshold: 0.55
+    exit_threshold: 0.45
+  short:
+    score_column: score_short
+    entry_threshold: 0.55
+    exit_threshold: 0.45
+  reject_if_both_high: true
+  reject_if_contradiction: true
