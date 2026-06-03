@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any, Mapping, MutableMapping, Optional, Set
+
+import pandas as pd
 
 from src.features.semantic_chop import (
     as_finite_float,
@@ -59,19 +62,38 @@ def enrich_multileg_runtime_features(
         coerce_trend_direction_for_bus(features)
 
 
+def trend_direction_to_sign(value: Any) -> float:
+    """Map UP/DOWN labels or raw sign to +1 / -1 (NaN when unknown)."""
+    if value is None:
+        return float("nan")
+    if isinstance(value, str):
+        return 1.0 if value.strip().upper() != "DOWN" else -1.0
+    val = as_finite_float(value)
+    if val is None:
+        return float("nan")
+    if val == 0.0:
+        return float("nan")
+    return 1.0 if val > 0.0 else -1.0
+
+
+def normalize_trend_direction_column(df: pd.DataFrame) -> pd.DataFrame:
+    """Coerce mixed string/float ``trend_direction`` history to float64 for parquet."""
+    if df.empty or "trend_direction" not in df.columns:
+        return df
+    out = df.copy()
+    out["trend_direction"] = out["trend_direction"].map(trend_direction_to_sign)
+    return out.astype({"trend_direction": "float64"}, errors="ignore")
+
+
 def coerce_trend_direction_for_bus(features: MutableMapping[str, Any]) -> None:
     """Publish ``trend_direction`` as numeric sign (+1 UP / -1 DOWN) for parquet."""
     raw = as_finite_float(features.get("trend_direction_raw"))
     if raw is not None and raw != 0.0:
         features["trend_direction"] = 1.0 if raw > 0.0 else -1.0
         return
-    td = features.get("trend_direction")
-    if isinstance(td, str):
-        features["trend_direction"] = 1.0 if td.strip().upper() != "DOWN" else -1.0
-        return
-    val = as_finite_float(td)
-    if val is not None:
-        features["trend_direction"] = 1.0 if val >= 0.0 else -1.0
+    sign = trend_direction_to_sign(features.get("trend_direction"))
+    if math.isfinite(sign):
+        features["trend_direction"] = sign
 
 
 def trend_direction_label(features: Mapping[str, Any], *, default: str = "UP") -> str:

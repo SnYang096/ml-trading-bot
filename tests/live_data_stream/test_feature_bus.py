@@ -27,6 +27,32 @@ def test_feature_bus_writer_reader_latest_features(tmp_path):
     assert float(row["semantic_chop"]) == 0.6
 
 
+def test_feature_bus_migrates_string_trend_direction_to_float(tmp_path):
+    path = tmp_path / "features" / "120T" / "ADAUSDT.parquet"
+    path.parent.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {
+                "timestamp": pd.Timestamp("2024-01-01T00:00:00Z"),
+                "close": 1.0,
+                "trend_direction": "UP",
+            }
+        ]
+    ).to_parquet(path)
+
+    writer = FeatureBusWriter(tmp_path, max_rows=5)
+    writer.append_features(
+        symbol="ADAUSDT",
+        timeframe="120T",
+        features={"close": 2.0, "trend_direction": -1.0},
+        timestamp=pd.Timestamp("2024-01-01T02:00:00Z"),
+    )
+
+    df = pd.read_parquet(path)
+    assert df["trend_direction"].dtype == "float64"
+    assert list(df["trend_direction"]) == [1.0, -1.0]
+
+
 def test_feature_bus_writer_trims_rows(tmp_path):
     writer = FeatureBusWriter(tmp_path, max_rows=1)
     writer.append_bar_1m(

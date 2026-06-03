@@ -16,6 +16,10 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 import pandas as pd
 
 from src.live_data_stream.parquet_io import atomic_write_parquet
+from src.time_series_model.live.multileg_runtime_features import (
+    coerce_trend_direction_for_bus,
+    normalize_trend_direction_column,
+)
 
 
 def normalize_timeframe(timeframe: str) -> str:
@@ -161,6 +165,8 @@ class FeatureBusWriter:
     ) -> Path:
         tf = normalize_timeframe(timeframe)
         row = dict(features)
+        if "trend_direction" in row or "trend_direction_raw" in row:
+            coerce_trend_direction_for_bus(row)
         row["timestamp"] = _utc_timestamp(row.get("timestamp", timestamp))
         path = self.root / "features" / tf / f"{symbol.upper()}.parquet"
         df = self._append_row(path, row)
@@ -183,6 +189,7 @@ class FeatureBusWriter:
             df = df.sort_values("timestamp").tail(self.max_rows).reset_index(drop=True)
         else:
             df = new_df.sort_values("timestamp").reset_index(drop=True)
+        df = normalize_trend_direction_column(df)
         atomic_write_parquet(df, path)
         return df
 
