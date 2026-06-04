@@ -165,6 +165,10 @@ class StatsCollector:
         strat_stats = self._by_strategy[strategy]
         strat_stats["evals"] += 1
 
+        if funnel.get("multileg"):
+            self._record_multileg_strategy_eval(strat_stats, funnel)
+            return
+
         if "regime" in funnel:
             if funnel.get("regime"):
                 strat_stats["regime_passed"] += 1
@@ -216,6 +220,69 @@ class StatsCollector:
                             if isinstance(reason_counts.get(rk), int)
                             else 1
                         )
+
+    def _record_multileg_strategy_eval(
+        self, strat_stats: Dict[str, Any], funnel: Dict[str, Any]
+    ) -> None:
+        """Multi-leg: regime/prefilter/wanted_enter/outcomes — not TPC no_dir."""
+        strat_stats["multileg"] = True
+        eng = str(funnel.get("engine") or "")
+        if eng:
+            strat_stats["engine"] = eng
+
+        if "regime" in funnel:
+            if funnel.get("regime"):
+                strat_stats["regime_passed"] += 1
+            else:
+                strat_stats["regime_denied"] += 1
+                self._bump_regime_deny_reason(strat_stats, funnel)
+
+        if "prefilter" in funnel:
+            if funnel.get("prefilter"):
+                strat_stats["prefilter_passed"] += 1
+            else:
+                strat_stats["prefilter_denied"] += 1
+
+        if funnel.get("wanted_enter"):
+            strat_stats["wanted_enter"] += 1
+        if funnel.get("active_segment"):
+            strat_stats["active_segment"] += 1
+        if funnel.get("open_grid"):
+            strat_stats["open_grid"] += 1
+        if funnel.get("exit_grid"):
+            strat_stats["exit_grid"] += 1
+        if funnel.get("exit_close"):
+            strat_stats["exit_close"] += 1
+
+        oc = funnel.get("outcome")
+        if oc:
+            outcomes = strat_stats.setdefault("outcomes", {})
+            key = str(oc)[:60]
+            outcomes[key] = int(outcomes.get(key, 0) or 0) + 1
+
+        if funnel.get("direction"):
+            self._direction_assigned += 1
+            strat_stats["direction"] += 1
+            dv = funnel.get("direction_value", 0)
+            if dv == 1:
+                strat_stats["long"] += 1
+            elif dv == -1:
+                strat_stats["short"] += 1
+
+        if "risk_gate" in funnel or "gate" in funnel:
+            risk_ok = bool(funnel.get("risk_gate", funnel.get("gate")))
+            if risk_ok:
+                strat_stats["risk_approved"] += 1
+                self._gate_passed += 1
+                strat_stats["gate_passed"] += 1
+            else:
+                strat_stats["risk_rejected"] += 1
+                strat_stats["gate_rejected"] += 1
+                reasons = funnel.get("gate_reasons") or []
+                reason_counts = strat_stats.setdefault("gate_reject_reasons", {})
+                for r in reasons:
+                    rk = str(r)[:60]
+                    reason_counts[rk] = int(reason_counts.get(rk, 0) or 0) + 1
 
     def record_pcm_selected(self, symbol: str, strategy: str) -> None:
         """记录 PCM 选中"""
@@ -396,6 +463,17 @@ class StatsCollector:
                 "signals",
                 "pcm_selected",
                 "orders",
+                "regime_passed",
+                "regime_denied",
+                "prefilter_passed",
+                "prefilter_denied",
+                "wanted_enter",
+                "active_segment",
+                "open_grid",
+                "exit_grid",
+                "exit_close",
+                "risk_approved",
+                "risk_rejected",
             )
             for k in cnt_keys:
                 if k not in raw:
@@ -410,6 +488,54 @@ class StatsCollector:
                 for reason, cnt in greasons.items():
                     if isinstance(cnt, (int, float)):
                         rc[str(reason)[:80]] += int(cnt)
+
+            if raw.get("multileg"):
+                tgt["multileg"] = True
+            eng = raw.get("engine")
+            if eng:
+                tgt["engine"] = str(eng)
+            outcomes = raw.get("outcomes") or {}
+            if isinstance(outcomes, dict):
+                oc: Counter = tgt.setdefault("_outcomes", Counter())
+                for k, v in outcomes.items():
+                    if isinstance(v, (int, float)):
+                        oc[str(k)[:60]] += int(v)
+
+    def _format_multileg_digest_line(self, strat: str, d: Dict[str, Any]) -> str:
+        ev = int(d.get("evals", 0) or 0)
+        regime = int(d.get("regime_passed", 0) or 0)
+        pre = int(d.get("prefilter_passed", 0) or 0)
+        wanted = int(d.get("wanted_enter", 0) or 0)
+        active = int(d.get("active_segment", 0) or 0)
+        ord_c = int(d.get("orders", 0) or 0)
+        risk_ok = int(d.get("risk_approved", 0) or 0)
+        risk_no = int(d.get("risk_rejected", 0) or 0)
+        oc = d.get("_outcomes") or Counter()
+        top_oc = ""
+        if isinstance(oc, Counter) and oc:
+            top_oc = ",".join(f"{k}:{v}" for k, v in oc.most_common(5))
+
+        sn = str(strat).lower()
+        if "chop" in sn or d.get("engine") == "chop_grid":
+            exit_g = int(d.get("exit_grid", 0) or 0)
+            open_g = int(d.get("open_grid", 0) or 0)
+            blk = (
+                f"{strat}[ev={ev} regime✓{regime} prefilter✓{pre} "
+                f"wanted_enter={wanted} active={active} exit_grid={exit_g} "
+                f"open_grid={open_g} risk✓{risk_ok} risk✗{risk_no} ord={ord_c}"
+            )
+        else:
+            lng = int(d.get("long", 0) or 0)
+            sht = int(d.get("short", 0) or 0)
+            exit_c = int(d.get("exit_close", 0) or 0)
+            blk = (
+                f"{strat}[ev={ev} regime✓{regime} prefilter✓{pre} "
+                f"wanted_enter={wanted} long={lng} short={sht} active={active} "
+                f"exit={exit_c} risk✓{risk_ok} risk✗{risk_no} ord={ord_c}"
+            )
+        if top_oc:
+            blk += f" audit{{{top_oc}}}"
+        return blk
 
     def _clear_funnel_digest(self) -> None:
         self._digest_globals.clear()
@@ -428,10 +554,17 @@ class StatsCollector:
         dg = dict(self._digest_globals)
         bys = sorted(self._digest_by_strategy.items(), key=lambda x: x[0])
         chunks: List[str] = []
+        multileg_any = any(d.get("multileg") for _, d in bys)
         for strat, d in bys:
             ev = int(d.get("evals", 0) or 0)
             if ev == 0:
                 continue
+            if d.get("multileg") or (
+                multileg_any and str(strat).lower() in ("chop_grid", "trend_scalp")
+            ):
+                chunks.append(self._format_multileg_digest_line(strat, d))
+                continue
+
             dir_ok = int(d.get("direction", 0) or 0)
             g_ok = int(d.get("gate_passed", 0) or 0)
             g_bad = int(d.get("gate_rejected", 0) or 0)
@@ -463,19 +596,36 @@ class StatsCollector:
             chunks.append(blk)
 
         if chunks:
-            logger.info(
-                "📈 funnel digest（过去 ~%.0fs 累计｜每层：eval→dir→gate→ef→signal→PCM→order）："
-                " bars=%s | GLOBAL dir/gate+/ef/ev/pcm/order=%s/%s/%s/%s/%s/%s\n    %s",
-                self.digest_interval_s,
-                dg.get("bars_processed", 0),
-                dg.get("direction_assigned", 0),
-                dg.get("gate_passed", 0),
-                dg.get("entry_filter_passed", 0),
-                dg.get("evidence_passed", 0),
-                dg.get("pcm_selected", 0),
-                dg.get("orders_placed", 0),
-                "\n    ".join(chunks),
-            )
+            if multileg_any:
+                logger.info(
+                    "📈 multileg funnel digest（过去 ~%.0fs｜regime→prefilter→wanted_enter→active→risk→order；"
+                    "chop 看 wanted_enter/exit_grid/open_grid，勿用 no_dir）："
+                    " bars=%s | risk✓/✗=%s/%s orders=%s\n    %s",
+                    self.digest_interval_s,
+                    dg.get("bars_processed", 0),
+                    dg.get("gate_passed", 0),
+                    sum(
+                        int(d.get("gate_rejected", 0) or 0)
+                        for _, d in bys
+                        if d.get("multileg")
+                    ),
+                    dg.get("orders_placed", 0),
+                    "\n    ".join(chunks),
+                )
+            else:
+                logger.info(
+                    "📈 funnel digest（过去 ~%.0fs 累计｜每层：eval→dir→gate→ef→signal→PCM→order）："
+                    " bars=%s | GLOBAL dir/gate+/ef/ev/pcm/order=%s/%s/%s/%s/%s/%s\n    %s",
+                    self.digest_interval_s,
+                    dg.get("bars_processed", 0),
+                    dg.get("direction_assigned", 0),
+                    dg.get("gate_passed", 0),
+                    dg.get("entry_filter_passed", 0),
+                    dg.get("evidence_passed", 0),
+                    dg.get("pcm_selected", 0),
+                    dg.get("orders_placed", 0),
+                    "\n    ".join(chunks),
+                )
         else:
             logger.info(
                 "📈 funnel digest（过去 ~%.0fs）：无策略 evaluate 计数（或未触发 PCM 链路）｜GLOBAL bars=%s",

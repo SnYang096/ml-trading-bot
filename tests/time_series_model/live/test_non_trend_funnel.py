@@ -90,17 +90,30 @@ def test_spot_funnel_truncates_long_blocker() -> None:
 
 def test_multileg_funnel_no_actions() -> None:
     f = funnel_for_multileg_bar(actions=[], approved_actions=[], rejected=[])
-    assert f["direction"] is False
-    assert f["direction_value"] == 0
-    assert f["gate"] is False
-    assert f["gate_reasons"] == []
+    assert f.get("multileg") is True
+    assert "direction" not in f or f.get("direction") is False
+    assert f.get("risk_gate") is False
+    assert f.get("gate_reasons") == []
 
 
 def test_multileg_funnel_all_approved() -> None:
     actions = [{"action": "place"}]
-    f = funnel_for_multileg_bar(actions=actions, approved_actions=actions, rejected=[])
-    assert f["direction"] is True
-    assert f["gate"] is True
+    audit = {
+        "engine": "chop_grid",
+        "is_box": False,
+        "wanted_enter": True,
+        "active_at_open": False,
+        "outcome": "open_grid_placed",
+    }
+    f = funnel_for_multileg_bar(
+        strategy="chop_grid",
+        engine_audit=audit,
+        actions=actions,
+        approved_actions=actions,
+        rejected=[],
+    )
+    assert f["wanted_enter"] is True
+    assert f["risk_gate"] is True
     assert f["gate_reasons"] == []
 
 
@@ -108,11 +121,22 @@ def test_multileg_funnel_rejected_collects_reason() -> None:
     rejected = [
         {"action": {"action": "place"}, "reason": "max_gross_notional exceeded"}
     ]
+    audit = {
+        "engine": "chop_grid",
+        "is_box": False,
+        "wanted_enter": True,
+        "active_at_open": False,
+        "outcome": "flat_other",
+    }
     f = funnel_for_multileg_bar(
-        actions=[{"action": "place"}], approved_actions=[], rejected=rejected
+        strategy="chop_grid",
+        engine_audit=audit,
+        actions=[{"action": "place"}],
+        approved_actions=[],
+        rejected=rejected,
     )
-    assert f["direction"] is True
-    assert f["gate"] is False
+    assert f["wanted_enter"] is True
+    assert f["risk_gate"] is False
     assert f["gate_reasons"] == ["max_gross_notional exceeded"]
 
 
@@ -121,7 +145,17 @@ def test_multileg_funnel_rejected_object_with_reason_attr() -> None:
         reason = "max_drawdown_pct breach"
 
     f = funnel_for_multileg_bar(
-        actions=[{"action": "place"}], approved_actions=[], rejected=[Rej()]
+        strategy="chop_grid",
+        engine_audit={
+            "engine": "chop_grid",
+            "is_box": False,
+            "wanted_enter": True,
+            "active_at_open": False,
+            "outcome": "flat_other",
+        },
+        actions=[{"action": "place"}],
+        approved_actions=[],
+        rejected=[Rej()],
     )
     assert f["gate_reasons"] == ["max_drawdown_pct breach"]
 
@@ -201,6 +235,14 @@ def test_stats_collector_round_trip_multileg(tmp_path: Path) -> None:
         "BTCUSDT",
         "chop_grid",
         funnel_for_multileg_bar(
+            strategy="chop_grid",
+            engine_audit={
+                "engine": "chop_grid",
+                "is_box": False,
+                "wanted_enter": True,
+                "active_at_open": False,
+                "outcome": "open_grid_placed",
+            },
             actions=[{"action": "place"}],
             approved_actions=[{"action": "place"}],
             rejected=[],

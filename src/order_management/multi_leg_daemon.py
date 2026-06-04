@@ -388,7 +388,10 @@ class MultiLegLiveDaemon:
             return
         try:
             sc.record_bar_processed(1)
+            engine_audit = getattr(rt.engine, "_last_bar_audit", None)
             funnel = funnel_for_multileg_bar(
+                strategy=str(rt.name or ""),
+                engine_audit=engine_audit,
                 actions=actions,
                 approved_actions=report.risk.approved_actions or [],
                 rejected=report.risk.rejected or [],

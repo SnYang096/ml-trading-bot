@@ -45,7 +45,21 @@ class FakeEngine:
         self.calls += 1
         self.timestamps.append(str(kwargs["timestamp"]))
         if not self.emit_actions:
+            self._last_bar_audit = {
+                "engine": "chop_grid",
+                "is_box": False,
+                "wanted_enter": False,
+                "active_at_open": False,
+                "outcome": "flat_other",
+            }
             return []
+        self._last_bar_audit = {
+            "engine": "chop_grid",
+            "is_box": False,
+            "wanted_enter": True,
+            "active_at_open": False,
+            "outcome": "open_grid_placed",
+        }
         return [
             {
                 "action": "place",
@@ -412,8 +426,9 @@ def test_daemon_records_funnel_events_when_stats_collector_attached() -> None:
     args = sc.record_strategy_eval.call_args.args
     assert args[0] == "BTCUSDT"
     assert args[1] == "chop_grid"
-    assert args[2]["direction"] is True
-    assert args[2]["gate"] is True
+    assert args[2]["multileg"] is True
+    assert args[2]["wanted_enter"] is True
+    assert args[2]["risk_gate"] is True
     sc.record_order_placed.assert_called_once_with("BTCUSDT", "chop_grid")
 
 

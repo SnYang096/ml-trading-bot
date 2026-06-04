@@ -255,66 +255,18 @@ class ChopGridLiveEngine:
         self.bar_simulation = bool(bar_simulation)
         self._live_exchange_has_activity = False
 
-    def _emit_chop_bar_outcome(
-        self,
-        symbol: str,
-        *,
-        chop: float,
-        is_box: bool,
-        wanted_enter: bool,
-        active_at_open: bool,
-        actions: List[Dict[str, Any]],
-    ) -> None:
+    def _emit_chop_bar_outcome(self, symbol: str, *, outcome: str) -> None:
         from src.order_management.hedge_engine_metrics import (
             record_multi_leg_engine_bar_outcome,
         )
 
         if not self.metrics_strategy:
             return
-        act_types = {str(a.get("action", "") or "").lower() for a in actions}
-        if "market_exit" in act_types:
-            record_multi_leg_engine_bar_outcome(
-                metrics_strategy=self.metrics_strategy,
-                symbol=symbol,
-                engine="chop_grid",
-                outcome="exit_close",
-            )
-            return
-        if not active_at_open and wanted_enter and "place" in act_types:
-            record_multi_leg_engine_bar_outcome(
-                metrics_strategy=self.metrics_strategy,
-                symbol=symbol,
-                engine="chop_grid",
-                outcome="open_grid_placed",
-            )
-            return
-        if active_at_open:
-            record_multi_leg_engine_bar_outcome(
-                metrics_strategy=self.metrics_strategy,
-                symbol=symbol,
-                engine="chop_grid",
-                outcome="active_holding",
-            )
-            return
-        if not active_at_open:
-            if is_box:
-                outcome = "flat_blocked_box"
-            elif chop < self.cfg.entry_chop_min:
-                outcome = "flat_blocked_chop_low"
-            else:
-                outcome = "flat_other"
-            record_multi_leg_engine_bar_outcome(
-                metrics_strategy=self.metrics_strategy,
-                symbol=symbol,
-                engine="chop_grid",
-                outcome=outcome,
-            )
-            return
         record_multi_leg_engine_bar_outcome(
             metrics_strategy=self.metrics_strategy,
             symbol=symbol,
             engine="chop_grid",
-            outcome="other",
+            outcome=outcome,
         )
 
     def load_state(self) -> GridState:
@@ -943,14 +895,27 @@ class ChopGridLiveEngine:
                 self._exit_grid(timestamp, close, reason="regime_or_risk_exit")
             )
 
-        self._emit_chop_bar_outcome(
-            symbol,
-            chop=chop,
-            is_box=is_box,
-            wanted_enter=wanted_enter,
+        from src.time_series_model.live.multileg_funnel import chop_grid_bar_outcome
+
+        outcome = chop_grid_bar_outcome(
             active_at_open=active_at_open,
+            wanted_enter=wanted_enter,
+            is_box=is_box,
+            chop=chop,
+            entry_chop_min=self.cfg.entry_chop_min,
             actions=actions,
         )
+        self._last_bar_audit = {
+            "engine": "chop_grid",
+            "chop": chop,
+            "is_box": is_box,
+            "wanted_enter": wanted_enter,
+            "active_at_open": active_at_open,
+            "should_enter": should_enter,
+            "should_exit": should_exit,
+            "outcome": outcome,
+        }
+        self._emit_chop_bar_outcome(symbol, outcome=outcome)
         self.save_state()
         return actions
 

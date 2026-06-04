@@ -57,40 +57,26 @@ def funnel_for_spot_decision(
     }
 
 
-def _multileg_reject_reasons(rejected: Iterable[Any]) -> List[str]:
-    out: List[str] = []
-    for rej in rejected or ():
-        reason = ""
-        if isinstance(rej, Mapping):
-            reason = str(rej.get("reason") or "")
-        else:
-            reason = str(getattr(rej, "reason", "") or "")
-        if reason:
-            out.append(reason[:60])
-    return out
-
-
 def funnel_for_multileg_bar(
     *,
+    strategy: str = "",
+    engine_audit: Optional[Mapping[str, Any]] = None,
     actions: Iterable[Any],
     approved_actions: Iterable[Any],
     rejected: Iterable[Any],
 ) -> Dict[str, Any]:
     """``record_strategy_eval``-shaped dict for one multi-leg bar evaluation."""
-    actions_list = list(actions or ())
-    approved_list = list(approved_actions or ())
-    has_action = bool(actions_list)
-    has_approved = bool(approved_list)
-    return {
-        "regime": True,
-        "prefilter": True,
-        "direction": has_action,
-        "direction_value": 1 if has_action else 0,
-        "gate": has_approved,
-        "gate_reasons": _multileg_reject_reasons(rejected),
-        "entry_filter": has_approved,
-        "evidence": has_approved,
-    }
+    from src.time_series_model.live.multileg_funnel import (
+        funnel_for_multileg_bar as _build,
+    )
+
+    return _build(
+        strategy=strategy,
+        engine_audit=engine_audit,
+        actions=actions,
+        approved_actions=approved_actions,
+        rejected=rejected,
+    )
 
 
 # ── 15min wall-clock flusher ───────────────────────────────────

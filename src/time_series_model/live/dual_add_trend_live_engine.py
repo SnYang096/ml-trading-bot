@@ -205,34 +205,46 @@ class DualAddTrendLiveEngine:
             outcome=outcome,
         )
 
-    def _dual_finalize_flat_or_active(
+    def _record_trend_bar_audit(
         self,
         symbol: str,
         *,
+        actions: List[Dict[str, Any]],
         active_at_open: bool,
+        should_enter: bool,
         trend_conf: float,
         chop: float,
         is_box: bool,
-        actions: List[Dict[str, Any]],
+        trend_side: str,
+        explicit_outcome: Optional[str] = None,
     ) -> None:
-        act_types = {str(a.get("action", "") or "").lower() for a in actions}
-        if "market_exit" in act_types:
-            self._emit_dual_bar_outcome(symbol, "exit_close")
-            return
-        if active_at_open:
-            self._emit_dual_bar_outcome(symbol, "active_manage")
-            return
-        if not self.state.active:
-            if self.cfg.exclude_box_prefilter and is_box:
-                self._emit_dual_bar_outcome(symbol, "flat_blocked_box")
-            elif trend_conf < self.cfg.entry_trend_min:
-                self._emit_dual_bar_outcome(symbol, "flat_blocked_trend_low")
-            elif chop > self.cfg.max_entry_chop:
-                self._emit_dual_bar_outcome(symbol, "flat_blocked_chop_high")
-            else:
-                self._emit_dual_bar_outcome(symbol, "flat_other")
-            return
-        self._emit_dual_bar_outcome(symbol, "other")
+        from src.time_series_model.live.multileg_funnel import trend_scalp_bar_outcome
+
+        outcome = trend_scalp_bar_outcome(
+            active_at_open=active_at_open,
+            wanted_enter=should_enter,
+            trend_conf=trend_conf,
+            chop=chop,
+            entry_trend_min=self.cfg.entry_trend_min,
+            max_entry_chop=self.cfg.max_entry_chop,
+            exclude_box=self.cfg.exclude_box_prefilter,
+            is_box=is_box,
+            actions=actions,
+            explicit=explicit_outcome,
+        )
+        self._last_bar_audit = {
+            "engine": "trend_scalp",
+            "trend_conf": trend_conf,
+            "chop": chop,
+            "is_box": is_box,
+            "exclude_box_prefilter": self.cfg.exclude_box_prefilter,
+            "entry_trend_min": self.cfg.entry_trend_min,
+            "wanted_enter": should_enter,
+            "active_at_open": active_at_open,
+            "trend_side": trend_side,
+            "outcome": outcome,
+        }
+        self._emit_dual_bar_outcome(symbol, outcome)
 
     def load_state(self) -> DualAddTrendState:
         if not self.state_path.exists():
@@ -311,7 +323,17 @@ class DualAddTrendLiveEngine:
                 self._start_segment(symbol, timestamp, close, atr, trend_side)
             )
             self.save_state()
-            self._emit_dual_bar_outcome(symbol, "segment_open_placed")
+            self._record_trend_bar_audit(
+                symbol,
+                actions=actions,
+                active_at_open=active_at_open,
+                should_enter=should_enter,
+                trend_conf=trend_conf,
+                chop=chop,
+                is_box=is_box,
+                trend_side=trend_side,
+                explicit_outcome="segment_open_placed",
+            )
             return actions
 
         if self.state.active and self.state.symbol == symbol:
@@ -334,7 +356,17 @@ class DualAddTrendLiveEngine:
                         self._seed_inventory_orders(close, timestamp, trend_side)
                     )
                     self.save_state()
-                    self._emit_dual_bar_outcome(symbol, "active_seed_inventory")
+                    self._record_trend_bar_audit(
+                        symbol,
+                        actions=actions,
+                        active_at_open=True,
+                        should_enter=False,
+                        trend_conf=trend_conf,
+                        chop=chop,
+                        is_box=is_box,
+                        trend_side=trend_side,
+                        explicit_outcome="active_seed_inventory",
+                    )
                     return actions
                 actions.extend(self._target_exits(high, low, close, timestamp))
                 if not self.state.active:
@@ -343,19 +375,31 @@ class DualAddTrendLiveEngine:
                         str(a.get("action", "") or "").lower() == "market_exit"
                         for a in actions
                     )
-                    self._emit_dual_bar_outcome(
-                        symbol, "exit_close" if has_mx else "segment_inactive_other"
+                    self._record_trend_bar_audit(
+                        symbol,
+                        actions=actions,
+                        active_at_open=active_at_open,
+                        should_enter=should_enter,
+                        trend_conf=trend_conf,
+                        chop=chop,
+                        is_box=is_box,
+                        trend_side=trend_side,
+                        explicit_outcome=(
+                            "exit_close" if has_mx else "segment_inactive_other"
+                        ),
                     )
                     return actions
                 actions.extend(self._trend_adds(high, low, timestamp, trend_side))
 
-        self._dual_finalize_flat_or_active(
+        self._record_trend_bar_audit(
             symbol,
+            actions=actions,
             active_at_open=active_at_open,
+            should_enter=should_enter,
             trend_conf=trend_conf,
             chop=chop,
             is_box=is_box,
-            actions=actions,
+            trend_side=trend_side,
         )
         self.save_state()
         return actions
