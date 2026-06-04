@@ -49,6 +49,34 @@ def test_multileg_trend_scalp_regime_pulls_trend_confidence_node() -> None:
     assert "trend_confidence_f" in nodes
 
 
+def test_regime_side_mask_pulls_ema_slope_node(tmp_path: Path) -> None:
+    arch = tmp_path / "archetypes"
+    arch.mkdir()
+    (arch / "regime.yaml").write_text(
+        """
+rules:
+  - feature: macro_tp_vwap_1200_position
+    operator: ">="
+    value: 0.10
+side_mask:
+  enabled: true
+  long_when:
+    all_of:
+      - macro_tp_vwap_1200_position:
+          value_gte: 0.10
+      - ema_1200_slope_10:
+          value_gt: 0.0
+""",
+        encoding="utf-8",
+    )
+    cols, nodes = extract_features_from_archetypes(
+        arch,
+        feature_deps_path=Path("config/feature_dependencies.yaml"),
+    )
+    assert "ema_1200_slope_10" in cols
+    assert "ema_1200_slope_f" in nodes
+
+
 def test_multileg_chop_grid_regime_pulls_soft_phase_node() -> None:
     arch = Path("config/strategies/chop_grid/archetypes")
     cols, nodes = extract_features_from_archetypes(

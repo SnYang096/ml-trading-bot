@@ -125,7 +125,7 @@ def single_position_band_series(
     long_m = valid & (s > inner) & (s < outer)
     short_m = valid & (s > -outer) & (s < -inner)
     out.loc[long_m] = 1.0
-    out.loc[short_m] = -1.0
+    out.loc[short_m & ~long_m] = -1.0
     return out
 
 

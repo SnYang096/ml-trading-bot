@@ -241,6 +241,53 @@ class DerivedEntryFeatureState:
 
 
 # ================================================================
+# Per-filter direction scope (long / short / both)
+# ================================================================
+
+
+def _normalize_filter_direction(filt: Dict[str, Any]) -> Optional[str]:
+    """Return 'long', 'short', or None if filter applies to both sides."""
+    raw = filt.get("direction")
+    if raw is None:
+        return None
+    side = str(raw).strip().lower()
+    if side in ("long", "buy", "1", "+1"):
+        return "long"
+    if side in ("short", "sell", "-1"):
+        return "short"
+    return None
+
+
+def entry_filter_applies_to_direction(
+    filt: Dict[str, Any],
+    direction: Optional[int],
+) -> bool:
+    """True when filter should be evaluated for this direction (+1 long / -1 short)."""
+    side = _normalize_filter_direction(filt)
+    if side is None or direction is None:
+        return True
+    if direction > 0:
+        return side == "long"
+    if direction < 0:
+        return side == "short"
+    return True
+
+
+def _direction_vacuous_pass_mask(
+    df: pd.DataFrame,
+    filt: Dict[str, Any],
+) -> pd.Series:
+    """Rows where a direction-scoped filter does not apply → vacuous pass."""
+    side = _normalize_filter_direction(filt)
+    if side is None or "entry_direction" not in df.columns:
+        return pd.Series(False, index=df.index)
+    ed = pd.to_numeric(df["entry_direction"], errors="coerce").fillna(0.0)
+    if side == "long":
+        return ed != 1.0
+    return ed != -1.0
+
+
+# ================================================================
 # Condition mask — batch (DataFrame)
 # ================================================================
 
@@ -306,6 +353,8 @@ def check_conditions_single(
 def check_entry_filters_or_single(
     features: Dict[str, float],
     entry_cfg: Dict[str, Any],
+    *,
+    direction: Optional[int] = None,
 ) -> bool:
     """Live 单 bar entry_filters.yaml 顶层组合。
 
@@ -338,6 +387,9 @@ def check_entry_filters_or_single(
     for filt in enabled:
         conditions = filt.get("conditions", [])
         if not conditions:
+            continue
+        if not entry_filter_applies_to_direction(filt, direction):
+            per_filter_ok.append(True)
             continue
         per_filter_ok.append(check_conditions_single(features, conditions))
 
@@ -446,6 +498,8 @@ def apply_entry_filters_or(
         if not conditions:
             continue
         filt_mask = _build_mask_from_conditions(df, conditions, silent=True)
+        vacuous = _direction_vacuous_pass_mask(df, filt)
+        filt_mask = filt_mask | vacuous
         filt_pass = int((filt_mask & (df["entry_direction"] != 0)).sum())
         filter_stats.append((filt["id"], filt_pass))
         filter_masks.append(filt_mask)

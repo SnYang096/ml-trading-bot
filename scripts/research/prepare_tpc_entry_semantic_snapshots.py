@@ -74,7 +74,8 @@ SNAPSHOTS: dict[str, dict[str, object]] = {
                 {
                     "id": "tpc_anti_chase_not_at_high",
                     "enabled": True,
-                    "description": "做多侧：距局部高点足够远，避免贴顶追（实验 E2）",
+                    "direction": "long",
+                    "description": "做多：距局部高点足够远，避免贴顶追（实验 E2）",
                     "conditions": [
                         {
                             "feature": "bars_since_local_high",
@@ -82,8 +83,20 @@ SNAPSHOTS: dict[str, dict[str, object]] = {
                             "value": 0.10,
                         }
                     ],
-                    "notes": "SHORT 在局部低点时 bars_since_local_high 通常已较大，不单独挡空",
-                }
+                },
+                {
+                    "id": "tpc_anti_chase_not_at_low",
+                    "enabled": True,
+                    "direction": "short",
+                    "description": "做空：距局部低点足够远，避免贴底追（实验 E2）",
+                    "conditions": [
+                        {
+                            "feature": "bars_since_local_low",
+                            "operator": ">=",
+                            "value": 0.10,
+                        }
+                    ],
+                },
             ],
         },
     },

@@ -30,6 +30,7 @@ from src.time_series_model.archetype.loader import (
 from src.time_series_model.execution.entry_filter import (
     DerivedEntryFeatureState,
     check_entry_filters_or_single,
+    entry_filter_applies_to_direction,
     load_entry_filters_config,
 )
 from src.time_series_model.live.execution_profile_apply import (
@@ -424,8 +425,14 @@ class EntryFilterChecker:
         self.config = entry_config
         self.ef_state = DerivedEntryFeatureState()
         self._last_merged_features: Dict[str, Any] = {}
+        self._last_direction: Optional[int] = None
 
-    def check(self, features: Dict[str, Any]) -> bool:
+    def check(
+        self,
+        features: Dict[str, Any],
+        *,
+        direction: Optional[int] = None,
+    ) -> bool:
         """检查是否满足入场条件"""
         if not self.config:
             return True
@@ -434,8 +441,9 @@ class EntryFilterChecker:
         ef_features = self.ef_state.update(features)
         merged = {**features, **ef_features}
         self._last_merged_features = merged
+        self._last_direction = direction
 
-        return check_entry_filters_or_single(merged, self.config)
+        return check_entry_filters_or_single(merged, self.config, direction=direction)
 
     def explain(self, features: Dict[str, Any]) -> List[str]:
         """Return compact failure reasons for the enabled entry filters."""
@@ -444,8 +452,11 @@ class EntryFilterChecker:
 
         merged = self._last_merged_features or dict(features)
         reasons: List[str] = []
+        direction = self._last_direction
         for filt in self.config.get("filters", []):
             if not filt.get("enabled", False):
+                continue
+            if not entry_filter_applies_to_direction(filt, direction):
                 continue
             fid = str(filt.get("id") or "entry_filter")
             failed: List[str] = []
@@ -1230,7 +1241,7 @@ class GenericLiveStrategy:
 
         # ── 3. Entry Filter 检查 ──
         if self.entry_filter_checker is not None:
-            ef_passed = self.entry_filter_checker.check(features)
+            ef_passed = self.entry_filter_checker.check(features, direction=direction)
             if not ef_passed:
                 logger.debug("❌ Entry filter denied")
                 funnel["entry_filter"] = False
@@ -1437,7 +1448,7 @@ class GenericLiveStrategy:
         if self.direction_evaluator is None:
             return False, {"reject_reason": "no_direction_config"}
 
-        direction, rule_id = self.direction_evaluator.evaluate(features, symbol=symbol)
+        direction, rule_id = self.direction_evaluator.evaluate(features)
         if direction == 0:
             return False, {"reject_reason": "no_direction"}
 
@@ -1457,7 +1468,7 @@ class GenericLiveStrategy:
 
         # ── 3. Entry Filter 检查 ──
         if self.entry_filter_checker is not None:
-            ef_passed = self.entry_filter_checker.check(features)
+            ef_passed = self.entry_filter_checker.check(features, direction=direction)
             if not ef_passed:
                 return False, {"reject_reason": "entry_filter_deny"}
 

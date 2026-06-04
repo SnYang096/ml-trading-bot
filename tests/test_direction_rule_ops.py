@@ -63,6 +63,33 @@ def test_single_position_band_scalar():
     assert single_position_band_scalar(0.15, 0.01, 0.1) == 0
 
 
+@pytest.mark.parametrize(
+    "pos,inner,outer,expected",
+    [
+        (-0.05, -0.1, 0.1, 1),
+        (0.05, -0.1, 0.1, 1),
+        (-0.15, -0.1, 0.1, 0),
+        (0.15, -0.1, 0.1, 0),
+        (-0.02, 0.01, 0.1, -1),
+    ],
+)
+def test_single_position_band_scalar_negative_inner(pos, inner, outer, expected):
+    assert single_position_band_scalar(pos, inner, outer) == expected
+
+
+def test_single_position_band_series_negative_inner_matches_scalar():
+    for pos, inner, outer in [
+        (-0.05, -0.1, 0.1),
+        (0.05, -0.1, 0.1),
+        (-0.15, -0.1, 0.1),
+        (-0.02, 0.01, 0.1),
+    ]:
+        df = pd.DataFrame({"p": [pos]})
+        assert single_position_band_series(df, "p", inner, outer).iloc[0] == (
+            single_position_band_scalar(pos, inner, outer)
+        )
+
+
 def test_single_position_band_series():
     df = pd.DataFrame({"p": [0.0, 0.02, -0.03, 0.2]})
     s = single_position_band_series(df, "p", 0.01, 0.1)

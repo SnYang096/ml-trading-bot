@@ -186,6 +186,19 @@ def _extract_features_from_prefilter(cfg: Dict[str, Any]) -> Set[str]:
     return features
 
 
+def _extract_features_from_regime_side_mask(cfg: Dict[str, Any]) -> Set[str]:
+    """Feature columns referenced in regime.yaml side_mask when-clauses."""
+    mask = cfg.get("side_mask")
+    if not isinstance(mask, dict) or not mask.get("enabled", False):
+        return set()
+    out: Set[str] = set()
+    for key in ("long_when", "short_when"):
+        when = mask.get(key)
+        if when:
+            out |= _extract_features_from_when(when)
+    return out
+
+
 def _extract_features_from_direction(cfg: Dict[str, Any]) -> Set[str]:
     """Extract feature columns referenced in direction.yaml direction_rules."""
     from src.time_series_model.live.direction_rule_ops import (
@@ -260,6 +273,7 @@ def extract_features_from_archetypes(
     if regime_path.exists():
         regime_raw = _load_yaml(regime_path)
         feature_columns |= _extract_features_from_prefilter(regime_raw)
+        feature_columns |= _extract_features_from_regime_side_mask(regime_raw)
         multileg = multileg_regime_section(regime_raw)
         if multileg:
             feature_columns |= extract_features_from_multileg_regime(
