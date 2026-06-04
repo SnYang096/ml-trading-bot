@@ -548,6 +548,9 @@ def _build_tree_train_cmd(step: Dict[str, Any], cfg: Dict[str, Any]) -> List[str
         cmd += ["--features", str(_resolve_project_path(step["features"]))]
     if step.get("prepare_only"):
         cmd.append("--prepare-only")
+    if step.get("labels"):
+        labels = step["labels"]
+        cmd += ["--labels", str(_resolve_project_path(labels))]
     if step.get("deterministic", True):
         cmd.append("--deterministic")
     return cmd

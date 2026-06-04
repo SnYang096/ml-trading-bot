@@ -63,31 +63,50 @@ def export_from_artifact(
         include_gate_features=include_gate_features,
         gate_feature_names=gate_feature_names,
     )
-    # Always compute the distribution so a degenerate artifact cannot be hidden
-    # behind --no-validate; write a sidecar + a DEGENERATE marker when applicable.
-    short_thr = (
-        float(validate_short_entry) if validate_short_entry is not None else -0.0074
-    )
+    # Score distribution sidecar; regression artifacts use signed short_entry sanity.
+    meta_path = artifact_dir / "model_artifact_metadata.json"
+    task_type = "regression"
+    if meta_path.is_file():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            task_type = str(meta.get("task_type") or "regression").lower()
+        except (json.JSONDecodeError, OSError):
+            pass
+
     scores = pd.to_numeric(df["pred"], errors="coerce")
-    dist = {
+    dist: dict = {
         "n": int(scores.notna().sum()),
         "min": float(scores.min()),
         "max": float(scores.max()),
         "mean": float(scores.mean()),
-        "frac_le_short_entry": float((scores <= short_thr).mean()),
-        "short_entry": short_thr,
+        "task_type": task_type,
     }
-    degenerate = dist["frac_le_short_entry"] < 0.001 or dist["min"] == dist["max"]
+    if task_type == "binary":
+        spread = float(dist["max"] - dist["min"])
+        dist["spread"] = spread
+        # Binary proba in [0,1]: only fail when truly constant (signed τ check N/A).
+        degenerate = spread < 1e-6
+    else:
+        short_thr = (
+            float(validate_short_entry) if validate_short_entry is not None else -0.0074
+        )
+        dist["frac_le_short_entry"] = float((scores <= short_thr).mean())
+        dist["short_entry"] = short_thr
+        degenerate = dist["frac_le_short_entry"] < 0.001 or dist["min"] == dist["max"]
     dist["degenerate"] = bool(degenerate)
     print(json.dumps({"score_distribution": dist}, indent=2))
     sidecar = output.with_suffix(".score_distribution.json")
     sidecar.parent.mkdir(parents=True, exist_ok=True)
     sidecar.write_text(json.dumps(dist, indent=2), encoding="utf-8")
     if degenerate:
+        extra = (
+            f"spread={dist.get('spread', 0):.6f}"
+            if task_type == "binary"
+            else f"frac<= {dist.get('short_entry')}={dist.get('frac_le_short_entry', 0):.4f}"
+        )
         print(
             "⚠️  DEGENERATE score distribution — artifact likely unusable as ranker "
-            f"(min={dist['min']:.4f}, max={dist['max']:.4f}, "
-            f"frac<= {short_thr}={dist['frac_le_short_entry']:.4f}). "
+            f"(min={dist['min']:.4f}, max={dist['max']:.4f}, {extra}). "
             "Marker written; do NOT promote."
         )
         output.with_suffix(".DEGENERATE").write_text(

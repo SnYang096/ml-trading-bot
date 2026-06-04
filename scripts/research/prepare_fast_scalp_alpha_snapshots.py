@@ -303,6 +303,49 @@ def _patch_g20_both_sides_regime(root: Path) -> None:
     _patch_regime_ema_slope_side(root)
 
 
+def _load_independent_sides_tau() -> Dict[str, float]:
+    summary = (
+        PROJECT_ROOT
+        / "results/rd_loop/fast_scalp_tree_validate/track_a/independent_sides/tau_scan/tau_scan_holdout_dual_prob.json"
+    )
+    if not summary.is_file():
+        raise FileNotFoundError(
+            f"Run run_independent_sides_experiment.sh (τ scan) first; missing {summary}"
+        )
+    import json
+
+    data = json.loads(summary.read_text(encoding="utf-8"))
+    rec = data.get("recommended") or {}
+    long_rec = rec.get("long") or {}
+    short_rec = rec.get("short") or {}
+    return {
+        "long_entry": float(long_rec.get("entry_threshold", 0.55)),
+        "short_entry": float(short_rec.get("entry_threshold", 0.55)),
+    }
+
+
+def _patch_g21_independent_sides(root: Path) -> None:
+    """G21: separate long_win / short_win trees + dual_head event (no signed score)."""
+    _patch_regime_empty(root)
+    ov = _read_yaml(EXP_OVERRIDES / "direction_independent_sides.yaml")
+    try:
+        tau = _load_independent_sides_tau()
+        ov["dual_head"]["long"]["entry_threshold"] = tau["long_entry"]
+        ov["dual_head"]["short"]["entry_threshold"] = tau["short_entry"]
+    except FileNotFoundError:
+        pass
+    path = _direction_path(root)
+    data = _read_yaml(path)
+    data.pop("direction_filter", None)
+    data.pop("source", None)
+    data["dual_head"] = ov["dual_head"]
+    data["thresholds"] = ov.get("thresholds") or {"entry_mode": "level"}
+    data["description"] = (
+        "G21 independent long_win/short_win trees — dual_head holdout τ (level)"
+    )
+    _write_yaml(path, data)
+
+
 def _patch_g3_h3_gate(root: Path) -> None:
     """G3 short + regime off + adverse gate trained on H=3 entry scores."""
     _patch_direction_short(root)
@@ -370,6 +413,7 @@ SNAPSHOTS: Dict[str, Callable[[Path], None] | None] = {
     "fast_scalp_alpha_G18_g3_h3_gate_strategies": _patch_g3_h3_gate,
     "fast_scalp_alpha_G19_h3_both_sides_strategies": _patch_g19_both_sides,
     "fast_scalp_alpha_G20_h3_both_sides_ema_regime_strategies": _patch_g20_both_sides_regime,
+    "fast_scalp_alpha_G21_independent_sides_strategies": _patch_g21_independent_sides,
     "fast_scalp_alpha_G8_short_regimeoff_gate_strategies": _patch_g3_gate,
     "fast_scalp_alpha_G9_short_wide_tight_regimeon_strategies": lambda r: _patch_wide_tight_short(
         r, regime_off=False

@@ -1,0 +1,18 @@
+# G21 — dual_head with holdout-scanned per-side thresholds (level mode).
+
+dual_head:
+  enabled: true
+  long:
+    score_column: score_long
+    entry_threshold: 0.55
+    exit_threshold: 0.45
+  short:
+    score_column: score_short
+    entry_threshold: 0.55
+    exit_threshold: 0.45
+  reject_if_both_high: true
+  reject_if_contradiction: true
+
+thresholds:
+  entry_mode: level
+  dead_zone: false

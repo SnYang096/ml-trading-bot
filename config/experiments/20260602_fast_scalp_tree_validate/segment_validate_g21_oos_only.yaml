@@ -1,0 +1,16 @@
+# G21 only — after τ-scan refresh (avoid re-running G3/G7)
+
+experiment_id: fast_scalp_g21_oos_refresh_20260604
+strategy: fast_scalp
+data_path: data/parquet_data
+market_segment_path: config/market_segment.yaml
+
+segment_matrix:
+  segments: [recent_6m_oos]
+  variants:
+    - suffix: g21_independent_sides
+      strategy: fast_scalp
+      strategies_root: config_experiments/fast_scalp_alpha_G21_independent_sides_strategies
+      symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+      inject_scores: results/rd_loop/fast_scalp_tree_validate/track_a/independent_sides/scores/independent_sides_event_scores.parquet
+      output_dir: results/rd_loop/fast_scalp_tree_validate/segment/independent_sides_oos/g21_independent_sides_v2

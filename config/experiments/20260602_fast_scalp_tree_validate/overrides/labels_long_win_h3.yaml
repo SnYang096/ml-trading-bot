@@ -1,0 +1,38 @@
+# Long-only binary win @ H=3 (independent side tree — G21 long head).
+
+name: fast_scalp_long_win_h3
+target_column: label
+
+label_generator:
+  module: src.time_series_model.strategies.labels.long_short_win_label
+  function: compute_long_win_label
+  params:
+    horizon: 3
+    price_col: close
+    atr_col: atr
+    rr_floor: 0.30
+
+label_meta:
+  label_type: binary
+  horizon: 3 bars
+  rr_floor: 0.30
+
+filters:
+  - column: label
+    notna: true
+
+post_label_filters: []
+
+model_hints:
+  task_type: binary
+  objective: binary
+  n_estimators: 200
+  learning_rate: 0.02
+  num_leaves: 8
+  max_depth: 3
+  min_data_in_leaf: 250
+  feature_fraction: 0.6
+  bagging_fraction: 0.7
+  bagging_freq: 5
+  reg_alpha: 1.0
+  reg_lambda: 5.0

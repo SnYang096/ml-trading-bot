@@ -67,6 +67,10 @@ class DirectionEvaluator:
         self.rules = direction_config.get("direction_rules", [])
         self._prev_tree_score: Optional[float] = None
         self._prev_tree_score_by_symbol: Dict[str, float] = {}
+        self._prev_dual_long: Optional[float] = None
+        self._prev_dual_short: Optional[float] = None
+        self._prev_dual_long_by_symbol: Dict[str, float] = {}
+        self._prev_dual_short_by_symbol: Dict[str, float] = {}
         # fixed_direction: long/short → 忽略 direction_rules，强制固定方向
         _fd = direction_config.get("fixed_direction", None)
         if _fd == "long":
@@ -98,6 +102,19 @@ class DirectionEvaluator:
         # fixed_direction 优先 — 跳过所有规则直接返回固定方向
         if self._fixed is not None:
             return self._fixed, "fixed_direction"
+
+        dual_cfg = self.config.get("dual_head") or {}
+        if bool(dual_cfg.get("enabled")):
+            direction, rule_id = self._evaluate_dual_head_direction(
+                features, symbol=symbol
+            )
+            if (
+                direction != 0
+                and self._filter is not None
+                and direction != self._filter
+            ):
+                return 0, None
+            return direction, rule_id
 
         tree_hit = self._evaluate_tree_score_direction(features, symbol=symbol)
         if tree_hit is not None:
@@ -272,6 +289,71 @@ class DirectionEvaluator:
                 return direction, str(rule_id)
 
         return 0, None
+
+    def _evaluate_dual_head_direction(
+        self, features: Dict[str, Any], *, symbol: str = ""
+    ) -> Tuple[int, Optional[str]]:
+        """Independent P(long_win) / P(short_win) columns (injected or live)."""
+        dual = self.config.get("dual_head") or {}
+        long_cfg = dual.get("long") if isinstance(dual.get("long"), dict) else {}
+        short_cfg = dual.get("short") if isinstance(dual.get("short"), dict) else {}
+        long_col = str(long_cfg.get("score_column") or "score_long").strip()
+        short_col = str(short_cfg.get("score_column") or "score_short").strip()
+        long_thr = long_cfg.get("entry_threshold")
+        short_thr = short_cfg.get("entry_threshold")
+        if long_thr is None or short_thr is None:
+            return 0, "dual_head_missing_threshold"
+
+        def _prob(col: str) -> Optional[float]:
+            raw = features.get(col)
+            if raw is None:
+                return None
+            try:
+                v = float(raw)
+            except (TypeError, ValueError):
+                return None
+            if v != v:
+                return None
+            return v
+
+        lp = _prob(long_col)
+        sp = _prob(short_col)
+        if lp is None or sp is None:
+            return 0, "dual_head_missing_score"
+
+        thr_block = self.config.get("thresholds") or {}
+        entry_mode = str(thr_block.get("entry_mode", "level")).lower()
+        long_raw = lp >= float(long_thr)
+        short_raw = sp >= float(short_thr)
+
+        sym_key = str(symbol or "").strip().upper()
+        prev_l = self._prev_dual_long_by_symbol.get(sym_key)
+        prev_s = self._prev_dual_short_by_symbol.get(sym_key)
+        if sym_key:
+            self._prev_dual_long_by_symbol[sym_key] = lp
+            self._prev_dual_short_by_symbol[sym_key] = sp
+        else:
+            self._prev_dual_long = lp
+            self._prev_dual_short = sp
+
+        if entry_mode == "cross":
+            if prev_l is None or prev_s is None or prev_l != prev_l or prev_s != prev_s:
+                return 0, "dual_head_dead_zone"
+            long_hit = long_raw and prev_l < float(long_thr)
+            short_hit = short_raw and prev_s < float(short_thr)
+        else:
+            long_hit = long_raw
+            short_hit = short_raw
+
+        if bool(dual.get("reject_if_both_high")) and long_hit and short_hit:
+            return 0, "dual_head_both_high"
+        if bool(dual.get("reject_if_contradiction")) and long_hit and short_hit:
+            return 0, "dual_head_contradiction"
+        if long_hit:
+            return 1, "dual_head_long"
+        if short_hit:
+            return -1, "dual_head_short"
+        return 0, "dual_head_dead_zone"
 
     def _evaluate_tree_score_direction(
         self, features: Dict[str, Any], *, symbol: str = ""
