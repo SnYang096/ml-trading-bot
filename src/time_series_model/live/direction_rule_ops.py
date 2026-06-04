@@ -81,14 +81,14 @@ def single_position_band_scalar(pos: Any, inner_abs: float, outer_abs: float) ->
 
     Long: inner < pos < outer. Short: -outer < pos < -inner.
     Else (too near VWAP, overextended, NaN): 0.
-    Requires 0 <= inner < outer.
+    Requires inner < outer (inner may be negative, e.g. -0.10 for macro pullback long).
     """
     try:
         inner = float(inner_abs)
         outer = float(outer_abs)
     except (TypeError, ValueError):
         return 0
-    if inner < 0 or outer <= inner:
+    if outer <= inner:
         return 0
     try:
         p = float(pos)
@@ -116,7 +116,7 @@ def single_position_band_series(
         outer = float(outer_abs)
     except (TypeError, ValueError):
         return pd.Series(0.0, index=df.index, dtype=float)
-    if inner < 0 or outer <= inner:
+    if outer <= inner:
         return pd.Series(0.0, index=df.index, dtype=float)
 
     s = pd.to_numeric(df[col], errors="coerce").astype(float)

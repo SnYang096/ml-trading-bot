@@ -522,6 +522,9 @@ class RegimeConfig(PrefilterConfig):
     allowed_sides: List[str] = field(
         default_factory=lambda: list(_DEFAULT_ALLOWED_SIDES)
     )
+    # Optional per-bar side mask (evaluated after direction is known).
+    # Keys: enabled, long_when, short_when — same when-clause shape as gate rules.
+    side_mask: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any]) -> "RegimeConfig":
@@ -534,6 +537,7 @@ class RegimeConfig(PrefilterConfig):
             allowed_sides=list(
                 raw.get("allowed_sides") or list(_DEFAULT_ALLOWED_SIDES)
             ),
+            side_mask=dict(raw.get("side_mask") or {}),
         )
 
     @classmethod
@@ -558,6 +562,23 @@ class RegimeConfig(PrefilterConfig):
         if direction < 0:
             return "short" in self.allowed_sides
         return True
+
+    def allows_side_for_bar(self, direction: int, features: Dict[str, Any]) -> bool:
+        """Global allowed_sides plus optional EMA/slope side_mask clauses."""
+        if not self.allows_side(direction):
+            return False
+        mask = self.side_mask or {}
+        if not bool(mask.get("enabled", False)):
+            return True
+        if direction > 0:
+            when = mask.get("long_when") or {}
+        elif direction < 0:
+            when = mask.get("short_when") or {}
+        else:
+            return True
+        if not when:
+            return True
+        return _evaluate_when_clause(when, features, quantiles=None)
 
     @property
     def is_empty(self) -> bool:

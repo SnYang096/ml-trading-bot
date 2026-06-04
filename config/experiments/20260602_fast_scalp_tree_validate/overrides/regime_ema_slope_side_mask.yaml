@@ -1,0 +1,41 @@
+# G20 — macro TP VWAP 1200 position + 10-bar slope side mask (fast_scalp column names).
+
+description: |
+  Dead zone: |macro_tp_vwap_1200_position| >= 0.10 (prod fast_scalp EMA band).
+  Side mask: long only when pos >= 0.10 AND slope > 0;
+             short only when pos <= -0.10 AND slope < 0.
+
+allowed_regimes:
+  - bull
+  - bear
+  - neutral
+
+allowed_sides:
+  - long
+  - short
+
+rules:
+  - any_of:
+      - feature: macro_tp_vwap_1200_position
+        operator: ">="
+        value: 0.10
+      - feature: macro_tp_vwap_1200_position
+        operator: "<="
+        value: -0.10
+    rationale: Leave EMA1200 mid-axis dead zone
+    locked: true
+
+side_mask:
+  enabled: true
+  long_when:
+    all_of:
+      - macro_tp_vwap_1200_position:
+          value_gte: 0.10
+      - ema_1200_slope_10:
+          value_gt: 0.0
+  short_when:
+    all_of:
+      - macro_tp_vwap_1200_position:
+          value_lte: -0.10
+      - ema_1200_slope_10:
+          value_lt: 0.0

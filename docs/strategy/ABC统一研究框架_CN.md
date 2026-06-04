@@ -9,6 +9,7 @@
 > - [`短期树独立策略_设计与落地_CN.md`](短期树独立策略_设计与落地_CN.md)（树通道的独立 slug 与上线流程）
 > - [`label_scan_vs_IC_说明_CN.md`](label_scan_vs_IC_说明_CN.md)（label scan / IC 含义与互补）
 > - [`为何不做滚动调阈值_与研究节奏_CN.md`](为何不做滚动调阈值_与研究节奏_CN.md)（滚动 replay vs rolling optimize；月监控 vs 季 R&D；树通道 τ 详述）
+> - [`TPC语义约束与树标签对齐_CN.md`](TPC语义约束与树标签对齐_CN.md)（语义 vs 统计；regime 代理详解 §5；**B 系统不必全树化** §6；S50/S51）
 
 ---
 

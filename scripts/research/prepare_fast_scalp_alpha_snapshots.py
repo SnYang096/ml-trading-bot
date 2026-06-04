@@ -71,11 +71,54 @@ def _patch_direction_short(root: Path) -> None:
     _write_yaml(path, data)
 
 
+def _patch_direction_both_sides(root: Path, *, tau: Dict[str, Any]) -> None:
+    """Bidirectional H=3: signed pred + holdout τ (level mode)."""
+    path = _direction_path(root)
+    data = _read_yaml(path)
+    data.pop("direction_filter", None)
+    data["description"] = str(
+        tau.get("description")
+        or "H=3 signed both sides — holdout τ @ level (20260602 both_sides scan)"
+    )
+    data["thresholds"] = {
+        "long_entry": float(tau["long_entry"]),
+        "long_exit": float(tau.get("long_exit", tau["long_entry"] - 0.05)),
+        "short_entry": float(tau["short_entry"]),
+        "short_exit": float(tau.get("short_exit", tau["short_entry"] + 0.05)),
+        "dead_zone": bool(tau.get("dead_zone", True)),
+        "entry_mode": str(tau.get("entry_mode", "level")),
+    }
+    data["per_symbol_thresholds"] = {}
+    _write_yaml(path, data)
+
+
 def _patch_regime_empty(root: Path) -> None:
     path = _archetype_path(root, "regime")
     data = _read_yaml(path)
     data["rules"] = []
     data["description"] = "Regime OFF ablation — no EMA1200 dead-zone rules"
+    _write_yaml(path, data)
+
+
+def _patch_regime_ema_slope_side(root: Path) -> None:
+    """EMA dead zone + position/slope side mask (G20)."""
+    src = EXP_OVERRIDES / "regime_ema_slope_side_mask.yaml"
+    if not src.is_file():
+        raise FileNotFoundError(f"regime side mask override not found: {src}")
+    raw = _read_yaml(src)
+    path = _archetype_path(root, "regime")
+    _write_yaml(path, raw)
+
+
+def _patch_features_ema_slope(root: Path) -> None:
+    """Ensure ema_1200_slope_10 is computed at event time (G20)."""
+    path = root / STRATEGY_PKG / "features.yaml"
+    data = _read_yaml(path)
+    pipeline = data.setdefault("feature_pipeline", {})
+    requested = list(pipeline.get("requested_features") or [])
+    if "ema_1200_slope_f" not in requested:
+        requested.append("ema_1200_slope_f")
+    pipeline["requested_features"] = requested
     _write_yaml(path, data)
 
 
@@ -215,6 +258,51 @@ GATE_OVERLAY_CANDIDATES = (
 )
 
 
+def _load_h3_both_sides_tau() -> Dict[str, Any]:
+    summary = (
+        PROJECT_ROOT
+        / "results/rd_loop/fast_scalp_tree_validate/track_a/tau_scan_h3_both/tau_scan_holdout_rr.json"
+    )
+    if not summary.is_file():
+        raise FileNotFoundError(
+            f"Run run_h3_tau_scan_both_sides.sh first; missing {summary}"
+        )
+    import json
+
+    data = json.loads(summary.read_text(encoding="utf-8"))
+    rec = data.get("recommended") or {}
+    q = rec.get("top_quantile")
+    if q is None:
+        plateau = data.get("quantile_plateau") or {}
+        best = plateau.get("recommended") or plateau.get("best") or {}
+        q = best.get("top_quantile")
+    rows = data.get("quantile_scan") or []
+    row = next((r for r in rows if r.get("top_quantile") == q), rows[0] if rows else {})
+    return {
+        "description": f"H=3 both sides holdout τ q={q} (pred quantile scan)",
+        "long_entry": float(
+            row.get("pred_threshold_long", rec.get("long_entry_threshold", 0.28))
+        ),
+        "short_entry": float(
+            row.get("pred_threshold_short", rec.get("short_entry_threshold", 0.18))
+        ),
+        "entry_mode": "level",
+        "dead_zone": True,
+        "top_quantile": q,
+    }
+
+
+def _patch_g19_both_sides(root: Path) -> None:
+    _patch_direction_both_sides(root, tau=_load_h3_both_sides_tau())
+    _patch_regime_empty(root)
+
+
+def _patch_g20_both_sides_regime(root: Path) -> None:
+    _patch_direction_both_sides(root, tau=_load_h3_both_sides_tau())
+    _patch_features_ema_slope(root)
+    _patch_regime_ema_slope_side(root)
+
+
 def _patch_g3_h3_gate(root: Path) -> None:
     """G3 short + regime off + adverse gate trained on H=3 entry scores."""
     _patch_direction_short(root)
@@ -280,6 +368,8 @@ SNAPSHOTS: Dict[str, Callable[[Path], None] | None] = {
         _patch_regime_empty(r),
     ),
     "fast_scalp_alpha_G18_g3_h3_gate_strategies": _patch_g3_h3_gate,
+    "fast_scalp_alpha_G19_h3_both_sides_strategies": _patch_g19_both_sides,
+    "fast_scalp_alpha_G20_h3_both_sides_ema_regime_strategies": _patch_g20_both_sides_regime,
     "fast_scalp_alpha_G8_short_regimeoff_gate_strategies": _patch_g3_gate,
     "fast_scalp_alpha_G9_short_wide_tight_regimeon_strategies": lambda r: _patch_wide_tight_short(
         r, regime_off=False

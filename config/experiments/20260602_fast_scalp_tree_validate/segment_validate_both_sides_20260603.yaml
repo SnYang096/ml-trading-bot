@@ -1,0 +1,33 @@
+# Exp 1–2: H=3 bidirectional τ + optional EMA/slope regime side mask
+#
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260602_fast_scalp_tree_validate/segment_validate_both_sides_20260603.yaml
+
+experiment_id: fast_scalp_tree_validate_both_sides_20260603
+strategy: fast_scalp
+data_path: data/parquet_data
+market_segment_path: config/market_segment.yaml
+
+segment_matrix:
+  segments: [bear_2022, bull_2023_2024, recent_range_to_bear, recent_6m_oos]
+  variants:
+    - suffix: g3_short_baseline
+      strategy: fast_scalp
+      strategies_root: config_experiments/fast_scalp_alpha_G3_short_regime_off_strategies
+      symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+      inject_scores: results/rd_loop/fast_scalp_tree_validate/track_a/scores/h3_baseline_full_history.parquet
+      output_dir: results/rd_loop/fast_scalp_tree_validate/segment/both_sides/g3_short_baseline
+
+    - suffix: g19_h3_both_sides
+      strategy: fast_scalp
+      strategies_root: config_experiments/fast_scalp_alpha_G19_h3_both_sides_strategies
+      symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+      inject_scores: results/rd_loop/fast_scalp_tree_validate/track_a/scores/h3_baseline_full_history.parquet
+      output_dir: results/rd_loop/fast_scalp_tree_validate/segment/both_sides/g19_h3_both_sides
+
+    - suffix: g20_h3_both_ema_regime
+      strategy: fast_scalp
+      strategies_root: config_experiments/fast_scalp_alpha_G20_h3_both_sides_ema_regime_strategies
+      symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
+      inject_scores: results/rd_loop/fast_scalp_tree_validate/track_a/scores/h3_baseline_full_history.parquet
+      output_dir: results/rd_loop/fast_scalp_tree_validate/segment/both_sides/g20_h3_both_ema_regime

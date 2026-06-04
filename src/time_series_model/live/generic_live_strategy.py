@@ -1182,8 +1182,10 @@ class GenericLiveStrategy:
             )
             return []
 
-        # Regime allowed_sides 掩码（牛市禁空 / 熊市禁多 / 单向策略）
-        if self.archetype and not self.archetype.regime.allows_side(direction):
+        # Regime allowed_sides + optional per-bar side_mask (EMA position / slope)
+        if self.archetype and not self.archetype.regime.allows_side_for_bar(
+            direction, features
+        ):
             funnel["regime_side_block"] = True
             funnel["regime_side_attempted"] = "long" if direction > 0 else "short"
             funnel["regime_allowed_sides"] = list(self.archetype.regime.allowed_sides)

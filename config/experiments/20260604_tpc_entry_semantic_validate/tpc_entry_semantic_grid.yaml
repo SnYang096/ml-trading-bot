@@ -1,0 +1,85 @@
+# TPC 入场语义 + 执行对照（2026-06-04）
+#
+# 目的：在 prod（G1 gate + deep_pullback entry OR）基线上，对比
+#   - S50 高语义：prefilter tpc_pullback_depth > 0.5
+#   - S51 S50 + ema_1200 略下方：depth>0.5, ema>=-0.10, direction inner=-0.10
+#   - E1  浅回踩下界：depth >= 0.15
+#   - E2  防贴顶追：entry AND bars_since_local_high >= 0.10
+#   - E3  挡延续区：gate path_efficiency_pct > 0.15 deny
+#   - E4  turbo 执行：20260424_191639 execution 快照
+#
+# 变体树：scripts/research/prepare_tpc_entry_semantic_snapshots.py
+#
+# 跑法：
+#   PYTHONPATH=src:scripts python scripts/research/prepare_tpc_entry_semantic_snapshots.py
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260604_tpc_entry_semantic_validate/tpc_entry_semantic_grid.yaml \
+#     --quiet-signal-logs
+#
+# 晋升：config/experiments/LAYER_PROMOTION_CRITERIA.md（canonical 三阶段 + 可选全窗 highcap）
+
+experiment_id: tpc_entry_semantic_validate_20260604
+strategy: tpc
+market_segment_path: config/market_segment.yaml
+data_path: data/parquet_data
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - BNBUSDT
+  - XRPUSDT
+  - ADAUSDT
+
+segment_matrix:
+  segments:
+    - bear_2022
+    - bull_2023_2024
+    - recent_range_to_bear
+  variants:
+    - suffix: E0_prod
+      strategies_root: config/strategies
+      output_dir: results/tpc/experiments/entry_semantic_validate_20260604/E0_prod
+
+    - suffix: S50_depth_gt50
+      strategies_root: config_experiments/tpc_semantic_depth_gt50_strategies
+      output_dir: results/tpc/experiments/entry_semantic_validate_20260604/S50_depth_gt50
+
+    - suffix: S51_depth_gt50_ema_near
+      strategies_root: config_experiments/tpc_semantic_depth_gt50_ema_near_strategies
+      output_dir: results/tpc/experiments/entry_semantic_validate_20260604/S51_depth_gt50_ema_near
+
+    - suffix: E1_depth_ge15
+      strategies_root: config_experiments/tpc_entry_depth_ge15_strategies
+      output_dir: results/tpc/experiments/entry_semantic_validate_20260604/E1_depth_ge15
+
+    - suffix: E2_anti_chase
+      strategies_root: config_experiments/tpc_entry_anti_chase_strategies
+      output_dir: results/tpc/experiments/entry_semantic_validate_20260604/E2_anti_chase
+
+    - suffix: E3_gate_pe
+      strategies_root: config_experiments/tpc_entry_gate_pe_strategies
+      output_dir: results/tpc/experiments/entry_semantic_validate_20260604/E3_gate_pe
+
+    - suffix: E4_turbo_exec
+      strategies_root: config_experiments/tpc_exec_turbo_20260424_strategies
+      output_dir: results/tpc/experiments/entry_semantic_validate_20260604/E4_turbo_exec
+
+# 全窗 highcap（与 trading_map 对齐，便于看 SOL 等单币）
+runs:
+  - variant: E0_prod_full
+    strategies_root: config/strategies
+    start_date: "2022-01-01"
+    end_date: "2026-04-01"
+    output_dir: results/tpc/experiments/entry_semantic_validate_20260604/full/E0_prod
+
+  - variant: S50_depth_gt50_full
+    strategies_root: config_experiments/tpc_semantic_depth_gt50_strategies
+    start_date: "2022-01-01"
+    end_date: "2026-04-01"
+    output_dir: results/tpc/experiments/entry_semantic_validate_20260604/full/S50_depth_gt50
+
+  - variant: S51_depth_gt50_ema_near_full
+    strategies_root: config_experiments/tpc_semantic_depth_gt50_ema_near_strategies
+    start_date: "2022-01-01"
+    end_date: "2026-04-01"
+    output_dir: results/tpc/experiments/entry_semantic_validate_20260604/full/S51_depth_gt50_ema_near

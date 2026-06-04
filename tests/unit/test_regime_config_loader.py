@@ -32,6 +32,43 @@ def test_regime_config_defaults_when_file_missing(tmp_path: Path):
     assert cfg.is_empty is True
 
 
+def test_regime_allows_side_for_bar_side_mask(tmp_path: Path):
+    cfg = RegimeConfig.from_mapping(
+        {
+            "allowed_sides": ["long", "short"],
+            "side_mask": {
+                "enabled": True,
+                "long_when": {
+                    "all_of": [
+                        {"macro_tp_vwap_1200_position": {"value_gte": 0.10}},
+                        {"ema_1200_slope_10": {"value_gt": 0.0}},
+                    ]
+                },
+                "short_when": {
+                    "all_of": [
+                        {"macro_tp_vwap_1200_position": {"value_lte": -0.10}},
+                        {"ema_1200_slope_10": {"value_lt": 0.0}},
+                    ]
+                },
+            },
+        }
+    )
+    feats_bull = {
+        "macro_tp_vwap_1200_position": 0.15,
+        "ema_1200_slope_10": 0.002,
+    }
+    feats_bear = {
+        "macro_tp_vwap_1200_position": -0.15,
+        "ema_1200_slope_10": -0.002,
+    }
+    feats_mid = {"macro_tp_vwap_1200_position": 0.05, "ema_1200_slope_10": 0.01}
+    assert cfg.allows_side_for_bar(1, feats_bull) is True
+    assert cfg.allows_side_for_bar(-1, feats_bear) is True
+    assert cfg.allows_side_for_bar(1, feats_bear) is False
+    assert cfg.allows_side_for_bar(-1, feats_bull) is False
+    assert cfg.allows_side_for_bar(1, feats_mid) is False
+
+
 def test_regime_config_loads_rules_and_masks(tmp_path: Path):
     regime_yaml = tmp_path / "regime.yaml"
     _write(
