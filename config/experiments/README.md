@@ -27,6 +27,7 @@
 > 所有 gate / entry_filters / prefilter / regime / direction 等规则的最终 promote，必须遵守 [`LAYER_PROMOTION_CRITERIA.md`](LAYER_PROMOTION_CRITERIA.md) 里的“三条杠”：  
 > **在 canonical 三个市场阶段上，总 R 明显提升 + maxDD 不恶化 + 逻辑可解释** 才允许写入生产 YAML 并 `locked: true`。  
 > IC/label scan 仅用于生成假设。TPC gate 系列是本准则的第一次完整落地。  
+> **树模型职责（2026-06）**：树嵌进 B/C 做 **排序/否决**，不替代规则语义；见 [`docs/strategy/短期树独立策略_设计与落地_CN.md`](../docs/strategy/短期树独立策略_设计与落地_CN.md) §1.4。  
 > **Promote 后平台基线（远程 drift）**：同文件 **§4** + [`docs/strategy/漂移监控_mlbot_monitor_CN.md`](../docs/strategy/漂移监控_mlbot_monitor_CN.md) §10（git 提交 monitoring JSON/plateaus；**不上传** train_final parquet）。
 
 **跨实验校准：** [`_cross/regime_thresholds/`](_cross/regime_thresholds/)（regime τ 季度标定日志）。

@@ -55,6 +55,49 @@ config/strategies/tree_strategies/
 | **PCM 槽位** | 4 个槽 | 2 个槽 | **独立槽（新增）** |
 | **能合并仓位吗** | — | — | ❌ 不并入 B 的 evidence（用户决定） |
 
+### 1.4 树在 ABC 中的职责边界（2026-06 实证）
+
+> **修订说明：** §2.3 写「不要叠 gate」针对的是 **legacy 四策略 + FGS** 老坑；`20260602_fast_scalp_tree_validate` 证明：**在已有正 edge 的 entry ranker 上叠第二层 adverse gate（G18）有效**；叠在无边 ranker（G16）或叠双边/双 head（G19/G21）无效。
+
+**结论：树不是第四条与 ABC 平行的「全自动策略线」，而是嵌进 B/C 流水线里的窄职责辅助件。**
+
+| 层 | 用什么 | 职责 | 2026-06 证据 |
+|----|--------|------|----------------|
+| **语义**（能不能做、做哪一侧、是否追高） | **规则 / archetype**（B、C 各自 YAML） | prefilter、entry_filters、regime、execution 语义 | TPC entry semantic：**E2 anti-chase** 三阶段 sum R +16.3、maxDD 更浅（规则胜） |
+| **排序**（同类机会里挑先后） | **浅树 score + holdout τ** | 规则已放行的 bar 上取 top-q | fast_scalp **G3** short-only OOS **+12%** |
+| **否决**（明显更糟的 bar 踢掉） | **浅树 gate**（与 entry **正交**特征池） | 第二层 MAE/尾部，不替代语义 | **G18** G3+gate OOS **~+30%**；G16 救不了无 edge ranker |
+| **剧本**（突破/反转/趋势叙事） | **规则**，非独立大树 | SR/压缩/趋势结构 | legacy 四树牛熊分段：**sr_breakout 全负**；compression 仅 bull 偶发正 |
+| **加仓** | **策略原生语义**（follow / ladder / regime bucket） | 宪法 + execution；最多小模型「允不允许加」 | 不复用 entry 全特征池（见 SRB 文档） |
+
+**不适合用树的地方（已证伪或慎用）：**
+
+- 一棵树管 **方向 + 双边 + 共池特征**（G7/G19/G21 OOS 负）
+- 用树 **替代** B 的 entry 语义（TPC E2 说明规则更稳）
+- legacy `tree_strategies/` 四棵 **模拟整套剧本**（50 bar label + FGS，牛熊不稳）
+- 把树 score **并入 B evidence 调仓位**（用户已定：不做）
+
+**适合用树的地方（排序层）：**
+
+- Entry：**谁更值得进**（同策略、同侧、漏斗已放行）→ scalar score + τ
+- Gate：**谁该被否决**（正交特征、浅树）
+- 槽位/资金有限时：在「能做」集合里按 score **排优先级**
+
+**操作口诀：**
+
+```text
+规则：能不能做、做哪一侧、什么环境
+树：  在「能做」的集合里，谁排前面 / 谁该被踢掉
+```
+
+**Promote 顺序：** 先 event OOS 证明 ranker 有 edge（G3）→ 再叠 gate 看净增益（G18）→ **不要**在无 edge 上叠复杂度（G14/G16/G19/G21）。
+
+**实验索引：**
+
+- [`config/experiments/20260602_fast_scalp_tree_validate/DECISION.md`](../../config/experiments/20260602_fast_scalp_tree_validate/DECISION.md)
+- [`config/experiments/20260604_tpc_entry_semantic_validate/DECISION.md`](../../config/experiments/20260604_tpc_entry_semantic_validate/DECISION.md)
+- [`config/experiments/20260604_tree_legacy_bull_bear/README.md`](../../config/experiments/20260604_tree_legacy_bull_bear/README.md)
+- [`config/experiments/20260602_fast_scalp_tree_validate/FEATURES_AND_OVERFITTING.md`](../../config/experiments/20260602_fast_scalp_tree_validate/FEATURES_AND_OVERFITTING.md)
+
 ---
 
 ## 2. 用户提案是否合理？

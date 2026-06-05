@@ -61,3 +61,14 @@
 3. **不急着加 head**：除非有明确结构假设（如 long/short 标签噪声不同），否则优先单 signed 回归 + 执行对齐 label 对照
 
 规则类策略的「难」在语义；树模型的「难」在 **用 holdout 约束搜索空间，并用 event OOS 一票否决样本内幻觉**。
+
+## 树在 ABC 中的职责（doctrine，2026-06）
+
+**树不做第四条平行策略线**；嵌进 B/C 流水线，只做 **排序** 与 **否决**：
+
+| 用树 | 用规则 |
+|------|--------|
+| entry score（G3）、adverse gate（G18） | entry 语义（TPC E2）、prefilter/regime |
+| 在「已放行」bar 上 top-q | 能不能做、做哪一侧、防追高 |
+
+口诀：**规则定语义，树定先后/否决。** 详见 [`docs/strategy/短期树独立策略_设计与落地_CN.md`](../../docs/strategy/短期树独立策略_设计与落地_CN.md) §1.4。
