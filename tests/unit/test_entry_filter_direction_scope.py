@@ -70,6 +70,54 @@ def test_check_entry_filters_or_single_direction_scoped_and_mode():
     assert check_entry_filters_or_single(short_at_low, cfg, direction=-1) is True
 
 
+def test_or_bundle_ids_vol_or_delta_and_anti_chase():
+    cfg = {
+        "or_bundle_ids": ["vol", "delta"],
+        "filters": [
+            {
+                "id": "vol",
+                "enabled": True,
+                "conditions": [{"feature": "x", "operator": ">=", "value": 1.0}],
+            },
+            {
+                "id": "delta",
+                "enabled": True,
+                "conditions": [{"feature": "y", "operator": ">=", "value": 1.0}],
+            },
+            {
+                "id": "anti",
+                "enabled": True,
+                "direction": "long",
+                "conditions": [
+                    {
+                        "feature": "bars_since_local_high",
+                        "operator": ">=",
+                        "value": 0.10,
+                    }
+                ],
+            },
+        ],
+    }
+    assert (
+        check_entry_filters_or_single(
+            {"x": 0.0, "y": 1.0, "bars_since_local_high": 0.05}, cfg, direction=1
+        )
+        is False
+    )
+    assert (
+        check_entry_filters_or_single(
+            {"x": 0.0, "y": 1.0, "bars_since_local_high": 0.15}, cfg, direction=1
+        )
+        is True
+    )
+    assert (
+        check_entry_filters_or_single(
+            {"x": 1.0, "y": 0.0, "bars_since_local_high": 0.05}, cfg, direction=1
+        )
+        is False
+    )
+
+
 def test_apply_entry_filters_or_direction_scoped_and_mode():
     cfg = _anti_chase_cfg()
     df = pd.DataFrame(

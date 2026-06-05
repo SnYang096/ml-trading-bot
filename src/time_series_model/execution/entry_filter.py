@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections import deque
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -350,6 +350,112 @@ def check_conditions_single(
     return True
 
 
+def _or_bundle_ids(entry_cfg: Dict[str, Any]) -> set[str]:
+    """Optional filter ids OR'd together; all other filters AND with that bundle."""
+    raw = entry_cfg.get("or_bundle_ids") or entry_cfg.get("or_bundle") or []
+    if not isinstance(raw, list):
+        return set()
+    return {str(x).strip() for x in raw if str(x).strip()}
+
+
+def _filter_passes_single(
+    features: Dict[str, float],
+    filt: Dict[str, Any],
+    *,
+    direction: Optional[int],
+) -> Optional[bool]:
+    """None = filter skipped (no conditions); else pass/fail."""
+    conditions = filt.get("conditions", [])
+    if not conditions:
+        return None
+    if not entry_filter_applies_to_direction(filt, direction):
+        return True
+    return check_conditions_single(features, conditions)
+
+
+def _live_combo_pass(
+    enabled: List[Dict[str, Any]],
+    entry_cfg: Dict[str, Any],
+    features: Dict[str, float],
+    *,
+    direction: Optional[int],
+) -> bool:
+    or_ids = _or_bundle_ids(entry_cfg)
+    if or_ids:
+        bundle = [f for f in enabled if str(f.get("id", "")).strip() in or_ids]
+        rest = [f for f in enabled if str(f.get("id", "")).strip() not in or_ids]
+        bundle_ok: List[bool] = []
+        for filt in bundle:
+            r = _filter_passes_single(features, filt, direction=direction)
+            if r is not None:
+                bundle_ok.append(r)
+        rest_ok: List[bool] = []
+        for filt in rest:
+            r = _filter_passes_single(features, filt, direction=direction)
+            if r is not None:
+                rest_ok.append(r)
+        if not bundle_ok and not rest_ok:
+            return True
+        ok_bundle = any(bundle_ok) if bundle_ok else True
+        ok_rest = all(rest_ok) if rest_ok else True
+        return ok_bundle and ok_rest
+
+    mode = str(entry_cfg.get("combination_mode") or "or").strip().lower()
+    if mode not in {"or", "and"}:
+        mode = "or"
+
+    per_filter_ok: List[bool] = []
+    for filt in enabled:
+        r = _filter_passes_single(features, filt, direction=direction)
+        if r is not None:
+            per_filter_ok.append(r)
+
+    if not per_filter_ok:
+        return True
+
+    if mode == "and":
+        return all(per_filter_ok)
+    return any(per_filter_ok)
+
+
+def _batch_combo_mask(
+    filter_masks: List[Tuple[str, pd.Series]],
+    entry_cfg: Dict[str, Any],
+    index: pd.Index,
+) -> pd.Series:
+    or_ids = _or_bundle_ids(entry_cfg)
+    if or_ids:
+        by_id = {fid: m for fid, m in filter_masks}
+        bundle_masks = [by_id[fid] for fid in or_ids if fid in by_id]
+        rest_masks = [m for fid, m in filter_masks if fid not in or_ids]
+        if not bundle_masks and not rest_masks:
+            return pd.Series(True, index=index)
+        combo = pd.Series(True, index=index)
+        if bundle_masks:
+            b = bundle_masks[0]
+            for m in bundle_masks[1:]:
+                b = b | m
+            combo = combo & b
+        for m in rest_masks:
+            combo = combo & m
+        return combo
+
+    mode = str(entry_cfg.get("combination_mode") or "or").strip().lower()
+    if mode not in {"or", "and"}:
+        mode = "or"
+
+    if mode == "and":
+        combo = filter_masks[0][1]
+        for _, m in filter_masks[1:]:
+            combo = combo & m
+        return combo
+
+    combo = pd.Series(False, index=index)
+    for _, m in filter_masks:
+        combo = combo | m
+    return combo
+
+
 def check_entry_filters_or_single(
     features: Dict[str, float],
     entry_cfg: Dict[str, Any],
@@ -363,6 +469,8 @@ def check_entry_filters_or_single(
 
     - ``or`` — 任一 enabled filter（且含非空 conditions）通过 ⇒ 允许入场
     - ``and`` — 所有这类 filter 均需通过 ⇒ 允许入场
+    - ``or_bundle_ids`` — 列表内 filter **OR** 成一组，与其余 filter **AND**
+      （E2a：vol|delta 且 anti-chase）
 
     若无 enabled filter、或均无有效 conditions ⇒ 放行（等价无门）。
 
@@ -379,26 +487,7 @@ def check_entry_filters_or_single(
     if not enabled:
         return True  # no filters → all pass
 
-    mode = str(entry_cfg.get("combination_mode") or "or").strip().lower()
-    if mode not in {"or", "and"}:
-        mode = "or"
-
-    per_filter_ok: List[bool] = []
-    for filt in enabled:
-        conditions = filt.get("conditions", [])
-        if not conditions:
-            continue
-        if not entry_filter_applies_to_direction(filt, direction):
-            per_filter_ok.append(True)
-            continue
-        per_filter_ok.append(check_conditions_single(features, conditions))
-
-    if not per_filter_ok:
-        return True  # enabled filters exist but none had conditions → pass
-
-    if mode == "and":
-        return all(per_filter_ok)
-    return any(per_filter_ok)
+    return _live_combo_pass(enabled, entry_cfg, features, direction=direction)
 
 
 # ================================================================
@@ -491,7 +580,7 @@ def apply_entry_filters_or(
 
     n_before = int((df["entry_direction"] != 0).sum())
 
-    filter_masks: List[pd.Series] = []
+    filter_masks: List[Tuple[str, pd.Series]] = []
     filter_stats = []
     for filt in enabled:
         conditions = filt.get("conditions", [])
@@ -500,21 +589,21 @@ def apply_entry_filters_or(
         filt_mask = _build_mask_from_conditions(df, conditions, silent=True)
         vacuous = _direction_vacuous_pass_mask(df, filt)
         filt_mask = filt_mask | vacuous
+        fid = str(filt.get("id", "")).strip()
         filt_pass = int((filt_mask & (df["entry_direction"] != 0)).sum())
-        filter_stats.append((filt["id"], filt_pass))
-        filter_masks.append(filt_mask)
+        filter_stats.append((fid, filt_pass))
+        filter_masks.append((fid, filt_mask))
 
     if not filter_masks:
         return n_before
 
-    if mode == "and":
-        combo_mask = filter_masks[0]
-        for m in filter_masks[1:]:
-            combo_mask = combo_mask & m
+    combo_mask = _batch_combo_mask(filter_masks, entry_cfg, df.index)
+    if _or_bundle_ids(entry_cfg):
+        top = "OR-bundle+AND"
+    elif mode == "and":
+        top = "AND"
     else:
-        combo_mask = pd.Series(False, index=df.index)
-        for m in filter_masks:
-            combo_mask = combo_mask | m
+        top = "OR"
 
     # 应用: 不满足并联 mask 的 bar → entry_direction = 0
     df.loc[~combo_mask, "entry_direction"] = 0.0
@@ -522,7 +611,6 @@ def apply_entry_filters_or(
 
     if not silent:
         pct = n_after / n_before * 100 if n_before > 0 else 0
-        top = "AND" if mode == "and" else "OR"
         print(
             f"   🔍 Entry Filter ({top}, {len(filter_masks)} filters): "
             f"{n_before} → {n_after} entries ({pct:.1f}% pass)"

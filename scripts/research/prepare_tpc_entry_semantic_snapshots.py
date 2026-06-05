@@ -17,6 +17,32 @@ TURBO_EXEC = (
     / "fast_month_2024-01/strategies_calibrated/tpc/archetypes/execution.yaml"
 )
 
+_ANTI_CHASE_APPEND = [
+    {
+        "id": "tpc_anti_chase_not_at_high",
+        "enabled": True,
+        "direction": "long",
+        "description": "做多：距局部高点足够远，避免贴顶追",
+        "conditions": [
+            {"feature": "bars_since_local_high", "operator": ">=", "value": 0.10}
+        ],
+    },
+    {
+        "id": "tpc_anti_chase_not_at_low",
+        "enabled": True,
+        "direction": "short",
+        "description": "做空：距局部低点足够远，避免贴底追",
+        "conditions": [
+            {"feature": "bars_since_local_low", "operator": ">=", "value": 0.10}
+        ],
+    },
+]
+
+_E2A_OR_BUNDLE = [
+    "tpc_deep_pullback_vol_confirm",
+    "tpc_deep_pullback_delta_absorb",
+]
+
 SNAPSHOTS: dict[str, dict[str, object]] = {
     "tpc_semantic_depth_gt50_strategies": {
         "prefilter_rules_append": [
@@ -70,34 +96,27 @@ SNAPSHOTS: dict[str, dict[str, object]] = {
     "tpc_entry_anti_chase_strategies": {
         "entry_filters_patch": {
             "combination_mode": "and",
-            "filters_append": [
-                {
-                    "id": "tpc_anti_chase_not_at_high",
-                    "enabled": True,
-                    "direction": "long",
-                    "description": "做多：距局部高点足够远，避免贴顶追（实验 E2）",
-                    "conditions": [
-                        {
-                            "feature": "bars_since_local_high",
-                            "operator": ">=",
-                            "value": 0.10,
-                        }
-                    ],
-                },
-                {
-                    "id": "tpc_anti_chase_not_at_low",
-                    "enabled": True,
-                    "direction": "short",
-                    "description": "做空：距局部低点足够远，避免贴底追（实验 E2）",
-                    "conditions": [
-                        {
-                            "feature": "bars_since_local_low",
-                            "operator": ">=",
-                            "value": 0.10,
-                        }
-                    ],
-                },
-            ],
+            "filters_append": _ANTI_CHASE_APPEND,
+        },
+    },
+    "tpc_entry_e2a_or_anti_chase_strategies": {
+        "entry_filters_patch": {
+            "or_bundle_ids": _E2A_OR_BUNDLE,
+            "filters_append": _ANTI_CHASE_APPEND,
+        },
+    },
+    "tpc_entry_e1e2_band_or_anti_strategies": {
+        "prefilter_rules_append": [
+            {
+                "feature": "tpc_pullback_depth",
+                "operator": ">=",
+                "value": 0.15,
+                "rationale": "双边带下界 0.15（与 prod <=0.85 组成 band）",
+            }
+        ],
+        "entry_filters_patch": {
+            "or_bundle_ids": _E2A_OR_BUNDLE,
+            "filters_append": _ANTI_CHASE_APPEND,
         },
     },
     "tpc_entry_gate_pe_strategies": {
@@ -153,6 +172,8 @@ def _patch_entry_filters(tree: Path, patch: dict) -> None:
     data = _load_yaml(path)
     if "combination_mode" in patch:
         data["combination_mode"] = patch["combination_mode"]
+    if "or_bundle_ids" in patch:
+        data["or_bundle_ids"] = list(patch["or_bundle_ids"])
     filters = list(data.get("filters") or [])
     filters.extend(patch.get("filters_append") or [])
     data["filters"] = filters

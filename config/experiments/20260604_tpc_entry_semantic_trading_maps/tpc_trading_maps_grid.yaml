@@ -1,0 +1,42 @@
+# 全窗 highcap trading map — E0 / E2a / E1e2 / S50
+#
+# 跑法:
+#   bash config/experiments/20260604_tpc_entry_semantic_trading_maps/run_trading_maps.sh
+
+experiment_id: tpc_entry_semantic_trading_maps_20260604
+decision_doc: config/experiments/20260604_tpc_entry_semantic_trading_maps/README.md
+strategy: tpc
+data_path: data/parquet_data
+trading_map: true
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - BNBUSDT
+  - XRPUSDT
+  - ADAUSDT
+
+runs:
+  - variant: E0_prod
+    strategies_root: config/strategies
+    start_date: "2022-01-01"
+    end_date: "2026-04-01"
+    output_dir: results/tpc/maps/compare_entry_semantic_20260604/E0_prod
+
+  - variant: E2a_or_anti_chase
+    strategies_root: config_experiments/tpc_entry_e2a_or_anti_chase_strategies
+    start_date: "2022-01-01"
+    end_date: "2026-04-01"
+    output_dir: results/tpc/maps/compare_entry_semantic_20260604/E2a_or_anti_chase
+
+  - variant: E1e2_band_or_anti
+    strategies_root: config_experiments/tpc_entry_e1e2_band_or_anti_strategies
+    start_date: "2022-01-01"
+    end_date: "2026-04-01"
+    output_dir: results/tpc/maps/compare_entry_semantic_20260604/E1e2_band_or_anti
+
+  - variant: S50_depth_gt50
+    strategies_root: config_experiments/tpc_semantic_depth_gt50_strategies
+    start_date: "2022-01-01"
+    end_date: "2026-04-01"
+    output_dir: results/tpc/maps/compare_entry_semantic_20260604/S50_depth_gt50
