@@ -133,20 +133,32 @@ def _predict_segment(
         )
         model_obj = artifact.model
         models = model_obj if isinstance(model_obj, list) else [model_obj]
+        task_type = str(
+            strategy_config.model.trainer.params.get("task_type", "regression")
+        ).lower()
         preds = generate_predictions(
             models,
             model_type=strategy_config.model.trainer.params.get(
                 "model_type", "lightgbm"
             ),
-            task_type=strategy_config.model.trainer.params.get(
-                "task_type", "regression"
-            ),
+            task_type=task_type,
             X=artifact.preprocessor.transform(
                 df_feat, feature_cols=artifact.used_features
             ),
         )
         out = df_feat.copy()
-        out["pred"] = np.asarray(preds, dtype=float)
+        if task_type == "multiclass" and np.ndim(preds) == 2:
+            for c in range(preds.shape[1]):
+                out[f"pred_c{c}"] = preds[:, c]
+            # Scalar fallback for quantile metadata (long-class proba).
+            long_class = int(
+                (strategy_config.backtest.params or {})
+                .get("multiclass", {})
+                .get("long_class", 2)
+            )
+            out["pred"] = preds[:, long_class]
+        else:
+            out["pred"] = np.asarray(preds, dtype=float).reshape(-1)
         out["split"] = "segment"
         if "timestamp" not in out.columns:
             out = out.reset_index().rename(columns={"index": "timestamp"})
@@ -203,9 +215,17 @@ def _run_bt(
         bt_params["debug"] = True
         bt_params["debug_trades_limit"] = debug_trades_limit
 
-    preds = df["pred"].to_numpy(dtype=float)
+    task_type = str(
+        strategy_config.model.trainer.params.get("task_type", "regression")
+    ).lower()
+    if task_type == "multiclass" and all(
+        c in df.columns for c in ("pred_c0", "pred_c1", "pred_c2")
+    ):
+        pred_cols = sorted(c for c in df.columns if c.startswith("pred_c"))
+        preds = df[pred_cols].to_numpy(dtype=float)
+    else:
+        preds = df["pred"].to_numpy(dtype=float)
     # Absolute-threshold mode: bypass regression quantile branch via binary thresholds.
-    task_type = "regression"
     if long_entry_threshold is not None or short_entry_threshold is not None:
         task_type = "binary"
 
