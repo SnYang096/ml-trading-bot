@@ -963,6 +963,31 @@ class MultiLegExecutionAdapter:
         if self.storage is None:
             return
         try:
+            raw = result.raw or dict(action)
+            info = raw.get("info") if isinstance(raw.get("info"), dict) else {}
+            filled_qty = 0.0
+            for key in ("filled", "filled_quantity", "executedQty"):
+                val = raw.get(key) if key != "executedQty" else info.get("executedQty")
+                if val is None:
+                    continue
+                try:
+                    filled_qty = float(val)
+                except (TypeError, ValueError):
+                    continue
+                if filled_qty > 0:
+                    break
+            avg_px = None
+            for key in ("average_price", "price", "avgPrice"):
+                val = raw.get(key) if key != "avgPrice" else info.get("avgPrice")
+                if val is None:
+                    continue
+                try:
+                    px = float(val)
+                except (TypeError, ValueError):
+                    continue
+                if px > 0:
+                    avg_px = px
+                    break
             self.storage.upsert_order(
                 {
                     "run_id": self.run_id,
@@ -988,7 +1013,9 @@ class MultiLegExecutionAdapter:
                     "stop_price": action.get("stop_price")
                     or action.get("trigger_price"),
                     "status": result.status,
-                    "raw": result.raw or dict(action),
+                    "filled_quantity": filled_qty,
+                    "average_price": avg_px,
+                    "raw": raw,
                 }
             )
         except (

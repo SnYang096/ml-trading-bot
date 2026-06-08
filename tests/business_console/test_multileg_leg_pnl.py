@@ -216,3 +216,51 @@ def test_attach_multileg_display_pnl_on_synthetic_inventory(multi_leg_db) -> Non
     )
     assert inv_row["pnl_usdt"] == pytest.approx((653.205 - 640.0) * 0.62, rel=1e-4)
     assert inv_row["pnl_hint"] == "浮盈"
+
+
+def test_multileg_pnl_orphan_market_exit_realized(multi_leg_db) -> None:
+    import json
+
+    from src.order_management.multi_leg_storage import MultiLegStorage
+
+    storage = MultiLegStorage(str(multi_leg_db))
+    run_id = storage.create_run(
+        mode="testnet",
+        strategies=["chop_grid"],
+        symbols=["XRPUSDT"],
+        run_id="ml_pnl_orphan_me",
+    )
+    group = "XRPUSDT_2026-06-04 02:55:53.371955+00:00"
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": f"{group}_L2",
+            "symbol": "XRPUSDT",
+            "side": "BUY",
+            "purpose": "entry",
+            "status": "filled",
+            "filled_quantity": 65.1,
+            "average_price": 1.1748,
+            "filled_at": "2026-06-04 07:20:11+00:00",
+        }
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": "cg_b3f1c92377fb",
+            "symbol": "XRPUSDT",
+            "side": "LONG",
+            "position_side": "LONG",
+            "purpose": "market_exit",
+            "status": "closed",
+            "quantity": 65.1,
+            "created_at": "2026-06-04 11:11:04+00:00",
+            "raw": json.dumps({"filled": 65.1, "average_price": 1.1419}),
+        }
+    )
+    pnl_map = multileg_pnl_by_order_id(multi_leg_db, "XRPUSDT")
+    expected = pytest.approx((1.1419 - 1.1748) * 65.1, rel=1e-4)
+    assert pnl_map[f"{group}_L2"]["pnl_usdt"] == expected
+    assert pnl_map[f"{group}_L2"]["pnl_hint"] == "已实现"

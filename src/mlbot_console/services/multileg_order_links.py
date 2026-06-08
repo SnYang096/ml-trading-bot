@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -58,7 +59,71 @@ def leg_index(order_id: str) -> int:
         return 0
 
 
+def _parse_raw_json_blob(row: Dict[str, Any]) -> Dict[str, Any]:
+    raw = row.get("raw_json")
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(parsed, dict):
+            return parsed
+        if isinstance(parsed, str) and parsed.strip():
+            try:
+                nested = json.loads(parsed)
+                if isinstance(nested, dict):
+                    return nested
+            except json.JSONDecodeError:
+                return {}
+    return {}
+
+
+def hydrate_multileg_fill_fields(row: Dict[str, Any]) -> None:
+    """Backfill filled_quantity / average_price from persisted exchange raw_json.
+
+    Idempotent: parses ``raw_json`` at most once per row (memoized via a private
+    flag) since ``_price`` may be called many times on the same row.
+    """
+    if row.get("_fill_hydrated"):
+        return
+    row["_fill_hydrated"] = True
+    raw = _parse_raw_json_blob(row)
+    if not raw:
+        return
+    info = raw.get("info") if isinstance(raw.get("info"), dict) else {}
+
+    if float(row.get("filled_quantity") or 0) <= 0:
+        for key in ("filled", "filled_quantity", "executedQty"):
+            val = raw.get(key) if key != "executedQty" else info.get("executedQty")
+            if val is None:
+                continue
+            try:
+                qty = float(val)
+            except (TypeError, ValueError):
+                continue
+            if qty > 0:
+                row["filled_quantity"] = qty
+                break
+
+    avg = row.get("average_price")
+    if avg is None or avg != avg:
+        for key in ("average_price", "price", "avgPrice"):
+            val = raw.get(key) if key != "avgPrice" else info.get("avgPrice")
+            if val is None:
+                continue
+            try:
+                px = float(val)
+            except (TypeError, ValueError):
+                continue
+            if px > 0:
+                row["average_price"] = px
+                break
+
+
 def _price(row: Dict[str, Any]) -> Optional[float]:
+    hydrate_multileg_fill_fields(row)
     for key in ("average_price", "price", "stop_price"):
         val = row.get(key)
         if val is not None and val == val:
@@ -67,6 +132,14 @@ def _price(row: Dict[str, Any]) -> Optional[float]:
             except (TypeError, ValueError):
                 continue
     return None
+
+
+def filled_quantity(row: Dict[str, Any]) -> float:
+    hydrate_multileg_fill_fields(row)
+    qty = float(row.get("filled_quantity") or 0)
+    if qty > 0:
+        return qty
+    return float(row.get("quantity") or 0)
 
 
 def _is_filled_row(row: Dict[str, Any]) -> bool:
