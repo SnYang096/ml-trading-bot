@@ -265,7 +265,7 @@ multi_leg:
     max_net_notional_pct: 0.85
     max_symbol_gross_notional_pct: 1.30
     max_symbol_net_notional_pct: 0.45
-    max_concurrent_grid_symbols: 3
+    max_concurrent_grid_symbols: 6
     # Maximum number of resting open orders across all multi-leg strategies.
     max_resting_orders: 60 # Cap on open limit orders (grid + dual-add combined).
 

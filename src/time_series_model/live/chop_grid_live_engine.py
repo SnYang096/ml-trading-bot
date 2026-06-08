@@ -399,13 +399,40 @@ class ChopGridLiveEngine:
             for p in self.state.inventory
         ]
 
+    def is_stale_active_ghost(self) -> bool:
+        """True when ``active`` is set but nothing real remains on this segment."""
+        return bool(
+            self.state.active
+            and not self.state.pending_orders
+            and not self.state.inventory
+            and not self._live_exchange_has_activity
+        )
+
+    def clear_stale_active_if_ghost(self) -> bool:
+        """Drop a ghost segment so it cannot block the concurrency cap.
+
+        Called from the shared gate before slot accounting so symbols that have
+        not received a bar yet this cycle still release stale ``active`` flags.
+        """
+        if not self.is_stale_active_ghost():
+            return False
+        logger.warning(
+            "chop_grid stale active state reset: symbol=%s grid_id=%s",
+            self.state.symbol,
+            self.state.grid_id,
+        )
+        self.state.active = False
+        self.state.current_regime = "idle"
+        self.save_state()
+        return True
+
     def holds_real_grid_slot(self) -> bool:
         """True iff this engine's active segment really occupies a concurrency slot.
 
         An ``active`` segment carrying no pending orders, no inventory and no live
-        exchange activity is a ghost (it gets stale-reset on the next bar), so it
-        must not count toward ``max_concurrent_grid_symbols`` and block other
-        symbols from starting. Mirrors the stale-active reset predicate in ``step``.
+        exchange activity is a ghost (cleared via :meth:`clear_stale_active_if_ghost`),
+        so it must not count toward ``max_concurrent_grid_symbols`` and block other
+        symbols from starting.
         """
         if not bool(getattr(self.state, "active", False)):
             return False
@@ -1182,20 +1209,8 @@ class ChopGridLiveEngine:
             rules=self._prefilter_rules,
         )
         wanted_enter = chop >= self.cfg.entry_chop_min and not is_box
-        if (
-            self.state.active
-            and self.state.symbol == symbol
-            and not self.state.pending_orders
-            and not self.state.inventory
-            and not self._live_exchange_has_activity
-        ):
-            logger.warning(
-                "chop_grid stale active state reset: symbol=%s grid_id=%s",
-                symbol,
-                self.state.grid_id,
-            )
-            self.state.active = False
-            self.state.current_regime = "idle"
+        if self.state.symbol == symbol:
+            self.clear_stale_active_if_ghost()
         active_at_open = self.state.active and self.state.symbol == symbol
         should_enter = wanted_enter and not self.state.active
         should_exit = self.state.active and chop < self.cfg.exit_chop_below

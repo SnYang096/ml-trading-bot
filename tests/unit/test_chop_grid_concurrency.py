@@ -73,6 +73,31 @@ def test_ghost_active_engine_does_not_occupy_a_slot() -> None:
     assert gate.allow_new_segment("ETHUSDT") is True
 
 
+def test_gate_purges_ghost_active_before_slot_count(tmp_path: Path) -> None:
+    """Shared gate clears stale active on other symbols before cap check."""
+    gate = ChopGridConcurrencyGate(3)
+    eng_btc = ChopGridLiveEngine(
+        config_path=_grid_config(tmp_path, "btc"),
+        state_path=tmp_path / "state_btc.json",
+        level_notional=100.0,
+    )
+    eng_eth = ChopGridLiveEngine(
+        config_path=_grid_config(tmp_path, "eth"),
+        state_path=tmp_path / "state_eth.json",
+        level_notional=100.0,
+    )
+    eng_btc.state.symbol = "BTCUSDT"
+    eng_btc.state.active = True
+    eng_btc.state.grid_id = "BTCUSDT_ghost"
+    eng_btc.save_state()
+
+    gate.register("BTCUSDT", eng_btc)
+    gate.register("ETHUSDT", eng_eth)
+
+    assert gate.allow_new_segment("ETHUSDT") is True
+    assert eng_btc.state.active is False
+
+
 def test_gate_falls_back_to_state_active_without_holds_hook() -> None:
     class _Bare:
         def __init__(self, active: bool) -> None:

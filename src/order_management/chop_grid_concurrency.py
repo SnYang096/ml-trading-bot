@@ -42,7 +42,21 @@ class ChopGridConcurrencyGate:
         state = getattr(engine, "state", None)
         return state is not None and bool(getattr(state, "active", False))
 
+    def _purge_ghost_segments(self) -> None:
+        """Clear stale ``active`` flags before slot accounting (any symbol's bar)."""
+        for _sym, engine in self._engines:
+            clear = getattr(engine, "clear_stale_active_if_ghost", None)
+            if callable(clear):
+                try:
+                    clear()
+                except Exception:  # pragma: no cover - defensive
+                    logger.warning(
+                        "chop_grid concurrency: clear_stale_active_if_ghost raised",
+                        exc_info=True,
+                    )
+
     def _active_symbols(self) -> set[str]:
+        self._purge_ghost_segments()
         out: set[str] = set()
         for sym, engine in self._engines:
             if self._engine_holds_slot(engine):

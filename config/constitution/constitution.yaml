@@ -297,7 +297,8 @@ multi_leg:
     max_symbol_net_notional_pct: 0.45 # ≥ trend 2-leg net (40%) + headroom.
     # chop_grid: at most this many symbols may hold an active grid segment at once.
     # Sizing does NOT divide by universe size; overlap is limited here instead.
-    max_concurrent_grid_symbols: 3
+    # Live highcap uses the same cap (6); gross notional still capped by pct limits.
+    max_concurrent_grid_symbols: 6
     # Maximum number of resting open orders across all multi-leg strategies.
     max_resting_orders: 60 # Cap on open limit orders (grid + dual-add combined).
 
