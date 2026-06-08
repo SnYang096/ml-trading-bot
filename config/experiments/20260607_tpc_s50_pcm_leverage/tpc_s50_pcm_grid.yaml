@@ -1,0 +1,41 @@
+# S50 TPC + BPC PCM 联合回测
+experiment_id: tpc_s50_pcm_20260607
+decision_doc: config/experiments/20260607_tpc_s50_pcm_leverage/README.md
+strategy: bpc,tpc
+data_path: data/parquet_data
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - BNBUSDT
+  - XRPUSDT
+  - ADAUSDT
+
+runs:
+  - variant: pcm_prod_baseline
+    strategies_root: config/strategies
+    constitution_yaml: config/experiments/20260607_tpc_s50_pcm_leverage/constitution/pcm_equal.yaml
+    start_date: "2022-01-01"
+    end_date: "2026-04-01"
+    output_dir: results/pcm/experiments/s50_pcm_20260607/pcm_prod_baseline
+
+  - variant: pcm_s50_equal
+    strategies_root: config_experiments/tpc_s50_bpc_pcm_strategies
+    constitution_yaml: config/experiments/20260607_tpc_s50_pcm_leverage/constitution/pcm_equal.yaml
+    start_date: "2022-01-01"
+    end_date: "2026-04-01"
+    output_dir: results/pcm/experiments/s50_pcm_20260607/pcm_s50_equal
+
+  - variant: pcm_s50_tpc_heavy
+    strategies_root: config_experiments/tpc_s50_bpc_pcm_strategies
+    constitution_yaml: config/experiments/20260607_tpc_s50_pcm_leverage/constitution/pcm_tpc_heavy.yaml
+    start_date: "2022-01-01"
+    end_date: "2026-04-01"
+    output_dir: results/pcm/experiments/s50_pcm_20260607/pcm_s50_tpc_heavy
+
+  - variant: pcm_s50_bpc_heavy
+    strategies_root: config_experiments/tpc_s50_bpc_pcm_strategies
+    constitution_yaml: config/experiments/20260607_tpc_s50_pcm_leverage/constitution/pcm_bpc_heavy.yaml
+    start_date: "2022-01-01"
+    end_date: "2026-04-01"
+    output_dir: results/pcm/experiments/s50_pcm_20260607/pcm_s50_bpc_heavy

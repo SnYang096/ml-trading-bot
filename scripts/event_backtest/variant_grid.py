@@ -99,6 +99,12 @@ def _build_event_backtest_cmd(
     if run.get("trading_map") or grid.get("trading_map"):
         map_out = out_path / f"trading_map_{strategy}_event.html"
         cmd += ["--trading-map", str(map_out)]
+    constitution_yaml = run.get("constitution_yaml") or grid.get("constitution_yaml")
+    if constitution_yaml:
+        const_path = Path(str(constitution_yaml))
+        if not const_path.is_absolute():
+            const_path = (_REPO_ROOT / const_path).resolve()
+        cmd += ["--constitution-yaml", str(const_path)]
     inject_scores = run.get("inject_scores") or grid.get("inject_scores")
     if inject_scores:
         inj_path = Path(str(inject_scores))
