@@ -264,3 +264,153 @@ def test_multileg_pnl_orphan_market_exit_realized(multi_leg_db) -> None:
     expected = pytest.approx((1.1419 - 1.1748) * 65.1, rel=1e-4)
     assert pnl_map[f"{group}_L2"]["pnl_usdt"] == expected
     assert pnl_map[f"{group}_L2"]["pnl_hint"] == "已实现"
+
+
+def _seed_trend_scalp_segment(
+    storage,
+    *,
+    segment: str,
+    side: str,
+    entry_qty: float,
+    entry_px: float,
+    exit_px: float,
+    reason: str = "initial_trend",
+    seq: int = 0,
+) -> tuple[str, str]:
+    entry_id = f"{segment}_{reason}_{side}_{seq}_0"
+    exit_id = f"{entry_id}_fill0_exit_regime_exit_2026-06-08 00:05:00+00:00"
+    run_id = storage.create_run(
+        mode="testnet",
+        strategies=["trend_scalp"],
+        symbols=[segment.split("_", 1)[0]],
+        run_id=f"ts_{segment[-8:]}",
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "trend_scalp",
+            "local_order_id": entry_id,
+            "symbol": segment.split("_", 1)[0],
+            "side": side,
+            "purpose": "entry",
+            "status": "closed",
+            "filled_quantity": entry_qty,
+            "average_price": entry_px,
+            "created_at": "2026-06-06 14:00:40",
+        }
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "trend_scalp",
+            "local_order_id": exit_id,
+            "symbol": segment.split("_", 1)[0],
+            "side": "SHORT" if side == "SELL" else "LONG",
+            "position_side": "SHORT" if side == "SELL" else "LONG",
+            "purpose": "market_exit",
+            "status": "closed",
+            "filled_quantity": entry_qty,
+            "average_price": exit_px,
+            "created_at": "2026-06-06 16:01:53",
+        }
+    )
+    return entry_id, exit_id
+
+
+def test_multileg_pnl_trend_scalp_short_segment(multi_leg_db) -> None:
+    from src.order_management.multi_leg_storage import MultiLegStorage
+
+    storage = MultiLegStorage(str(multi_leg_db))
+    segment = "ETHUSDT_2026-06-06 14:00:27.526643+00:00"
+    entry_id, exit_id = _seed_trend_scalp_segment(
+        storage,
+        segment=segment,
+        side="SELL",
+        entry_qty=0.048,
+        entry_px=1685.0,
+        exit_px=1680.0,
+    )
+    pnl_map = multileg_pnl_by_order_id(multi_leg_db, "ETHUSDT")
+    expected = pytest.approx((1685.0 - 1680.0) * 0.048, rel=1e-4)
+    assert pnl_map[entry_id]["pnl_usdt"] == expected
+    assert pnl_map[exit_id]["pnl_usdt"] == expected
+    assert pnl_map[entry_id]["pnl_hint"] == "已实现"
+
+
+def test_multileg_pnl_trend_scalp_dual_add_long_segment(multi_leg_db) -> None:
+    from src.order_management.multi_leg_storage import MultiLegStorage
+
+    storage = MultiLegStorage(str(multi_leg_db))
+    segment = "ETHUSDT_2026-06-07 22:19:47.612033+00:00"
+    sym = "ETHUSDT"
+    run_id = storage.create_run(
+        mode="testnet",
+        strategies=["trend_scalp"],
+        symbols=[sym],
+        run_id="ts_dual_add",
+    )
+    initial_id = f"{segment}_initial_trend_BUY_0_0"
+    add_id = f"{segment}_trend_add_BUY_1_0"
+    initial_exit = f"{initial_id}_fill0_exit_regime_exit_2026-06-08 00:05:00+00:00"
+    add_exit = f"{add_id}_fill1_exit_regime_exit_2026-06-08 00:05:00+00:00"
+    for payload in (
+        {
+            "local_order_id": initial_id,
+            "side": "BUY",
+            "filled_quantity": 0.126,
+            "average_price": 1685.77,
+            "created_at": "2026-06-07 22:19:58",
+        },
+        {
+            "local_order_id": add_id,
+            "side": "BUY",
+            "filled_quantity": 0.124,
+            "average_price": 1686.0,
+            "created_at": "2026-06-07 23:05:27",
+        },
+    ):
+        storage.upsert_order(
+            {
+                "run_id": run_id,
+                "strategy": "trend_scalp",
+                "symbol": sym,
+                "purpose": "entry",
+                "status": "closed",
+                **payload,
+            }
+        )
+    for payload in (
+        {
+            "local_order_id": initial_exit,
+            "filled_quantity": 0.126,
+            "average_price": 1682.83,
+            "created_at": "2026-06-08 00:06:07",
+        },
+        {
+            "local_order_id": add_exit,
+            "filled_quantity": 0.124,
+            "average_price": 1682.83,
+            "created_at": "2026-06-08 00:06:08",
+        },
+    ):
+        storage.upsert_order(
+            {
+                "run_id": run_id,
+                "strategy": "trend_scalp",
+                "symbol": sym,
+                "side": "LONG",
+                "position_side": "LONG",
+                "purpose": "market_exit",
+                "status": "closed",
+                **payload,
+            }
+        )
+    pnl_map = multileg_pnl_by_order_id(multi_leg_db, sym)
+    assert pnl_map[initial_id]["pnl_usdt"] == pytest.approx(
+        (1682.83 - 1685.77) * 0.126, rel=1e-4
+    )
+    assert pnl_map[add_id]["pnl_usdt"] == pytest.approx(
+        (1682.83 - 1686.0) * 0.124, rel=1e-4
+    )
+    assert pnl_map[initial_exit]["pnl_usdt"] == pnl_map[initial_id]["pnl_usdt"]
+    assert pnl_map[add_exit]["pnl_usdt"] == pnl_map[add_id]["pnl_usdt"]

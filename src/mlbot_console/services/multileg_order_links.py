@@ -11,6 +11,53 @@ from mlbot_console.services.trade_markers import _OPEN_ORDER_STATUSES, _multi_le
 _LEG_SUFFIX_RE = re.compile(r"_(L|S)(\d+)$", re.I)
 _TP_SUFFIX_RE = re.compile(r"_(L|S)(\d+)_tp$", re.I)
 _PROT_SUFFIX_RE = re.compile(r"_(L|S)(\d+)_(tp|sl)(?:_supp)?$", re.I)
+_TREND_ENTRY_RE = re.compile(
+    r"^.+_(?:initial_trend|trend_add)_(?:BUY|SELL)_\d+_\d+$",
+    re.I,
+)
+_TREND_EXIT_RE = re.compile(
+    r"^(.+_(?:initial_trend|trend_add)_(?:BUY|SELL)_\d+_\d+)_fill\d+_exit_",
+    re.I,
+)
+_TREND_SEGMENT_RE = re.compile(r"^(.+)_(?:initial_trend|trend_add)_", re.I)
+
+
+def trend_segment_key(order_id: str) -> Optional[str]:
+    """Segment id prefix for trend_scalp entry / add / market_exit rows."""
+    m = _TREND_SEGMENT_RE.match(str(order_id or ""))
+    if not m:
+        return None
+    return m.group(1)
+
+
+def trend_exit_entry_id(order_id: str) -> Optional[str]:
+    """Entry local_order_id embedded in a trend market_exit id."""
+    m = _TREND_EXIT_RE.match(str(order_id or ""))
+    if not m:
+        return None
+    return m.group(1)
+
+
+def is_trend_entry_row(row: Dict[str, Any]) -> bool:
+    purpose = str(row.get("purpose") or "").lower()
+    if "take_profit" in purpose or "market_exit" in purpose or "stop_loss" in purpose:
+        return False
+    for field in ("order_id", "local_order_id", "leg_id"):
+        if _TREND_ENTRY_RE.match(str(row.get(field) or "")):
+            return True
+    return False
+
+
+def trend_entry_position_side(row: Dict[str, Any]) -> Optional[str]:
+    for field in ("order_id", "local_order_id", "leg_id"):
+        oid = str(row.get(field) or "")
+        if not _TREND_ENTRY_RE.match(oid):
+            continue
+        if "_BUY_" in oid.upper():
+            return "LONG"
+        if "_SELL_" in oid.upper():
+            return "SHORT"
+    return None
 
 
 def leg_group_key(order_id: str) -> Optional[str]:
@@ -218,7 +265,7 @@ def is_s_entry_row(row: Dict[str, Any]) -> bool:
 
 
 def is_entry_row(row: Dict[str, Any]) -> bool:
-    return is_l_entry_row(row) or is_s_entry_row(row)
+    return is_l_entry_row(row) or is_s_entry_row(row) or is_trend_entry_row(row)
 
 
 def _entry_side_kind(row: Dict[str, Any]) -> Optional[str]:
@@ -332,11 +379,15 @@ def annotate_leg_group(legs: List[Dict[str, Any]]) -> None:
 
 
 def row_group_key(row: Dict[str, Any]) -> Optional[str]:
-    """Group key for chop_grid legs (cg_* ids use leg_id for L1/L2 grouping)."""
+    """Group key for chop_grid legs and trend_scalp segment batches."""
     for field in ("order_id", "local_order_id", "leg_id"):
         gk = leg_group_key(str(row.get(field) or ""))
         if gk:
             return gk
+    for field in ("order_id", "local_order_id", "leg_id"):
+        sk = trend_segment_key(str(row.get(field) or ""))
+        if sk:
+            return sk
     lid = str(row.get("leg_id") or "")
     m = _LEG_SUFFIX_RE.search(lid)
     if m:

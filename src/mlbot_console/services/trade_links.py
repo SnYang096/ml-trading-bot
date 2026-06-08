@@ -20,6 +20,8 @@ from mlbot_console.services.multileg_order_links import (
     is_s_entry_row,
     leg_group_key,
     leg_suffix,
+    trend_entry_position_side,
+    trend_exit_entry_id,
 )
 from mlbot_console.services.db import query_rows
 from mlbot_console.services.trade_markers import (
@@ -231,7 +233,7 @@ def _entry_position_side(row: Dict[str, Any]) -> Optional[str]:
         return "LONG"
     if is_s_entry_row(row):
         return "SHORT"
-    return None
+    return trend_entry_position_side(row)
 
 
 def _entry_marker_key(row: Dict[str, Any]) -> str:
@@ -269,7 +271,10 @@ def _append_orphan_market_exit_links(
         purpose = str(row.get("purpose") or "").lower()
         if "market_exit" not in purpose or not _is_filled_row(row):
             continue
-        if leg_group_key(str(row.get("local_order_id") or "")):
+        oid = str(row.get("local_order_id") or "")
+        if leg_group_key(oid):
+            continue
+        if trend_exit_entry_id(oid):
             continue
         exit_ts = _ts_row(row)
         exit_px = _price(row)

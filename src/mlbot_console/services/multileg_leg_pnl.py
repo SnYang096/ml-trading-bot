@@ -20,7 +20,11 @@ from mlbot_console.services.multileg_order_links import (
     is_entry_row,
     is_l_entry_row,
     is_s_entry_row,
+    is_trend_entry_row,
     leg_group_key,
+    row_group_key,
+    trend_entry_position_side,
+    trend_exit_entry_id,
 )
 from mlbot_console.services.multileg_repair_tp import pick_repair_filled_tp
 
@@ -100,7 +104,7 @@ def _entry_position_side(row: Dict[str, Any]) -> Optional[str]:
         return "LONG"
     if is_s_entry_row(row):
         return "SHORT"
-    return None
+    return trend_entry_position_side(row)
 
 
 def _market_exit_position_side(row: Dict[str, Any]) -> Optional[str]:
@@ -117,13 +121,45 @@ def _ts_row(row: Dict[str, Any]) -> Optional[int]:
     return int(ts) if ts is not None else None
 
 
+def _trend_exit_for_entry(
+    group_rows: List[Dict[str, Any]], entry_row: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
+    if not is_trend_entry_row(entry_row):
+        return None
+    entry_id = entry_link_id(entry_row)
+    if not entry_id:
+        return None
+    entry_ts = _ts_row(entry_row)
+    best: Optional[Dict[str, Any]] = None
+    best_ts = -1
+    for row in group_rows:
+        purpose = str(row.get("purpose") or "").lower()
+        if "market_exit" not in purpose or not _is_filled_row(row):
+            continue
+        oid = str(row.get("order_id") or row.get("local_order_id") or "")
+        if trend_exit_entry_id(oid) != entry_id:
+            continue
+        if _price(row) is None:
+            continue
+        exit_ts = _ts_row(row) or 0
+        if entry_ts is not None and exit_ts < entry_ts:
+            continue
+        if exit_ts >= best_ts:
+            best = row
+            best_ts = exit_ts
+    return best
+
+
 def _orphan_market_exit_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for row in rows:
         purpose = str(row.get("purpose") or "").lower()
         if "market_exit" not in purpose or not _is_filled_row(row):
             continue
-        if leg_group_key(str(row.get("order_id") or row.get("local_order_id") or "")):
+        oid = str(row.get("order_id") or row.get("local_order_id") or "")
+        if leg_group_key(oid):
+            continue
+        if trend_exit_entry_id(oid):
             continue
         if _price(row) is None:
             continue
@@ -147,6 +183,10 @@ def _filled_exit_row(
     exit_row = _pick_filled_tp(tp_rows)
     if exit_row is None:
         exit_row = pick_repair_filled_tp(group_rows, eid)
+    if exit_row is not None:
+        return exit_row
+
+    exit_row = _trend_exit_for_entry(group_rows, entry_row)
     if exit_row is not None:
         return exit_row
 
@@ -214,9 +254,7 @@ def multileg_pnl_by_order_id(
 
     for entry in pending_entries:
         entry_key = _order_key(entry)
-        gk = leg_group_key(
-            str(entry.get("order_id") or entry.get("local_order_id") or "")
-        )
+        gk = row_group_key(entry)
         group_rows = by_group.get(gk or "", [entry])
         if not entry_key:
             continue
