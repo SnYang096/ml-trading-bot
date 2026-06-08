@@ -579,6 +579,29 @@ class DualAddTrendLiveEngine:
                     ),
                 )
             )
+            # ── Late-fill guard ──
+            # When _exit_all ran before the fill report arrived, the segment
+            # is already marked inactive but the order was still in
+            # pending_orders (the _exit_all fix keeps it there).  The fill
+            # creates a position that must be immediately unwound, otherwise
+            # the CMS sees a filled entry with no exit.
+            if not self.state.active:
+                logger.warning(
+                    "dual_add_trend late fill after segment exit: symbol=%s "
+                    "side=%s qty=%s leg=%s — queueing immediate market_exit",
+                    getattr(self.state, "symbol", ""),
+                    pos_side,
+                    fill_delta,
+                    new_position.leg_id,
+                )
+                self._pending_actions.append(
+                    self._market_exit(
+                        new_position,
+                        last_px if last_px > 0 else order.price,
+                        str(report.get("trade_time") or self.state.last_timestamp),
+                        "late_fill_cleanup",
+                    )
+                )
         if terminal or order.filled_quantity >= order.quantity:
             self.state.pending_orders = [
                 o for o in self.state.pending_orders if o.order_id != order.order_id
@@ -725,6 +748,22 @@ class DualAddTrendLiveEngine:
             self._market_exit(pos, close, timestamp, reason)
             for pos in self.state.inventory
         ]
+        # ── Defer pending_orders clear to on_execution_results ──
+        # Previously we cleared pending_orders[] unconditionally BEFORE the
+        # cancel actions were executed.  If the exchange rejected a cancel
+        # (order already filled), the subsequent fill report could not find
+        # the order in pending_orders (on_execution_report → _find_order),
+        # the position was never created, and no market_exit was produced.
+        # The orphaned filled entry then showed as negative unrealised PnL
+        # in the CMS.
+        #
+        # Now we keep the orders in pending_orders and rely on
+        # on_execution_results to prune the ones that were successfully
+        # cancelled / filled.  That callback already handles the
+        # housekeeping: orders whose status becomes "canceled" or are fully
+        # filled get removed from pending_orders at the end of
+        # on_execution_results.
+        cancel_order_ids = {o.order_id for o in self.state.pending_orders}
         for order in self.state.pending_orders:
             actions.append(
                 {
@@ -735,7 +774,7 @@ class DualAddTrendLiveEngine:
                     "reason": reason,
                 }
             )
-        self.state.pending_orders = []
+        # Keep pending_orders intact; on_execution_results will filter them.
         self.state.inventory = []
         self.state.active = False
         return actions

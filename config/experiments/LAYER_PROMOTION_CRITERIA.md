@@ -46,17 +46,51 @@ IC、label scan（feature-plateau / condition-set / quick_layer_scan）、单特
 
 ---
 
+## 标准 R&D 阶段（新特征 / 新周期 — 必须先走完 Phase 0–2 再跑 grid）
+
+**禁止跳步**：未在 Phase 1/2 用 IC、label scan 或专用历史扫描 **证明特征有用并标定窗宽/阈值** 之前，不得把拍脑袋的 τ / lookback 写进 `variant_grid` 当 promote 依据。  
+（反例：手选 `lookback=120`、`box_breakout>=0.5` 直接 segment grid — 只能当探索性 ablation，**不得**进 DECISION promote。）
+
+| Phase | 名称 | 做什么 | 典型工具 / 产物 | 能否 promote？ |
+|-------|------|--------|-----------------|----------------|
+| **0** | 特征可算 | 新列进 `feature_dependencies` + 策略 `features*.yaml`；有 labeled parquet | `train_strategy_pipeline --prepare-only` → `features_labeled.parquet` | 否 |
+| **1** | 假设扫描 | IC、label plateau、condition-set、pair-scan、snotio | **`mlbot research scan`** / **`mlbot research ic`** / **`mlbot research plateau`**；批量 → **`rd_loop_*.yaml`** | **否**（仅生成假设） |
+| **2** | 定参 | 从 Phase 1 读 plateau / scan 报告，**人写** τ、lookback、组合逻辑；更新实验 `DECISION.md` 假设表 | `quick_scan/*.md`、`results/*/research/*_scan.json` | 否 |
+| **3** | 因果复验 | `segment_matrix` + `market_segment.yaml` canonical 三阶段 event_backtest | `*_grid.yaml` + `scripts.event_backtest --variant-grid` | **仍否**（除非过下面三条杠） |
+| **4** | 人审 | 胜出变体全窗 **trading map**（语义是否对齐，如 BPC 是否仍追高） | `run_trading_maps.sh` | 否 |
+| **5** | Promote | 满足本文 **三条杠** → 写 prod archetype + `locked: true` + §4 监控 bundle | `LAYER_PROMOTION_CRITERIA` §4.3 | **是** |
+
+**参考实验（顺序正确）**：
+
+- TPC gate：`20260531_tpc_gate_validate/` — Phase 1 rd_loop only → Phase 2 grid  
+- TPC 深回撤：`20260530_tpc_deep_pullback/` — Pass 1 plateau → Pass 2 condition-set → Phase 3 ablation  
+- TPC macro 窗宽：`mlbot research scan` +（可选）`scan_tpc_pullback_lookback.py` 标定 binding → `20260610_tpc_macro_pullback_replace/` grid  
+- BPC box×depth×lookback：`20260611_bpc_lookback_retest_validate/rd_loop_bpc_box_pullback_phase1.yaml`（**勿**写 `scan_bpc_*.py`）
+
+**窗宽 / 多尺度**：若压缩区用 box N、回踩用 soft_phase L，须在 Phase 1 分别扫描或论证对齐；**不得**默认 `box_breakout@120` 与 `lookback_breakout@240` 混用且无文档。
+
+**Phase 1 工具优先级（防 AI 忘）**：
+
+1. **默认**：`mlbot research scan`（`feature-plateau` / `condition-set` / `pair-scan`）+ `rd_loop.py` 编排；输入 `features_labeled.parquet`。
+2. **binding 窗宽**（`lookback_breakout` 等）：`box_pos_60/120/240` 等同 parquet 多列用 ①；改 binding 则 **N 次 `mlbot train final --prepare-only`**（各实验树）再 plateau。
+3. **禁止**：为 B/C 新写 `scripts/research/scan_<topic>.py` 重复已有 scan 内核。
+4. **例外**：`scripts/research/scan_tpc_pullback_lookback.py` — 在不重跑 N 次 prepare 时 OHLC 重算 TPC depth/macro binding；**不是** BPC 模板。
+
+---
+
 ## 操作落地（推荐 checklist）
 
-1. 任何新规则先在 label/IC 阶段生成假设（rd_loop + condition-set / feature-plateau）。
-2. 必须用 **segment_matrix + market_segment.yaml** 里定义的 canonical segments 做完整 variant-grid 事件回测（G0 基线 vs 新变体）。
-3. 在对应 `config/experiments/<date>_<topic>/DECISION.md` 里用表格呈现每个 segment 的 Total R、maxDD、CAGR、胜率、tail contrib 等。
-4. 只有同时满足“三条杠”的变体，才允许：
+1. 任何新规则先在 **Phase 1** 用 **`mlbot research scan`**（或 `rd_loop_*.yaml` 批量）生成假设；**不要**新写 `scan_*.py` 除非符合上文「例外」。
+2. **Phase 2**：在 `DECISION.md` 记录从扫描选定的 τ / lookback；再建 `config_experiments/*_strategies/` 静态树。
+3. **Phase 3**：必须用 **segment_matrix + market_segment.yaml** 里定义的 canonical segments 做完整 variant-grid 事件回测（G0 基线 vs 新变体）。
+4. 在对应 `config/experiments/<date>_<topic>/DECISION.md` 里用表格呈现每个 segment 的 Total R、maxDD、CAGR、胜率、tail contrib 等。
+5. **Phase 4**：segment 胜出者跑 trading map，核对入场语义（尤其 prefilter 周期错配）。
+6. 只有 **Phase 5** 同时满足“三条杠”的变体，才允许：
    - 写入 `config/strategies/<family>/archetypes/*.yaml`（+ live/highcap 同步）
    - 打 `locked: true` + `promote_never_disable: true`
    - 删除所有对应的 disabled 历史痕迹
-5. 原则上每个 layer 最终只保留“当前已验证最好”的那套规则，历史实验留在 `config_experiments/` 快照里即可。
-6. **Promote 后更新「平台基线」并 `git push`**（远程 drift 只读 git；**不要**上传 `train_final` parquet）。见下文 §4 与 [`docs/strategy/漂移监控_mlbot_monitor_CN.md`](../../docs/strategy/漂移监控_mlbot_monitor_CN.md) §10。
+7. 原则上每个 layer 最终只保留“当前已验证最好”的那套规则，历史实验留在 `config_experiments/` 快照里即可。
+8. **Promote 后更新「平台基线」并 `git push`**（远程 drift 只读 git；**不要**上传 `train_final` parquet）。见下文 §4 与 [`docs/strategy/漂移监控_mlbot_monitor_CN.md`](../../docs/strategy/漂移监控_mlbot_monitor_CN.md) §10。
 
 ---
 

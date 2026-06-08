@@ -12,6 +12,7 @@ decision_doc: config/experiments/20260610_tpc_macro_pullback_replace/DECISION.md
 strategy: tpc
 market_segment_path: config/market_segment.yaml
 data_path: data/parquet_data
+trading_map: true
 symbols:
   - BTCUSDT
   - ETHUSDT

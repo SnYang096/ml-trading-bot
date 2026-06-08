@@ -17,6 +17,8 @@
 
 **禁止**：在同一趟 `mlbot pipeline run` 里同时做 ①+②+③ 并 `--adopt` —— 无法归因。
 
+**Phase 1 勿重复造轮子**：box × depth × lookback 等 B/C 规则扫描一律走 **`mlbot research scan`** + [`config/experiments/` 下 `rd_loop_*.yaml`](../../config/experiments/README.md)；binding 窗宽用 **N 次 `prepare-only`** 各产 parquet。仅 TPC `scan_tpc_pullback_lookback.py` 为 OHLC 重算 binding 的**例外**（见 [`LAYER_PROMOTION_CRITERIA.md`](../../config/experiments/LAYER_PROMOTION_CRITERIA.md)）。
+
 **管线（pipeline yaml）的历史角色**：把 prefilter / gate / entry 各层脚本 **串成一条自动化 R&D 链**。  
 新 doctrine：**各层脚本仍有用，但应分层、分阶段显式调用**；bundle yaml 仅保留监控与 contract。
 

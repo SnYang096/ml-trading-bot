@@ -23,6 +23,62 @@
 
 **不在此目录：** 整棵策略变体树 → 仓库根 [`config_experiments/`](../config_experiments/)（与 `config/strategies` 对照）。
 
+## 标准 R&D 流程（新特征 / 新周期 — 必读）
+
+完整 promote 准则见 [`LAYER_PROMOTION_CRITERIA.md`](LAYER_PROMOTION_CRITERIA.md)。**核心顺序**：
+
+```text
+Phase 0  特征可算（parquet）
+    ↓
+Phase 1  IC + label scan / 历史窗宽扫描  ← 证明「有用」+ 候选 τ / lookback
+    ↓
+Phase 2  人读扫描 → DECISION 定参 → config_experiments 静态树
+    ↓
+Phase 3  segment_matrix variant-grid（因果 R）
+    ↓
+Phase 4  trading map 人审（语义对齐）
+    ↓
+Phase 5  三条杠 promote → prod YAML locked
+```
+
+| Phase | 命令 / 文件 | 说明 |
+|-------|-------------|------|
+| 0 | `train_strategy_pipeline.py --prepare-only` | `features_labeled.parquet` 含新列 |
+| 1a | **`mlbot research scan`** + **`rd_loop.py --hypothesis-yaml …/rd_loop_*.yaml`** | `feature-plateau` / `condition-set` / `pair-scan` / `gate-plateau` / `ic-decay`（**默认 Phase 1 入口**） |
+| 1b | `mlbot research ic` / `plateau` / `segment` | IC@H、lift/snotio 精标、分桶 stratify |
+| 1c | `mlbot train final --prepare-only` × N | **lookback / binding 参数**改特征计算窗宽时，各 L 各跑一份 parquet，再对每份跑 1a |
+| 1d | `scripts/research/scan_*.py` | **例外**：仅当 1a+1c 成本过高且扫的是 **OHLC 重算 binding**（如 TPC `scan_tpc_pullback_lookback.py`）；**禁止**为 B/C 规则栈新写 `scan_<strategy>_*.py` |
+| 2 | `DECISION.md` 假设表 + τ | **禁止手拍窗宽进 grid** |
+| 3 | `python -m scripts.event_backtest --variant-grid …/*_grid.yaml` | canonical 三阶段；yaml 加 `trading_map: true` 则同跑分段地图 |
+| 4 | 同上 grid 或 `*_bull_maps_grid.yaml` | **优先分段地图**（与 R 同窗）；全窗 map 仅当必须看跨段连续 K 线 |
+| 5 | [`LAYER_PROMOTION_CRITERIA.md`](LAYER_PROMOTION_CRITERIA.md) | Total R ↑、maxDD 不恶化、可解释 |
+
+**反模式（不得当 promote 依据）**：
+
+- 跳过 Phase 1 直接 `*_grid.yaml`（窗宽/阈值来自直觉）
+- **AI/人写新 `scripts/research/scan_*.py`** 代替 `mlbot research scan` + `rd_loop`（已有命令族）
+- IC/label 显著但未经 Phase 3 三阶段回测
+- 多尺度特征未对齐（例：box 突破 @120 + soft_phase @240）且无扫描文档
+
+**Phase 1 命令族（复制即用）**：
+
+```bash
+# 单条 scan（等价于 rd_loop 里一条 quick_layer_scans）
+mlbot research scan feature-plateau --strategy bpc --layer prefilter \
+  --parquet results/train_final/bpc/<run>/bpc/features_labeled.parquet \
+  --label success_no_rr_extreme \
+  --feature bpc_pullback_depth --operator '<=' \
+  --grid '0.35,0.45,0.50,0.55,0.65' \
+  --filter 'tpc_semantic_chop<=0.40' \
+  --output results/rd_loop/bpc_box_pullback/quick_scan/depth_plateau.md
+
+# 批量编排（推荐）
+PYTHONPATH=src:scripts python scripts/rd_loop.py \
+  --hypothesis-yaml config/experiments/20260611_bpc_lookback_retest_validate/rd_loop_bpc_box_pullback_phase1.yaml
+```
+
+完整子命令表：[`docs/strategy/R&D工具矩阵_CN.md`](../docs/strategy/R&D工具矩阵_CN.md) §1 · [`docs/完整命令速查表.md`](../docs/完整命令速查表.md) §research。
+
 > **跨 Layer 决策准则（2026-06 新增）**：  
 > 所有 gate / entry_filters / prefilter / regime / direction 等规则的最终 promote，必须遵守 [`LAYER_PROMOTION_CRITERIA.md`](LAYER_PROMOTION_CRITERIA.md) 里的“三条杠”：  
 > **在 canonical 三个市场阶段上，总 R 明显提升 + maxDD 不恶化 + 逻辑可解释** 才允许写入生产 YAML 并 `locked: true`。  
@@ -82,22 +138,24 @@ PYTHONPATH=src:scripts python -m scripts.event_backtest \
 | [`20260530_tpc_deep_pullback/`](20260530_tpc_deep_pullback/) | tpc | 深回撤 + 吸收（H1–H4） |
 | [`_smoke/`](_smoke/) | tpc | CI / 工具 smoke（非正式实验） |
 
-|| [`20260531_tpc_gate_validate/`](20260531_tpc_gate_validate/) | tpc | gate ablation Phase 1 |
-|| [`20260601_1124_tpc_regime_gate_extend/`](20260601_1124_tpc_regime_gate_extend/) | tpc | regime gate extend |
-|| [`20260601_1125_tpc_gate_validate/`](20260601_1125_tpc_gate_validate/) | tpc | gate G0/G1 by segment (mixed names) |
-|| [`20260601_1126_tpc_gate_monotonic_validate/`](20260601_1126_tpc_gate_monotonic_validate/) | tpc | monotonic single-sided gate label scan |
-|| [`20260601_1130_tpc_gate_final_lock/`](20260601_1130_tpc_gate_final_lock/) | tpc | gate final lock attempt (含 G10，YAML 问题中断) |
-|| [`20260601_1210_short_term_swing_wide_top100/`](20260601_1210_short_term_swing_wide_top100/) | short_term_swing | wide top100 IC + tree |
-|| [`20260601_1300_tpc_gate_canonical_g0_g1/`](20260601_1300_tpc_gate_canonical_g0_g1/) | tpc | **最终干净 G0 vs G1 判决**（仅 canonical 三阶段，按 LAYER_PROMOTION_CRITERIA.md lock） |
-|| [`20260604_tpc_entry_semantic_validate/`](20260604_tpc_entry_semantic_validate/) | tpc | **入场语义 S50(depth>0.5) + S51(EMA略下) + E1/E2/E3 + turbo** × canonical + 全窗；笔记 [`TPC语义约束与树标签对齐_CN.md`](../docs/strategy/TPC语义约束与树标签对齐_CN.md) |
-|| [**`20260610_tpc_macro_pullback_replace/`**](20260610_tpc_macro_pullback_replace/) | **tpc** | **macro_pullback_pct 替代 depth prefilter**（静态 `config_experiments/tpc_macro_replace_*`） |
-|| [**`20260611_bpc_lookback_retest_validate/`**](20260611_bpc_lookback_retest_validate/) | **bpc** | **lookback 120/240 + box-retest 反追高**（静态 `config_experiments/bpc_lb*`） |
-|| [`20260601_1322_tree_forward_rr_ic_small_pool/`](20260601_1322_tree_forward_rr_ic_small_pool/) | fast_scalp, short_term_swing | label vs forward_rr IC + small pool comparison |
+| [`20260531_tpc_gate_validate/`](20260531_tpc_gate_validate/) | tpc | gate ablation Phase 1 |
+| [`20260601_1124_tpc_regime_gate_extend/`](20260601_1124_tpc_regime_gate_extend/) | tpc | regime gate extend |
+| [`20260601_1125_tpc_gate_validate/`](20260601_1125_tpc_gate_validate/) | tpc | gate G0/G1 by segment (mixed names) |
+| [`20260601_1126_tpc_gate_monotonic_validate/`](20260601_1126_tpc_gate_monotonic_validate/) | tpc | monotonic single-sided gate label scan |
+| [`20260601_1130_tpc_gate_final_lock/`](20260601_1130_tpc_gate_final_lock/) | tpc | gate final lock attempt (含 G10，YAML 问题中断) |
+| [`20260601_1210_short_term_swing_wide_top100/`](20260601_1210_short_term_swing_wide_top100/) | short_term_swing | wide top100 IC + tree |
+| [`20260601_1300_tpc_gate_canonical_g0_g1/`](20260601_1300_tpc_gate_canonical_g0_g1/) | tpc | **最终干净 G0 vs G1 判决**（仅 canonical 三阶段，按 LAYER_PROMOTION_CRITERIA.md lock） |
+| [`20260604_tpc_entry_semantic_validate/`](20260604_tpc_entry_semantic_validate/) | tpc | **入场语义 S50(depth>0.5) + S51(EMA略下) + E1/E2/E3 + turbo** × canonical + 全窗；笔记 [`TPC语义约束与树标签对齐_CN.md`](../docs/strategy/TPC语义约束与树标签对齐_CN.md) |
+| [**`20260610_tpc_macro_pullback_replace/`**](20260610_tpc_macro_pullback_replace/) | **tpc** | macro 替代 depth；**Phase 1 扫描已完成** → Phase 3 grid |
+| [**`20260611_bpc_lookback_retest_validate/`**](20260611_bpc_lookback_retest_validate/) | **bpc** | ⚠️ Phase 3 超前；Phase 1 → `rd_loop_bpc_box_pullback_phase1.yaml`（mlbot scan） |
+| [`20260601_1322_tree_forward_rr_ic_small_pool/`](20260601_1322_tree_forward_rr_ic_small_pool/) | fast_scalp, short_term_swing | label vs forward_rr IC + small pool comparison |
 
 ## 新建实验 checklist
 
 1. `mkdir config/experiments/<YYYYMMDD>_<strategy>_<topic>/`
-2. 放入 `rd_loop_*.yaml` / `*_grid.yaml`；`variant_grid:` 用**项目根相对路径**
-3. 写 `README.md`（假设、物料、跑法、`results/`、结论 TODO）
-4. 变体策略树仍在 `config_experiments/<topic>_strategies/`
-5. 在本表追加一行索引
+2. **先** `rd_loop_*.yaml` 编排 **`mlbot research scan`**（Phase 1）；**不要**新写 `scripts/research/scan_*.py`（TPC lookback OHLC 例外见 `LAYER_PROMOTION_CRITERIA.md`）
+3. `DECISION.md` 记录 Phase 2 定参（τ、lookback、多尺度对齐说明）
+4. **再** `*_grid.yaml`（Phase 3）；`variant_grid` 用**项目根相对路径**
+5. 变体策略树：`config_experiments/<topic>_strategies/`（静态 YAML，**无** prepare 脚本除非历史例外）
+6. `run_trading_maps.sh`（Phase 4，可选）
+7. 在本表追加一行索引；README 标明当前 **Phase 0–5 进度**

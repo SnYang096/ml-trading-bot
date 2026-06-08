@@ -1,5 +1,18 @@
 # TPC macro_pullback_pct **替代** depth prefilter（2026-06-10）
 
+## R&D 阶段进度
+
+流程定义见 [`../LAYER_PROMOTION_CRITERIA.md`](../LAYER_PROMOTION_CRITERIA.md) §标准 R&D 阶段。
+
+| Phase | 状态 | 产物 |
+|-------|------|------|
+| 0 | ✅ | `tpc_macro_pullback_pct_f` + labeled parquet |
+| 1 | ✅ | label scan + OHLC → [`PHASE1_REPORT.md`](PHASE1_REPORT.md) |
+| 2 | ✅ | τ L15/S12 主候选；L20/S15 对照 |
+| 3 | 🔄 | segment grid（`trading_map: true` 同跑分段地图） |
+| 4 | ⏳ | bull 三变体对比 map：[`tpc_macro_pullback_bull_maps_grid.yaml`](tpc_macro_pullback_bull_maps_grid.yaml) |
+| 5 | ⏳ | `DECISION.md` promote（须过三条杠） |
+
 | 字段 | 值 |
 |------|-----|
 | 策略 | tpc |
@@ -22,6 +35,7 @@
 | **E0_prod** | 现网：`tpc_pullback_depth <= 0.85` |
 | **M_replace_L15_S12** | **仅** macro `any_of`：long≥0.15 / short≥0.12 |
 | **M_replace_L20_S15** | **仅** macro `any_of`：long≥0.20 / short≥0.15 |
+| **M_add_L15_S12** | **depth≤0.85 AND** macro `any_of` long≥0.15 / short≥0.12（叠加，见 add grid） |
 
 ## 跑法
 
@@ -30,22 +44,34 @@
 PYTHONPATH=. python scripts/research/scan_tpc_pullback_lookback.py \
   --out results/tpc/research/macro_pullback_scan_20260609
 
-# canonical 三阶段 × 3 变体 = 9 runs
+# canonical 三阶段 × 3 变体 = 9 runs（replace 实验，已跑完）
 PYTHONPATH=src:scripts python -m scripts.event_backtest \
   --variant-grid config/experiments/20260610_tpc_macro_pullback_replace/tpc_macro_pullback_replace_grid.yaml \
   --quiet-signal-logs
+
+# macro + depth 叠加：E0 vs M_add，3×2 = 6 runs
+PYTHONPATH=src:scripts python -m scripts.event_backtest \
+  --variant-grid config/experiments/20260610_tpc_macro_pullback_replace/tpc_macro_pullback_add_grid.yaml \
+  --quiet-signal-logs
 ```
 
-全窗 trading map（segment 胜出者，BTC/SOL）：
+**Trading map（推荐：segment grid 内嵌，不另跑全窗）**
+
+grid yaml 顶层 `trading_map: true` → 每段回测顺带出 `trading_map_tpc_event.html`（与 capital_report 同目录）。
+
+三变体 bull 对比（仅 3 runs，已够用）：
 
 ```bash
-bash config/experiments/20260610_tpc_macro_pullback_replace/run_trading_maps.sh
+PYTHONPATH=src:scripts python -m scripts.event_backtest \
+  --variant-grid config/experiments/20260610_tpc_macro_pullback_replace/tpc_macro_pullback_bull_maps_grid.yaml \
+  --quiet-signal-logs
+# 或：bash config/experiments/20260610_tpc_macro_pullback_replace/run_trading_maps.sh
 ```
 
 ## 结果
 
-- 分段：`results/tpc/experiments/macro_pullback_replace_20260610/<variant>/<segment>/`
-- 地图：`results/tpc/maps/macro_pullback_replace_20260610/`
+- 分段 R：`results/tpc/experiments/macro_pullback_*_20260610/<variant>/<segment>/capital_report.json`
+- 分段地图：同上目录下 `trading_map_tpc_event.html`（例 bull：`.../bull_2023_2024/trading_map_tpc_event.html`）
 
 ## 决策
 
