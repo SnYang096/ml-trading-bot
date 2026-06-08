@@ -316,7 +316,13 @@ Grid：`config/experiments/20260604_tpc_entry_semantic_validate/tpc_entry_semant
 
 ---
 
-## 9. 交叉引用
+## 9. 入场窗口 vs 执行层错配
+
+详见 **[B系统入场语义与执行层周期错配_CN.md](B系统入场语义与执行层周期错配_CN.md)**：`tpc_pullback_depth` 基于 `lookback_breakout=20`（≈1.7d），与 ema1200 执行（≈100d）不对齐；抓「大周期回调」应优先新增 `tpc_macro_pullback_pct` 或拉长 lookback，而非先改 timeframe。
+
+---
+
+## 10. 交叉引用
 
 - 入场漏斗与 SOL 追高诊断：对话记录 → 实验 README。  
 - Regime 监控 vs R&D：`docs/strategy/为何不做滚动调阈值_与研究节奏_CN.md`  

@@ -600,6 +600,61 @@ def compute_tpc_soft_phase_from_series(
     )
 
 
+@register_feature(
+    "compute_tpc_macro_pullback_pct_from_series",
+    category="tpc",
+    description=(
+        "TPC macro pullback as price % from N-bar swing high/low with EMA1200 regime gate"
+    ),
+    outputs=[
+        "tpc_macro_pullback_pct_long",
+        "tpc_macro_pullback_pct_short",
+    ],
+)
+def compute_tpc_macro_pullback_pct_from_series(
+    *,
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    ema_1200_position: pd.Series,
+    lookback: int = 240,
+) -> pd.DataFrame:
+    """
+    Macro pullback / relief rally as price percentage (not range position).
+
+    - long: (roll_high_N - close) / roll_high_N — bull drawdown from swing high
+    - short: (close - roll_low_N) / roll_low_N — bear relief rally from swing low
+
+    Regime gate (feature layer):
+    - ema_1200_position >= 0.10 → long only (short NaN)
+    - ema_1200_position <= -0.10 → short only (long NaN)
+    - dead zone → both NaN
+
+    Uses shift(1) on rolling extrema (causal, same as tpc_pullback_depth).
+    """
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    high = pd.to_numeric(high, errors="coerce").astype(float)
+    low = pd.to_numeric(low, errors="coerce").astype(float)
+    ema_pos = pd.to_numeric(ema_1200_position, errors="coerce").astype(float)
+
+    lb = max(int(lookback), 1)
+    roll_high = high.rolling(lb, min_periods=1).max().shift(1)
+    roll_low = low.rolling(lb, min_periods=1).min().shift(1)
+
+    long_raw = ((roll_high - close) / roll_high.replace(0, np.nan)).clip(0, 1)
+    short_raw = ((close - roll_low) / roll_low.replace(0, np.nan)).clip(0, 1)
+
+    bull = ema_pos >= 0.10
+    bear = ema_pos <= -0.10
+
+    return pd.DataFrame(
+        {
+            "tpc_macro_pullback_pct_long": long_raw.where(bull),
+            "tpc_macro_pullback_pct_short": short_raw.where(bear),
+        }
+    )
+
+
 # =============================================================================
 # 🧩 辅助特征函数
 # =============================================================================

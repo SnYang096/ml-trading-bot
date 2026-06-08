@@ -189,8 +189,13 @@ class IncrementalFeatureComputer:
                     StrategyFeatureLoader,
                 )
 
+                from src.time_series_model.live.feature_deps_path import (
+                    resolve_feature_deps_path,
+                )
+
+                _deps_path = resolve_feature_deps_path(archetypes_dir)
                 self._feature_loader = StrategyFeatureLoader(
-                    feature_deps_path="config/feature_dependencies.yaml",
+                    feature_deps_path=_deps_path,
                     strategy_config_path=None,
                     cache_dir=None,
                     use_disk_cache=False,
@@ -1758,6 +1763,13 @@ class IncrementalFeatureComputer:
 
     # 关键特征前缀 — 这些特征缺失通常意味着上游数据链路断裂
     _CRITICAL_PREFIXES = ("atr", "oi_", "funding_oi_")
+    # Side-gated features intentionally NaN on the inactive regime leg (see tpc_macro_pullback_pct_f).
+    _HIGH_NAN_OK_COLUMNS = frozenset(
+        {
+            "tpc_macro_pullback_pct_long",
+            "tpc_macro_pullback_pct_short",
+        }
+    )
 
     @staticmethod
     def _is_critical(name: str) -> bool:
@@ -1926,7 +1938,11 @@ class IncrementalFeatureComputer:
 
         # High NaN-rate columns (>50% NaN across all rows)
         nan_rates = features_df.isna().mean()
-        high_nan_cols = sorted(nan_rates[nan_rates > 0.5].index.tolist())
+        high_nan_cols = sorted(
+            c
+            for c in nan_rates[nan_rates > 0.5].index.tolist()
+            if c not in self._HIGH_NAN_OK_COLUMNS
+        )
 
         # Critical features missing in last row
         critical_nan = [c for c in nan_cols if self._is_critical(c)]

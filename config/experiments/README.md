@@ -90,6 +90,7 @@ PYTHONPATH=src:scripts python -m scripts.event_backtest \
 || [`20260601_1210_short_term_swing_wide_top100/`](20260601_1210_short_term_swing_wide_top100/) | short_term_swing | wide top100 IC + tree |
 || [`20260601_1300_tpc_gate_canonical_g0_g1/`](20260601_1300_tpc_gate_canonical_g0_g1/) | tpc | **最终干净 G0 vs G1 判决**（仅 canonical 三阶段，按 LAYER_PROMOTION_CRITERIA.md lock） |
 || [`20260604_tpc_entry_semantic_validate/`](20260604_tpc_entry_semantic_validate/) | tpc | **入场语义 S50(depth>0.5) + S51(EMA略下) + E1/E2/E3 + turbo** × canonical + 全窗；笔记 [`TPC语义约束与树标签对齐_CN.md`](../docs/strategy/TPC语义约束与树标签对齐_CN.md) |
+|| [**`20260610_tpc_macro_pullback_replace/`**](20260610_tpc_macro_pullback_replace/) | **tpc** | **macro_pullback_pct 替代 depth prefilter**（静态 `config_experiments/tpc_macro_replace_*`） |
 || [`20260601_1322_tree_forward_rr_ic_small_pool/`](20260601_1322_tree_forward_rr_ic_small_pool/) | fast_scalp, short_term_swing | label vs forward_rr IC + small pool comparison |
 
 ## 新建实验 checklist

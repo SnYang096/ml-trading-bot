@@ -391,6 +391,14 @@ class PrefilterConfig:
 
     rules: List[Dict[str, Any]] = field(default_factory=list)
 
+    @staticmethod
+    def _is_nan(val: Any) -> bool:
+        try:
+            fv = float(val)
+        except (TypeError, ValueError):
+            return True
+        return fv != fv
+
     @classmethod
     def from_yaml(cls, path: Path) -> "PrefilterConfig":
         if not path.exists():
@@ -420,9 +428,13 @@ class PrefilterConfig:
                     if isinstance(sub, dict)
                     and sub.get("feature") in features
                     and features.get(sub.get("feature")) is not None
+                    and not PrefilterConfig._is_nan(features.get(sub.get("feature")))
                 ]
                 if not available_sub_rules:
-                    continue
+                    return (
+                        False,
+                        "prefilter_any_of_fail: all sub-rules unavailable (missing or nan)",
+                    )
                 any_pass = False
                 for sub in available_sub_rules:
                     if self._check_single(sub, features):
@@ -490,7 +502,13 @@ class PrefilterConfig:
                 len(features),
             )
             return False  # 特征缺失 → prefilter 不通过 (保守: 不交易)
-        return bool(op_func(float(fv), float(val)))
+        try:
+            fv_f = float(fv)
+        except (TypeError, ValueError):
+            return False
+        if fv_f != fv_f:  # NaN — side-gated / unavailable leg
+            return False
+        return bool(op_func(fv_f, float(val)))
 
 
 # =============================================================================

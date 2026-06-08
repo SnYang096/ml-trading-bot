@@ -23,6 +23,7 @@ feature_pipeline:
   requested_features:
     - market_cap_normalized_orderflow_f
     - tpc_soft_phase_f
+    - tpc_macro_pullback_pct_f
     - bpc_pullback_depth_pct_f
     - bpc_pullback_duration_f
     - bpc_pullback_speed_f

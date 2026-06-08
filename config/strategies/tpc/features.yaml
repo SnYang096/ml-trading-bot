@@ -14,6 +14,7 @@ feature_pipeline:
 
     # ========== TPC 核心：软阶段分数（无突破门控） ==========
     - tpc_soft_phase_f  # 输出: tpc_score_breakout/pullback/continuation/neutral
+    - tpc_macro_pullback_pct_f  # 输出: tpc_macro_pullback_pct_long/short
 
     # ========== BPC 结构特征（不依赖突破，可复用） ==========
     - bpc_pullback_depth_pct_f

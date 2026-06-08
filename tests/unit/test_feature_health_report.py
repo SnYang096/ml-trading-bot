@@ -161,6 +161,18 @@ class TestReportFeatureHealthDf:
 
         assert "oi_zscore" in report["high_nan_cols"]
 
+    def test_side_gated_macro_columns_not_flagged(self):
+        """Regime-gated macro legs may be >50% NaN by design."""
+        ifc = _make_ifc(["tpc_macro_pullback_pct_long"])
+        df = pd.DataFrame(
+            {
+                "close": [100.0, 101.0, 102.0, 103.0],
+                "tpc_macro_pullback_pct_long": [np.nan, np.nan, np.nan, 0.2],
+            }
+        )
+        report = ifc.report_feature_health_df(df, symbol="BTCUSDT", timeframe="120T")
+        assert "tpc_macro_pullback_pct_long" not in report["high_nan_cols"]
+
     def test_empty_df(self):
         """Empty DataFrame returns 'empty' report."""
         ifc = _make_ifc(["close"])
