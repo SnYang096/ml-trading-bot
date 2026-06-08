@@ -42,8 +42,14 @@ class _FakeState:
 
 
 class _FakeEngine:
-    def __init__(self, active: bool) -> None:
+    def __init__(self, active: bool, holds: bool | None = None) -> None:
         self.state = _FakeState(active)
+        self._holds = holds
+
+    def holds_real_grid_slot(self) -> bool:
+        if self._holds is None:
+            return self.state.active
+        return self._holds
 
 
 def test_chop_grid_concurrency_gate_blocks_fourth_symbol() -> None:
@@ -53,6 +59,29 @@ def test_chop_grid_concurrency_gate_blocks_fourth_symbol() -> None:
     gate.register("BNBUSDT", _FakeEngine(False))
     assert gate.allow_new_segment("BNBUSDT") is False
     assert gate.allow_new_segment("BTCUSDT") is True
+
+
+def test_ghost_active_engine_does_not_occupy_a_slot() -> None:
+    """An active-but-empty (ghost) segment must not block a new symbol."""
+    gate = ChopGridConcurrencyGate(3)
+    gate.register("BTCUSDT", _FakeEngine(True, holds=True))
+    gate.register("SOLUSDT", _FakeEngine(True, holds=True))
+    # active=True but nothing real -> ghost, should not count toward the cap.
+    gate.register("XRPUSDT", _FakeEngine(True, holds=False))
+    gate.register("ETHUSDT", _FakeEngine(False))
+
+    assert gate.allow_new_segment("ETHUSDT") is True
+
+
+def test_gate_falls_back_to_state_active_without_holds_hook() -> None:
+    class _Bare:
+        def __init__(self, active: bool) -> None:
+            self.state = _FakeState(active)
+
+    gate = ChopGridConcurrencyGate(1)
+    gate.register("BTCUSDT", _Bare(True))
+    gate.register("ETHUSDT", _Bare(False))
+    assert gate.allow_new_segment("ETHUSDT") is False
 
 
 def test_gate_blocks_second_real_engine_on_bar(tmp_path: Path) -> None:

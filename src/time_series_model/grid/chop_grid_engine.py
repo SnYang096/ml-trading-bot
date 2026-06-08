@@ -19,6 +19,10 @@ class GridEngineConfig:
     grid_atr_mult: float = 0.50
     grid_min_pct: float = 0.004
     max_levels_per_side: int = 3
+    # Take-profit distance = spacing * tp_spacing_mult. 1.0 keeps the legacy
+    # "TP at one grid step" behavior; >1.0 decouples exit target from entry
+    # density (wider TP while keeping the grid layout tight).
+    tp_spacing_mult: float = 1.0
     fee_bps: float = 4.0
     maker_fee_bps: float | None = None
     taker_fee_bps: float | None = None
@@ -147,6 +151,7 @@ class ChopGridEngine:
             return GridSegmentResult(
                 [], {"status": "invalid", "segment_id": segment_id}, []
             )
+        tp_distance = spacing * float(self.cfg.tp_spacing_mult or 1.0)
 
         maker_fee_bps = (
             float(self.cfg.maker_fee_bps)
@@ -250,7 +255,7 @@ class ChopGridEngine:
 
             # Target exits before new fills; optionally disallow same-bar entry+exit.
             for level_i, (entry, entry_ts, fill_bar) in list(open_longs.items()):
-                target = entry + spacing
+                target = entry + tp_distance
                 can_exit = self.cfg.same_bar_entry_exit or bar_i > fill_bar
                 if can_exit and high >= target:
                     lvl = level_i + 1
@@ -268,7 +273,7 @@ class ChopGridEngine:
                     completed_long[level_i] = completed_long.get(level_i, 0) + 1
                     del open_longs[level_i]
             for level_i, (entry, entry_ts, fill_bar) in list(open_shorts.items()):
-                target = entry - spacing
+                target = entry - tp_distance
                 can_exit = self.cfg.same_bar_entry_exit or bar_i > fill_bar
                 if can_exit and low <= target:
                     lvl = level_i + 1

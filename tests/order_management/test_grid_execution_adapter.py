@@ -177,6 +177,29 @@ def test_market_exit_uses_reduce_only_opposite_side() -> None:
     assert (result.raw or {}).get("local_order_id") == "exit_l1"
 
 
+def test_market_exit_skips_reduce_only_rejected_without_crash() -> None:
+    api = _api()
+    api.place_order.side_effect = Exception(
+        'binance {"code":-2022,"msg":"ReduceOnly Order is rejected."}'
+    )
+    adapter = GridExecutionAdapter(api)
+
+    result = adapter.execute_action(
+        {
+            "action": "market_exit",
+            "symbol": "XRPUSDT",
+            "side": "LONG",
+            "quantity": 70.0,
+            "order_id": "XRPUSDT_exit_L1",
+        }
+    )
+
+    assert result.status == "skipped_no_position"
+    assert result.symbol == "XRPUSDT"
+    assert "-2022" in (result.raw or {}).get("error", "")
+    assert (result.raw or {}).get("local_order_id") == "XRPUSDT_exit_L1"
+
+
 def test_place_stop_loss_protection_uses_explicit_position_side() -> None:
     api = _api()
     adapter = MultiLegExecutionAdapter(api)

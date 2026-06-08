@@ -131,6 +131,77 @@ def test_chop_grid_execution_report_moves_filled_order_to_inventory(
     assert tp_action["price"] == tp_action["trigger_price"]
 
 
+def _config_with_tp_mult(tmp_path: Path, mult: float) -> Path:
+    path = tmp_path / "grid_tpmult.yaml"
+    path.write_text(
+        f"""
+regime:
+  entry_chop_min: 0.40
+  exit_chop_below: 0.25
+inventory:
+  spacing:
+    atr_mult: 0.50
+    min_pct: 0.004
+  max_levels_per_side: 1
+risk:
+  fee_bps: 4.0
+  max_loss_per_grid: 0.03
+  max_open_levels_total: 2
+  tp_spacing_mult: {mult}
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_tp_spacing_mult_default_is_one_grid_step(tmp_path: Path) -> None:
+    engine = ChopGridLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        level_notional=100.0,
+    )
+    engine.state.spacing = 2.0
+    pos = GridPosition(
+        symbol="BTCUSDT",
+        side="LONG",
+        level=1,
+        entry_price=100.0,
+        quantity=1.0,
+        entry_time="2026-01-01T00:00:00Z",
+    )
+    # default mult = 1.0 -> TP one spacing away
+    assert engine._tp_price_for_position(pos) == 100.0 + 2.0
+
+
+def test_tp_spacing_mult_widens_take_profit(tmp_path: Path) -> None:
+    engine = ChopGridLiveEngine(
+        config_path=_config_with_tp_mult(tmp_path, 3.0),
+        state_path=tmp_path / "state.json",
+        level_notional=100.0,
+    )
+    assert engine.cfg.tp_spacing_mult == 3.0
+    engine.state.spacing = 2.0
+    long_pos = GridPosition(
+        symbol="BTCUSDT",
+        side="LONG",
+        level=1,
+        entry_price=100.0,
+        quantity=1.0,
+        entry_time="2026-01-01T00:00:00Z",
+    )
+    short_pos = GridPosition(
+        symbol="BTCUSDT",
+        side="SHORT",
+        level=1,
+        entry_price=100.0,
+        quantity=1.0,
+        entry_time="2026-01-01T00:00:00Z",
+    )
+    # mult = 3.0 -> TP three spacings away (entry density unchanged)
+    assert engine._tp_price_for_position(long_pos) == 100.0 + 3 * 2.0
+    assert engine._tp_price_for_position(short_pos) == 100.0 - 3 * 2.0
+
+
 def test_chop_grid_order_snapshots_include_protection_ids(tmp_path: Path) -> None:
     engine = ChopGridLiveEngine(
         config_path=_config(tmp_path),
@@ -187,6 +258,66 @@ def test_chop_grid_keeps_local_only_missing_pending_orders(tmp_path: Path) -> No
 
     after_ids = [o.order_id for o in engine.state.pending_orders]
     assert before_ids == after_ids
+
+
+def test_chop_grid_prunes_stale_local_only_pending_after_ttl(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("MLBOT_CHOP_GRID_GHOST_PENDING_TTL_S", "1800")
+    engine = ChopGridLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        level_notional=100.0,
+    )
+    engine.on_bar(
+        symbol="BTCUSDT",
+        timestamp="2026-01-01T00:00:00Z",
+        high=100.0,
+        low=100.0,
+        close=100.0,
+        atr=2.0,
+        features={"semantic_chop": 0.8, "box_prefilter": False},
+    )
+    stale_snapshot = engine.local_order_snapshots()[0]
+    stale_id = stale_snapshot.order_id
+    # Advance the engine clock past the TTL; order never received an exchange id.
+    engine.state.last_timestamp = "2026-01-01T01:00:00Z"
+
+    engine.on_reconciliation_report(
+        ReconciliationReport(missing_exchange_orders=[stale_snapshot])
+    )
+
+    assert all(o.order_id != stale_id for o in engine.state.pending_orders)
+
+
+def test_chop_grid_keeps_local_only_pending_within_ttl(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("MLBOT_CHOP_GRID_GHOST_PENDING_TTL_S", "1800")
+    engine = ChopGridLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        level_notional=100.0,
+    )
+    engine.on_bar(
+        symbol="BTCUSDT",
+        timestamp="2026-01-01T00:00:00Z",
+        high=100.0,
+        low=100.0,
+        close=100.0,
+        atr=2.0,
+        features={"semantic_chop": 0.8, "box_prefilter": False},
+    )
+    snapshot = engine.local_order_snapshots()[0]
+    keep_id = snapshot.order_id
+    # Only 5 minutes elapsed -> below TTL, must be kept.
+    engine.state.last_timestamp = "2026-01-01T00:05:00Z"
+
+    engine.on_reconciliation_report(
+        ReconciliationReport(missing_exchange_orders=[snapshot])
+    )
+
+    assert any(o.order_id == keep_id for o in engine.state.pending_orders)
 
 
 def test_chop_grid_prunes_mapped_missing_pending_orders(tmp_path: Path) -> None:

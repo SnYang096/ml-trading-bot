@@ -659,6 +659,33 @@ class MultiLegExecutionAdapter:
                 client_order_id=client_order_id,
             )
         except Exception as exc:
+            if _is_reduce_only_rejected_error(exc):
+                # -2022: exchange has no (remaining) position to reduce. The local
+                # inventory is stale; treat as already-flat instead of crashing the
+                # whole multi-leg daemon (mirrors _place_protection handling).
+                logger.warning(
+                    "multi-leg market_exit skipped (no exchange position to reduce): "
+                    "strategy=%s symbol=%s qty=%s local_order_id=%s error=%s",
+                    self.strategy_name,
+                    symbol,
+                    quantity,
+                    str(action.get("order_id") or ""),
+                    exc,
+                )
+                result = MultiLegExecutionResult(
+                    action="market_exit",
+                    status="skipped_no_position",
+                    symbol=symbol,
+                    client_order_id=client_order_id,
+                    reason=str(exc),
+                    raw={
+                        **dict(action),
+                        "local_order_id": action.get("order_id"),
+                        "error": str(exc),
+                    },
+                )
+                self._persist_order_result(action, result, purpose="market_exit")
+                return result
             if _is_invalid_order_size_error(exc):
                 reject = str(exc)
                 logger.warning(

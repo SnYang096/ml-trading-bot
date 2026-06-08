@@ -430,6 +430,7 @@ def run_backtest(
         grid_atr_mult=args.grid_atr_mult,
         grid_min_pct=args.grid_pct,
         max_levels_per_side=args.max_levels,
+        tp_spacing_mult=getattr(args, "tp_spacing_mult", 1.0),
         fee_bps=args.fee_bps + args.slippage_bps,
         maker_fee_bps=args.maker_fee_bps,
         taker_fee_bps=args.taker_fee_bps,
@@ -883,6 +884,7 @@ def write_report(
     Entry: {args.chop_signal} chop at or above {args.chop_min}; hold until chop drops below {args.exit_chop_min}.
     (raw = semantic_chop; ts_quantile = rolling pct rank, window {args.chop_ts_window}.)
     Grid spacing: max({args.grid_atr_mult} ATR, {args.grid_pct:.2%}); levels per side: {args.max_levels};
+    TP distance = spacing x {args.tp_spacing_mult};
     fee: {args.fee_bps} bps; slippage sensitivity: {args.slippage_bps} bps. Exclude box: {args.exclude_box}.
     Realistic costs: maker={args.maker_fee_bps} bps, taker={args.taker_fee_bps} bps,
     forced-exit slippage={args.forced_exit_slippage_bps} bps,
@@ -1122,6 +1124,15 @@ def main() -> None:
         "--grid-pct", type=float, default=defaults.get("grid_pct", 0.004)
     )
     parser.add_argument("--max-levels", type=int, default=defaults.get("max_levels", 3))
+    parser.add_argument(
+        "--tp-spacing-mult",
+        type=float,
+        default=float(defaults.get("tp_spacing_mult", 1.0)),
+        help=(
+            "Take-profit distance = grid spacing * this multiplier. 1.0 = legacy "
+            "(TP at one grid step); >1.0 widens the TP while keeping entry density."
+        ),
+    )
     parser.add_argument(
         "--max-replenish-per-level",
         default=defaults.get("max_replenish_per_level"),

@@ -694,6 +694,13 @@ class PositionTracker:
                     else:
                         time.sleep(0.25)
                     continue
+                # -4509: closePosition STOP requires an open position. If the
+                # exchange is actually flat on this side, the local position is a
+                # ghost; clear it so we stop retrying (and log spamming) forever.
+                if "-4509" in str(exc) and self._reconcile_local_position_if_exchange_flat(
+                    pid, position_side
+                ):
+                    return
                 self._log_exchange_sl_failure(new_sl, last_exc, log_key=_4130_log_key)
                 return
         if new_order is None:
@@ -720,6 +727,42 @@ class PositionTracker:
         pos["_exchange_sl_price"] = new_sl
         self._persist_position_record(pid, pos)
         self._persist_state()
+
+    def _reconcile_local_position_if_exchange_flat(
+        self, pid: str, position_side: str
+    ) -> bool:
+        """Return True iff the exchange has no position on ``position_side`` and the
+        local ghost position was dropped via :meth:`close_from_exchange`.
+
+        Only clears when the exchange read succeeds and confirms flatness; any read
+        error keeps the local position so the next cycle retries (fail-safe)."""
+        api = getattr(self.order_manager, "binance_api", None)
+        if api is None:
+            return False
+        try:
+            exchange_positions = api.get_positions(self.symbol) or []
+        except Exception:
+            logger.warning(
+                "[%s] -4509 reconcile: 查询交易所仓位失败，保留本地仓位待下次重试",
+                self.symbol,
+                exc_info=True,
+            )
+            return False
+        want = str(position_side or "").upper()
+        for ep in exchange_positions:
+            if abs(float(ep.get("size") or 0.0)) <= 0:
+                continue
+            ep_side = str(ep.get("side") or "").upper()
+            if not want or ep_side == want:
+                # Real live position on this side -> -4509 is not a ghost; keep it.
+                return False
+        logger.warning(
+            "[%s] -4509: 交易所该方向无持仓，判定本地为幽灵仓，自动同步关闭 pid=%s side=%s",
+            self.symbol,
+            pid,
+            position_side,
+        )
+        return self.close_from_exchange(pid, reason="exchange_flat_minus_4509")
 
     def _storage(self) -> Any:
         if self.order_manager is None:

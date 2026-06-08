@@ -389,6 +389,52 @@ class TestSyncExchangeSL:
         assert n == 1
         om.place_order.assert_called_once()
 
+    def test_sync_exchange_sl_4509_clears_ghost_when_exchange_flat(self):
+        """-4509 + exchange flat on this side -> drop the local ghost position."""
+        om = _make_om()
+        om.place_order.side_effect = Exception(
+            'binance {"code":-4509,"msg":"Time in Force (TIF) GTE can only be '
+            'used with open positions."}'
+        )
+        om.binance_api.get_positions.return_value = []  # exchange truly flat
+        tracker = _make_tracker(om)
+        tracker.add("pid1", _make_pos(stop_loss_r=3.0))
+
+        tracker.sync_exchange_sl("pid1")
+
+        assert "pid1" not in tracker.all_positions()
+
+    def test_sync_exchange_sl_4509_keeps_position_when_still_live(self):
+        """-4509 but exchange still shows a same-side position -> keep local state."""
+        om = _make_om()
+        om.place_order.side_effect = Exception(
+            'binance {"code":-4509,"msg":"Time in Force (TIF) GTE can only be '
+            'used with open positions."}'
+        )
+        om.binance_api.get_positions.return_value = [
+            {"symbol": "BTCUSDT", "side": "long", "size": 0.5}
+        ]
+        tracker = _make_tracker(om)
+        tracker.add("pid1", _make_pos(stop_loss_r=3.0))
+
+        tracker.sync_exchange_sl("pid1")
+
+        assert "pid1" in tracker.all_positions()
+
+    def test_sync_exchange_sl_4509_keeps_position_when_exchange_read_fails(self):
+        """Fail-safe: if exchange read errors, never drop the local position."""
+        om = _make_om()
+        om.place_order.side_effect = Exception(
+            'binance {"code":-4509,"msg":"... open positions."}'
+        )
+        om.binance_api.get_positions.side_effect = Exception("network down")
+        tracker = _make_tracker(om)
+        tracker.add("pid1", _make_pos(stop_loss_r=3.0))
+
+        tracker.sync_exchange_sl("pid1")
+
+        assert "pid1" in tracker.all_positions()
+
     def test_sync_exchange_sl_skips_add_inheriting_parent_stop(self):
         om = _make_om()
         tracker = _make_tracker(om)

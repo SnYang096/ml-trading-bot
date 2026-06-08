@@ -22,11 +22,30 @@ class ChopGridConcurrencyGate:
         engine._concurrency_gate = self  # noqa: SLF001 — live engine hook
         self._engines.append((sym, engine))
 
+    @staticmethod
+    def _engine_holds_slot(engine: Any) -> bool:
+        """Count a symbol against the cap only if it really occupies a slot.
+
+        Ghost-active engines (active=True but no pending/inventory/exchange
+        activity) are excluded so they cannot permanently block other symbols.
+        """
+        holds = getattr(engine, "holds_real_grid_slot", None)
+        if callable(holds):
+            try:
+                return bool(holds())
+            except Exception:  # pragma: no cover - defensive
+                logger.warning(
+                    "chop_grid concurrency: holds_real_grid_slot raised; "
+                    "falling back to state.active",
+                    exc_info=True,
+                )
+        state = getattr(engine, "state", None)
+        return state is not None and bool(getattr(state, "active", False))
+
     def _active_symbols(self) -> set[str]:
         out: set[str] = set()
         for sym, engine in self._engines:
-            state = getattr(engine, "state", None)
-            if state is not None and bool(getattr(state, "active", False)):
+            if self._engine_holds_slot(engine):
                 out.add(sym)
         return out
 

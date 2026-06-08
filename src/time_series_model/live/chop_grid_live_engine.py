@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
@@ -173,6 +175,9 @@ def _load_grid_config(path: str | Path) -> GridEngineConfig:
         grid_atr_mult=float(spacing.get("atr_mult", 0.50)),
         grid_min_pct=float(spacing.get("min_pct", 0.004)),
         max_levels_per_side=int(inv.get("max_levels_per_side", 3)),
+        tp_spacing_mult=float(
+            risk.get("tp_spacing_mult", inv.get("tp_spacing_mult", 1.0))
+        ),
         fee_bps=float(expected_costs.get("fee_bps", risk.get("fee_bps", 4.0))),
         maker_fee_bps=float(
             expected_costs.get(
@@ -344,6 +349,22 @@ class ChopGridLiveEngine:
             for p in self.state.inventory
         ]
 
+    def holds_real_grid_slot(self) -> bool:
+        """True iff this engine's active segment really occupies a concurrency slot.
+
+        An ``active`` segment carrying no pending orders, no inventory and no live
+        exchange activity is a ghost (it gets stale-reset on the next bar), so it
+        must not count toward ``max_concurrent_grid_symbols`` and block other
+        symbols from starting. Mirrors the stale-active reset predicate in ``step``.
+        """
+        if not bool(getattr(self.state, "active", False)):
+            return False
+        return bool(
+            self.state.pending_orders
+            or self.state.inventory
+            or self._live_exchange_has_activity
+        )
+
     def on_execution_results(self, results: Iterable[GridExecutionResult]) -> None:
         """Persist exchange/client ids returned by the execution adapter."""
         for result in results:
@@ -375,6 +396,41 @@ class ChopGridLiveEngine:
         ]
         self.save_state()
 
+    @staticmethod
+    def _ghost_pending_ttl_seconds() -> float:
+        """TTL after which a local-only pending order that never received an
+        exchange/client id is treated as a ghost and pruned. ``<= 0`` disables."""
+        raw = os.getenv("MLBOT_CHOP_GRID_GHOST_PENDING_TTL_S", "1800").strip()
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return 1800.0
+
+    @staticmethod
+    def _parse_ts(value: Any) -> Optional[datetime]:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            return datetime.fromisoformat(text)
+        except ValueError:
+            return None
+
+    def _order_age_seconds(
+        self, order: Optional[GridOrder], now_value: Any
+    ) -> Optional[float]:
+        if order is None:
+            return None
+        created = self._parse_ts(order.created_at)
+        now = self._parse_ts(now_value)
+        if created is None or now is None:
+            return None
+        # created/now share the engine's bar-timestamp source; if one is tz-aware
+        # and the other naive, fromisoformat would mismatch -> guard the subtraction.
+        if (created.tzinfo is None) != (now.tzinfo is None):
+            return None
+        return (now - created).total_seconds()
+
     def on_reconciliation_report(self, report: ReconciliationReport) -> None:
         missing_ids = {str(o.order_id) for o in report.missing_exchange_orders}
         if missing_ids:
@@ -384,13 +440,37 @@ class ChopGridLiveEngine:
                 if str(o.order_id) in missing_ids
                 and bool(o.exchange_order_id or o.client_order_id)
             }
-            skipped_ids = sorted(missing_ids - prunable_ids)
-            if skipped_ids:
+            ttl = self._ghost_pending_ttl_seconds()
+            now_value = self.state.last_timestamp
+            kept_ids: List[str] = []
+            expired_local_only: List[str] = []
+            for oid in sorted(missing_ids - prunable_ids):
+                age = self._order_age_seconds(self._find_order(local_id=oid), now_value)
+                if ttl > 0 and age is not None and age >= ttl:
+                    expired_local_only.append(oid)
+                else:
+                    kept_ids.append(oid)
+            if expired_local_only:
+                expired_set = set(expired_local_only)
+                before = len(self.state.pending_orders)
+                self.state.pending_orders = [
+                    o
+                    for o in self.state.pending_orders
+                    if str(o.order_id) not in expired_set
+                ]
+                logger.warning(
+                    "chop_grid: pruned %d stale local-only pending order(s) "
+                    "(never mapped to exchange within %.0fs): %s",
+                    before - len(self.state.pending_orders),
+                    ttl,
+                    expired_local_only[:12],
+                )
+            if kept_ids:
                 logger.info(
                     "chop_grid: keep %d local-only missing order(s) pending "
                     "(no exchange/client id): %s",
-                    len(skipped_ids),
-                    skipped_ids[:12],
+                    len(kept_ids),
+                    kept_ids[:12],
                 )
             if prunable_ids:
                 before = len(self.state.pending_orders)
@@ -826,12 +906,19 @@ class ChopGridLiveEngine:
         cid = str(order.get("client_order_id") or info.get("clientOrderId") or "")
         return cid.startswith("cg_")
 
+    def _tp_distance(self) -> float:
+        """Take-profit distance = grid spacing * tp_spacing_mult (decoupled exit)."""
+        return self.state.spacing * float(
+            getattr(self.cfg, "tp_spacing_mult", 1.0) or 1.0
+        )
+
     def _tp_price_for_position(self, pos: GridPosition) -> Optional[float]:
         if self.state.spacing <= 0:
             return None
+        tp_distance = self._tp_distance()
         if pos.side == "LONG":
-            return pos.entry_price + self.state.spacing
-        return pos.entry_price - self.state.spacing
+            return pos.entry_price + tp_distance
+        return pos.entry_price - tp_distance
 
     def on_bar(
         self,
@@ -1015,15 +1102,16 @@ class ChopGridLiveEngine:
         actions: List[Dict[str, Any]] = []
         remaining: List[GridPosition] = []
         fee = self._maker_fee_bps() / 10000.0
+        tp_distance = self._tp_distance()
         for pos in self.state.inventory:
             if pos.side == "LONG":
-                target = pos.entry_price + self.state.spacing
+                target = pos.entry_price + tp_distance
                 hit = high >= target
                 pnl = (
                     target - pos.entry_price
                 ) * pos.quantity - 2.0 * fee * pos.entry_price * pos.quantity
             else:
-                target = pos.entry_price - self.state.spacing
+                target = pos.entry_price - tp_distance
                 hit = low <= target
                 pnl = (
                     pos.entry_price - target
@@ -1269,13 +1357,14 @@ class ChopGridLiveEngine:
 
         if self.state.spacing <= 0:
             return []
+        tp_distance = self._tp_distance()
         if pos.side == "LONG":
-            tp = pos.entry_price + self.state.spacing
+            tp = pos.entry_price + tp_distance
             sl = pos.entry_price - self.state.spacing * (
                 self.cfg.max_levels_per_side + 1
             )
         else:
-            tp = pos.entry_price - self.state.spacing
+            tp = pos.entry_price - tp_distance
             sl = pos.entry_price + self.state.spacing * (
                 self.cfg.max_levels_per_side + 1
             )
