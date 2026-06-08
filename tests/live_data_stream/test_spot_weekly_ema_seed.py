@@ -45,6 +45,21 @@ def test_parse_kline_zip_bytes() -> None:
     assert float(df["close"].iloc[-1]) == 110.0
 
 
+def test_parse_kline_zip_bytes_microsecond_open_time() -> None:
+    """Vision spot 1d switched to 16-digit microsecond open_time from 2025."""
+    t0 = int(pd.Timestamp("2025-01-01", tz="UTC").timestamp() * 1_000_000)
+    raw = _make_kline_zip(
+        [
+            [t0, 100, 110, 90, 105, 1000, 0, 0, 0, 0, 0, 0],
+            [t0 + 86_400_000_000, 105, 115, 95, 110, 1100, 0, 0, 0, 0, 0, 0],
+        ]
+    )
+    df = _parse_kline_zip_bytes(raw)
+    assert len(df) == 2
+    assert df.index[0] == pd.Timestamp("2025-01-01", tz="UTC")
+    assert float(df["close"].iloc[-1]) == 110.0
+
+
 def test_insufficient_live_history_returns_nan_not_zero() -> None:
     # ~180 calendar days of 2h bars — far below 40 weekly bars for span=200.
     idx = pd.date_range("2025-01-01", periods=180 * 12, freq="2h", tz="UTC")
