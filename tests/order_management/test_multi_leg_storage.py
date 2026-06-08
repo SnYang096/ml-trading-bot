@@ -222,3 +222,41 @@ def test_close_absent_positions_marks_stale_open_rows_closed(tmp_path) -> None:
         assert rows == {"active_leg": "open", "stale_leg": "closed"}
     finally:
         conn.close()
+
+
+def test_lookup_order_purpose_by_exchange_and_client_id(tmp_path) -> None:
+    db_path = tmp_path / "multi_leg.db"
+    storage = MultiLegStorage(str(db_path))
+    run_id = storage.create_run(
+        mode="testnet",
+        strategies=["chop_grid"],
+        symbols=["SOLUSDT"],
+        account_label="multi_leg_testnet",
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": "SOLUSDT_grid_L1_sl",
+            "leg_id": "SOLUSDT_grid_L1",
+            "symbol": "SOLUSDT",
+            "side": "LONG",
+            "position_side": "LONG",
+            "order_type": "stop_market",
+            "purpose": "stop_loss",
+            "quantity": 1.13,
+            "client_order_id": "cg_de1f197df8e3",
+            "exchange_order_id": "2000001079676592",
+            "status": "filled",
+        }
+    )
+
+    assert (
+        storage.lookup_order_purpose(exchange_order_id="2000001079676592")
+        == "stop_loss"
+    )
+    assert (
+        storage.lookup_order_purpose(client_order_id="cg_de1f197df8e3") == "stop_loss"
+    )
+    assert storage.lookup_order_purpose(leg_id="SOLUSDT_grid_L1_sl") == "stop_loss"
+    assert storage.lookup_order_purpose(exchange_order_id="missing") is None

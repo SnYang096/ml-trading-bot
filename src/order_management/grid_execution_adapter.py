@@ -53,8 +53,14 @@ def _exchange_place_reject_reason(
     quantity: float,
     *,
     price: Optional[float] = None,
+    skip_min_notional: bool = False,
 ) -> str:
-    """Return a rejection reason when qty/notional is below exchange limits, else ''."""
+    """Return a rejection reason when qty/notional is below exchange limits, else ''.
+
+    ``skip_min_notional`` exempts the min-notional filter (reduce-only market
+    exits are accepted by the exchange even below it) while still enforcing the
+    hard min-quantity (LOT_SIZE) filter that no order can bypass.
+    """
     getter = getattr(api, "get_symbol_info", None)
     if not callable(getter):
         return ""
@@ -80,6 +86,8 @@ def _exchange_place_reject_reason(
                 f"exchange_min_qty: quantity {float(quantity):.8f} < "
                 f"min {min_qty:.8f} for {symbol}"
             )
+    if skip_min_notional:
+        return ""
     cost_limits = limits.get("cost") or {}
     min_cost = cost_limits.get("min")
     if min_cost is not None and price is not None and float(price) > 0:
@@ -628,8 +636,11 @@ class MultiLegExecutionAdapter:
             if candidate > 0:
                 mark = candidate
                 break
+        # Reduce-only market exits may close below min notional; the exchange
+        # accepts them even when resting TP/SL would be rejected. Still enforce
+        # the hard min-quantity (LOT_SIZE) filter to avoid an exchange exception.
         reject = _exchange_place_reject_reason(
-            self.binance_api, symbol, quantity, price=mark
+            self.binance_api, symbol, quantity, price=mark, skip_min_notional=True
         )
         if reject:
             logger.warning(

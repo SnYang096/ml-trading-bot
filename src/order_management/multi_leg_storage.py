@@ -249,6 +249,60 @@ class MultiLegStorage:
         finally:
             conn.close()
 
+    def lookup_order_purpose(
+        self,
+        *,
+        exchange_order_id: str = "",
+        client_order_id: str = "",
+        leg_id: str = "",
+    ) -> Optional[str]:
+        """Resolve protection purpose from persisted multi-leg order rows."""
+        ex_id = str(exchange_order_id or "").strip()
+        cid = str(client_order_id or "").strip()
+        leg = str(leg_id or "").strip()
+        if not ex_id and not cid and not leg:
+            return None
+        clauses: list[str] = []
+        params: list[Any] = []
+        if ex_id:
+            clauses.append("exchange_order_id = ?")
+            params.append(ex_id)
+        if cid:
+            clauses.append("client_order_id = ?")
+            params.append(cid)
+        if leg:
+            clauses.append("leg_id = ?")
+            params.append(leg)
+            if leg.endswith("_tp") or leg.endswith("_sl"):
+                base = leg.rsplit("_", 1)[0]
+                clauses.append("leg_id = ?")
+                params.append(base)
+                clauses.append("local_order_id = ?")
+                params.append(leg)
+            else:
+                for suffix in ("_tp", "_sl"):
+                    clauses.append("local_order_id = ?")
+                    params.append(f"{leg}{suffix}")
+        conn = self._connect()
+        try:
+            cur = conn.execute(
+                f"""
+                SELECT purpose
+                FROM multi_leg_orders
+                WHERE ({' OR '.join(clauses)})
+                  AND purpose IN ('stop_loss', 'take_profit', 'market_exit')
+                ORDER BY COALESCE(updated_at, created_at) DESC
+                LIMIT 1
+                """,
+                tuple(params),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            return str(row["purpose"] or "").strip() or None
+        finally:
+            conn.close()
+
     def get_open_orders_for_reconcile(
         self,
         *,

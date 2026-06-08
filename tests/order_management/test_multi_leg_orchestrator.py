@@ -16,6 +16,7 @@ from src.order_management.multi_leg_risk_governor import (
     MultiLegPortfolioRiskGovernor,
     MultiLegRiskLimits,
 )
+from src.order_management.multi_leg_storage import MultiLegStorage
 
 
 @dataclass
@@ -180,6 +181,76 @@ def test_reconcile_reports_position_drift_without_suggesting_position_action() -
         engine.reconciliation_reports[0].position_mismatches[0].exchange_quantity
         == 0.02
     )
+
+
+def test_execution_report_enriched_with_db_purpose(tmp_path) -> None:
+    engine = FakeEngine()
+    adapter = _adapter()
+    storage = MultiLegStorage(str(tmp_path / "multi_leg.db"))
+    run_id = storage.create_run(
+        mode="testnet",
+        strategies=["chop_grid"],
+        symbols=["SOLUSDT"],
+        account_label="multi_leg_testnet",
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": "SOLUSDT_grid_L1_sl",
+            "leg_id": "SOLUSDT_grid_L1",
+            "symbol": "SOLUSDT",
+            "side": "LONG",
+            "position_side": "LONG",
+            "order_type": "stop_market",
+            "purpose": "stop_loss",
+            "quantity": 1.13,
+            "client_order_id": "cg_de1f197df8e3",
+            "exchange_order_id": "2000001079676592",
+            "status": "filled",
+        }
+    )
+    orchestrator = MultiLegLiveOrchestrator(
+        engine=engine,
+        governor=MultiLegPortfolioRiskGovernor(
+            MultiLegRiskLimits(max_gross_notional=1_000.0, max_net_notional=1_000.0)
+        ),
+        adapter=adapter,
+        reconciler=MultiLegReconciler(
+            ReconciliationPolicy(client_id_prefixes={"dat_", "cg_"})
+        ),
+        storage=storage,
+        strategy_name="chop_grid",
+        symbol="SOLUSDT",
+    )
+
+    orchestrator.on_execution_report(
+        {
+            "order_id": "2000001079676592",
+            "client_order_id": "cg_de1f197df8e3",
+            "status": "FILLED",
+            "filled_qty": 0.37,
+        }
+    )
+
+    assert engine.execution_reports[0]["protection_type"] == "stop_loss"
+
+
+def test_execution_report_enriched_with_order_type_when_db_misses() -> None:
+    engine = FakeEngine()
+    adapter = _adapter()
+    orchestrator = _orchestrator(engine, adapter)
+
+    orchestrator.on_execution_report(
+        {
+            "order_id": "algo_99",
+            "status": "FILLED",
+            "filled_qty": 0.5,
+            "order_type": "STOP_MARKET",
+        }
+    )
+
+    assert engine.execution_reports[0]["protection_type"] == "stop_loss"
 
 
 def test_user_stream_execution_report_is_forwarded_to_engine() -> None:

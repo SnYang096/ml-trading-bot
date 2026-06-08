@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -58,6 +59,8 @@ class GridPosition:
     entry_time: str
     leg_id: str = ""
     protection_order_ids: List[str] = field(default_factory=list)
+    # Original entry fill qty; kept through exchange sync for protection sizing.
+    entry_quantity: float = 0.0
 
 
 @dataclass
@@ -76,6 +79,8 @@ class GridState:
     last_reconciliation_issues: List[str] = field(default_factory=list)
     # Completed round-trips per level key (L1..Ln, S1..Sn) within active grid segment.
     level_replenish_count: Dict[str, int] = field(default_factory=dict)
+    # leg_ids for which a dust market_exit was already queued (dedup across cycles).
+    pending_dust_exits: List[str] = field(default_factory=list)
 
 
 def _as_float(value: Any, default: float = 0.0) -> float:
@@ -83,6 +88,48 @@ def _as_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _grid_position_from_state(row: Mapping[str, Any]) -> GridPosition:
+    data = dict(row)
+    qty = _as_float(data.get("quantity"))
+    data["entry_quantity"] = _as_float(data.get("entry_quantity"), qty)
+    return GridPosition(**data)
+
+
+def _parse_leg_level_side(leg_id: str) -> tuple[int, str]:
+    text = str(leg_id or "")
+    for level in range(1, 20):
+        if text.endswith(f"_L{level}"):
+            return level, "LONG"
+        if text.endswith(f"_S{level}"):
+            return level, "SHORT"
+    if "_L" in text.upper():
+        return 0, "LONG"
+    if "_S" in text.upper():
+        return 0, "SHORT"
+    return 0, "LONG"
+
+
+def _normalize_entry_leg_id(leg_hint: str) -> str:
+    text = str(leg_hint or "").strip()
+    if text.endswith("_tp"):
+        return text[: -len("_tp")]
+    if text.endswith("_sl"):
+        return text[: -len("_sl")]
+    return text
+
+
+_ENTRY_LEG_RE = re.compile(r"_(?:L|S)\d+(?:_r\d+)?$")
+
+
+def _is_entry_leg_id(leg_id: str) -> bool:
+    """True for entry leg ids like ``..._L1`` / ``..._S2`` / ``..._L1_r3``.
+
+    Guards the late-fill recovery path against non-entry suffixes (``_dust``,
+    stray protection ids) that must never be re-ingested as inventory.
+    """
+    return bool(_ENTRY_LEG_RE.search(str(leg_id or "")))
 
 
 def _normalize_symbol(value: Any) -> str:
@@ -286,7 +333,7 @@ class ChopGridLiveEngine:
             spacing=_as_float(raw.get("spacing")),
             realized_pnl=_as_float(raw.get("realized_pnl")),
             pending_orders=[GridOrder(**o) for o in raw.get("pending_orders", [])],
-            inventory=[GridPosition(**p) for p in raw.get("inventory", [])],
+            inventory=[_grid_position_from_state(p) for p in raw.get("inventory", [])],
             last_timestamp=str(raw.get("last_timestamp", "")),
             current_regime=str(raw.get("current_regime", "idle")),
             last_reconciliation_ok=bool(raw.get("last_reconciliation_ok", True)),
@@ -297,6 +344,9 @@ class ChopGridLiveEngine:
                 str(k): int(v)
                 for k, v in (raw.get("level_replenish_count") or {}).items()
             },
+            pending_dust_exits=[
+                str(x) for x in (raw.get("pending_dust_exits") or []) if str(x)
+            ],
         )
 
     def save_state(self) -> None:
@@ -391,6 +441,17 @@ class ChopGridLiveEngine:
                 pos = self._find_position(str(raw.get("leg_id") or ""))
                 if pos is not None and result.order_id:
                     pos.protection_order_ids.append(result.order_id)
+            elif result.action == "market_exit":
+                leg_id = str(raw.get("leg_id") or "")
+                if not leg_id:
+                    order_id = str(
+                        raw.get("local_order_id") or raw.get("order_id") or ""
+                    )
+                    if order_id.endswith("_dust"):
+                        leg_id = order_id[: -len("_dust")]
+                status = str(result.status or "").lower()
+                if status in {"skipped_no_position", "filled", "closed"}:
+                    self._clear_pending_dust_exit(leg_id)
         self.state.pending_orders = [
             o for o in self.state.pending_orders if o.status != "canceled"
         ]
@@ -533,11 +594,14 @@ class ChopGridLiveEngine:
             exchange_id=str(report.get("order_id") or ""),
             client_id=str(report.get("client_order_id") or ""),
         )
+        leg_hint = _normalize_entry_leg_id(
+            str(report.get("leg_id") or report.get("local_order_id") or "")
+        )
+        if order is None and leg_hint:
+            order = self._find_order(local_id=leg_hint)
         if order is None:
-            leg_hint = str(report.get("leg_id") or report.get("local_order_id") or "")
-            if leg_hint:
-                order = self._find_order(local_id=leg_hint)
-        if order is None:
+            if self._ingest_late_entry_fill(report, leg_hint):
+                self.save_state()
             return
         status = str(report.get("status") or "").upper()
         filled_qty = _as_float(report.get("filled_qty"), order.filled_quantity)
@@ -548,13 +612,15 @@ class ChopGridLiveEngine:
         order.status = status.lower() if status else order.status
         if status == "FILLED" or order.filled_quantity >= order.quantity:
             pos_side = "LONG" if order.side == "BUY" else "SHORT"
+            fill_qty = order.filled_quantity or order.quantity
             self.state.inventory.append(
                 GridPosition(
                     symbol=order.symbol,
                     side=pos_side,
                     level=order.level,
                     entry_price=last_px if last_px > 0 else order.price,
-                    quantity=order.filled_quantity or order.quantity,
+                    quantity=fill_qty,
+                    entry_quantity=fill_qty,
                     entry_time=str(
                         report.get("trade_time") or self.state.last_timestamp
                     ),
@@ -574,6 +640,52 @@ class ChopGridLiveEngine:
                 o for o in self.state.pending_orders if o.order_id != order.order_id
             ]
         self.save_state()
+
+    def _ingest_late_entry_fill(self, report: Dict[str, Any], leg_hint: str) -> bool:
+        """Recover inventory + protection when a fill arrives after pending prune."""
+        leg_id = _normalize_entry_leg_id(leg_hint)
+        if not leg_id or not _is_entry_leg_id(leg_id):
+            return False
+        if self._find_position(leg_id) is not None:
+            return False
+        status = str(report.get("status") or "").upper()
+        if status != "FILLED":
+            return False
+        filled_qty = _as_float(report.get("filled_qty"), 0.0)
+        if filled_qty <= 0:
+            return False
+        level, pos_side = _parse_leg_level_side(leg_id)
+        last_px = _as_float(
+            report.get("last_filled_price") or report.get("avg_price"), 0.0
+        )
+        symbol = _normalize_symbol(report.get("symbol") or self.state.symbol)
+        if not symbol:
+            return False
+        pos = GridPosition(
+            symbol=symbol,
+            side=pos_side,
+            level=level,
+            entry_price=last_px,
+            quantity=filled_qty,
+            entry_quantity=filled_qty,
+            entry_time=str(report.get("trade_time") or self.state.last_timestamp),
+            leg_id=leg_id,
+        )
+        self.state.inventory.append(pos)
+        self._pending_actions.extend(
+            self._protection_actions(
+                order_id=leg_id,
+                pos=pos,
+                timestamp=str(report.get("trade_time") or self.state.last_timestamp),
+            )
+        )
+        logger.info(
+            "chop_grid late entry fill ingested: symbol=%s leg_id=%s qty=%.8f",
+            symbol,
+            leg_id,
+            filled_qty,
+        )
+        return True
 
     def pop_pending_actions(self) -> List[Dict[str, Any]]:
         actions = list(self._pending_actions)
@@ -606,20 +718,52 @@ class ChopGridLiveEngine:
         open_orders = [dict(o) for o in exchange_orders]
         actions: List[Dict[str, Any]] = []
         ts = self.state.last_timestamp or ""
+        side_remaining = self._exchange_side_qty_map(exchange_positions, symbol=sym)
         for pos in self.state.inventory:
             if str(pos.symbol or "").upper() != sym:
                 continue
+            pos_side = str(pos.side).upper()
+            leg_qty = float(pos.quantity or 0.0)
+            alloc_qty = min(leg_qty, side_remaining.get(pos_side, 0.0))
+            side_remaining[pos_side] = max(
+                0.0, side_remaining.get(pos_side, 0.0) - alloc_qty
+            )
+            if alloc_qty <= 0:
+                continue
             covered_qty = self._open_tp_covered_qty(pos, open_orders)
-            need_qty = float(pos.quantity or 0.0)
+            need_qty = alloc_qty
             if need_qty <= 0 or covered_qty >= need_qty * 0.99:
                 continue
             remaining_qty = max(0.0, need_qty - covered_qty)
+            ref_px = self._tp_price_for_position(pos) or pos.entry_price
+            if self._is_dust_notional(remaining_qty, ref_px):
+                if not self._should_emit_dust_exit(
+                    pos, remaining_qty, ref_px, ts, open_orders
+                ):
+                    continue
+                self._mark_pending_dust_exit(pos.leg_id)
+                actions.append(
+                    {
+                        "action": "market_exit",
+                        "order_id": f"{pos.leg_id}_dust",
+                        "leg_id": pos.leg_id,
+                        "symbol": pos.symbol,
+                        "side": pos.side,
+                        "level": pos.level,
+                        "quantity": remaining_qty,
+                        "exit_price": ref_px,
+                        "reason": "dust_below_min_notional",
+                        "timestamp": ts,
+                    }
+                )
+                continue
             action_pos = GridPosition(
                 symbol=pos.symbol,
                 side=pos.side,
                 level=pos.level,
                 entry_price=pos.entry_price,
                 quantity=remaining_qty,
+                entry_quantity=float(pos.entry_quantity or pos.quantity or 0.0),
                 entry_time=pos.entry_time,
                 leg_id=pos.leg_id,
                 protection_order_ids=list(pos.protection_order_ids),
@@ -633,6 +777,11 @@ class ChopGridLiveEngine:
             filtered_actions = []
             for action in new_actions:
                 if derive_multileg_client_order_id(action) in open_client_ids:
+                    continue
+                if self._is_dust_notional(
+                    float(action.get("quantity") or 0.0),
+                    float(action.get("price") or action.get("trigger_price") or ref_px),
+                ):
                     continue
                 if str(action.get("protection_type") or "") == "take_profit":
                     # Catch-up protection must close if price already crossed TP.
@@ -811,12 +960,103 @@ class ChopGridLiveEngine:
                     level=0,
                     entry_price=entry,
                     quantity=qty,
+                    entry_quantity=qty,
                     entry_time=self.state.last_timestamp,
                     leg_id=leg_id,
                 )
             )
 
         self.state.inventory = other_symbol_legs + capped
+        active_leg_ids = {str(p.leg_id) for p in self.state.inventory if p.leg_id}
+        self.state.pending_dust_exits = [
+            leg_id
+            for leg_id in self.state.pending_dust_exits
+            if leg_id in active_leg_ids
+        ]
+
+    def _dust_exit_action(
+        self, pos: GridPosition, quantity: float, ref_px: float, timestamp: str
+    ) -> Dict[str, Any]:
+        return {
+            "action": "market_exit",
+            "order_id": f"{pos.leg_id}_dust",
+            "leg_id": pos.leg_id,
+            "symbol": pos.symbol,
+            "side": pos.side,
+            "level": pos.level,
+            "quantity": quantity,
+            "exit_price": ref_px,
+            "reason": "dust_below_min_notional",
+            "timestamp": timestamp,
+        }
+
+    def _should_emit_dust_exit(
+        self,
+        pos: GridPosition,
+        quantity: float,
+        ref_px: float,
+        timestamp: str,
+        open_orders: List[Dict[str, Any]],
+    ) -> bool:
+        leg_id = str(pos.leg_id or "")
+        if leg_id and leg_id in self.state.pending_dust_exits:
+            return False
+        dust_action = self._dust_exit_action(pos, quantity, ref_px, timestamp)
+        dust_cid = derive_multileg_client_order_id(dust_action)
+        if dust_cid in _open_exchange_client_order_ids(open_orders):
+            if leg_id:
+                self._mark_pending_dust_exit(leg_id)
+            return False
+        return True
+
+    def _mark_pending_dust_exit(self, leg_id: str) -> None:
+        leg = str(leg_id or "").strip()
+        if not leg or leg in self.state.pending_dust_exits:
+            return
+        self.state.pending_dust_exits.append(leg)
+
+    def _clear_pending_dust_exit(self, leg_id: str) -> None:
+        leg = str(leg_id or "").strip()
+        if not leg:
+            return
+        self.state.pending_dust_exits = [
+            x for x in self.state.pending_dust_exits if x != leg
+        ]
+
+    @staticmethod
+    def _min_notional_usd() -> float:
+        raw = os.getenv("MLBOT_CHOP_GRID_MIN_NOTIONAL_USD", "5").strip()
+        try:
+            return max(0.0, float(raw))
+        except (TypeError, ValueError):
+            return 5.0
+
+    def _is_dust_notional(self, quantity: float, price: float) -> bool:
+        qty = float(quantity or 0.0)
+        px = float(price or 0.0)
+        if qty <= 0 or px <= 0:
+            return False
+        return qty * px < self._min_notional_usd()
+
+    def _exchange_side_qty_map(
+        self,
+        exchange_positions: Iterable[Mapping[str, Any]],
+        *,
+        symbol: str,
+    ) -> Dict[str, float]:
+        sym = str(symbol).upper()
+        out: Dict[str, float] = {}
+        for raw in exchange_positions:
+            row = dict(raw)
+            if _normalize_symbol(row.get("symbol")) != sym:
+                continue
+            qty = _exchange_position_quantity(row)
+            if qty <= 0:
+                continue
+            side_raw = str(row.get("side") or row.get("positionSide") or "").lower()
+            pos_side = "LONG" if side_raw in {"long", "buy"} else "SHORT"
+            out[pos_side] = out.get(pos_side, 0.0) + qty
+        return out
 
     def _match_leg_id_for_fill(self, pos_side: str, entry_price: float) -> str:
         best_id = f"{self.state.grid_id}_{'L1' if pos_side == 'LONG' else 'S1'}"
@@ -1082,6 +1322,7 @@ class ChopGridLiveEngine:
                     level=order.level,
                     entry_price=order.price,
                     quantity=order.quantity,
+                    entry_quantity=order.quantity,
                     entry_time=timestamp,
                     leg_id=order.order_id,
                 )
@@ -1318,6 +1559,31 @@ class ChopGridLiveEngine:
                 )
         return actions
 
+    def _protection_report_kind(self, report: Mapping[str, Any]) -> str:
+        prot = str(report.get("protection_type") or "").strip().lower()
+        if prot in {"stop_loss", "sl", "stop", "stop_market"}:
+            return "stop_loss"
+        if prot in {"take_profit", "tp", "take_profit_market"}:
+            return "take_profit"
+        order_type = str(report.get("order_type") or "").strip().upper()
+        if order_type in {
+            "STOP",
+            "STOP_MARKET",
+            "STOP_LOSS",
+            "STOP_LOSS_LIMIT",
+            "TRAILING_STOP_MARKET",
+        }:
+            return "stop_loss"
+        if order_type in {"TAKE_PROFIT", "TAKE_PROFIT_MARKET", "TAKE_PROFIT_LIMIT"}:
+            return "take_profit"
+        cid = str(report.get("client_order_id") or "")
+        leg_hint = str(report.get("leg_id") or report.get("local_order_id") or "")
+        if cid.endswith("_sl") or leg_hint.endswith("_sl"):
+            return "stop_loss"
+        if cid.endswith("_tp") or leg_hint.endswith("_tp"):
+            return "take_profit"
+        return "take_profit"
+
     def _handle_protection_fill(self, report: Dict[str, Any]) -> bool:
         """Detect TP/SL protection fills so replenish + count++ stay accurate.
 
@@ -1334,20 +1600,45 @@ class ChopGridLiveEngine:
             return False
         ex_id = str(report.get("order_id") or "")
         cid = str(report.get("client_order_id") or "")
-        leg_hint = str(report.get("leg_id") or report.get("local_order_id") or "")
-        if leg_hint.endswith("_tp"):
-            leg_hint = leg_hint[: -len("_tp")]
+        leg_hint = _normalize_entry_leg_id(
+            str(report.get("leg_id") or report.get("local_order_id") or "")
+        )
+        kind = self._protection_report_kind(report)
+        filled_qty = _as_float(report.get("filled_qty"), 0.0)
         ts = str(report.get("trade_time") or self.state.last_timestamp)
+
+        def _apply_fill(pos: GridPosition) -> bool:
+            if kind == "stop_loss":
+                close_qty = filled_qty if filled_qty > 0 else float(pos.quantity or 0.0)
+                remaining = max(0.0, float(pos.quantity or 0.0) - close_qty)
+                # Partial SL fill: shrink the leg but keep it (and its protection)
+                # so the rest of the position stays tracked. Only a full close
+                # falls through to the existing close+replenish bookkeeping.
+                if remaining > 1e-8:
+                    pos.quantity = remaining
+                    if ex_id:
+                        pos.protection_order_ids = [
+                            pid for pid in pos.protection_order_ids if str(pid) != ex_id
+                        ]
+                    logger.info(
+                        "chop_grid partial SL fill: leg_id=%s closed_qty=%.8f "
+                        "remaining=%.8f",
+                        pos.leg_id,
+                        close_qty,
+                        remaining,
+                    )
+                    return True
+            self._pending_actions.extend(self._after_level_tp_closed(pos, ts))
+            return True
+
         for pos in list(self.state.inventory):
             prot_ids = {str(x) for x in pos.protection_order_ids if str(x)}
             if (ex_id and ex_id in prot_ids) or (cid and cid in prot_ids):
-                self._pending_actions.extend(self._after_level_tp_closed(pos, ts))
-                return True
+                return _apply_fill(pos)
         if leg_hint:
             pos = self._find_position(leg_hint)
             if pos is not None:
-                self._pending_actions.extend(self._after_level_tp_closed(pos, ts))
-                return True
+                return _apply_fill(pos)
         return False
 
     def _protection_actions(

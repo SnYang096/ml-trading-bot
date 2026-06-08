@@ -346,7 +346,7 @@ class MultiLegLiveOrchestrator:
     def on_execution_report(self, report: Mapping[str, Any]) -> None:
         """Forward user-stream execution updates and execute follow-up actions."""
 
-        report_dict = dict(report)
+        report_dict = self._enrich_execution_report(dict(report))
         _call_optional(self.engine, "on_execution_report", report_dict)
         self._persist_execution_report(report_dict)
         follow_ups = _call_snapshot(self.engine, "pop_pending_actions")
@@ -354,6 +354,40 @@ class MultiLegLiveOrchestrator:
             results = self.adapter.execute_actions(follow_ups)
             _call_optional(self.engine, "on_execution_results", results)
         self._persist_positions()
+
+    def _enrich_execution_report(self, report: Dict[str, Any]) -> Dict[str, Any]:
+        """Attach ``protection_type`` from DB purpose or exchange order_type."""
+        if str(report.get("protection_type") or "").strip():
+            return report
+        storage = self.storage
+        lookup = (
+            getattr(storage, "lookup_order_purpose", None) if storage is not None else None
+        )
+        if callable(lookup):
+            purpose = lookup(
+                exchange_order_id=str(report.get("order_id") or ""),
+                client_order_id=str(report.get("client_order_id") or ""),
+                leg_id=str(report.get("leg_id") or report.get("local_order_id") or ""),
+            )
+            if purpose in {"stop_loss", "take_profit", "market_exit"}:
+                report["protection_type"] = purpose
+                return report
+        order_type = str(report.get("order_type") or "").strip().upper()
+        if order_type in {
+            "STOP",
+            "STOP_MARKET",
+            "STOP_LOSS",
+            "STOP_LOSS_LIMIT",
+            "TRAILING_STOP_MARKET",
+        }:
+            report["protection_type"] = "stop_loss"
+        elif order_type in {
+            "TAKE_PROFIT",
+            "TAKE_PROFIT_MARKET",
+            "TAKE_PROFIT_LIMIT",
+        }:
+            report["protection_type"] = "take_profit"
+        return report
 
     def _persist_reconciliation(self, report: ReconciliationReport) -> None:
         if self.storage is None:
