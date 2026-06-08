@@ -1,6 +1,10 @@
 import pytest
 
-from mlbot_console.services.orders_list import collect_orders, trend_orders
+from mlbot_console.services.orders_list import (
+    collect_orders,
+    multi_leg_orders_list,
+    trend_orders,
+)
 
 
 def test_trend_orders_list(trend_db):
@@ -245,6 +249,30 @@ def test_trend_filled_order_inherits_stop_loss_without_position_id(trend_db):
     row = next(r for r in rows if r["order_id"] == "ord_no_pid")
     assert row["stop_loss_price"] == 98.5
     assert row["take_profit_price"] == 106.0
+
+
+def test_multileg_orders_list_hydrates_qty_from_raw_json(multi_leg_db) -> None:
+    from src.order_management.multi_leg_storage import MultiLegStorage
+
+    storage = MultiLegStorage(str(multi_leg_db))
+    storage.upsert_order(
+        {
+            "local_order_id": "trend_ts_entry",
+            "strategy": "trend_scalp",
+            "symbol": "ETHUSDT",
+            "side": "BUY",
+            "order_type": "market",
+            "purpose": "entry",
+            "quantity": 0.126,
+            "status": "closed",
+            "filled_quantity": 0.0,
+            "raw": {"filled": 0.126, "info": {"executedQty": "0.126"}},
+        }
+    )
+    rows = multi_leg_orders_list(multi_leg_db, "ETHUSDT", limit=20)
+    row = next(r for r in rows if r["order_id"] == "trend_ts_entry")
+    assert float(row["filled_quantity"]) == pytest.approx(0.126)
+    assert float(row["quantity"]) == pytest.approx(0.126)
 
 
 def test_collect_orders_multileg_history_survives_exclude_filter(

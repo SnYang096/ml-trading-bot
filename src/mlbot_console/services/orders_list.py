@@ -10,6 +10,7 @@ from mlbot_console.services.db import query_rows, table_columns
 from mlbot_console.services.multileg_order_links import (
     enrich_multileg_rows_for_symbol,
     entry_link_id,
+    hydrate_multileg_fill_fields,
     is_entry_row,
     leg_index,
     leg_suffix,
@@ -728,7 +729,7 @@ def multi_leg_orders_list(
         sql = f"""
             SELECT local_order_id AS order_id, symbol, side, status, order_type, purpose,
                    quantity, price, stop_price, filled_quantity, average_price, created_at,
-                   filled_at, strategy, leg_id, client_order_id
+                   filled_at, strategy, leg_id, client_order_id, raw_json
             FROM multi_leg_orders
             WHERE 1=1{status_clause}
             ORDER BY COALESCE(filled_at, created_at) DESC
@@ -740,7 +741,7 @@ def multi_leg_orders_list(
         sql = f"""
             SELECT local_order_id AS order_id, symbol, side, status, order_type, purpose,
                    quantity, price, stop_price, filled_quantity, average_price, created_at,
-                   filled_at, strategy, leg_id, client_order_id
+                   filled_at, strategy, leg_id, client_order_id, raw_json
             FROM multi_leg_orders
             WHERE symbol = ?{status_clause}
             ORDER BY COALESCE(filled_at, created_at) DESC
@@ -754,6 +755,7 @@ def multi_leg_orders_list(
     enrich_multileg_rows_for_symbol(db_path, symbol, rows)
     out = []
     for r in rows:
+        hydrate_multileg_fill_fields(r)
         qty = float(r.get("quantity") or 0)
         filled = float(r.get("filled_quantity") or 0)
         if qty <= 0 and filled > 0:

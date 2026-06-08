@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
 from src.order_management.multi_leg_storage import MultiLegStorage
 
 
@@ -220,6 +222,49 @@ def test_close_absent_positions_marks_stale_open_rows_closed(tmp_path) -> None:
             conn.execute("SELECT leg_id, status FROM multi_leg_positions").fetchall()
         )
         assert rows == {"active_leg": "open", "stale_leg": "closed"}
+    finally:
+        conn.close()
+
+
+def test_apply_execution_report_does_not_zero_market_fill(tmp_path) -> None:
+    """User-stream z=0 after place-time fill must not erase filled_quantity."""
+    storage = MultiLegStorage(str(tmp_path / "multi_leg.db"))
+    storage.upsert_order(
+        {
+            "local_order_id": "trend_entry",
+            "run_id": "run",
+            "strategy": "trend_scalp",
+            "symbol": "ETHUSDT",
+            "side": "BUY",
+            "order_type": "market",
+            "purpose": "entry",
+            "quantity": 0.126,
+            "exchange_order_id": "8389766200983343994",
+            "client_order_id": "dat_23ac20a34a6c",
+            "status": "closed",
+            "filled_quantity": 0.126,
+            "average_price": 1685.77,
+        }
+    )
+    assert (
+        storage.apply_execution_report(
+            {
+                "order_id": "8389766200983343994",
+                "client_order_id": "dat_23ac20a34a6c",
+                "status": "NEW",
+                "filled_qty": 0.0,
+            }
+        )
+        == 1
+    )
+    conn = sqlite3.connect(storage.db_path)
+    try:
+        row = conn.execute(
+            "SELECT filled_quantity, average_price FROM multi_leg_orders "
+            "WHERE local_order_id = 'trend_entry'"
+        ).fetchone()
+        assert float(row[0]) == pytest.approx(0.126)
+        assert float(row[1]) == pytest.approx(1685.77)
     finally:
         conn.close()
 

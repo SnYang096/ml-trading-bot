@@ -348,6 +348,10 @@ class MultiLegStorage:
         status_raw = str(payload.get("status") or "").strip()
         status = status_raw.lower() if status_raw else "unknown"
         filled_qty = _optional_float(payload.get("filled_qty"))
+        # User-stream NEW events often carry cumulative z=0 after a market fill was
+        # already persisted from the place response; COALESCE(0, filled) would erase it.
+        if filled_qty is not None and filled_qty <= 0.0:
+            filled_qty = None
         avg_price = _optional_float(payload.get("avg_price"))
         if avg_price is None:
             lp = _optional_float(payload.get("last_filled_price"))
