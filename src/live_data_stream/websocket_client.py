@@ -40,6 +40,21 @@ logger = logging.getLogger(__name__)
 FUTURES_WS_BASE = "wss://fstream.binance.com"
 
 
+class StaleAggTradeSession(TimeoutError):
+    """No aggTrade payload within heartbeat_timeout; trigger session restart."""
+
+
+def _heartbeat_timeout_seconds() -> float:
+    raw = os.getenv("MLBOT_BINANCE_WS_HEARTBEAT_TIMEOUT", "60").strip()
+    try:
+        return max(15.0, float(raw))
+    except ValueError:
+        logger.warning(
+            "Invalid MLBOT_BINANCE_WS_HEARTBEAT_TIMEOUT=%r; using 60s", raw
+        )
+        return 60.0
+
+
 def configure_binance_ws_queue_size() -> int:
     """Raise python-binance internal WS queue (default 100) to reduce QueueOverflow."""
     size = max(100, int(os.getenv("MLBOT_BINANCE_WS_MAX_QUEUE", "2048")))
@@ -163,7 +178,7 @@ class BinanceWebSocketClient:
         ping_timeout: int = 10,
         reconnect_config: Optional[ReconnectionConfig] = None,
         max_reconnect_retries: Optional[int] = None,
-        heartbeat_timeout: float = 60.0,
+        heartbeat_timeout: Optional[float] = None,
         health_check_interval: float = 30.0,
     ):
         """
@@ -217,8 +232,13 @@ class BinanceWebSocketClient:
         )
 
         # 创建连接监控器
+        self.heartbeat_timeout = (
+            float(heartbeat_timeout)
+            if heartbeat_timeout is not None
+            else _heartbeat_timeout_seconds()
+        )
         self.connection_monitor = ConnectionMonitor(
-            heartbeat_timeout=heartbeat_timeout,
+            heartbeat_timeout=self.heartbeat_timeout,
             health_check_interval=health_check_interval,
             on_health_change=self._on_health_change,
             on_timeout=self._on_heartbeat_timeout,
@@ -309,10 +329,16 @@ class BinanceWebSocketClient:
                 if stop_event.is_set():
                     break
                 exc_name = type(exc).__name__
+                is_stale_session = isinstance(exc, StaleAggTradeSession)
                 is_read_loop_closed = exc_name == "ReadLoopClosed" or (
                     "Read loop has been closed" in str(exc)
                 )
-                if is_read_loop_closed:
+                if is_stale_session:
+                    logger.warning(
+                        "python-binance aggTrade stream stale (%s); reconnecting",
+                        exc,
+                    )
+                elif is_read_loop_closed:
                     logger.warning(
                         "python-binance aggTrade stream disconnected (%s); reconnecting",
                         exc_name,
@@ -393,6 +419,7 @@ class BinanceWebSocketClient:
             async with bsm.futures_multiplex_socket(
                 streams=streams, futures_type=FuturesType.USD_M
             ) as socket:
+                last_message_monotonic = time.monotonic()
                 inbound: asyncio.Queue[Optional[Dict[str, Any]]] = asyncio.Queue(
                     maxsize=max(
                         512,
@@ -427,10 +454,10 @@ class BinanceWebSocketClient:
                             message = await asyncio.wait_for(inbound.get(), timeout=1.0)
                         except asyncio.TimeoutError:
                             elapsed = time.monotonic() - last_message_monotonic
-                            if elapsed > self.connection_monitor.heartbeat_timeout:
-                                raise TimeoutError(
-                                    "No aggTrade messages received for "
-                                    f"{elapsed:.1f}s; restarting websocket session"
+                            if elapsed > self.heartbeat_timeout:
+                                raise StaleAggTradeSession(
+                                    "No websocket frames received for "
+                                    f"{elapsed:.1f}s; restarting aggTrade session"
                                 )
                             continue
                         if message is None:
@@ -438,6 +465,7 @@ class BinanceWebSocketClient:
                                 raise recv_errors[0]
                             break
 
+                        last_message_monotonic = time.monotonic()
                         tick = _parse_message(message)
                         if tick is None:
                             continue

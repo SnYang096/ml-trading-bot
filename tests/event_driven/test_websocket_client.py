@@ -11,6 +11,7 @@ import time
 from src.live_data_stream.websocket_client import (
     BinanceWebSocketClient,
     BinanceTick,
+    StaleAggTradeSession,
     configure_binance_ws_queue_size,
     create_and_run_websocket,
 )
@@ -331,3 +332,102 @@ class TestBinanceWebSocketClient:
         assert tick.symbol == "BTCUSDT"
         assert tick.trade_id == 12345
         client.reconnect_manager.wait_before_reconnect.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_stream_ticks_reconnects_after_stale_session(self, caplog):
+        """Stale session should warn and restart instead of logging ERROR traceback."""
+
+        class FakeAsyncClient:
+            created = []
+
+            @classmethod
+            async def create(cls):
+                client = cls()
+                client.closed = False
+                cls.created.append(client)
+                return client
+
+            async def close_connection(self):
+                self.closed = True
+
+        class HungSocket:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+            async def recv(self):
+                await asyncio.sleep(3600)
+
+        class FakeBsm:
+            sessions = []
+
+            def __init__(self, client):
+                self.client = client
+
+            def futures_multiplex_socket(self, streams, futures_type):
+                return HungSocket()
+
+        second_messages = [
+            {
+                "e": "aggTrade",
+                "s": "BTCUSDT",
+                "p": "50000.00",
+                "q": "0.1",
+                "T": 1234567890000,
+                "m": False,
+                "a": 99,
+            }
+        ]
+
+        class RecoveringSocket:
+            def __init__(self, messages):
+                self.messages = list(messages)
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+            async def recv(self):
+                if not self.messages:
+                    await asyncio.sleep(3600)
+                return self.messages.pop(0)
+
+        class RecoveringBsm:
+            call_count = 0
+
+            def __init__(self, client):
+                self.client = client
+
+            def futures_multiplex_socket(self, streams, futures_type):
+                RecoveringBsm.call_count += 1
+                if RecoveringBsm.call_count == 1:
+                    return HungSocket()
+                return RecoveringSocket(second_messages)
+
+        client = BinanceWebSocketClient(symbols=["BTCUSDT"], heartbeat_timeout=0.5)
+        client.reconnect_manager.wait_before_reconnect = AsyncMock(return_value=True)
+        stop_event = asyncio.Event()
+
+        with patch(
+            "src.live_data_stream.websocket_client.AsyncClient", FakeAsyncClient
+        ), patch(
+            "src.live_data_stream.websocket_client.BinanceSocketManager", RecoveringBsm
+        ):
+            RecoveringBsm.call_count = 0
+            stream = client.stream_ticks(stop_event)
+            tick = await asyncio.wait_for(stream.__anext__(), timeout=5.0)
+            stop_event.set()
+            await stream.aclose()
+
+        assert tick.symbol == "BTCUSDT"
+        assert RecoveringBsm.call_count == 2
+        assert not any(
+            record.levelname == "ERROR"
+            and "aggTrade stream failed" in record.getMessage()
+            for record in caplog.records
+        )
+        assert isinstance(StaleAggTradeSession(), TimeoutError)

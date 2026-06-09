@@ -602,7 +602,11 @@ async def async_main() -> None:
     else:
         logger.info("auto-gap-fill: disabled")
 
-    ws_client = BinanceWebSocketClient(symbols=symbols, use_futures=args.use_futures)
+    ws_client = BinanceWebSocketClient(
+        symbols=symbols,
+        use_futures=args.use_futures,
+        heartbeat_timeout=float(os.getenv("MLBOT_BINANCE_WS_HEARTBEAT_TIMEOUT", "60")),
+    )
     tick_queue: asyncio.Queue[BinanceTick] = asyncio.Queue(
         maxsize=max(1000, int(os.getenv("MLBOT_TICK_DISPATCH_QUEUE", "20000")))
     )
