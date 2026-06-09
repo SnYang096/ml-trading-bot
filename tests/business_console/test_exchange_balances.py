@@ -9,8 +9,38 @@ import pytest
 from mlbot_console.services.exchange_balances import (
     build_exchange_ledger,
     fetch_scope_exchange_balance,
+    futures_symbol_unrealized_pnl,
     parse_futures_account,
+    spot_symbol_holdings_value,
 )
+
+
+def test_futures_symbol_unrealized_pnl_sums_hedge_legs() -> None:
+    raw = {
+        "positions": [
+            {
+                "symbol": "XRPUSDT",
+                "positionAmt": "100",
+                "unRealizedProfit": "1.5",
+            },
+            {
+                "symbol": "XRPUSDT",
+                "positionAmt": "-50",
+                "unRealizedProfit": "-0.3",
+            },
+            {"symbol": "BTCUSDT", "positionAmt": "0.01", "unRealizedProfit": "9.0"},
+            {"symbol": "XRPUSDT", "positionAmt": "0", "unRealizedProfit": "0"},
+        ]
+    }
+    assert futures_symbol_unrealized_pnl(raw, "XRPUSDT") == pytest.approx(1.2)
+
+
+def test_spot_symbol_holdings_value_filters_asset() -> None:
+    holdings = [
+        {"asset": "XRP", "qty": 100.0, "value_usdt": 120.0},
+        {"asset": "BTC", "qty": 0.1, "value_usdt": 6000.0},
+    ]
+    assert spot_symbol_holdings_value(holdings, "XRPUSDT") == pytest.approx(120.0)
 
 
 def test_parse_futures_account() -> None:
@@ -40,7 +70,7 @@ def test_fetch_scope_unconfigured(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_build_exchange_ledger_sums_ok_accounts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def _fake(scope: str, *, mark_prices=None):
+    def _fake(scope: str, *, mark_prices=None, symbol=None):
         base = {
             "scope": scope,
             "label": scope,

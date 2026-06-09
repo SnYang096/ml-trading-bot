@@ -83,6 +83,48 @@ def _fetch_futures_account_raw(*, api_key: str, api_secret: str) -> Dict[str, An
     return data
 
 
+def _is_all_symbols(symbol: str) -> bool:
+    return str(symbol or "").strip().upper() in {"", "*", "ALL", "__ALL__"}
+
+
+def _symbol_base_asset(symbol: str) -> str:
+    sym = str(symbol or "").strip().upper()
+    if sym.endswith("USDT") and len(sym) > 4:
+        return sym[:-4]
+    return sym
+
+
+def futures_symbol_unrealized_pnl(
+    data: Mapping[str, Any], symbol: str
+) -> float:
+    """Sum ``unRealizedProfit`` for non-flat legs of one futures symbol (hedge-safe)."""
+    sym = str(symbol).upper()
+    total = 0.0
+    for pos in data.get("positions") or []:
+        if str(pos.get("symbol") or "").upper() != sym:
+            continue
+        try:
+            amt = float(pos.get("positionAmt") or 0.0)
+        except (TypeError, ValueError):
+            amt = 0.0
+        if amt == 0.0:
+            continue
+        total += float(pos.get("unRealizedProfit") or 0.0)
+    return total
+
+
+def spot_symbol_holdings_value(
+    holdings: List[Mapping[str, Any]], symbol: str
+) -> float:
+    asset = _symbol_base_asset(symbol)
+    total = 0.0
+    for row in holdings:
+        if str(row.get("asset") or "").upper() != asset:
+            continue
+        total += float(row.get("value_usdt") or 0.0)
+    return total
+
+
 def parse_futures_account(data: Mapping[str, Any]) -> Dict[str, float]:
     return {
         "wallet_balance_usdt": float(data.get("totalWalletBalance") or 0.0),
@@ -211,6 +253,7 @@ def fetch_scope_exchange_balance(
     scope: str,
     *,
     mark_prices: Optional[Mapping[str, float]] = None,
+    symbol: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Return one account row aligned with console scope (trend / spot / multi_leg)."""
     if scope not in _SCOPE_META:
@@ -224,16 +267,35 @@ def fetch_scope_exchange_balance(
         out["error"] = "API 密钥未配置"
         out["error_code"] = "not_configured"
         return out
+    sym_filter = str(symbol or "").strip().upper()
+    symbol_scoped = sym_filter and not _is_all_symbols(sym_filter)
     try:
         if meta["account_type"] == "futures_usdtm":
             raw = _fetch_futures_account_raw(api_key=api_key, api_secret=api_secret)
             parsed = parse_futures_account(raw)
+            if symbol_scoped:
+                parsed = dict(parsed)
+                parsed["unrealized_pnl_usdt"] = futures_symbol_unrealized_pnl(
+                    raw, sym_filter
+                )
+                out["unrealized_pnl_basis"] = "symbol"
+            else:
+                out["unrealized_pnl_basis"] = "account"
         else:
             parsed = _fetch_spot_equity(
                 api_key=api_key,
                 api_secret=api_secret,
                 mark_prices=mark_prices or {},
             )
+            if symbol_scoped:
+                parsed = dict(parsed)
+                holdings = list(parsed.get("holdings") or [])
+                parsed["holdings_value_usdt"] = spot_symbol_holdings_value(
+                    holdings, sym_filter
+                )
+                out["unrealized_pnl_basis"] = "symbol"
+            else:
+                out["unrealized_pnl_basis"] = "account"
         out.update(parsed)
         out["ok"] = True
         out["fetched_at"] = datetime.now(timezone.utc).isoformat()
@@ -248,14 +310,22 @@ def build_exchange_ledger(
     *,
     mark_prices: Optional[Mapping[str, float]] = None,
     scopes: Optional[List[str]] = None,
+    symbol: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Fetch Binance balances for each isolated account and sum into a ledger."""
     want = scopes or ["trend", "spot", "multi_leg"]
+    sym_meta = (
+        str(symbol).upper()
+        if symbol and not _is_all_symbols(symbol)
+        else "ALL"
+    )
     accounts: List[Dict[str, Any]] = []
     for scope in want:
         if scope in _SCOPE_META:
             accounts.append(
-                fetch_scope_exchange_balance(scope, mark_prices=mark_prices)
+                fetch_scope_exchange_balance(
+                    scope, mark_prices=mark_prices, symbol=symbol
+                )
             )
     equity_sum = 0.0
     wallet_sum = 0.0
@@ -271,6 +341,7 @@ def build_exchange_ledger(
         available_sum += float(row.get("available_usdt") or 0.0)
         exchange_upnl += float(row.get("unrealized_pnl_usdt") or 0.0)
     return {
+        "symbol": sym_meta,
         "accounts": accounts,
         "totals": {
             "equity_usdt": equity_sum,

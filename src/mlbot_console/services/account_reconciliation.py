@@ -194,3 +194,65 @@ def reconcile_account(
         "exchange_snapshot": exchange,
         "local_snapshot": local_snapshot,
     }
+
+
+def reconcile_all_accounts(
+    *,
+    trend_db: Any = None,
+    spot_db: Any = None,
+    spot_ledger_db: Any = None,
+    multi_leg_db: Any = None,
+    feature_bus_root: Any = None,
+    mark_prices: Optional[Dict[str, float]] = None,
+    symbol: str = "*",
+    lookback_days: int = 0,
+) -> Dict[str, Any]:
+    """Run engine reconciliation (spot/multi_leg) + PnL vs exchange for A/B/C."""
+    from mlbot_console.services.account_pnl_reconciliation import (
+        reconcile_pnl_vs_exchange,
+    )
+
+    engine_by_scope: Dict[str, Any] = {}
+    engine_issues: List[Dict[str, Any]] = []
+    for scope in ("spot", "trend", "multi_leg"):
+        res = reconcile_account(
+            scope,
+            trend_db=trend_db,
+            spot_db=spot_db,
+            spot_ledger_db=spot_ledger_db,
+            multi_leg_db=multi_leg_db,
+            mark_prices=mark_prices,
+        )
+        engine_by_scope[scope] = res
+        for issue in res.get("issues") or []:
+            engine_issues.append({**issue, "scope": scope, "layer": "engine"})
+
+    pnl = reconcile_pnl_vs_exchange(
+        trend_db=Path(str(trend_db)) if trend_db else Path("/dev/null"),
+        spot_db=Path(str(spot_db)) if spot_db else Path("/dev/null"),
+        spot_ledger_db=Path(str(spot_ledger_db)) if spot_ledger_db else Path("/dev/null"),
+        multi_leg_db=Path(str(multi_leg_db)) if multi_leg_db else Path("/dev/null"),
+        feature_bus_root=Path(str(feature_bus_root)) if feature_bus_root else Path("/dev/null"),
+        symbol=symbol,
+        lookback_days=lookback_days,
+    )
+    pnl_issues = [{**i, "layer": "pnl"} for i in (pnl.get("issues") or [])]
+
+    all_issues = engine_issues + pnl_issues
+    ok = len(all_issues) == 0
+    if not ok:
+        logger.warning(
+            "reconcile_all_accounts: %d issue(s) (engine=%d pnl=%d)",
+            len(all_issues),
+            len(engine_issues),
+            len(pnl_issues),
+        )
+
+    return {
+        "ok": ok,
+        "symbol": symbol,
+        "lookback_days": lookback_days,
+        "issues": all_issues,
+        "engine": engine_by_scope,
+        "pnl": pnl,
+    }

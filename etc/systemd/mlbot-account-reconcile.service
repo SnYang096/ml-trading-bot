@@ -1,0 +1,17 @@
+[Unit]
+Description=MLBot ABC account PnL vs exchange reconciliation
+After=network.target
+
+[Service]
+Type=oneshot
+User=quant
+WorkingDirectory=/opt/quant-engine
+Environment=PYTHONPATH=/opt/quant-engine/src
+Environment=MLBOT_CONSOLE_FEATURE_BUS_ROOT=/opt/quant-engine/live/shared_feature_bus
+Environment=MLBOT_CONSOLE_ENGINE_DATA_ROOT=/opt/quant-engine/data
+ExecStart=/usr/bin/python3 /opt/quant-engine/scripts/reconcile_account_pnl.py -q
+# Optional: notify on failure (same pattern as mlbot-monitor-notify@)
+# OnFailure=mlbot-monitor-notify@%n.service
+
+[Install]
+WantedBy=multi-user.target

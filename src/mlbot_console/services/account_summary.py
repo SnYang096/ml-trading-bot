@@ -436,13 +436,35 @@ def _multileg_stats(
         )
         order_meta = {str(r["local_order_id"]): r for r in rows if r.get("local_order_id")}
 
-        for oid, rec in pnl_map.items():
-            meta = order_meta.get(oid) or {}
-            strat = str(meta.get("strategy") or "multi_leg").lower()
+        entry_meta_rows = query_rows(
+            multi_leg_db,
+            """
+            SELECT local_order_id, strategy, purpose, status, filled_quantity, quantity
+            FROM multi_leg_orders
+            WHERE symbol = ?
+            """,
+            (sym,),
+        )
+        from mlbot_console.services.multileg_order_links import (
+            _is_filled_row as _ml_is_filled,
+            is_entry_row as _ml_is_entry,
+        )
+
+        for row in entry_meta_rows:
+            oid = str(row.get("local_order_id") or "")
+            rec = pnl_map.get(oid) or {}
+            purpose = str(row.get("purpose") or "").lower()
+            if not (
+                (_ml_is_entry(row) and _ml_is_filled(row))
+                or (purpose == "inventory" and _ml_is_filled(row))
+            ):
+                continue
             u = rec.get("unrealized_pnl")
-            if u is not None:
-                unrealized += float(u)
-                by_strategy[strat]["unrealized_pnl"] += float(u)
+            if u is None:
+                continue
+            strat = str(row.get("strategy") or "multi_leg").lower()
+            unrealized += float(u)
+            by_strategy[strat]["unrealized_pnl"] += float(u)
 
         for item in _multileg_realized_rows(multi_leg_db, sym):
             exit_ts = int(item.get("exit_time") or 0)
@@ -642,7 +664,7 @@ def build_account_summary(
 
     daily = _merge_daily([s["daily_realized"] for s in scope_blocks])
 
-    ledger = build_exchange_ledger(mark_prices=marks)
+    ledger = build_exchange_ledger(mark_prices=marks, symbol=symbol)
     exchange_by_scope = {str(a["scope"]): a for a in ledger.get("accounts") or []}
     
     from mlbot_console.services.spot_ledger_book import fetch_spot_ledger_holdings

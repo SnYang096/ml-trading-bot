@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from mlbot_console.services.account_summary import _link_pnl_usdt
 from mlbot_console.services.db import query_rows
 from mlbot_console.services.multileg_order_links import (
+    _LATE_FIXUP_SUFFIX,
     _is_filled_row,
     _pick_filled_tp,
     _pick_planned_tp,
@@ -27,6 +28,7 @@ from mlbot_console.services.multileg_order_links import (
     market_exit_closing_position_side,
     trend_entry_position_side,
     trend_exit_entry_id,
+    trend_segment_key,
 )
 from mlbot_console.services.multileg_repair_tp import pick_repair_filled_tp
 
@@ -163,12 +165,47 @@ def _orphan_market_exit_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     return out
 
 
+def _late_fixup_exit_for_entry(
+    entry_row: Dict[str, Any],
+    *,
+    all_rows: List[Dict[str, Any]],
+    orphan_market_exits: Optional[List[Dict[str, Any]]] = None,
+    used_market_exit_ids: Optional[set[str]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Pair ``{segment}_market_exit_late_fixup`` even when exit ts < entry fill ts."""
+    entry_id = _order_key(entry_row)
+    seg = trend_segment_key(entry_id)
+    if not seg:
+        return None
+    target_id = f"{seg}{_LATE_FIXUP_SUFFIX}"
+    ent_side = _entry_position_side(entry_row)
+    if ent_side is None:
+        return None
+    used = used_market_exit_ids if used_market_exit_ids is not None else set()
+    ent_qty = filled_quantity(entry_row)
+    for row in list(all_rows) + list(orphan_market_exits or []):
+        mex_id = _order_key(row)
+        if mex_id != target_id or not mex_id or mex_id in used:
+            continue
+        if not _is_filled_row(row) or _price(row) is None:
+            continue
+        if market_exit_closing_position_side(row) != ent_side:
+            continue
+        mex_qty = filled_quantity(row)
+        if mex_qty <= 0 or ent_qty > mex_qty * 1.02:
+            continue
+        used.add(mex_id)
+        return row
+    return None
+
+
 def _filled_exit_row(
     group_rows: List[Dict[str, Any]],
     entry_row: Dict[str, Any],
     *,
     orphan_market_exits: Optional[List[Dict[str, Any]]] = None,
     used_market_exit_ids: Optional[set[str]] = None,
+    all_rows: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[Dict[str, Any]]:
     eid = entry_link_id(entry_row)
     oid = _order_key(entry_row)
@@ -182,6 +219,15 @@ def _filled_exit_row(
         return exit_row
 
     exit_row = _trend_exit_for_entry(group_rows, entry_row)
+    if exit_row is not None:
+        return exit_row
+
+    exit_row = _late_fixup_exit_for_entry(
+        entry_row,
+        all_rows=all_rows or group_rows,
+        orphan_market_exits=orphan_market_exits,
+        used_market_exit_ids=used_market_exit_ids,
+    )
     if exit_row is not None:
         return exit_row
 
@@ -260,6 +306,7 @@ def multileg_pnl_by_order_id(
             entry,
             orphan_market_exits=orphan_exits,
             used_market_exit_ids=used_market_exit_ids,
+            all_rows=raw,
         )
         if exit_row is not None:
             pnl = _link_pnl_usdt(entry, exit_row)

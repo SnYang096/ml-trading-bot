@@ -576,3 +576,52 @@ def test_multileg_pnl_late_fixup_does_not_cross_segments(multi_leg_db) -> None:
     expected = pytest.approx((1.1027 - 1.0201) * 69.1, rel=1e-4)
     assert pnl_map[new_entry]["pnl_usdt"] == expected
     assert old_entry not in pnl_map or pnl_map[old_entry].get("realized_pnl") is None
+
+
+def test_multileg_pnl_late_fixup_pairs_when_exit_ts_before_entry(multi_leg_db) -> None:
+    """late_fixup is often persisted before the entry fill report arrives."""
+    from src.order_management.multi_leg_storage import MultiLegStorage
+
+    storage = MultiLegStorage(str(multi_leg_db))
+    segment = "XRPUSDT_2026-06-07 09:12:20.523263+00:00"
+    entry_id = f"{segment}_initial_trend_BUY_0_0"
+    exit_id = f"{segment}_market_exit_late_fixup"
+    run_id = storage.create_run(
+        mode="testnet",
+        strategies=["trend_scalp"],
+        symbols=["XRPUSDT"],
+        run_id="ts_exit_first",
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "trend_scalp",
+            "local_order_id": exit_id,
+            "symbol": "XRPUSDT",
+            "side": "SELL",
+            "purpose": "market_exit",
+            "status": "filled",
+            "filled_quantity": 64.3,
+            "average_price": 1.1546,
+            "created_at": "2026-06-07 09:12:21+00:00",
+        }
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "trend_scalp",
+            "local_order_id": entry_id,
+            "symbol": "XRPUSDT",
+            "side": "BUY",
+            "purpose": "entry",
+            "status": "filled",
+            "filled_quantity": 64.3,
+            "average_price": 1.1628,
+            "filled_at": "2026-06-07 09:12:34+00:00",
+        }
+    )
+    pnl_map = multileg_pnl_by_order_id(multi_leg_db, "XRPUSDT")
+    expected = pytest.approx((1.1546 - 1.1628) * 64.3, rel=1e-4)
+    assert pnl_map[entry_id]["pnl_hint"] == "已实现"
+    assert pnl_map[entry_id]["pnl_usdt"] == expected
+    assert pnl_map[exit_id]["pnl_usdt"] == expected
