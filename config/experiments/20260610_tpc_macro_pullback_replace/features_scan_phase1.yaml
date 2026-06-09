@@ -1,0 +1,12 @@
+# Phase 1 label scan 专用（跳过 ofci/shd 等 tick 重特征）
+name: tpc_scan_phase1
+description: Minimal features for macro_pullback label scan (20260610)
+feature_pipeline:
+  exclude_columns:
+    - atr
+  requested_features:
+    - atr_f
+    - ema_1200_position_f
+    - tpc_soft_phase_f
+    - tpc_macro_pullback_pct_f
+    - path_efficiency_pct_f

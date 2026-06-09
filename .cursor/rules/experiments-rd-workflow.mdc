@@ -1,0 +1,36 @@
+---
+description: R&D Phase 0–5 workflow — mlbot scan before grid; no new scan_*.py for B/C
+alwaysApply: true
+---
+
+# Experiments R&D workflow (hard rules)
+
+Canonical docs: `config/experiments/README.md`, `config/experiments/LAYER_PROMOTION_CRITERIA.md`, `docs/strategy/R&D工具矩阵_CN.md`.
+
+## Phase order (do not skip)
+
+0. `mlbot train final --prepare-only` → `features_labeled.parquet`
+1. **`mlbot research scan`** (`feature-plateau` / `condition-set` / `pair-scan` / `ic`) — batch via `scripts/rd_loop.py --hypothesis-yaml config/experiments/<dir>/rd_loop_*.yaml`
+2. Human reads `quick_scan/*.md` → τ / lookback in `DECISION.md` → static tree under `config_experiments/`
+3. `python -m scripts.event_backtest --variant-grid …/*_grid.yaml` (canonical segments only)
+4. `run_trading_maps.sh` — semantic check (e.g. BPC chase vs retest)
+5. Promote only if LAYER_PROMOTION_CRITERIA **三条杠** → prod archetype `locked: true`
+
+## Phase 1 tools (default)
+
+- **Use:** `mlbot research scan` + `rd_loop_*.yaml` on parquet.
+- **Box N:** same parquet columns `box_pos_60/120/240`, `box_breakout_*`, `box_compression_score`.
+- **lookback / binding:** N× `prepare-only` (per `config_experiments/*_strategies/` tree) → plateau per parquet; do not hand-pick L.
+- **Do not** add `scripts/research/scan_<strategy>_*.py` for B/C rule stacks.
+- **Exception:** `scripts/research/scan_tpc_pullback_lookback.py` — TPC OHLC binding sweep only.
+
+## Anti-patterns (never promote on these)
+
+- Grid before Phase 1 scan (hand-tuned τ / lookback)
+- IC/label lift without Phase 3 segment backtest
+- Misaligned scales (e.g. `box_breakout@120` + `lookback_breakout@240`) without scan doc
+
+## Examples
+
+- BPC box×depth×lookback Phase 1: `config/experiments/20260611_bpc_lookback_retest_validate/rd_loop_bpc_box_pullback_phase1.yaml`
+- TPC gate / deep pullback: `20260531_tpc_gate_validate/`, `20260530_tpc_deep_pullback/`

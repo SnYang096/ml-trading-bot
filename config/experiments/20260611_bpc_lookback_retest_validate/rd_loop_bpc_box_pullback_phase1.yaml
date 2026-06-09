@@ -1,0 +1,180 @@
+# BPC box × depth × lookback — Phase 1 only（mlbot research scan，不挂 variant_grid）
+#
+# 禁止新建 scripts/research/scan_bpc_*.py；本实验 Phase 1 一律走 mlbot + rd_loop。
+# 流程：[`../README.md`](../README.md) §Phase 1 · [`../LAYER_PROMOTION_CRITERIA.md`](../LAYER_PROMOTION_CRITERIA.md)
+#
+#   # Phase 0：prod parquet（须含 box_structure_f）
+#   RUN_ID=train_final_$(date +%Y%m%d_%H%M%S)
+#   mlbot train final --no-docker --prepare-only \
+#     -c config/strategies/bpc -t 240T \
+#     --symbol BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT \
+#     --start-date 2022-01-01 --end-date 2026-04-01 \
+#     --output-root results/train_final/bpc/${RUN_ID}
+#   # 把下方 *parquet_prod 换成实际路径
+#
+#   # lookback L（binding 参数）：各 L 再 prepare 一次（实验树已改 lookback_breakout）
+#   mlbot train final --no-docker --prepare-only \
+#     -c config_experiments/bpc_lb120_strategies/bpc -t 240T \
+#     --symbol BTCUSDT,ETHUSDT,SOLUSDT --start-date 2022-01-01 --end-date 2026-04-01 \
+#     --output-root results/train_final/bpc/bpc_lb120_${RUN_ID}
+#   mlbot train final --no-docker --prepare-only \
+#     -c config_experiments/bpc_lb240_strategies/bpc -t 240T \
+#     --symbol BTCUSDT,ETHUSDT,SOLUSDT --start-date 2022-01-01 --end-date 2026-04-01 \
+#     --output-root results/train_final/bpc/bpc_lb240_${RUN_ID}
+#   # 更新 *parquet_l120 / *parquet_l240
+#
+#   PYTHONPATH=src:scripts python scripts/rd_loop.py \
+#     --hypothesis-yaml config/experiments/20260611_bpc_lookback_retest_validate/rd_loop_bpc_box_pullback_phase1.yaml
+
+topic: bpc_box_pullback_phase1_20260611
+strategy: bpc
+output_dir: results/rd_loop/bpc_box_pullback_20260611
+
+# 替换为最新 prepare-only 产物（勿手拍路径进 DECISION）
+features_parquet: &parquet_prod results/train_final/bpc/train_final_20260604_rd_rerun/bpc/features_labeled.parquet
+features_parquet_l120: &parquet_l120 results/train_final/bpc/bpc_lb120_train_final_20260604_rd_rerun/bpc/features_labeled.parquet
+features_parquet_l240: &parquet_l240 results/train_final/bpc/bpc_lb240_train_final_20260604_rd_rerun/bpc/features_labeled.parquet
+
+label: &label success_no_rr_extreme
+
+regime_filter: &regime_filter
+  - tpc_semantic_chop<=0.40
+
+regime_bull: &regime_bull
+  - tpc_semantic_chop<=0.40
+  - ema_1200_position>=0.10
+
+regime_bear: &regime_bear
+  - tpc_semantic_chop<=0.40
+  - ema_1200_position<=-0.10
+
+quick_layer_scans:
+  # ── 1) depth 带（prod lookback L=20）──
+  - mode: feature-plateau
+    features_parquet: *parquet_prod
+    label: *label
+    layer: prefilter
+    feature: bpc_pullback_depth
+    operator: "<="
+    grid: "0.35,0.45,0.50,0.55,0.65,0.75"
+    filter: *regime_filter
+    out: quick_scan/depth_plateau_L20.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet_prod
+    label: *label
+    layer: prefilter
+    feature: bpc_pullback_depth
+    operator: ">="
+    grid: "0.08,0.12,0.18,0.25,0.35"
+    filter: *regime_filter
+    out: quick_scan/depth_floor_plateau_L20.md
+
+  # ── 2) box 窗宽 N（同 parquet 多列：60/120/240；勿混用未对齐的 box_breakout@120 + soft_phase@240）──
+  - mode: feature-plateau
+    features_parquet: *parquet_prod
+    label: *label
+    layer: prefilter
+    feature: box_pos_120
+    operator: ">="
+    grid: "0.55,0.65,0.75,0.85,0.92"
+    filter: *regime_filter
+    out: quick_scan/box_pos_120_plateau.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet_prod
+    label: *label
+    layer: prefilter
+    feature: box_stability_120
+    operator: ">="
+    grid: "0.50,0.60,0.70,0.80"
+    filter: *regime_filter
+    out: quick_scan/box_stability_120_plateau.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet_prod
+    label: *label
+    layer: prefilter
+    feature: box_compression_score
+    operator: "<="
+    grid: "0.50,0.65,0.80,0.95,1.05"
+    filter: *regime_filter
+    out: quick_scan/box_compression_plateau.md
+
+  - mode: condition-set
+    features_parquet: *parquet_prod
+    label: *label
+    layer: prefilter
+    filter: *regime_filter
+    condition:
+      - "boxN60_high: box_pos_60>=0.75"
+      - "boxN120_high: box_pos_120>=0.75"
+      - "boxN240_high: box_pos_240>=0.75"
+      - "breakout_up: box_breakout_up>=0.5"
+      - "breakout_down: box_breakout_down>=0.5"
+    out: quick_scan/box_scale_condition_set.md
+
+  # ── 3) retest 组合假设（depth 带 × box 突破）──
+  - mode: condition-set
+    features_parquet: *parquet_prod
+    label: *label
+    layer: prefilter
+    filter: *regime_filter
+    condition:
+      - "prod_prefilter_proxy: bpc_volume_compression_pct>=0.9295 AND bpc_recent_breakout_strength>=0.40 AND bpc_pullback_depth<=0.55 AND bpc_recovery_strength>=0.50"
+      - "retest_band_L20: bpc_pullback_depth>=0.12 AND bpc_pullback_depth<=0.55 AND box_breakout_up>=0.5"
+      - "retest_band_bear: bpc_pullback_depth>=0.12 AND bpc_pullback_depth<=0.55 AND box_breakout_down>=0.5"
+      - "anti_chase_high_pos: box_pos_120>=0.85 AND bpc_pullback_depth<=0.55"
+    out: quick_scan/retest_combo_condition_set.md
+
+  - mode: pair-scan
+    features_parquet: *parquet_prod
+    label: *label
+    layer: prefilter
+    filter: *regime_filter
+    pair_a: "bpc_pullback_depth:>=:0.08,0.12,0.18,0.25"
+    pair_b: "box_breakout_up:>=:0.3,0.5,0.7"
+    out: quick_scan/depth_floor_x_breakout_up_pair.md
+
+  # ── 4) lookback L：分 parquet plateau（须先 L120/L240 prepare-only）──
+  - mode: feature-plateau
+    features_parquet: *parquet_l120
+    label: *label
+    layer: prefilter
+    feature: bpc_pullback_depth
+    operator: "<="
+    grid: "0.35,0.45,0.50,0.55,0.65,0.75"
+    filter: *regime_bull
+    out: quick_scan/depth_plateau_L120_bull.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet_l240
+    label: *label
+    layer: prefilter
+    feature: bpc_pullback_depth
+    operator: "<="
+    grid: "0.35,0.45,0.50,0.55,0.65,0.75"
+    filter: *regime_bull
+    out: quick_scan/depth_plateau_L240_bull.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet_l120
+    label: *label
+    layer: prefilter
+    feature: bpc_recent_breakout_strength
+    operator: ">="
+    grid: "0.30,0.40,0.50,0.60"
+    filter: *regime_filter
+    out: quick_scan/breakout_strength_plateau_L120.md
+
+  # ── 5) IC：box + BPC 核心列方向核对 ──
+  - mode: ic-decay
+    features_parquet: *parquet_prod
+    target: forward_rr
+    features: bpc_pullback_depth,bpc_recent_breakout_strength,bpc_recovery_strength,box_pos_120,box_breakout_up,box_breakout_down,box_compression_score,path_efficiency_pct
+    horizons: "1,3,5,10,20"
+    filter: *regime_filter
+    out: quick_scan/ic_decay_box_bpc.md
+
+# Phase 3 grid 读完本目录 quick_scan 后再 unlock：
+# variant_grid: config/experiments/20260611_bpc_lookback_retest_validate/bpc_lookback_retest_grid.yaml
