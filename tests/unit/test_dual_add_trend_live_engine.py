@@ -389,3 +389,298 @@ def test_dual_add_records_reconciliation_report(tmp_path: Path) -> None:
     assert engine.state.last_reconciliation_issues == [
         "position_mismatch:BTCUSDT:SHORT:0.0->0.01"
     ]
+
+
+# =========================================================================
+# _order_history / backfill late-fill guard tests
+# =========================================================================
+from src.time_series_model.live.dual_add_trend_live_engine import (  # noqa: E402
+    DualAddOrder,
+)
+
+
+def test_archive_order_stores_by_all_keys(tmp_path: Path) -> None:
+    engine = DualAddTrendLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        unit_notional=100.0,
+    )
+    order = DualAddOrder(
+        order_id="local_1",
+        symbol="BTCUSDT",
+        side="BUY",
+        price=100.0,
+        quantity=1.0,
+        reason="entry",
+        exchange_order_id="ex_123",
+        client_order_id="cl_abc",
+        reference_price=100.0,
+        max_slippage_bps=5.0,
+        seq=0,
+    )
+    engine._archive_order(order)
+
+    hist = engine.state._order_history
+    assert hist.get("ex_123") is order
+    assert hist.get("local_1") is order
+    assert hist.get("cl_abc") is order
+
+
+def test_find_order_searches_history_after_pending_removal(
+    tmp_path: Path,
+) -> None:
+    engine = DualAddTrendLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        unit_notional=100.0,
+    )
+    engine.on_bar(
+        symbol="BTCUSDT",
+        timestamp="2026-01-01T00:00:00Z",
+        high=101.0,
+        low=99.0,
+        close=100.0,
+        atr=2.0,
+        features={
+            "trend_confidence": 1.0,
+            "trend_direction": "UP",
+            "semantic_chop": 0.0,
+            "box_prefilter": False,
+        },
+    )
+    order = engine.state.pending_orders[0]
+    order.exchange_order_id = "ex_backfill"
+    order.client_order_id = "cl_xyz"
+
+    # Archive order (simulates order removed after fill + removed from pending)
+    engine._archive_order(order)
+    engine.state.pending_orders = []
+
+    # Backfill fill arrives hours later → _find_order finds archived order
+    found = engine._find_order(exchange_id="ex_backfill")
+    assert found is not None
+    assert found.exchange_order_id == "ex_backfill"
+
+    found2 = engine._find_order(client_id="cl_xyz")
+    assert found2 is not None
+
+
+def test_late_fill_after_segment_exit_generates_cleanup_exit(
+    tmp_path: Path,
+) -> None:
+    engine = DualAddTrendLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        unit_notional=100.0,
+    )
+    engine.on_bar(
+        symbol="BTCUSDT",
+        timestamp="2026-01-01T00:00:00Z",
+        high=101.0,
+        low=99.0,
+        close=100.0,
+        atr=2.0,
+        features={
+            "trend_confidence": 1.0,
+            "trend_direction": "UP",
+            "semantic_chop": 0.0,
+            "box_prefilter": False,
+        },
+    )
+    order = engine.state.pending_orders[0]
+    order.exchange_order_id = "ex_late"
+    order.client_order_id = "cl_late"
+    engine._archive_order(order)
+
+    # Simulate: segment exited, pending_orders cleared by exit flow
+    engine.state.inventory = []
+    engine.state.pending_orders = []
+    engine.state.active = False
+
+    # Late fill via backfill
+    report = {
+        "order_id": "ex_late",
+        "client_order_id": "cl_late",
+        "symbol": "BTCUSDT",
+        "status": "FILLED",
+        "filled_qty": 1.0,
+        "last_filled_price": 100.02,
+        "trade_time": "2026-01-01T02:00:00Z",
+    }
+    engine.on_execution_report(report)
+
+    positions = engine.local_position_snapshots()
+    assert len(positions) == 1
+    assert positions[0].side == "LONG"
+
+    exit_actions = [
+        a for a in engine.pop_pending_actions() if a.get("action") == "market_exit"
+    ]
+    assert len(exit_actions) == 1
+    assert exit_actions[0]["reason"] == "late_fill_cleanup"
+
+
+def test_active_segment_fill_does_not_trigger_late_cleanup(
+    tmp_path: Path,
+) -> None:
+    engine = DualAddTrendLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        unit_notional=100.0,
+    )
+    engine.state.active = True
+    engine.state.symbol = "BTCUSDT"
+    engine.state.segment_id = "seg"
+    engine.state.center = 100.0
+    engine.state.atr = 2.0
+    engine.state.trend_side = "LONG"
+    engine.state.last_timestamp = "2026-01-01T00:00:00Z"
+
+    order = DualAddOrder(
+        order_id="local_active",
+        symbol="BTCUSDT",
+        side="BUY",
+        price=100.0,
+        quantity=1.0,
+        reason="entry",
+        exchange_order_id="ex_active",
+        client_order_id="cl_active",
+        reference_price=100.0,
+        max_slippage_bps=5.0,
+        seq=0,
+    )
+    engine.state.pending_orders.append(order)
+
+    report = {
+        "order_id": "ex_active",
+        "client_order_id": "cl_active",
+        "symbol": "BTCUSDT",
+        "status": "FILLED",
+        "filled_qty": 1.0,
+        "last_filled_price": 100.02,
+        "trade_time": "2026-01-01T00:02:00Z",
+    }
+    engine.on_execution_report(report)
+
+    positions = engine.local_position_snapshots()
+    assert len(positions) == 1
+
+    cleanup = [
+        a
+        for a in engine.pop_pending_actions()
+        if a.get("reason") == "late_fill_cleanup"
+    ]
+    assert len(cleanup) == 0
+
+
+def test_exit_all_preserves_pending_orders(tmp_path: Path) -> None:
+    engine = DualAddTrendLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        unit_notional=100.0,
+    )
+    engine.state.active = True
+    engine.state.symbol = "BTCUSDT"
+    engine.state.segment_id = "seg"
+    engine.state.center = 100.0
+    engine.state.atr = 2.0
+    engine.state.trend_side = "LONG"
+    engine.state.last_timestamp = "2026-01-01T00:00:00Z"
+
+    order = DualAddOrder(
+        order_id="local_exit",
+        symbol="BTCUSDT",
+        side="BUY",
+        price=100.0,
+        quantity=1.0,
+        reason="entry",
+        exchange_order_id="ex_exit",
+        client_order_id="cl_exit",
+        reference_price=100.0,
+        max_slippage_bps=5.0,
+        seq=0,
+    )
+    engine.state.pending_orders.append(order)
+
+    actions = engine._exit_all(100.0, "2026-01-01T01:00:00Z", reason="regime_exit")
+
+    # pending_orders NOT cleared by _exit_all
+    assert len(engine.state.pending_orders) == 1
+    assert engine.state.pending_orders[0].order_id == "local_exit"
+
+    cancel_actions = [a for a in actions if a.get("action") == "cancel"]
+    assert len(cancel_actions) == 1
+    assert cancel_actions[0]["exchange_order_id"] == "ex_exit"
+
+    assert engine.state.inventory == []
+    assert engine.state.active is False
+
+
+def test_on_execution_results_cleans_cancelled_and_archives(
+    tmp_path: Path,
+) -> None:
+    engine = DualAddTrendLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        unit_notional=100.0,
+    )
+    order = DualAddOrder(
+        order_id="local_cancel",
+        symbol="BTCUSDT",
+        side="BUY",
+        price=100.0,
+        quantity=1.0,
+        reason="entry",
+        exchange_order_id="ex_cancel_test",
+        client_order_id="cl_cancel_test",
+        reference_price=100.0,
+        max_slippage_bps=5.0,
+        seq=0,
+    )
+    engine.state.pending_orders.append(order)
+    engine.state.active = True
+    engine.state.symbol = "BTCUSDT"
+
+    engine.on_execution_results(
+        [
+            GridExecutionResult(
+                action="cancel",
+                status="canceled",
+                symbol="BTCUSDT",
+                order_id="ex_cancel_test",
+                client_order_id="cl_cancel_test",
+                raw={"local_order_id": "local_cancel"},
+            )
+        ]
+    )
+
+    assert len(engine.state.pending_orders) == 0
+    # Archived so late fills can still find the order
+    assert engine.state._order_history.get("ex_cancel_test") is order
+
+
+def test_save_state_excludes_order_history(tmp_path: Path) -> None:
+    engine = DualAddTrendLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        unit_notional=100.0,
+    )
+    order = DualAddOrder(
+        order_id="local_save",
+        symbol="BTCUSDT",
+        side="BUY",
+        price=100.0,
+        quantity=1.0,
+        reason="entry",
+        exchange_order_id="ex_save",
+        client_order_id="cl_save",
+        reference_price=100.0,
+        max_slippage_bps=5.0,
+        seq=0,
+    )
+    engine._archive_order(order)
+    engine.save_state()
+
+    raw = __import__("json").loads((tmp_path / "state.json").read_text())
+    assert "_order_history" not in raw
+    assert raw.get("symbol") == ""
