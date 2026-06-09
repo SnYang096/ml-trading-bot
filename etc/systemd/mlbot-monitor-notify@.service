@@ -5,5 +5,5 @@ After=network-online.target
 [Service]
 Type=oneshot
 Environment=MLBOT_MONITORING_ENV=/opt/quant-engine/monitoring/.env
-ExecStart=/home/yin/trading/ml_trading_bot/scripts/monitoring/monitor_telegram_notify.sh %i failed
+ExecStart=/opt/quant-engine/scripts/monitoring/monitor_telegram_notify.sh %i failed
 TimeoutStartSec=30

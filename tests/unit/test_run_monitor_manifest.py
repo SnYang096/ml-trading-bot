@@ -14,6 +14,19 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WEEKLY_MANIFEST = PROJECT_ROOT / "config" / "monitoring" / "weekly_rule_stack.yaml"
 
 
+def test_window_key_legacy_short_long_aliases():
+    manifest = {
+        "windows": {
+            "near": {"parquet": "a.parquet"},
+            "deep": {"parquet": "b.parquet"},
+        }
+    }
+    from scripts.monitoring.run_monitor_manifest import _window_cfg
+
+    assert _window_cfg(manifest, "short")["parquet"] == "a.parquet"
+    assert _window_cfg(manifest, "long")["parquet"] == "b.parquet"
+
+
 def test_weekly_manifest_loads_and_has_four_steps():
     manifest = _load_manifest(WEEKLY_MANIFEST)
     assert manifest["monitor_id"] == "weekly_rule_stack"
@@ -24,9 +37,9 @@ def test_weekly_manifest_loads_and_has_four_steps():
         "watchdog",
         "drift",
     ]
-    assert manifest["windows"]["long"]["source"] == "feature_bus_export"
-    assert "short" in manifest["windows"]
-    assert "long" in manifest["windows"]
+    assert manifest["windows"]["deep"]["source"] == "feature_bus_export"
+    assert "near" in manifest["windows"]
+    assert "deep" in manifest["windows"]
 
 
 def test_execute_manifest_dry_run_substitutes_run_ts(capsys):
@@ -42,7 +55,7 @@ def test_execute_manifest_dry_run_substitutes_run_ts(capsys):
     out = capsys.readouterr().out
     assert "20260101_1200" in out
     assert "features_current_7d.parquet" in out
-    assert "features_current_long.parquet" in out
+    assert "features_current_deep.parquet" in out
     assert out.count("[dry-run] export-window") == 2
     assert "[dry-run] watchdog" in out
     assert "[dry-run] drift" in out
@@ -51,7 +64,7 @@ def test_execute_manifest_dry_run_substitutes_run_ts(capsys):
 def test_execute_manifest_rejects_unknown_step(tmp_path):
     manifest = {
         "monitor_id": "bad",
-        "windows": {"short": {"parquet": "x.parquet"}},
+        "windows": {"near": {"parquet": str(tmp_path / "near.parquet")}},
         "steps": [{"noop": {}}],
     }
     with pytest.raises(ValueError, match="unknown manifest step"):
@@ -69,17 +82,17 @@ def test_execute_manifest_writes_heartbeat_on_success(tmp_path, monkeypatch):
         "monitor_id": "test_stack",
         "output_dir": str(tmp_path / "out/{run_ts}"),
         "windows": {
-            "short": {"parquet": str(tmp_path / "short.parquet")},
-            "long": {"parquet": str(tmp_path / "long.parquet")},
+            "near": {"parquet": str(tmp_path / "near.parquet")},
+            "deep": {"parquet": str(tmp_path / "deep.parquet")},
         },
         "strategies": ["tpc"],
         "steps": [
-            {"watchdog": {"window": "short"}},
-            {"drift": {"window": "long"}},
+            {"watchdog": {"window": "near"}},
+            {"drift": {"window": "deep"}},
         ],
     }
-    (tmp_path / "short.parquet").write_bytes(b"")  # not read when mocked
-    (tmp_path / "long.parquet").write_bytes(b"")
+    (tmp_path / "near.parquet").write_bytes(b"")  # not read when mocked
+    (tmp_path / "deep.parquet").write_bytes(b"")
 
     def fake_run(script: str, argv):  # noqa: ANN001
         return 0
@@ -112,15 +125,15 @@ def test_execute_manifest_watchdog_in_process(tmp_path, monkeypatch):
     import argparse
 
     # Create dummy parquet files so the code gets past file-existence checks
-    short_pq = tmp_path / "short.parquet"
+    short_pq = tmp_path / "near.parquet"
     short_pq.write_bytes(b"")  # 0-byte is fine — we monkeypatch before read
 
     manifest = {
         "monitor_id": "inproc_watchdog",
         "output_dir": str(tmp_path / "out/{run_ts}"),
-        "windows": {"short": {"parquet": str(short_pq)}},
+        "windows": {"near": {"parquet": str(short_pq)}},
         "strategies": ["tpc"],
-        "steps": [{"watchdog": {"window": "short"}}],
+        "steps": [{"watchdog": {"window": "near"}}],
     }
 
     monkeypatch.delenv("MLBOT_MONITOR_FORCE_SUBPROCESS", raising=False)
@@ -129,7 +142,7 @@ def test_execute_manifest_watchdog_in_process(tmp_path, monkeypatch):
 
     def fake_run_watchdog(ns: argparse.Namespace) -> int:
         called["flag"] = True
-        assert str(ns.window_parquet).endswith("short.parquet")
+        assert str(ns.window_parquet).endswith("near.parquet")
         return 0
 
     # Patch at the module that will import it at runtime

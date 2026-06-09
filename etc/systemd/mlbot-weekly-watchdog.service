@@ -1,17 +1,12 @@
 [Unit]
-Description=mlbot weekly regime watchdog (manifest or run_weekly.sh)
-After=network-online.target
+Description=mlbot weekly regime watchdog (alias of monitor schedule weekly)
+After=docker.service network-online.target
+Requires=docker.service
 OnFailure=mlbot-monitor-notify@%n.service
 
 [Service]
 Type=oneshot
-WorkingDirectory=/home/yin/trading/ml_trading_bot
-Environment=MLBOT_FEATURE_BUS_ROOT=live/shared_feature_bus
-Environment=MLBOT_MONITOR_AUTO_WINDOW=1
-# Optional overrides (unset = auto-produce under results/monitoring/window/<ts>/):
-# Environment=WATCHDOG_PARQUET=
-# Environment=DRIFT_PARQUET=
-ExecStart=/bin/bash -lc 'mlbot monitor schedule --cadence weekly'
+ExecStart=/opt/quant-engine/deploy/systemd/mlbot-monitor-docker-run.sh weekly
 
 [Install]
 WantedBy=multi-user.target

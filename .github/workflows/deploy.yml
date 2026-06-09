@@ -71,6 +71,10 @@ on:
       - 'deploy/monitoring/**'
       - 'deploy/business-console/**'
       - 'deploy/systemd/quant-business-console.service'
+      - 'deploy/systemd/mlbot-monitor-docker-run.sh'
+      - 'etc/systemd/mlbot-monitor-*.service'
+      - 'etc/systemd/mlbot-monitor-*.timer'
+      - 'etc/systemd/mlbot-monitor-notify@.service'
       - 'src/mlbot_console/**'
       - 'src/time_series_model/live/**'
       - 'config/strategies/**'
@@ -722,6 +726,19 @@ jobs:
           for p in \
             deploy/business-console \
             deploy/systemd/quant-business-console.service \
+            deploy/systemd/mlbot-monitor-docker-run.sh \
+            etc/systemd/mlbot-monitor-daily.service \
+            etc/systemd/mlbot-monitor-daily.timer \
+            etc/systemd/mlbot-monitor-weekly.service \
+            etc/systemd/mlbot-monitor-weekly.timer \
+            etc/systemd/mlbot-monitor-monthly.service \
+            etc/systemd/mlbot-monitor-monthly.timer \
+            etc/systemd/mlbot-monitor-quarterly.service \
+            etc/systemd/mlbot-monitor-quarterly.timer \
+            etc/systemd/mlbot-monitor-yearly.service \
+            etc/systemd/mlbot-monitor-yearly.timer \
+            etc/systemd/mlbot-monitor-notify@.service \
+            scripts/monitoring/monitor_telegram_notify.sh \
             src/__init__.py \
             src/mlbot_console \
             src/live_data_stream \
@@ -744,6 +761,19 @@ jobs:
             -C "${ROOT}" \
               deploy/business-console \
               deploy/systemd/quant-business-console.service \
+              deploy/systemd/mlbot-monitor-docker-run.sh \
+              etc/systemd/mlbot-monitor-daily.service \
+              etc/systemd/mlbot-monitor-daily.timer \
+              etc/systemd/mlbot-monitor-weekly.service \
+              etc/systemd/mlbot-monitor-weekly.timer \
+              etc/systemd/mlbot-monitor-monthly.service \
+              etc/systemd/mlbot-monitor-monthly.timer \
+              etc/systemd/mlbot-monitor-quarterly.service \
+              etc/systemd/mlbot-monitor-quarterly.timer \
+              etc/systemd/mlbot-monitor-yearly.service \
+              etc/systemd/mlbot-monitor-yearly.timer \
+              etc/systemd/mlbot-monitor-notify@.service \
+              scripts/monitoring/monitor_telegram_notify.sh \
               src/__init__.py \
               src/mlbot_console \
               src/live_data_stream \
@@ -780,7 +810,37 @@ jobs:
             sudo chown -R "$(whoami):$(whoami)" \
               /opt/quant-engine/deploy \
               /opt/quant-engine/src \
-              /opt/quant-engine/config
+              /opt/quant-engine/config \
+              /opt/quant-engine/etc \
+              /opt/quant-engine/scripts
+            sudo mkdir -p /opt/quant-engine/results/monitoring
+            sudo chown -R "$(whoami):$(whoami)" /opt/quant-engine/results
+            if [ -f /opt/quant-engine/deploy/systemd/mlbot-monitor-docker-run.sh ]; then
+              chmod +x /opt/quant-engine/deploy/systemd/mlbot-monitor-docker-run.sh
+            fi
+            if [ -f /opt/quant-engine/scripts/monitoring/monitor_telegram_notify.sh ]; then
+              chmod +x /opt/quant-engine/scripts/monitoring/monitor_telegram_notify.sh
+            fi
+            for unit in \
+              mlbot-monitor-daily.service mlbot-monitor-daily.timer \
+              mlbot-monitor-weekly.service mlbot-monitor-weekly.timer \
+              mlbot-monitor-monthly.service mlbot-monitor-monthly.timer \
+              mlbot-monitor-quarterly.service mlbot-monitor-quarterly.timer \
+              mlbot-monitor-yearly.service mlbot-monitor-yearly.timer \
+              mlbot-monitor-notify@.service; do
+              if [ -f "/opt/quant-engine/etc/systemd/${unit}" ]; then
+                sudo cp "/opt/quant-engine/etc/systemd/${unit}" /etc/systemd/system/
+              fi
+            done
+            sudo systemctl daemon-reload
+            sudo systemctl enable --now \
+              mlbot-monitor-daily.timer \
+              mlbot-monitor-weekly.timer \
+              mlbot-monitor-monthly.timer \
+              mlbot-monitor-quarterly.timer \
+              mlbot-monitor-yearly.timer
+            echo "✅ mlbot monitor timers enabled (writes /opt/quant-engine/results/monitoring/index.json)"
+            systemctl list-timers 'mlbot-monitor-*' --no-pager 2>/dev/null || true
             if [ -f /opt/quant-engine/live/highcap/universe.yaml ]; then
               sudo chown "$(whoami):$(whoami)" /opt/quant-engine/live/highcap/universe.yaml
             fi
@@ -823,5 +883,6 @@ jobs:
             echo "=== 📊 Business console ==="
             docker ps --filter name=mlbot-business-console --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
             echo "Trade Map: http://127.0.0.1:8800/trade-map （仅本机或 SSH -L 8800:127.0.0.1:8800）"
+            echo "Drift CMS: http://127.0.0.1:8800/monitoring （index 来自 /opt/quant-engine/results/monitoring/index.json）"
             echo "live/highcap → universe.yaml + config/constitution + config/strategies（由 business-console CI 同步）"
             echo "可选 Basic Auth: 在 compose 环境变量中设置 MLBOT_CONSOLE_BASIC_AUTH_USER/PASSWORD 后 docker compose up -d"

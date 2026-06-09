@@ -2,12 +2,12 @@ monitor_id: quarterly_drift
 output_dir: results/monitoring/quarterly_drift/{run_ts}
 
 windows:
-  short:
+  near:
     source: feature_bus_export
     lookback_days: 30
     timeframe: 120T
     parquet: results/monitoring/window/{run_ts}/features_current_30d.parquet
-  long:
+  deep:
     source: feature_bus_export
     lookback_days: 0
     timeframe: 120T
@@ -16,11 +16,11 @@ windows:
 strategies: [bpc, tpc, me, srb]
 
 steps:
-  - export-window: { window: short }
-  - export-window: { window: long }
+  - export-window: { window: near }
+  - export-window: { window: deep }
   - watchdog:
-      window: short
+      window: near
       baseline: config/monitoring/regime_watchdog_baseline.json
   - drift:
-      window: long
+      window: deep
       emit_rd_loop_suggestions: true

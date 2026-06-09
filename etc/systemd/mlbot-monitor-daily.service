@@ -1,13 +1,12 @@
 [Unit]
 Description=mlbot monitor daily health + staleness check
-After=network-online.target
+After=docker.service network-online.target
+Requires=docker.service
 OnFailure=mlbot-monitor-notify@%n.service
 
 [Service]
 Type=oneshot
-WorkingDirectory=/home/yin/trading/ml_trading_bot
-Environment=MLBOT_FEATURE_BUS_ROOT=live/shared_feature_bus
-ExecStart=/bin/bash -lc 'mlbot monitor schedule --cadence daily'
+ExecStart=/opt/quant-engine/deploy/systemd/mlbot-monitor-docker-run.sh daily
 
 [Install]
 WantedBy=multi-user.target

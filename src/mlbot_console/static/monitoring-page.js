@@ -42,7 +42,12 @@ function renderCards(cards) {
     .map((c) => {
       const label = CADENCE_LABELS[c.cadence] || c.cadence;
       const st = c.display_status || "—";
-      const wd = c.watchdog_any_alert ? "ALERT" : "OK";
+      const wd =
+        c.watchdog_any_alert === true
+          ? "ALERT"
+          : c.watchdog_any_alert === false
+            ? "OK"
+            : "—";
       let dr = "—";
       if (c.drift_any_alert) dr = "ALERT";
       else if (c.drift_no_plateaus) dr = "未校准";

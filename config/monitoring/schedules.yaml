@@ -17,7 +17,7 @@ schedules:
     description: Daily bus 1d + watchdog; plus staleness TG if overdue
   weekly:
     manifest: config/monitoring/weekly_rule_stack.yaml
-    description: Gate PSI + regime plateau (bus short + long export)
+    description: Gate PSI + regime plateau (bus near + deep export)
   monthly:
     manifest: config/monitoring/monthly_drift.yaml
     description: Regime plateau on ~30d bus window

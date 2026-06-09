@@ -8120,6 +8120,45 @@ def monitor_check_staleness(schedules: str, dry_run: bool):
     sys.exit(run_script("scripts/monitoring/check_monitor_staleness.py", args))
 
 
+@monitor.command("catalog")
+@click.option(
+    "--root",
+    default="results",
+    show_default=True,
+    help="Search root for features_labeled.parquet",
+)
+@click.option(
+    "--path",
+    default="",
+    help="Inspect a single parquet (skip discovery)",
+)
+@click.option(
+    "--strategy",
+    default="",
+    help="Filter by strategy slug in path (e.g. tpc, bpc)",
+)
+@click.option(
+    "--name",
+    default="features_labeled.parquet",
+    show_default=True,
+    help="Filename to match",
+)
+@click.option("--limit", default=30, show_default=True, type=int)
+@click.option("--json", "as_json", is_flag=True, help="JSON output with full metadata")
+def monitor_catalog(
+    root: str, path: str, strategy: str, name: str, limit: int, as_json: bool
+):
+    """List labeled parquet files + monitor metadata (rows, symbols, date range, IC cols)."""
+    args = ["--root", root, "--name", name, "--limit", str(limit)]
+    if str(path).strip():
+        args.extend(["--path", str(path).strip()])
+    if str(strategy).strip():
+        args.extend(["--strategy", str(strategy).strip()])
+    if as_json:
+        args.append("--json")
+    sys.exit(run_script("scripts/monitoring/catalog_labeled_parquets.py", args))
+
+
 @monitor.command("run")
 @click.option(
     "--config",

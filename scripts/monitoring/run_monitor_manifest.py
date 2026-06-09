@@ -36,14 +36,46 @@ def _load_manifest(path: Path) -> Dict[str, Any]:
     return data
 
 
+# Manifest window keys: near/deep = lookback depth (NOT trading long/short).
+# Legacy aliases short/long still resolve for older YAML.
+_WINDOW_KEY_ALIASES = {
+    "short": "near",
+    "long": "deep",
+}
+
+
+def _normalize_window_key(key: str) -> str:
+    k = str(key).strip()
+    return _WINDOW_KEY_ALIASES.get(k, k)
+
+
 def _window_cfg(manifest: Dict[str, Any], key: str) -> Dict[str, Any]:
     windows = manifest.get("windows") or {}
+    key = _normalize_window_key(key)
     if key not in windows:
         raise KeyError(f"window {key!r} not in manifest windows")
     row = windows[key]
     if not isinstance(row, dict):
         raise ValueError(f"window {key!r} must be a mapping")
     return row
+
+
+def _window_path_for_step(
+    steps: List[Any],
+    step_name: str,
+    window_paths: Dict[str, Path],
+) -> Optional[Path]:
+    default = "near" if step_name == "watchdog" else "deep"
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        cfg = step.get(step_name)
+        if not isinstance(cfg, dict):
+            continue
+        win_key = _normalize_window_key(str(cfg.get("window", default)))
+        if win_key in window_paths:
+            return window_paths[win_key]
+    return None
 
 
 def _run_py(script: str, argv: List[str]) -> int:
@@ -147,7 +179,7 @@ def execute_manifest(
         cfg = cfg if isinstance(cfg, dict) else {}
 
         if name == "export-window":
-            win_key = str(cfg.get("window", "short"))
+            win_key = _normalize_window_key(str(cfg.get("window", "near")))
             win = _window_cfg(manifest, win_key)
             parquet = _resolve_path(
                 str(
@@ -205,7 +237,7 @@ def execute_manifest(
                 return rc, run_ts, out_dir
 
         elif name == "archive-batch":
-            win_key = str(cfg.get("window", "long"))
+            win_key = _normalize_window_key(str(cfg.get("window", "deep")))
             win = _window_cfg(manifest, win_key)
             parquet = _resolve_path(
                 str(
@@ -252,7 +284,7 @@ def execute_manifest(
                 return rc, run_ts, out_dir
 
         elif name == "watchdog":
-            win_key = str(cfg.get("window", "short"))
+            win_key = _normalize_window_key(str(cfg.get("window", "near")))
             pq = window_paths.get(win_key) or _resolve_path(
                 str((_window_cfg(manifest, win_key).get("parquet"))),
                 run_ts=run_ts,
@@ -317,7 +349,7 @@ def execute_manifest(
                 exit_code = 1
 
         elif name == "drift":
-            win_key = str(cfg.get("window", "long"))
+            win_key = _normalize_window_key(str(cfg.get("window", "deep")))
             pq = window_paths.get(win_key) or _resolve_path(
                 str((_window_cfg(manifest, win_key).get("parquet"))),
                 run_ts=run_ts,
@@ -360,10 +392,8 @@ def execute_manifest(
     if dry_run:
         return 0, run_ts, out_dir
 
-    short_key = "short"
-    long_key = "long"
-    wd_pq = window_paths.get(short_key)
-    dr_pq = window_paths.get(long_key)
+    wd_pq = _window_path_for_step(steps, "watchdog", window_paths)
+    dr_pq = _window_path_for_step(steps, "drift", window_paths)
     if wd_pq:
         os.environ["WATCHDOG_PARQUET"] = str(wd_pq)
     if dr_pq:

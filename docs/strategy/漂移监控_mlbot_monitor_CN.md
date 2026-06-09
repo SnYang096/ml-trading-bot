@@ -561,9 +561,11 @@ verbs（目标态，粗体=已有薄壳）:
 **周跑默认（两路 current，均来自 bus，解决 C6）**：
 
 1. **reference**：git `config/monitoring/*_baseline.json` + `regime.yaml` plateaus；PSI 的 reference 来自 baseline 内 `source_parquet`（标定窗），**≠** 任一 current。
-2. **current 短窗**（gate / PSI 突变）：`export-window --lookback-days 7` → `features_current_7d.parquet`
-3. **current 长窗**（regime plateau）：`export-window --lookback-days 0`（bus 滚动快照全量）→ `features_current_long.parquet`。**不**在 monitor 时 `prepare-only`；publisher 已持续 append 120T 特征。
+2. **current 近端窗**（gate / PSI 突变）：manifest `near` → `export-window --lookback-days 7` → `features_current_7d.parquet`
+3. **current 深窗**（regime plateau）：manifest `deep` → `export-window --lookback-days 0`（bus 滚动快照全量）→ `features_current_deep.parquet`。**不**在 monitor 时 `prepare-only`；publisher 已持续 append 120T 特征。
 4. **monitor**：`mlbot monitor run --config config/monitoring/weekly_rule_stack.yaml` 或设 `WATCHDOG_PARQUET` / `DRIFT_PARQUET` 后 `mlbot monitor weekly`。
+
+**Symbol 列表**：highcap 实盘真值 [`live/highcap/universe.yaml`](../../live/highcap/universe.yaml)（与 `start_live.sh` 同源）。`export-window` 未传 `--symbols` 时用 bus 目录 listing（bus 空则脚本内硬编码回退，**尚未**自动读 universe）。**不要**在文档/脚本里再维护一套与 universe 平行的 coin list；manifest 可选 `symbols:` 应与 universe keys 一致，且 **baseline 标定与 current 须同集合**（详见 [`config/monitoring/README.md`](../../config/monitoring/README.md)）。
 
 **可选路径（仅 manifest 声明时）**：
 
@@ -615,9 +617,10 @@ flowchart LR
 **应该做的**
 
 1. **远程（T1）**：cron = `export-window` → `WATCHDOG_PARQUET` → `monitor weekly`；`window.source: feature_bus_export`。**不要**每周 `train final --prepare-only` 重算特征。
-2. **本地**：现有 `features_labeled` 继续用于 research；复核时改 `window.source: prepare_labeled` 或 `parquet_path`（近端 OOS 窗，非全历史 train_final）。
-3. **promote 后**：本地 `watchdog --baseline-refresh` → commit baseline JSON；远程用 bus 导出窗 + 同一 baseline 做 PSI/plateau。
-4. **IC 项**：周 cron 可 **跳过**（bus 无 `forward_rr`），或 manifest 单独 step + `archive_batch`/`prepare_labeled`；多数人审后在本地跑 IC。
+2. **本地**：现有 `features_labeled` 继续用于 research；复核时用已有 parquet 或 §7.4 命令生成窗（**`mlbot train final` 无 `--segment`**，须 `--start-date`/`--end-date` 或 `train_strategy_pipeline.py`）。
+3. **选 parquet**：`mlbot monitor catalog [--strategy tpc] [--json]`；或 `find results -path '*/features_labeled.parquet'`；核对 symbol 集合、日期窗、是否有 `forward_rr`（见 [`config/monitoring/README.md`](../../config/monitoring/README.md) §0 A）。
+4. **promote 后**：本地在标定窗上刷 baseline JSON + plateaus → commit；远程用 bus 导出 + 同一 baseline 做 PSI/plateau。
+5. **IC 项**：周 cron 可 **跳过**（bus 无 `forward_rr`），或 manifest 单独 step + `archive_batch`/`prepare_labeled`；多数人审后在本地跑 IC。
 
 **禁止做的**
 
@@ -633,12 +636,20 @@ flowchart LR
 - `parquet_path`：仅调试；生产 cron 用 `feature_bus_export`。
 
 ```bash
-# 远程默认（T1）
+# 远程默认（T1）；--symbols 应与 live/highcap/universe.yaml keys 一致（或省略 = bus 上有的币）
 mlbot monitor export-window --timeframe 120T --lookback-days 7 \
-  --output results/monitoring/window/$(date -u +%Y%m%d)/features_current.parquet
+  --output results/monitoring/window/$(date -u +%Y%m%d)/features_current_7d.parquet
 
-# 仅当 manifest 含 ic 步骤时（本地更常见）
-mlbot train final --prepare-only -c config/strategies/tpc ...
+# 本地 labeled 窗（无 bus）：须显式日期，无 --segment
+python scripts/train_strategy_pipeline.py --prepare-only \
+  --config config/strategies/tpc \
+  --symbol BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT \
+  --timeframe 120T --start-date 2025-10-01 --end-date 2026-03-31 \
+  --train-all --output-root results/monitoring/tier0/tpc_highcap_manual
+
+# 或单币 archive-batch（对齐 market_segment）
+mlbot monitor archive-batch --strategy tpc --segment recent_6m_oos \
+  --symbol BTCUSDT --output /tmp/tpc_6m.parquet
 ```
 
 **结论**：远程 **不必**为监控重算特征；**必须**把 bus 导出成 watchdog 可读的单文件，且 current ≠ baseline 窗。本地 `features_labeled` 用于 R&D 与含 IC 的复核。
@@ -823,7 +834,7 @@ flowchart TB
 |----|------|------------------|-------------------|
 | **Regime** | plateau P50 | `regime.yaml` **plateaus 列表**（标定写入） | **仅 plateaus 里列出的 regime 特征** |
 | **Gate** | bull_share、trigger_rate | `regime_watchdog_baseline.json` **per strategy** | **per 策略** 聚合指标，非全特征 |
-| **Gate/Prefilter** | PSI | baseline JSON 的 `source` + manifest **`psi_features`**（默认 3 列） | **显式清单**，非 features.yaml 全量 |
+| **Gate/Prefilter** | PSI | baseline JSON 的 `source` + manifest **`psi_features`**（默认 3 列） | **显式清单**，非 features.yaml 全量；改列编辑 [`weekly_rule_stack.yaml`](../../config/monitoring/weekly_rule_stack.yaml) `watchdog_defaults`；**未**自动读 `gate.yaml`（backlog） |
 | **Gate/Prefilter** | IC sign-flip | `factor_ic_baseline_*.json` **rows[]** | **仅 JSON 里登记的特征**（现 TPC 较全，他策略缺 C3） |
 | **Entry** | （计划）hit_rate / R | 未实现 T5 | — |
 | **Execution** | 月 replay / ledger | 无特征平台基线 | KPI 级 |

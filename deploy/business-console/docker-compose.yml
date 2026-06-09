@@ -33,5 +33,7 @@ services:
       - /opt/quant-engine/live/highcap:/data/live_root:ro
       - /opt/quant-engine/live/highcap/data:/data/live_data:ro
       - /opt/quant-engine/data:/data/engine:ro
+      # CMS drift cards: schedule writes host results/; console reads /app/results/
+      - /opt/quant-engine/results:/app/results:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
