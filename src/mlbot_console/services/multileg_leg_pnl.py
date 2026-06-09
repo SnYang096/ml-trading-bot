@@ -23,6 +23,8 @@ from mlbot_console.services.multileg_order_links import (
     is_trend_entry_row,
     leg_group_key,
     row_group_key,
+    late_fixup_entry_segment_matches,
+    market_exit_closing_position_side,
     trend_entry_position_side,
     trend_exit_entry_id,
 )
@@ -105,13 +107,6 @@ def _entry_position_side(row: Dict[str, Any]) -> Optional[str]:
     if is_s_entry_row(row):
         return "SHORT"
     return trend_entry_position_side(row)
-
-
-def _market_exit_position_side(row: Dict[str, Any]) -> Optional[str]:
-    ps = str(row.get("position_side") or row.get("side") or "").upper()
-    if ps in {"LONG", "SHORT"}:
-        return ps
-    return None
 
 
 def _ts_row(row: Dict[str, Any]) -> Optional[int]:
@@ -205,7 +200,9 @@ def _filled_exit_row(
         exit_ts = _ts_row(mex)
         if exit_ts is None or exit_ts < entry_ts:
             continue
-        if _market_exit_position_side(mex) != ent_side:
+        if market_exit_closing_position_side(mex) != ent_side:
+            continue
+        if not late_fixup_entry_segment_matches(mex_id, _order_key(entry_row)):
             continue
         mex_qty = filled_quantity(mex)
         if mex_qty <= 0 or ent_qty > mex_qty * 1.02:

@@ -20,6 +20,7 @@ _TREND_EXIT_RE = re.compile(
     re.I,
 )
 _TREND_SEGMENT_RE = re.compile(r"^(.+)_(?:initial_trend|trend_add)_", re.I)
+_LATE_FIXUP_SUFFIX = "_market_exit_late_fixup"
 
 
 def trend_segment_key(order_id: str) -> Optional[str]:
@@ -57,6 +58,39 @@ def trend_entry_position_side(row: Dict[str, Any]) -> Optional[str]:
             return "LONG"
         if "_SELL_" in oid.upper():
             return "SHORT"
+    return None
+
+
+def late_fixup_segment_prefix(order_id: str) -> Optional[str]:
+    """Segment batch id embedded in ``{segment}_market_exit_late_fixup`` rows."""
+    oid = str(order_id or "")
+    if oid.endswith(_LATE_FIXUP_SUFFIX):
+        return oid[: -len(_LATE_FIXUP_SUFFIX)]
+    return None
+
+
+def late_fixup_entry_segment_matches(
+    exit_order_id: str, entry_order_id: str
+) -> bool:
+    """When exit is a late_fixup row, require the same trend segment prefix."""
+    seg = late_fixup_segment_prefix(exit_order_id)
+    if not seg:
+        return True
+    return trend_segment_key(entry_order_id) == seg
+
+
+def market_exit_closing_position_side(row: Dict[str, Any]) -> Optional[str]:
+    """Position reduced by a market_exit row (hedge: BUY closes SHORT, SELL closes LONG)."""
+    ps = str(row.get("position_side") or "").upper()
+    if ps in {"LONG", "SHORT"}:
+        return ps
+    side = str(row.get("side") or "").upper()
+    if side in {"LONG", "SHORT"}:
+        return side
+    if side == "BUY":
+        return "SHORT"
+    if side == "SELL":
+        return "LONG"
     return None
 
 

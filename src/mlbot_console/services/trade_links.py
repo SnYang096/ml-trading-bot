@@ -20,6 +20,8 @@ from mlbot_console.services.multileg_order_links import (
     is_s_entry_row,
     leg_group_key,
     leg_suffix,
+    late_fixup_entry_segment_matches,
+    market_exit_closing_position_side,
     trend_entry_position_side,
     trend_exit_entry_id,
 )
@@ -221,13 +223,6 @@ def _append_entry_tp_links(
         return
 
 
-def _market_exit_position_side(row: Dict[str, Any]) -> Optional[str]:
-    ps = str(row.get("position_side") or row.get("side") or "").upper()
-    if ps in {"LONG", "SHORT"}:
-        return ps
-    return None
-
-
 def _entry_position_side(row: Dict[str, Any]) -> Optional[str]:
     if is_l_entry_row(row):
         return "LONG"
@@ -296,7 +291,7 @@ def _append_orphan_market_exit_links(
         exit_mid = _marker_id(
             "multi_leg", "multi_leg_orders", str(mex.get("local_order_id") or "")
         )
-        mex_side = _market_exit_position_side(mex)
+        mex_side = market_exit_closing_position_side(mex)
         remaining = filled_quantity(mex)
         if remaining <= 0:
             continue
@@ -308,10 +303,14 @@ def _append_orphan_market_exit_links(
                 continue
             if _entry_position_side(ent) != mex_side:
                 continue
+            eoid = str(ent.get("local_order_id") or "")
+            if not late_fixup_entry_segment_matches(
+                str(mex.get("local_order_id") or ""), eoid
+            ):
+                continue
             ent_qty = filled_quantity(ent)
             if ent_qty <= 0 or ent_qty > remaining * 1.02:
                 continue
-            eoid = str(ent.get("local_order_id") or "")
             ekey = entry_link_id(ent)
             entry_mid = _entry_marker_key(ent)
             if entry_mid in linked_entries:
