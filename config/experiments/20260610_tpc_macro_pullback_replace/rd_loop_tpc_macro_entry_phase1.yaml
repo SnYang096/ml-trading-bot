@@ -1,0 +1,116 @@
+# TPC macro entry Phase 1 — 扫描适合 macro 尺度的 entry 特征（2026-06-09）
+#
+# Prefilter: macro@240 背景 only（宽松 τ），不预判吸收
+# Entry candidates: 吸收/收敛/效率特征，找 plateau
+#
+# 前置：parse-only 生成含 absorption 列的 parquet
+#   PARQ=results/train_final/tpc/tpc_absorption_*/tpc/features_labeled.parquet
+#
+#   PYTHONPATH=src:scripts python scripts/rd_loop.py \
+#     --hypothesis-yaml config/experiments/20260610_tpc_macro_pullback_replace/rd_loop_tpc_macro_entry_phase1.yaml
+
+topic: tpc_macro_entry_phase1_20260609
+strategy: tpc
+output_dir: results/rd_loop/tpc_macro_entry_20260609
+
+# 替换为 prepare-only 产物
+features_parquet: &parquet results/train_final/tpc/tpc_absorption_PLACEHOLDER/tpc/features_labeled.parquet
+label: &label success_no_rr_extreme
+
+# prefilter: 宽松 macro 背景 — 只要求「发生过大回撤」，不做吸收预判
+macro_loose_bull: &macro_loose_bull
+  - tpc_semantic_chop<=0.40
+  - ema_1200_position>=0.10
+  - tpc_macro_pullback_pct_long>=0.08
+
+macro_loose_bear: &macro_loose_bear
+  - tpc_semantic_chop<=0.40
+  - ema_1200_position<=-0.10
+  - tpc_macro_pullback_pct_short>=0.06
+
+quick_layer_scans:
+  # ── 1) 宏观吸收 plateau（候选 entry，非 prefilter）──
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: entry
+    feature: tpc_macro_vol_contraction
+    operator: ">="
+    grid: "0.20,0.30,0.40,0.50,0.60,0.70"
+    filter: *macro_loose_bull
+    out: quick_scan/macro_vol_contraction_entry_bull.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: entry
+    feature: tpc_macro_range_convergence
+    operator: ">="
+    grid: "0.15,0.25,0.35,0.45,0.55,0.65"
+    filter: *macro_loose_bull
+    out: quick_scan/macro_range_convergence_entry_bull.md
+
+  # ── 2) 价格效率（低效率=震荡吸收）──
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: entry
+    feature: path_efficiency_pct
+    operator: "<="
+    grid: "0.15,0.25,0.35,0.45,0.55"
+    filter: *macro_loose_bull
+    out: quick_scan/path_efficiency_entry_bull.md
+
+  # ── 3) 波动率分位（低 vol = 压缩）──
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: entry
+    feature: volatility_cone_position
+    operator: "<="
+    grid: "0.15,0.25,0.35,0.45,0.55"
+    filter: *macro_loose_bull
+    out: quick_scan/vol_cone_position_entry_bull.md
+
+  # ── 4) 组合条件：吸收 AND 收敛 AND 低效 ──
+  - mode: condition-set
+    features_parquet: *parquet
+    label: *label
+    layer: entry
+    filter: *macro_loose_bull
+    condition:
+      - "abs_hi: tpc_macro_vol_contraction>=0.50 AND tpc_macro_range_convergence>=0.40"
+      - "abs_mid: tpc_macro_vol_contraction>=0.40 AND tpc_macro_range_convergence>=0.30"
+      - "abs_lo: tpc_macro_vol_contraction>=0.30 AND tpc_macro_range_convergence>=0.20"
+      - "abs_efficiency: tpc_macro_vol_contraction>=0.40 AND path_efficiency_pct<=0.30"
+    out: quick_scan/absorption_combo_entry_bull.md
+
+  # ── 5) bear side ——
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: entry
+    feature: tpc_macro_vol_contraction
+    operator: ">="
+    grid: "0.20,0.30,0.40,0.50,0.60"
+    filter: *macro_loose_bear
+    out: quick_scan/macro_vol_contraction_entry_bear.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: entry
+    feature: tpc_macro_range_convergence
+    operator: ">="
+    grid: "0.15,0.25,0.35,0.45,0.55"
+    filter: *macro_loose_bear
+    out: quick_scan/macro_range_convergence_entry_bear.md
+
+  # ── 6) IC：确认方向和尺度 ──
+  - mode: ic-decay
+    features_parquet: *parquet
+    target: forward_rr
+    features: tpc_macro_vol_contraction,tpc_macro_range_convergence,path_efficiency_pct,volatility_cone_position,tpc_macro_pullback_pct_long,tpc_macro_pullback_pct_short
+    horizons: "1,3,5,10,20"
+    filter: *macro_loose_bull
+    out: quick_scan/ic_decay_macro_entry_bull.md

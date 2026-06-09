@@ -1,0 +1,38 @@
+# TPC macro 宽止损 + 去 depth — fast 模式（2026-06-09）
+#
+# Prefilter: macro@240 背景 only（τ 放宽 0.12/0.10），吸收确认由 entry vol_confirm 承担
+# Execution: initial_r=8, trail_r=10, activation=6, structural=ema1200
+# 变体树：config_experiments/tpc_macro_wide_exec_strategies/
+#
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260610_tpc_macro_pullback_replace/tpc_macro_wide_exec_fast_grid.yaml \
+#     --quiet-signal-logs
+
+experiment_id: tpc_macro_wide_exec_fast_20260609
+decision_doc: config/experiments/20260610_tpc_macro_pullback_replace/DECISION.md
+strategy: tpc
+market_segment_path: config/market_segment.yaml
+data_path: data/parquet_data
+fast: true
+trading_map: true
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - BNBUSDT
+  - XRPUSDT
+  - ADAUSDT
+
+segment_matrix:
+  segments:
+    - bear_2022
+    - bull_2023_2024
+    - recent_range_to_bear
+  variants:
+    - suffix: E0_prod
+      strategies_root: config/strategies
+      output_dir: results/tpc/experiments/macro_wide_exec_fast_20260609/E0_prod
+
+    - suffix: M_wide_exec
+      strategies_root: config_experiments/tpc_macro_wide_exec_strategies
+      output_dir: results/tpc/experiments/macro_wide_exec_fast_20260609/M_wide_exec

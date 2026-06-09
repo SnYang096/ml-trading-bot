@@ -7761,6 +7761,36 @@ features:
       low: low
       ema_1200_position: ema_1200_position
 
+  tpc_macro_absorption_f:
+    module: bpc
+    compute_func: compute_tpc_macro_absorption_from_series
+    dependencies:
+    - ema_1200_position_f
+    required_columns:
+    - close
+    - high
+    - low
+    - volume
+    output_columns:
+    - tpc_macro_vol_contraction
+    - tpc_macro_range_convergence
+    category: tpc
+    description: Macro absorption score (vol contraction + range convergence) @240-bar for deep pullback entries
+    pass_full_df: false
+    compute_params:
+      lookback: 240
+      normalized: true
+      node_cache_version: "tpc_macro_absorption_v1_lb240"
+      output_normalization_map:
+        tpc_macro_vol_contraction: bounded_0_1
+        tpc_macro_range_convergence: bounded_0_1
+    column_mappings:
+      close: close
+      high: high
+      low: low
+      volume: volume
+      ema_1200_position: ema_1200_position
+
   bpc_pullback_depth_pct_f:
     module: bpc
     compute_func: compute_bpc_pullback_depth_pct_from_series

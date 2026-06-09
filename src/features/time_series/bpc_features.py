@@ -661,6 +661,79 @@ def compute_tpc_macro_pullback_pct_from_series(
 
 
 @register_feature(
+    "compute_tpc_macro_absorption_from_series",
+    category="tpc",
+    description="Macro pullback absorption: vol contraction + range convergence @240-bar",
+    outputs=[
+        "tpc_macro_vol_contraction",
+        "tpc_macro_range_convergence",
+    ],
+)
+def compute_tpc_macro_absorption_from_series(
+    *,
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    volume: pd.Series,
+    ema_1200_position: pd.Series,
+    lookback: int = 240,
+) -> pd.DataFrame:
+    """
+    Macro-scale absorption score for deep pullback detection.
+
+    - tpc_macro_vol_contraction: 1 - (short_vol / long_vol), [0,1].
+      → 1.0 = vol fully collapsed (absorbing), 0.0 = vol still expanding.
+      Short window = lookback/4 (60 bars ≈ 5d), long window = lookback (240 bars ≈ 20d).
+    - tpc_macro_range_convergence: 1 - (short_range / long_range), [0,1].
+      → 1.0 = range tightly converged, 0.0 = range still wide.
+
+    Regime gate (same as macro_pullback_pct):
+      - ema_1200_position >= 0.10 → long side only
+      - ema_1200_position <= -0.10 → short side only
+      - dead zone → NaN
+
+    Causal: uses shift(1) on rolling windows.
+    """
+    import numpy as np
+
+    high = pd.to_numeric(high, errors="coerce").astype(float)
+    low = pd.to_numeric(low, errors="coerce").astype(float)
+    close_arr = pd.to_numeric(close, errors="coerce").astype(float)
+    vol = pd.to_numeric(volume, errors="coerce").astype(float)
+    ema_pos = pd.to_numeric(ema_1200_position, errors="coerce").astype(float)
+
+    lb = max(int(lookback), 1)
+    short_w = max(lb // 4, 5)
+
+    # ── Volume contraction ──
+    short_vol = vol.rolling(short_w, min_periods=3).mean().shift(1)
+    long_vol = vol.rolling(lb, min_periods=10).mean().shift(1)
+    vol_ratio = (short_vol / long_vol.replace(0, np.nan)).clip(0, 2)
+    vol_contraction = (1.0 - vol_ratio).clip(0, 1)
+
+    # ── Range convergence ──
+    roll_high = high.rolling(lb, min_periods=1).max().shift(1)
+    roll_low = low.rolling(lb, min_periods=1).min().shift(1)
+    long_range = (roll_high - roll_low).replace(0, np.nan)
+    short_high = high.rolling(short_w, min_periods=1).max().shift(1)
+    short_low = low.rolling(short_w, min_periods=1).min().shift(1)
+    short_range = (short_high - short_low).replace(0, np.nan)
+    range_ratio = (short_range / long_range).clip(0, 2)
+    range_convergence = (1.0 - range_ratio).clip(0, 1)
+
+    # ── Regime gate ──
+    bull = ema_pos >= 0.10
+    bear = ema_pos <= -0.10
+
+    return pd.DataFrame(
+        {
+            "tpc_macro_vol_contraction": vol_contraction.where(bull | bear),
+            "tpc_macro_range_convergence": range_convergence.where(bull | bear),
+        }
+    )
+
+
+@register_feature(
     "compute_bpc_pullback_depth_pct_from_series",
     category="bpc",
     description="BPC pullback depth as percentage of range, side-aware",

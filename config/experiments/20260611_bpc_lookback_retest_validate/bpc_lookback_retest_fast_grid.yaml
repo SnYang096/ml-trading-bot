@@ -13,6 +13,7 @@ strategy: bpc
 market_segment_path: config/market_segment.yaml
 data_path: data/parquet_data
 fast: true
+trading_map: true
 symbols:
   - BTCUSDT
   - ETHUSDT
