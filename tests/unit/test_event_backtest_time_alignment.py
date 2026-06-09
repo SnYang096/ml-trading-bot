@@ -5,6 +5,7 @@ import pandas as pd
 from scripts.event_backtest import (
     _align_feature_index_to_bar_close,
     _iter_update_bars_1min,
+    _iter_update_bars_primary_tf,
     _timeframe_to_timedelta,
 )
 
@@ -53,7 +54,7 @@ def test_alignment_prevents_future_bar_leakage_in_window_filter():
     assert len(aligned[aligned.index <= cutoff]) == 1
 
 
-def test_iter_update_bars_1min_same_for_fast_and_non_fast():
+def test_iter_update_bars_1min_yields_minute_bars_in_window():
     idx = pd.to_datetime(
         [
             "2024-01-01 00:01:00",
@@ -75,11 +76,28 @@ def test_iter_update_bars_1min_same_for_fast_and_non_fast():
     prev_ts = pd.Timestamp("2024-01-01 00:01:30", tz="UTC")
     cur_ts = pd.Timestamp("2024-01-01 00:03:30", tz="UTC")
 
-    non_fast_ts = [ts for ts, _ in _iter_update_bars_1min(bars, prev_ts, cur_ts)]
-    fast_ts = [
-        ts for ts, _ in _iter_update_bars_1min(bars, prev_ts, cur_ts, fast_mode=True)
-    ]
-    assert non_fast_ts == fast_ts
-    assert non_fast_ts == list(
+    got = [ts for ts, _ in _iter_update_bars_1min(bars, prev_ts, cur_ts)]
+    assert got == list(
         pd.to_datetime(["2024-01-01 00:02:00", "2024-01-01 00:03:00"], utc=True)
+    )
+
+
+def test_iter_update_bars_primary_tf_yields_coarse_bars_only():
+    idx = pd.to_datetime(
+        ["2024-01-01 02:00:00", "2024-01-01 04:00:00", "2024-01-01 06:00:00"],
+        utc=True,
+    )
+    tf_df = pd.DataFrame(
+        {"open": [1.0, 2.0, 3.0], "high": [1.1, 2.1, 3.1], "close": [1.0, 2.0, 3.0]},
+        index=idx,
+    )
+    bundle = {"tf_features": {"120T": tf_df}}
+    prev_ts = pd.Timestamp("2024-01-01 01:00:00", tz="UTC")
+    cur_ts = pd.Timestamp("2024-01-01 05:00:00", tz="UTC")
+
+    got = [
+        ts for ts, _ in _iter_update_bars_primary_tf(bundle, prev_ts, cur_ts, "120T")
+    ]
+    assert got == list(
+        pd.to_datetime(["2024-01-01 02:00:00", "2024-01-01 04:00:00"], utc=True)
     )

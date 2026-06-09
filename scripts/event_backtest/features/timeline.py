@@ -58,16 +58,44 @@ def _iter_update_bars_1min(
     *,
     fast_mode: bool = False,
 ):
-    """Yield 1min bars in (prev_ts, cur_ts] for position updates.
-
-    `fast_mode` is preserved for CLI compatibility; update path remains
-    1min-exact to keep SL/TP timing consistent with non-fast mode.
-    """
+    """Yield 1min bars in (prev_ts, cur_ts] for position updates."""
+    del fast_mode  # fast path uses _iter_update_bars_primary_tf instead
     if bars_1min is None or bars_1min.empty:
         return
     mask = (bars_1min.index > prev_ts) & (bars_1min.index <= cur_ts)
     for bar_ts, bar_row in bars_1min[mask].iterrows():
         yield bar_ts, bar_row
+
+
+def _iter_update_bars_primary_tf(
+    sym_bundle: Dict[str, Any],
+    prev_ts: pd.Timestamp,
+    cur_ts: pd.Timestamp,
+    primary_tf: str,
+):
+    """Yield primary-timeframe feature rows (bar-close index) in (prev_ts, cur_ts].
+
+    Used by ``--fast``: one OHLC update per strategy bar instead of every 1min bar.
+    SL/trailing/structural exits are coarser than 1min-exact mode.
+    """
+    tf_features = sym_bundle.get("tf_features") or {}
+    tdf = tf_features.get(primary_tf)
+    if tdf is None or getattr(tdf, "empty", True):
+        return
+    mask = (tdf.index > prev_ts) & (tdf.index <= cur_ts)
+    for bar_ts, bar_row in tdf.loc[mask].iterrows():
+        yield bar_ts, bar_row
+
+
+def _ohlc_dict_from_bar_row(bar_ts: pd.Timestamp, bar_row: pd.Series) -> Dict[str, Any]:
+    """Feature / OHLC row → bar dict for PositionSimulator.update."""
+    return {
+        "timestamp": bar_ts,
+        "open": float(bar_row.get("open", bar_row.get("close", 0)) or 0),
+        "high": float(bar_row.get("high", bar_row.get("close", 0)) or 0),
+        "low": float(bar_row.get("low", bar_row.get("close", 0)) or 0),
+        "close": float(bar_row.get("close", 0) or 0),
+    }
 
 
 def _feature_asof_from_sym_tf_features(

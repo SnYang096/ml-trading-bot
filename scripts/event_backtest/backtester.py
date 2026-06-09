@@ -21,6 +21,8 @@ from scripts.event_backtest.features.timeline import (
     _get_bar_minutes,
     _get_timeframe,
     _iter_update_bars_1min,
+    _iter_update_bars_primary_tf,
+    _ohlc_dict_from_bar_row,
     _sync_ema_1200_from_feature_row,
     _sync_macro_tp_vwap_from_feature_row,
     _timeframe_from_strategy_meta,
@@ -143,8 +145,13 @@ class EventBacktester:
             self._tf_map[s] = _get_timeframe(s, strategies_root=self.strategies_root)
             self._bm_map[s] = _get_bar_minutes(s, strategies_root=self.strategies_root)
 
-        # 主 bar 分钟数 (position simulator default)
+        # 主 bar 分钟数 (position simulator default) + 对应 timeframe token
         self._primary_bar_minutes = max(self._bm_map.values())
+        self._primary_timeframe = next(
+            self._tf_map[s]
+            for s in self.strategy_names
+            if self._bm_map[s] == self._primary_bar_minutes
+        )
 
         # order_management 集成 (可选)
         self._om_bridge: Optional[OMBridge] = None
@@ -922,8 +929,9 @@ class EventBacktester:
             logger.warning("Empty timeline: equity curve timestamps disabled")
         if fast_mode:
             logger.info(
-                "Fast mode compatibility: using 1min-exact position updates "
-                "to avoid approximation drift."
+                "Fast mode: position updates on primary TF %s bars only "
+                "(not 1min-exact; SL/trailing may differ from prod).",
+                self._primary_timeframe,
             )
         _ks_triggers: list = []
         _ks_skipped = 0
@@ -1027,19 +1035,26 @@ class EventBacktester:
                 if upd_prev is None or upd_prev >= ts:
                     continue
 
-                upd_bars = sym_data[upd_sym]["bars_1min_test"]
                 _sym_bundle = sym_data.get(upd_sym) or {}
-                for bar_ts, bar_row in _iter_update_bars_1min(
-                    upd_bars,
-                    upd_prev,
-                    ts,
-                    fast_mode=fast_mode,
-                ):
-                    _frow = _feature_row_asof_from_sym_tf_features(
+                if fast_mode:
+                    bar_iter = _iter_update_bars_primary_tf(
                         _sym_bundle,
-                        bar_ts,
-                        require_macro=True,
+                        upd_prev,
+                        ts,
+                        self._primary_timeframe,
                     )
+                else:
+                    upd_bars = sym_data[upd_sym]["bars_1min_test"]
+                    bar_iter = _iter_update_bars_1min(upd_bars, upd_prev, ts)
+                for bar_ts, bar_row in bar_iter:
+                    if fast_mode:
+                        _frow = bar_row
+                    else:
+                        _frow = _feature_row_asof_from_sym_tf_features(
+                            _sym_bundle,
+                            bar_ts,
+                            require_macro=True,
+                        )
                     _sync_macro_tp_vwap_from_feature_row(upd_sim, _frow)
                     _sync_ema_1200_from_feature_row(upd_sim, _frow)
                     if _frow is not None and "ema_200" in _frow.index:
@@ -1049,7 +1064,7 @@ class EventBacktester:
                                 upd_sim._structural_price = _e
                         except (TypeError, ValueError):
                             pass
-                    else:
+                    elif not fast_mode:
                         _ema_upd = _feature_asof_from_sym_tf_features(
                             _sym_bundle,
                             bar_ts,
@@ -1057,13 +1072,16 @@ class EventBacktester:
                         )
                         if _ema_upd is not None:
                             upd_sim._structural_price = _ema_upd
-                    bar_dict = {
-                        "timestamp": bar_ts,
-                        "open": float(bar_row.get("open", 0)),
-                        "high": float(bar_row.get("high", 0)),
-                        "low": float(bar_row.get("low", 0)),
-                        "close": float(bar_row.get("close", 0)),
-                    }
+                    if fast_mode:
+                        bar_dict = _ohlc_dict_from_bar_row(bar_ts, bar_row)
+                    else:
+                        bar_dict = {
+                            "timestamp": bar_ts,
+                            "open": float(bar_row.get("open", 0)),
+                            "high": float(bar_row.get("high", 0)),
+                            "low": float(bar_row.get("low", 0)),
+                            "close": float(bar_row.get("close", 0)),
+                        }
                     closed = upd_sim.update(bar_dict)
                     for ct in closed:
                         self.pcm.notify_position_closed(upd_sym, ct.archetype)
@@ -1869,23 +1887,39 @@ class EventBacktester:
                 _pos_last_ts[sym] = ts
             prev_ts[sym] = ts
 
-        # ── Phase 4: 处理最后一个信号后的 1min bars + 关闭残留持仓 ──
+        # ── Phase 4: 处理最后一个信号后的 bars + 关闭残留持仓 ──
         for sym, simulator in self._simulators.items():
             data = sym_data[sym]
-            bars_1min_test = data["bars_1min_test"]
 
             # 最后一个信号后的 bars (用 _pos_last_ts 避免重复处理)
             last_update = _pos_last_ts.get(sym)
             if last_update is not None and simulator.has_positions:
-                remaining = bars_1min_test[bars_1min_test.index > last_update]
-                for bar_ts, bar_row in remaining.iterrows():
-                    bar_dict = {
-                        "timestamp": bar_ts,
-                        "open": float(bar_row.get("open", 0)),
-                        "high": float(bar_row.get("high", 0)),
-                        "low": float(bar_row.get("low", 0)),
-                        "close": float(bar_row.get("close", 0)),
-                    }
+                if fast_mode:
+                    bar_tail = _iter_update_bars_primary_tf(
+                        data,
+                        last_update,
+                        _end,
+                        self._primary_timeframe,
+                    )
+                else:
+                    bars_1min_test = data["bars_1min_test"]
+                    bar_tail = (
+                        (bar_ts, bar_row)
+                        for bar_ts, bar_row in bars_1min_test[
+                            bars_1min_test.index > last_update
+                        ].iterrows()
+                    )
+                for bar_ts, bar_row in bar_tail:
+                    if fast_mode:
+                        bar_dict = _ohlc_dict_from_bar_row(bar_ts, bar_row)
+                    else:
+                        bar_dict = {
+                            "timestamp": bar_ts,
+                            "open": float(bar_row.get("open", 0)),
+                            "high": float(bar_row.get("high", 0)),
+                            "low": float(bar_row.get("low", 0)),
+                            "close": float(bar_row.get("close", 0)),
+                        }
                     closed = simulator.update(bar_dict)
                     for ct in closed:
                         self.pcm.notify_position_closed(sym, ct.archetype)

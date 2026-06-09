@@ -24,6 +24,8 @@ from scripts.event_backtest.features.timeline import (
     _get_bar_minutes,
     _get_timeframe,
     _iter_update_bars_1min,
+    _iter_update_bars_primary_tf,
+    _ohlc_dict_from_bar_row,
     _sync_ema_1200_from_feature_row,
     _sync_macro_tp_vwap_from_feature_row,
     _timeframe_from_strategy_meta,

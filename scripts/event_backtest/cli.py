@@ -198,7 +198,7 @@ def main():
         "--fast",
         action="store_true",
         default=False,
-        help="兼容参数: 当前仍使用 1min 精确持仓更新（用于保证与非 fast 一致）",
+        help="持仓更新用策略主周期 bar（非 1min）；R/SL 与 prod 1min 路径可能略有差异，适合 trend 类 R&D 提速",
     )
     parser.add_argument(
         "--resume-state",

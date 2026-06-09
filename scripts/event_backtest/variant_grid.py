@@ -99,6 +99,8 @@ def _build_event_backtest_cmd(
     if run.get("trading_map") or grid.get("trading_map"):
         map_out = out_path / f"trading_map_{strategy}_event.html"
         cmd += ["--trading-map", str(map_out)]
+    if run.get("fast") or grid.get("fast"):
+        cmd += ["--fast"]
     constitution_yaml = run.get("constitution_yaml") or grid.get("constitution_yaml")
     if constitution_yaml:
         const_path = Path(str(constitution_yaml))

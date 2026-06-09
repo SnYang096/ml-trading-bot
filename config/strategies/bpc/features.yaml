@@ -78,9 +78,9 @@ feature_pipeline:
     # ========== SR 相关 ==========
     - sr_strength_max_f  # 输出包含 sr_strength_max 和 dist_to_nearest_sr
 
-    # ========== Box structure (regime layer 依赖) ==========
-    # regime.yaml 用 box_pos_120 + box_breakout_up/down 判断"非箱体中部"，
-    # 避免在 box mid 区域反复扫单。
+    # ========== Box structure (prefilter / 语义扫描 依赖) ==========
+    # box_pos_* / box_breakout_* 用于 BPC 反追高 prefilter（如 box_pos_120<=0.85）；
+    # regime 层已改为 chop + EMA1200（20260527 移除 box 规则）。
     - box_structure_f
 
     # ========== 订单流 ==========

@@ -1,0 +1,38 @@
+# TPC macro + depth 叠加 prefilter — fast 模式重跑（2026-06-11）
+#
+# 持仓更新用策略主周期 bar（120T），非 1min 精确 SL；适合 trend R&D 筛 variant。
+# 变体树：config_experiments/tpc_macro_add_L15_S12_strategies/
+#
+# 跑法：
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260610_tpc_macro_pullback_replace/tpc_macro_pullback_add_fast_grid.yaml \
+#     --quiet-signal-logs
+
+experiment_id: tpc_macro_pullback_add_fast_20260611
+decision_doc: config/experiments/20260610_tpc_macro_pullback_replace/DECISION.md
+strategy: tpc
+market_segment_path: config/market_segment.yaml
+data_path: data/parquet_data
+fast: true
+trading_map: true
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - BNBUSDT
+  - XRPUSDT
+  - ADAUSDT
+
+segment_matrix:
+  segments:
+    - bear_2022
+    - bull_2023_2024
+    - recent_range_to_bear
+  variants:
+    - suffix: E0_prod
+      strategies_root: config/strategies
+      output_dir: results/tpc/experiments/macro_pullback_add_fast_20260611/E0_prod
+
+    - suffix: M_add_L15_S12
+      strategies_root: config_experiments/tpc_macro_add_L15_S12_strategies
+      output_dir: results/tpc/experiments/macro_pullback_add_fast_20260611/M_add_L15_S12
