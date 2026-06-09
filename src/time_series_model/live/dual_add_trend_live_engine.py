@@ -109,6 +109,12 @@ class DualAddTrendState:
     last_reconciliation_ok: bool = True
     last_reconciliation_issues: List[str] = field(default_factory=list)
     block_reseed_after_flip: bool = False
+    # ── Retroactive-fill guard ──
+    # Order lookups keyed by exchange_order_id / client_order_id / order_id.
+    # Populated when orders are pruned from pending_orders; never persisted
+    # to JSON state (non-serialisable values).  Enables on_execution_report
+    # to handle fills detected hours later by the REST backfill.
+    _order_history: dict = field(default_factory=dict, repr=False, compare=False)
 
 
 def _load_dual_add_config(path: str | Path) -> DualAddEngineConfig:
@@ -274,8 +280,10 @@ class DualAddTrendLiveEngine:
 
     def save_state(self) -> None:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        raw = asdict(self.state)
+        raw.pop("_order_history", None)
         self.state_path.write_text(
-            json.dumps(asdict(self.state), ensure_ascii=False, indent=2),
+            json.dumps(raw, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
 
@@ -478,6 +486,10 @@ class DualAddTrendLiveEngine:
                 pos = self._find_position(str(raw.get("leg_id") or ""))
                 if pos is not None and result.order_id:
                     pos.protection_order_ids.append(result.order_id)
+        # Archive cancelled orders so backfill late-fill lookups still work.
+        for o in self.state.pending_orders:
+            if o.status == "canceled":
+                self._archive_order(o)
         self.state.pending_orders = [
             o for o in self.state.pending_orders if o.status != "canceled"
         ]
@@ -603,6 +615,7 @@ class DualAddTrendLiveEngine:
                     )
                 )
         if terminal or order.filled_quantity >= order.quantity:
+            self._archive_order(order)
             self.state.pending_orders = [
                 o for o in self.state.pending_orders if o.order_id != order.order_id
             ]
@@ -967,7 +980,30 @@ class DualAddTrendLiveEngine:
                 return order
             if client_id and order.client_order_id == client_id:
                 return order
+        # ── Retroactive-fill guard ──
+        # After a user-stream gap the periodic backfill may detect fills that
+        # arrived while the engine was unaware.  By the time the backfill
+        # routes the fill back via on_execution_report, the order is no
+        # longer in pending_orders.  Keeping a small history lets us match
+        # those late fills so the position/exit cycle is completed.
+        history = getattr(self.state, "_order_history", None)
+        if history:
+            for order in history.values():
+                if local_id and order.order_id == local_id:
+                    return order
+                if exchange_id and order.exchange_order_id == exchange_id:
+                    return order
+                if client_id and order.client_order_id == client_id:
+                    return order
         return None
+
+    def _archive_order(self, order: DualAddOrder) -> None:
+        """Stash an order so late-fill lookups can still find it."""
+        hist = self.state._order_history
+        for key in (order.exchange_order_id, order.order_id, order.client_order_id):
+            key = str(key or "").strip()
+            if key:
+                hist[key] = order
 
     def _find_position(self, leg_id: str) -> Optional[DualAddPosition]:
         if not leg_id:

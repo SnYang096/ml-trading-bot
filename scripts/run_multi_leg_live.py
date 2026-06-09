@@ -841,11 +841,42 @@ async def async_main() -> None:
     if multi_leg_backfill_interval_seconds() > 0 and multi_leg_backfill_enabled(
         exchange_api, storage
     ):
+        # ── Backfill → engine bridge ──
+        # When the periodic REST backfill detects fills that the user-stream
+        # missed, route them through the engine's on_execution_report so
+        # positions and exits are created (the engine's _order_history keeps
+        # order lookups alive across segments).
+        def _route_backfill_fill(payload: Dict[str, Any]) -> None:
+            sym = str(payload.get("symbol") or "").upper().strip()
+            if not sym:
+                return
+            exec_report = {
+                "order_id": str(payload.get("order_id") or ""),
+                "client_order_id": str(payload.get("client_order_id") or ""),
+                "symbol": sym,
+                "status": str(payload.get("status") or "filled").upper(),
+                "filled_qty": float(payload.get("filled_qty") or 0),
+                "last_filled_price": float(payload.get("avg_price") or 0),
+                "trade_time": str(payload.get("trade_time") or ""),
+            }
+            for rt in daemon.runtimes:
+                if rt.symbol.upper() == sym:
+                    try:
+                        rt.orchestrator.on_execution_report(exec_report)
+                    except Exception:
+                        logger.debug(
+                            "backfill→engine fill route failed symbol=%s",
+                            sym,
+                            exc_info=True,
+                        )
+                    break
+
         backfill_task = asyncio.create_task(
             periodic_multi_leg_order_backfill(
                 api=exchange_api,
                 storage=storage,
                 startup_delay_seconds=20.0,
+                on_new_fill=_route_backfill_fill,
             )
         )
     try:

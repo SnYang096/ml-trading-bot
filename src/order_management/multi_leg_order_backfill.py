@@ -189,11 +189,19 @@ def run_multi_leg_backfill_once(
     storage: Any,
     lookback_hours: int,
     limit: int,
+    on_new_fill: Any = None,
 ) -> int:
-    """Run one REST backfill pass; return updated row count."""
+    """Run one REST backfill pass; return updated row count.
+
+    When *on_new_fill* is callable, each newly detected fill is forwarded
+    as ``on_new_fill(payload_dict)`` after the DB row has been updated.
+    This allows the live engine to create positions and exits for fills
+    that were missed by the real-time user-stream.
+    """
     updated_rows = 0
     stale_marked = 0
     api_error_count = 0
+    new_fills: list[dict[str, Any]] = []
     candidates = storage.get_recent_orders_for_backfill(
         lookback_hours=max(1, int(lookback_hours)),
         limit=max(1, int(limit)),
@@ -336,7 +344,10 @@ def run_multi_leg_backfill_once(
                 "raw": snap,
             }
             changed = int(storage.apply_execution_report(payload) or 0)
-            updated_rows += max(0, changed)
+            if changed > 0:
+                updated_rows += max(0, changed)
+                if payload.get("status") == "filled" and payload.get("filled_qty") and float(payload.get("filled_qty") or 0) > 0:
+                    new_fills.append(dict(payload))
         except Exception:
             api_error_count += 1
             logger.debug(
@@ -346,6 +357,18 @@ def run_multi_leg_backfill_once(
                 symbol,
                 exc_info=True,
             )
+    # ── Notify engine of backfill-detected fills ──
+    if new_fills and callable(on_new_fill):
+        for payload in new_fills:
+            try:
+                on_new_fill(payload)
+            except Exception:
+                logger.debug(
+                    "multi-leg backfill fill notification failed for %s/%s",
+                    payload.get("symbol"),
+                    payload.get("order_id"),
+                    exc_info=True,
+                )
     try:
         METRICS.update_reconciliation_metrics(
             scope="hedge",
@@ -368,8 +391,15 @@ async def periodic_multi_leg_order_backfill(
     api: Any,
     storage: Any,
     startup_delay_seconds: float = 20.0,
+    on_new_fill: Any = None,
 ) -> None:
-    """Periodic task to refresh multi-leg order status from REST order snapshots."""
+    """Periodic task to refresh multi-leg order status from REST order snapshots.
+
+    When *on_new_fill* is callable, each newly detected fill is forwarded
+    as ``on_new_fill(payload_dict)`` after the DB has been updated.  Use
+    this to re-route missed fills back to the live engine's execution
+    report handler.
+    """
     interval = multi_leg_backfill_interval_seconds()
     if interval <= 0:
         return
@@ -401,6 +431,7 @@ async def periodic_multi_leg_order_backfill(
                     storage=storage,
                     lookback_hours=max(1, lookback_hours),
                     limit=max(1, limit),
+                    on_new_fill=on_new_fill,
                 ),
             )
             if updated > 0:
