@@ -6805,6 +6805,30 @@ features:
       high: high
       low: low
       close: close
+  adx50_f:
+    module: talib
+    compute_func: compute_talib_indicator_from_series
+    dependencies: []
+    required_columns:
+    - high
+    - low
+    - close
+    output_columns:
+    - adx_50
+    category: trend
+    description: Average Directional Index (50) — longer lookback for regime classification
+    pass_full_df: false
+    compute_params:
+      indicator_name: ADX
+      timeperiod: 50
+      output_column: adx_50
+      normalized: true
+    column_mappings:
+      high: high
+      low: low
+      close: close
+      low: low
+      close: close
   adxr_f:
     module: talib
     compute_func: compute_talib_indicator_from_series

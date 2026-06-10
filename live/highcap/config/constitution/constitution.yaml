@@ -162,6 +162,9 @@ resource_allocation:
   # 列表顺序 = 同 bar 多 archetype 时 PCM 仲裁优先级（除非另写 intent_selection_policy.archetype_priority）
   enabled_archetypes:
     - tpc # Trend Pullback Continuation (primary production trend archetype).
+    - bpc # Breakout Pullback Continuation (research PCM candidate).
+    - me # Momentum Expansion (research PCM candidate).
+    - srb # Structural Range Breakout (research PCM candidate).
 
   # trend/fat-tail 账户池 slot 规则（仅作用于 run_live.py + LivePCM）。
   # 运行时 trend 槽成员 = archetype_groups.trend ∩ enabled_archetypes（见 constitution_config）。
@@ -211,6 +214,9 @@ resource_allocation:
   archetype_groups:
     trend: # Named pool for slot_policy.trend_group; members share per-symbol slot rules.
       - tpc
+      - bpc
+      - me
+      - srb
 
   per_strategy_limits:
     # ── TPC（Trend Pullback Continuation）──
@@ -220,6 +226,21 @@ resource_allocation:
       max_risk_per_trade: 0.01
       allow_add_position: true
       max_add_times: 3
+      require_locked_profit: true
+    bpc:
+      max_risk_per_trade: 0.01
+      allow_add_position: true
+      max_add_times: 2
+      require_locked_profit: true
+    me:
+      max_risk_per_trade: 0.01
+      allow_add_position: true
+      max_add_times: 2
+      require_locked_profit: true
+    srb:
+      max_risk_per_trade: 0.01
+      allow_add_position: true
+      max_add_times: 2
       require_locked_profit: true
 
   # 未配置 direction_policy 时 LivePCM 不做事：方向由各策略 / gate 决定。
@@ -235,13 +256,18 @@ multi_leg:
   strategies:
     - chop_grid # C-layer chop grid (mean-reversion inventory); mutually exclusive per symbol with trend_scalp.
     - trend_scalp # C-layer regime trend scalp legs; mutually exclusive per symbol with chop_grid.
-  # Per-strategy segment DD budgets (see config/constitution/constitution.yaml).
+  # Per-strategy segment DD budgets → leg notional at runtime (see multileg_sizing.py).
+  # Worst-case single-segment loss ≈ segment_dd_target × equity when all inventory slots fill.
+  # Observed account DD is usually lower; tune each strategy independently for balanced risk.
   sizing:
     chop_grid:
+      # Live 500U + BTC min lot: level ≈ 20% equity (segment_dd/(max_loss×6 levels)).
+      # sim_multileg @500: 4-segment maxDD ~-9.5% (trade replay, not re-run pipeline).
       segment_dd_target: 0.036
       max_loss_per_grid: 0.03
       max_levels_per_side: 3
     trend_scalp:
+      # Live 500U + BTC min lot: leg ≈ 20% equity (segment_dd/(max_loss×4 units)).
       segment_dd_target: 0.016
       max_loss_per_segment: 0.02
       max_gross_exposure_units: 4
@@ -250,6 +276,7 @@ multi_leg:
     # In live trading, actual equity/drawdown should come from account sync / exchange
     # state; this value is not a replacement for real account balance.
     equity_usdt: 500 # Offline fallback anchor; live sizing/caps use synced exchange equity (run_multi_leg_live._sync_multi_leg_sizing_equity).
+    # Kill-switch: halt new risk when drawdown from peak exceeds this (operator accepts ~20%).
     max_drawdown_pct: 0.20
   # Account-level hard stop for multi-leg live orders (separate API keys from trend).
   account_risk_limits:
@@ -261,10 +288,16 @@ multi_leg:
     fail_closed: true
 
   risk_limits:
+    # Pct limits resolve against synced equity (fallback account.equity_usdt).
+    # Sized for segment_dd 0.036 chop / 0.016 trend (≈20% equity per level/leg):
+    #   chop 6-level gross ≈ 120%; trend 4-leg gross ≈ 80%, 2-leg net ≈ 40%.
     max_gross_notional_pct: 1.40
     max_net_notional_pct: 0.85
-    max_symbol_gross_notional_pct: 1.30
-    max_symbol_net_notional_pct: 0.45
+    max_symbol_gross_notional_pct: 1.30 # ≥ chop full grid gross on one symbol.
+    max_symbol_net_notional_pct: 0.45 # ≥ trend 2-leg net (40%) + headroom.
+    # chop_grid: at most this many symbols may hold an active grid segment at once.
+    # Sizing does NOT divide by universe size; overlap is limited here instead.
+    # Live highcap uses the same cap (6); gross notional still capped by pct limits.
     max_concurrent_grid_symbols: 6
     # Maximum number of resting open orders across all multi-leg strategies.
     max_resting_orders: 60 # Cap on open limit orders (grid + dual-add combined).

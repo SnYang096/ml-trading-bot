@@ -217,6 +217,41 @@ holding:
 
 **核心原则：IC/label scan 只能生成假设，不能直接决定生产配置。只有三段 variant-grid 回测 + 三条杠达标才能 promote。**
 
+### 5.1 Phase 0 操作细节
+
+#### 特征添加到 `features.yaml` 后，必须用增量 FeatureStore
+
+**错误做法**：
+```bash
+# ❌ 不指定 --layer → config hash 变化，自动生成新 layer → 全量重算（数十分钟）
+mlbot feature-store build --no-docker --config config/strategies/tpc \
+  --symbols BTCUSDT,ETHUSDT --timeframe 120T
+```
+
+**正确做法**：
+```bash
+# 1. 找到已有 layer
+ls feature_store/features_tpc_120T_*
+# → features_tpc_120T_9506bdec50（6 币种 × 52+ 月）
+
+# 2. --layer 指定已有 layer → 增量添加新特征 → ~30s
+mlbot feature-store build --no-docker \
+  --config config/strategies/tpc \
+  --symbols BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT \
+  --timeframe 120T \
+  --start-date 2022-01-01 --end-date 2026-04-30 \
+  --root feature_store \
+  --layer features_tpc_120T_9506bdec50 \
+  --warmup-months 12
+```
+
+**原理**：`--layer` 指定已有名称 → 系统检测已有月份已存在 → 只计算缺失的新列（增量）；不指定则 config hash 触发全新 layer → 全部从零计算。
+
+**重要**：
+- `--start-date` 应和已有 layer 的数据范围对齐，避免算不需要的早期月份
+- 新特征必须出现在策略 `features.yaml` 的 `requested_features` 里（`_shared/features.yaml` 只是注册表，不触发计算）
+- 用 `--no-reuse` 可禁用跨 layer 复制，纯增量；默认开启 reuse（自动从其他 layer 拷贝已有月份）
+
 ## 6. 引擎代码位置
 
 | 组件 | 路径 |
@@ -249,21 +284,33 @@ python -m scripts.event_backtest \
 
 ## 9. 实验目录规范
 
+所有 R&D 实验文件**自包含在一个目录**中，放在 `config/experiments/` 下：
+
 ```
-config_experiments/<experiment_name>/
-├── grid.yaml                      # variant grid 定义（VariantRunner 入口）
-├── grid_phase2.yaml               # 可选：更多 grid
-├── DECISION.md                    # [推荐] 实验结论
-├── <variant_name>/                # 每个 variant = 一个子目录
-│   └── <strategy>/                # tpc / bpc / me / srb …
-│       └── archetypes/
-│           └── <changed_file>.yaml# 只放相对基线改动的文件
-└── constitution/
-    └── <variant>.yaml             # constitution override
+config/experiments/<YYYYMMDD>_<strategy>_<topic>/
+├── README.md                       # [必需] 复现步骤 + 结论
+├── DECISION.md                     # [必需] 定参决策 + promote/delete 建议
+├── rd_loop_<topic>.yaml            # [可选] Phase 1 扫描配置
+├── phase1_scan.json                # [可选] Phase 1 产物
+├── phase2_grid.yaml                # [可选] Phase 3 variant grid
+└── phase3_results.md               # [可选] grid 结果汇总
 ```
 
-> **注意：** `grid.yaml` 只在 `config_experiments/` 下，不在策略目录中。
-> Variant 子目录只包含**改动**的 archetype 文件，未出现的文件自动继承基线。
+**规则**：
+- grid.yaml **在实验目录内**，不在全局 `config_experiments/` 下
+- grid 的 `strategies_root` 指向 `config_experiments/<variant>/`（静态策略树快照）
+- 不要创建自定义脚本（如 `augment_adx.py`）——用 `mlbot feature-store build` + `mlbot research`
+- 一个实验一个目录，所有文件（rd_loop、grid、DECISION）在一起
+
+**示例**（TPC ADX regime）：
+```
+config/experiments/20260610_tpc_regime_adx_phase1/
+├── README.md                       # 完整复现命令
+├── DECISION.md                     # ADX(50)>25 作为 bull
+├── rd_loop_tpc_regime_adx.yaml     # Phase 1 扫描
+├── phase1_scan.json                # IC/plateau 结果
+└── phase2_grid.yaml                # E9 vs E21 vs E22
+```
 
 ## 10. Portfolio 级策略特殊说明
 

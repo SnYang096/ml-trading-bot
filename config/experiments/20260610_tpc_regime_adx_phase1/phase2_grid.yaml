@@ -1,0 +1,36 @@
+# Phase 3: ADX Regime vs EMA Regime — causal validation grid
+# 对比 E9 (baseline trailing) vs E21 (ema_1200>0.18 bull structural) vs E22 (ADX 50 bull structural)
+strategy: tpc
+fast: true
+experiment_id: tpc_regime_adx_phase3_20260610
+
+segment_matrix:
+  segments:
+    - bull_2023_2024
+    - recent_range_to_bear
+  variants:
+    # ── E9: baseline — trailing always on ──
+    - suffix: E9_baseline
+      strategies_root: config_experiments/tpc_add_full_ablation_strategies/E9_be_6atr
+      constitution_yaml: config_experiments/tpc_add_full_ablation_strategies/constitution/locked_max3.yaml
+      output_dir: results/tpc/experiments/regime_adx_phase3/E9_baseline
+
+    # ── E21: EMA 0.18 — bull → structural exit, bear/neutral → trailing ──
+    - suffix: E21_ema_018
+      strategies_root: config_experiments/tpc_regime_adaptive_exit/E21_regime_adaptive
+      output_dir: results/tpc/experiments/regime_adx_phase3/E21_ema_018
+
+    # ── E22: ADX 50 — bull → structural exit, bear/neutral → trailing ──
+    - suffix: E22_adx50
+      strategies_root: config_experiments/tpc_regime_adaptive_exit/E22_adx
+      output_dir: results/tpc/experiments/regime_adx_phase3/E22_adx50
+
+    # ── E23: ADX 50, bear also structural exit (bear trailing off) ──
+    - suffix: E23_bear_structural
+      strategies_root: config_experiments/tpc_regime_adaptive_exit/E23_bear_structural
+      output_dir: results/tpc/experiments/regime_adx_phase3/E23_bear_structural
+
+    # ── E24: ADX 50, bull threshold 25→18 ──
+    - suffix: E24_adx18
+      strategies_root: config_experiments/tpc_regime_adaptive_exit/E24_adx18
+      output_dir: results/tpc/experiments/regime_adx_phase3/E24_adx18

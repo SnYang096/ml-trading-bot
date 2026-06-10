@@ -38,6 +38,19 @@ stop_loss:
     expand_with_primary_atr: true
     trail_r: 6.0
   type: trailing
+  # 2026-06-11 E22 promote: exit_by_regime — ADX(50) 分类决定 trailing 开关
+  # bull (ADX>25 + EMA>0.1) → structural exit 不 trailing; bear/neutral → trailing 保护
+  # E23 ablation 证明 bear 关 trailing = 灾难 (-6.14R)
+  exit_by_regime:
+    bull:
+      trailing:
+        enabled: false
+    bear:
+      trailing:
+        enabled: true
+    neutral:
+      trailing:
+        enabled: true
 take_profit:
   enabled: false
 version: 1

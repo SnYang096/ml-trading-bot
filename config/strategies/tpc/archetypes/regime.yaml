@@ -1,34 +1,35 @@
+# TPC Regime — ADX(50) 牛熊分类（2026-06-11 E22 promote）
+# labeled schema: bull/bear/neutral 各有独立规则，供 execution.exit_by_regime 引用
 allowed_regimes:
-- bull
-- bear
-- neutral
+  bull:
+    description: 强趋势市 — ADX50>25 且 EMA1200>0.1，适合结构退出（不 trailing）
+    match: all
+    rules:
+    - feature: adx_50
+      operator: '>='
+      value: 25
+    - feature: ema_1200_position
+      operator: '>='
+      value: 0.1
+  bear:
+    description: 弱势/下跌/震荡 — ADX50≤20 或 EMA1200 下方，必须 trailing 保护
+    match: any
+    rules:
+    - feature: adx_50
+      operator: <=
+      value: 20
+    - feature: ema_1200_position
+      operator: <=
+      value: -0.1
+  neutral:
+    description: 震荡/无方向 — 默认回退，trailing 保护
+    match: any
+    rules:
+    - feature: adx_50
+      operator: <=
+      value: 25
 allowed_sides:
 - long
 - short
-rules:
-- any_of:
-  - feature: ema_1200_position
-    operator: '>='
-    value: 0.1
-  - feature: ema_1200_position
-    operator: <=
-    value: -0.1
-  rationale: 离开 EMA1200 中轴死区 — 宏观 regime，不绑定多空
-  locked: true
-  lock_reason: Regime 慢变量 — EMA1200 宏观带（TPC 专用，替代原 chop+box）
-last_calibration:
-  timestamp: '2026-06-03T05:41:24Z'
-  data_source: results/monitoring/tier0/tpc_20260603/features_labeled_recent_6m_oos.parquet
-  segment: recent_6m_oos
-  plateau_overlap: null
-  plateaus:
-  - feature: ema_1200_position
-    operator: '>='
-    plateau:
-      start: -0.4176
-      end: 0.009
-      mid: -0.1056
-    action: TIER0_LOCAL
-    reason: recent_6m_oos p10-p95 band from train_final_20260523 slice
-  notes: 'Tier-0 local 2026-06-03: ema_1200_position distribution band on recent_6m_oos
-    (2025-10-01 .. 2026-03-31 intent; source parquet max ts 2026-02-23).'
+locked: true
+lock_reason: E22 ADX(50) regime — Phase 3 验证 bull+recent +88% vs baseline; bear trailing 必须保留（E23 ablation 证明 bear 关 trailing = -6.14R）

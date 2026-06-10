@@ -648,10 +648,30 @@ class RegimeConfig(PrefilterConfig):
 
     @property
     def is_empty(self) -> bool:
-        """所有字段为默认值（无规则、无方向限制）"""
+        """所有字段为默认值（无规则、无方向限制）
+
+        兼容 labeled regime schema：dict 型 allowed_regimes 有 per-label rules 时不算空。
+        """
+        _ar = self.allowed_regimes
+        if isinstance(_ar, dict):
+            for _cfg in _ar.values():
+                if isinstance(_cfg, dict) and _cfg.get("rules"):
+                    return False
+            # dict with no per-label rules → treat as empty
         return (
             not self.rules
-            and tuple(self.allowed_regimes) == _DEFAULT_ALLOWED_REGIMES
+            and (
+                (
+                    isinstance(_ar, (list, tuple))
+                    and tuple(_ar) == _DEFAULT_ALLOWED_REGIMES
+                )
+                or (
+                    isinstance(_ar, dict)
+                    and not any(
+                        isinstance(c, dict) and c.get("rules") for c in _ar.values()
+                    )
+                )
+            )
             and tuple(self.allowed_sides) == _DEFAULT_ALLOWED_SIDES
         )
 

@@ -89,6 +89,8 @@ feature_pipeline:
     - ema_1200_slope_f           # 10-bar EMA1200 斜率；TPC 核心：aligned vs not aligned +3.4R/trade
     - macro_tp_vwap_1200_position_f
     - jump_risk_pct_f
+    - adx_f                  # ADX(14) 趋势强度
+    - adx50_f                # ADX(50) 趋势强度 — regime 自适应退出
 
     # ========== Volume Profile ==========
     - volume_profile_volatility_features_f
