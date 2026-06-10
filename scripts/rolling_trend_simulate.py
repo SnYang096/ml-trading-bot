@@ -2,7 +2,7 @@
 """滚仓策略模拟器 v2 — 多段多币种
 
 用法:
-  python config/strategies/rolling_trend/simulate.py \
+  python scripts/rolling_trend_simulate.py \
     --trades results/tpc/experiments/exit_regime_20260610/E13_structural/ \
     --segments bear_2022,bull_2023_2024,recent_range_to_bear \
     --leverage 2,3 \
@@ -18,14 +18,15 @@ from typing import Dict, List, Tuple
 import numpy as np
 import pandas as pd
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
+_REPO_ROOT = Path(__file__).resolve().parents[1]
 
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT"]
 
+# 与 config/market_segment.yaml 保持同步
 SEGMENTS = {
     "bear_2022": ("2022-01-01", "2023-11-01"),
     "bull_2023_2024": ("2023-06-01", "2025-01-01"),
-    "recent_range_to_bear": ("2025-01-01", "2026-04-01"),
+    "recent_range_to_bear": ("2025-01-01", "2026-06-01"),
     "recent_6m_oos": ("2025-12-01", "2026-06-01"),
 }
 

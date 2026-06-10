@@ -29,7 +29,7 @@ strategy:
 # 滚仓参数
 rolling:
   initial_leverage: 2.0       # 初始杠杆 (1-3x)
-  max_leverage: 5.0           # 最大杠杆上限
+  max_leverage: 3.0           # 最大杠杆上限（>3x 历史回测 SOL/XRP 爆仓）
   leverage_step: 1.0          # 每次滚仓加多少倍
   
   # 滚仓触发 (AND条件)

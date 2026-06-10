@@ -15,14 +15,10 @@ universe_sets:
         - BNB
         - ETH
         - SOL
-        - BNB
 
-      new_stars:  
-        - HYPE
-
-        # - XRP
-        # - TRX
-        # - ZEC
+      # note: XRP/ADA 暂移出 starter 池，待 2026-06 segment 验证后再决定
+      # - XRP
+      # - ADA
 
         # - ADA
         # - BCH
