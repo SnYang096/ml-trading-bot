@@ -38,10 +38,10 @@ stop_loss:
   type: trailing
   regime_adaptive_exit:
     enabled: true
-    bull_threshold: 0.15                # ema_1200_position > 此值 = 真牛市（2023-24: 0.2-0.5）
+    bull_threshold: 0.18                # 0.15→0.18，屏蔽 2025 弱牛误判
     bull_override:
       trailing:
-        enabled: false                  # 牛市禁止 trailing，只用 structural_exit
+        enabled: false
 take_profit:
   enabled: false
 version: 1

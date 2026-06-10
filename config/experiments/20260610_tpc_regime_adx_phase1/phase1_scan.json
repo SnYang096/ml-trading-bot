@@ -1,0 +1,209 @@
+{
+  "experiment": "tpc_regime_adx_phase1",
+  "date": "2026-06-10",
+  "data": "BTCUSDT 120T, 18441 bars, 2022-01-02 \u2192 2026-03-27",
+  "ic_analysis": {
+    "ADX(14)": {
+      "IC_5b": 0.0079,
+      "IC_10b": 0.0093,
+      "IC_20b": 0.0084,
+      "IC_40b": 0.0026
+    },
+    "ADX(50)": {
+      "IC_5b": 0.0258,
+      "IC_10b": 0.034,
+      "IC_20b": 0.0429,
+      "IC_40b": 0.0541
+    },
+    "ADX(100)": {
+      "IC_5b": 0.0206,
+      "IC_10b": 0.0271,
+      "IC_20b": 0.0339,
+      "IC_40b": 0.0402
+    },
+    "EMA1200_pos": {
+      "IC_5b": 0.0148,
+      "IC_10b": 0.0219,
+      "IC_20b": 0.0356,
+      "IC_40b": 0.0328
+    },
+    "SemanticChop": {
+      "IC_5b": -0.0053,
+      "IC_10b": -0.0115,
+      "IC_20b": -0.0183,
+      "IC_40b": 0.0067
+    },
+    "PathEff": {
+      "IC_5b": -0.0041,
+      "IC_10b": -0.001,
+      "IC_20b": -0.0055,
+      "IC_40b": -0.0109
+    }
+  },
+  "regime_separation": {
+    "ADX(14)": {
+      "threshold": 25,
+      "HI_mean_pct": 0.097,
+      "LO_mean_pct": 0.096,
+      "HI_n": 9533,
+      "LO_n": 8908,
+      "separation_bps": 0.1
+    },
+    "ADX(50)": {
+      "threshold": 25,
+      "HI_mean_pct": 0.81,
+      "LO_mean_pct": -0.015,
+      "HI_n": 2489,
+      "LO_n": 15952,
+      "separation_bps": 82.4
+    },
+    "ADX(100)": {
+      "threshold": 25,
+      "HI_mean_pct": 0.847,
+      "LO_mean_pct": 0.058,
+      "HI_n": 910,
+      "LO_n": 17531,
+      "separation_bps": 78.9
+    },
+    "EMA1200_pos": {
+      "threshold": 0.18,
+      "HI_mean_pct": -0.002,
+      "LO_mean_pct": 0.107,
+      "HI_n": 1677,
+      "LO_n": 16764,
+      "separation_bps": -10.9
+    },
+    "SemanticChop": {
+      "threshold": 0.5,
+      "HI_mean_pct": 0.047,
+      "LO_mean_pct": 0.228,
+      "HI_n": 13379,
+      "LO_n": 5062,
+      "separation_bps": -18.0
+    },
+    "PathEff": {
+      "threshold": 0.7,
+      "HI_mean_pct": 0.052,
+      "LO_mean_pct": 0.132,
+      "HI_n": 5387,
+      "LO_n": 12509,
+      "separation_bps": -8.0
+    }
+  },
+  "by_segment": {
+    "bear_2022": {
+      "ADX(14)": {
+        "mean": 27.88,
+        "pct_above_thr": 51.6,
+        "fwd20_above": 0.009,
+        "fwd20_below": -0.014
+      },
+      "ADX(50)": {
+        "mean": 17.4,
+        "pct_above_thr": 15.8,
+        "fwd20_above": 1.013,
+        "fwd20_below": -0.193
+      },
+      "ADX(100)": {
+        "mean": 13.07,
+        "pct_above_thr": 6.7,
+        "fwd20_above": 0.749,
+        "fwd20_below": -0.056
+      },
+      "EMA1200_pos": {
+        "mean": -0.04,
+        "pct_above_thr": 5.7,
+        "fwd20_above": -0.172,
+        "fwd20_below": 0.008
+      },
+      "SemanticChop": {
+        "mean": 0.74,
+        "pct_above_thr": 73.8,
+        "fwd20_above": -0.017,
+        "fwd20_below": 0.041
+      },
+      "PathEff": {
+        "mean": 0.5,
+        "pct_above_thr": 30.1,
+        "fwd20_above": -0.213,
+        "fwd20_below": 0.117
+      }
+    },
+    "bull_2023_2024": {
+      "ADX(14)": {
+        "mean": 27.75,
+        "pct_above_thr": 52.0,
+        "fwd20_above": 0.394,
+        "fwd20_below": 0.437
+      },
+      "ADX(50)": {
+        "mean": 17.34,
+        "pct_above_thr": 14.5,
+        "fwd20_above": 1.277,
+        "fwd20_below": 0.269
+      },
+      "ADX(100)": {
+        "mean": 13.22,
+        "pct_above_thr": 6.9,
+        "fwd20_above": 0.991,
+        "fwd20_below": 0.372
+      },
+      "EMA1200_pos": {
+        "mean": 0.06,
+        "pct_above_thr": 17.7,
+        "fwd20_above": 0.056,
+        "fwd20_below": 0.492
+      },
+      "SemanticChop": {
+        "mean": 0.72,
+        "pct_above_thr": 72.3,
+        "fwd20_above": 0.404,
+        "fwd20_below": 0.444
+      },
+      "PathEff": {
+        "mean": 0.5,
+        "pct_above_thr": 29.4,
+        "fwd20_above": 0.496,
+        "fwd20_below": 0.381
+      }
+    },
+    "recent_range": {
+      "ADX(14)": {
+        "mean": 27.33,
+        "pct_above_thr": 49.8,
+        "fwd20_above": -0.001,
+        "fwd20_below": -0.175
+      },
+      "ADX(50)": {
+        "mean": 15.69,
+        "pct_above_thr": 12.0,
+        "fwd20_above": -0.074,
+        "fwd20_below": -0.09
+      },
+      "ADX(100)": {
+        "mean": 11.69,
+        "pct_above_thr": 1.9,
+        "fwd20_above": 0.495,
+        "fwd20_below": -0.1
+      },
+      "EMA1200_pos": {
+        "mean": -0.02,
+        "pct_above_thr": 0.1,
+        "fwd20_above": null,
+        "fwd20_below": -0.087
+      },
+      "SemanticChop": {
+        "mean": 0.72,
+        "pct_above_thr": 71.2,
+        "fwd20_above": -0.181,
+        "fwd20_below": 0.141
+      },
+      "PathEff": {
+        "mean": 0.5,
+        "pct_above_thr": 30.8,
+        "fwd20_above": -0.19,
+        "fwd20_below": -0.043
+      }
+    }
+  }
+}

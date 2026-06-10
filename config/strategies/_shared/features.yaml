@@ -68,6 +68,7 @@ feature_pipeline:
   - vwap_position_f
   - exhaustion_at_liquidity_void_f
   - dual_compression_f
+  - adx
   - dual_ignition_f
   - dual_exhaustion_f
   - funding_oi_crowding_f

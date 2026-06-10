@@ -546,12 +546,24 @@ class RegimeConfig(PrefilterConfig):
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any]) -> "RegimeConfig":
-        """从 regime.yaml 映射加载（缺失键 → 全开放默认值）"""
+        """从 regime.yaml 映射加载（缺失键 → 全开放默认值）
+
+        兼容两种 schema:
+          - 旧: ``allowed_regimes: [bull, bear, neutral]`` (mask 模式)
+          - 新: ``allowed_regimes: {bull: {rules: [...]}, bear: {...}}`` (分类模式)
+        """
+        _ar = raw.get("allowed_regimes")
+        if isinstance(_ar, dict):
+            # New labeled schema — classify() will use per-label rules
+            allowed_regimes = dict(_ar)
+        elif isinstance(_ar, list):
+            allowed_regimes = list(_ar)
+        else:
+            allowed_regimes = list(_DEFAULT_ALLOWED_REGIMES)
+
         return cls(
             rules=list(raw.get("rules") or []),
-            allowed_regimes=list(
-                raw.get("allowed_regimes") or list(_DEFAULT_ALLOWED_REGIMES)
-            ),
+            allowed_regimes=allowed_regimes,
             allowed_sides=list(
                 raw.get("allowed_sides") or list(_DEFAULT_ALLOWED_SIDES)
             ),
@@ -572,6 +584,42 @@ class RegimeConfig(PrefilterConfig):
         if not passed and reason and reason.startswith("prefilter_"):
             reason = "regime_" + reason[len("prefilter_") :]
         return passed, reason
+
+    def classify(self, features: Dict[str, Any]) -> str:
+        """将当前 bar 特征分类到 regime 标签。
+
+        优先匹配 labeled regimes (new schema)，回退到 flat rules (old schema)。
+        返回 'bull' / 'bear' / 'neutral'，默认返回 'neutral'。
+        """
+        # ── New schema: labeled regimes with per-label rules ──
+        _ar = self.allowed_regimes
+        if isinstance(_ar, dict) and _ar:
+            for label, cfg in _ar.items():
+                if not isinstance(cfg, dict):
+                    continue
+                rules = cfg.get("rules") or []
+                if not rules:
+                    continue
+                match_mode = str(cfg.get("match", "all")).strip().lower()
+                if match_mode == "any":
+                    for rule in rules:
+                        if self._check_single(rule, features):
+                            return str(label)
+                else:  # "all" — default
+                    if all(self._check_single(r, features) for r in rules):
+                        return str(label)
+            return "neutral"
+
+        # ── Old schema: flat list — can't distinguish bull/bear, return generic ──
+        return "neutral"
+
+    def classify_or_default(
+        self, features: Dict[str, Any], default: str = "neutral"
+    ) -> str:
+        """classify() with fallback for empty/missing features."""
+        if not features or not self.allowed_regimes:
+            return default
+        return self.classify(features)
 
     def allows_side(self, direction: int) -> bool:
         """direction: +1=long / -1=short / 0=neutral。0 视为无方向，不拦截。"""

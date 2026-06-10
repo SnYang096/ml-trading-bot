@@ -592,6 +592,7 @@ class ExecutionParamGenerator:
         evidence_score: float,
         features: Optional[Dict[str, Any]] = None,
         direction: Optional[int] = None,
+        regime_label: str = "neutral",
     ) -> Dict[str, Any]:
         """生成执行参数 — 统一使用全局参数（grid search 优化的）
 
@@ -803,25 +804,50 @@ class ExecutionParamGenerator:
                     pass
 
         # ── Regime 自适应退出 (2026-06-10) ──
-        # 牛市 (ema1200_position > bull_threshold) → 强制禁止 trailing，只用 structural_exit
-        # 非牛市 → 沿用父级 trailing 设置
-        # bull_threshold 默认 0.15：真牛市(0.20+)与弱市/震荡(0.10-0.15)的分界线
+        # 根据 regime.yaml 分类的 regime_label 决定是否禁用 trailing。
+        # 优先级：exit_by_regime (新) > regime_adaptive_exit.indicator (旧)
+        exit_rg = sl_cfg.get("exit_by_regime") or {}
         ra_cfg = sl_cfg.get("regime_adaptive_exit") or {}
-        if ra_cfg.get("enabled") and features:
-            ema_pos = features.get("ema_1200_position")
-            if ema_pos is not None:
-                try:
-                    _ema_val = float(ema_pos)
-                    _bull_thr = float(ra_cfg.get("bull_threshold", 0.15))
-                    if _ema_val > _bull_thr:
-                        bull_ov = ra_cfg.get("bull_override") or {}
-                        bull_trail = bull_ov.get("trailing") or {}
-                        if bull_trail.get("enabled") is False:
+
+        if exit_rg:
+            # ── 新风格：引用 regime.yaml 的 bull/bear/neutral 标签 ──
+            rg_action = exit_rg.get(regime_label) or exit_rg.get("neutral") or {}
+            if rg_action:
+                rg_trail = rg_action.get("trailing") or {}
+                if rg_trail.get("enabled") is False:
+                    result["allow_trailing"] = False
+                    result["activation_r"] = None
+                    result["trail_r"] = None
+        elif ra_cfg.get("enabled") and features:
+            # ── 旧风格：直接读特征判断（向后兼容）──
+            indicator = str(ra_cfg.get("indicator", "ema_1200_position"))
+            bull_thr = float(
+                ra_cfg.get("bull_threshold", 0.18 if indicator != "adx" else 25)
+            )
+            bull_ov = ra_cfg.get("bull_override") or {}
+            bull_trail = bull_ov.get("trailing") or {}
+            disable_trailing = bull_trail.get("enabled") is False
+
+            if indicator == "adx":
+                adx_val = features.get("adx")
+                if adx_val is not None:
+                    try:
+                        if float(adx_val) > bull_thr and disable_trailing:
                             result["allow_trailing"] = False
                             result["activation_r"] = None
                             result["trail_r"] = None
-                except (TypeError, ValueError):
-                    pass
+                    except (TypeError, ValueError):
+                        pass
+            else:
+                ema_pos = features.get("ema_1200_position")
+                if ema_pos is not None:
+                    try:
+                        if float(ema_pos) > bull_thr and disable_trailing:
+                            result["allow_trailing"] = False
+                            result["activation_r"] = None
+                            result["trail_r"] = None
+                    except (TypeError, ValueError):
+                        pass
 
         return result
 
@@ -1208,9 +1234,15 @@ class GenericLiveStrategy:
         # ── 0a. Regime check (慢变量数据空间: EMA 带 / chop 上限 / box 状态) ──
         # Regime 与 Prefilter 解耦：Regime 是 A/B/C 共用慢变量层，
         # Prefilter 是策略 archetype 入场形态。
+        regime_label: str = "neutral"
         if self.archetype and not self.archetype.regime.is_empty:
             rg_passed, rg_reason = self.archetype.regime.evaluate(features)
             funnel["regime"] = rg_passed
+            # 分类到具体 regime 标签 (bull/bear/neutral)，供 execution 层引用
+            regime_label = self.archetype.regime.classify_or_default(
+                features, "neutral"
+            )
+            funnel["regime_label"] = regime_label
             if not rg_passed:
                 logger.debug(f"❌ Regime denied: {rg_reason}")
                 funnel["regime_reason"] = rg_reason
@@ -1394,7 +1426,10 @@ class GenericLiveStrategy:
         exec_params = {}
         if self.execution_generator is not None:
             exec_params = self.execution_generator.generate_params(
-                evidence_score, features=features, direction=direction
+                evidence_score,
+                features=features,
+                direction=direction,
+                regime_label=regime_label,
             )
             self._last_tier_params = exec_params
             logger.debug(f"⚙️  Execution params: {exec_params}")
@@ -1601,7 +1636,10 @@ class GenericLiveStrategy:
         exec_params = {}
         if self.execution_generator is not None:
             exec_params = self.execution_generator.generate_params(
-                adjusted_score, features=features, direction=direction
+                adjusted_score,
+                features=features,
+                direction=direction,
+                regime_label="neutral",
             )
             self._last_tier_params = exec_params
 
