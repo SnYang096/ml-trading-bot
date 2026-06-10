@@ -343,7 +343,7 @@ class BacktestResult:
         print("=" * 72)
         for line in format_er_pct_summary_lines(
             pe.get("signal_add_attempts") or {},
-            "signal_add（PCM 再意图 / bpc_follow_signal）",
+            "signal_add（PCM 再意图）",
         ):
             print(line)
         for line in format_er_pct_summary_lines(

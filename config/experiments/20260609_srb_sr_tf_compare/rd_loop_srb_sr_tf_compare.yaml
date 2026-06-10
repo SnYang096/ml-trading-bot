@@ -1,0 +1,168 @@
+# SRB SR时间周期对比 — Phase 1 only（mlbot research scan）
+#
+# 回答核心问题：prefilter 应该用 L3 大周期 SR（wide_sr_dist_atr + srb_l3_breakout_age_decay），
+# 还是只用 L1/L2 小周期 SR（sr_strength_max + spectrum）就够了？
+#
+# 流程：[README.md](README.md)
+#
+# 前置：
+#   # Phase 0：准备 prod parquet
+#   RUN_ID=train_final_$(date +%Y%m%d_%H%M%S)
+#   mlbot train final --no-docker --prepare-only \
+#     -c config/strategies/srb -t 120T \
+#     --symbol BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT \
+#     --start-date 2022-01-01 --end-date 2026-04-01 \
+#     --output-root results/train_final/srb/${RUN_ID}
+#   # 把下方 *parquet_prod 换成实际路径
+#
+#   PYTHONPATH=src:scripts python scripts/rd_loop.py \
+#     --hypothesis-yaml config/experiments/20260609_srb_sr_tf_compare/rd_loop_srb_sr_tf_compare.yaml
+
+topic: srb_sr_tf_compare_20260609
+strategy: srb
+output_dir: results/rd_loop/srb_sr_tf_compare_20260609
+
+# 替换为最新 prepare-only 产物路径
+features_parquet: &parquet_prod results/train_final/srb/train_final_placeholder/srb/logs_gated.parquet
+
+label: &label success_no_rr_extreme
+
+regime_filter: &regime_filter
+  - tpc_semantic_chop<=0.40
+
+regime_bull: &regime_bull
+  - tpc_semantic_chop<=0.40
+  - ema_1200_position>=0.10
+
+regime_bear: &regime_bear
+  - tpc_semantic_chop<=0.40
+  - ema_1200_position<=-0.10
+
+quick_layer_scans:
+  # ── 1) Prefilter 核心特征 plateau（当前 L3 系）──
+  - mode: feature-plateau
+    features_parquet: *parquet_prod
+    label: *label
+    layer: prefilter
+    feature: sr_strength_max
+    operator: ">="
+    grid: "0.20,0.30,0.35,0.40,0.45,0.50,0.55,0.60"
+    filter: *regime_filter
+    out: quick_scan/sr_strength_max_plateau.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet_prod
+    label: *label
+    layer: prefilter
+    feature: srb_l3_breakout_age_decay
+    operator: ">="
+    grid: "0.10,0.15,0.20,0.25,0.30,0.35,0.40,0.50"
+    filter: *regime_filter
+    out: quick_scan/l3_breakout_age_decay_plateau.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet_prod
+    label: *label
+    layer: prefilter
+    feature: wide_sr_dist_atr
+    operator: "<="
+    grid: "0.50,0.75,1.00,1.25,1.50,2.00,3.00"
+    filter: *regime_filter
+    out: quick_scan/wide_sr_dist_atr_plateau.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet_prod
+    label: *label
+    layer: prefilter
+    feature: spectrum_price_high_freq_ratio
+    operator: ">="
+    grid: "0.10,0.15,0.18,0.20,0.22,0.25,0.30,0.35"
+    filter: *regime_filter
+    out: quick_scan/spectrum_high_freq_ratio_plateau.md
+
+  # ── 2) L1 小周期 SR 相关的替代特征 plateau ──
+  - mode: feature-plateau
+    features_parquet: *parquet_prod
+    label: *label
+    layer: prefilter
+    feature: l1_sr_range_width_ratio
+    operator: ">="
+    grid: "0.50,0.75,1.00,1.25,1.50,2.00,3.00"
+    filter: *regime_filter
+    out: quick_scan/l1_sr_range_width_plateau.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet_prod
+    label: *label
+    layer: prefilter
+    feature: dist_to_nearest_sr
+    operator: "<="
+    grid: "0.005,0.010,0.015,0.020,0.030,0.050"
+    filter: *regime_filter
+    out: quick_scan/dist_to_nearest_sr_plateau.md
+
+  # ── 3) L3 有/无 对比：condition-set ──
+  - mode: condition-set
+    features_parquet: *parquet_prod
+    label: *label
+    layer: prefilter
+    filter: *regime_filter
+    condition:
+      - "l2_only: sr_strength_max>=0.40 AND spectrum_price_high_freq_ratio>=0.20"
+      - "l2_l3_prod: sr_strength_max>=0.42 AND spectrum_price_high_freq_ratio>=0.22 AND srb_l3_breakout_age_decay>=0.35"
+      - "l2_l3_relaxed: sr_strength_max>=0.42 AND spectrum_price_high_freq_ratio>=0.22 AND srb_l3_breakout_age_decay>=0.20"
+      - "l2_only_loose: sr_strength_max>=0.30 AND spectrum_price_high_freq_ratio>=0.15"
+      - "l3_strong: srb_l3_breakout_age_decay>=0.45 AND sr_strength_max>=0.45"
+    out: quick_scan/l2_vs_l3_condition_set.md
+
+  # ── 4) 牛/熊 分段对比 ──
+  - mode: condition-set
+    features_parquet: *parquet_prod
+    label: *label
+    layer: prefilter
+    filter: *regime_bull
+    condition:
+      - "bull_l2_only: sr_strength_max>=0.40 AND spectrum_price_high_freq_ratio>=0.20"
+      - "bull_l2_l3: sr_strength_max>=0.42 AND spectrum_price_high_freq_ratio>=0.22 AND srb_l3_breakout_age_decay>=0.35"
+    out: quick_scan/bull_l2_vs_l3_condition_set.md
+
+  - mode: condition-set
+    features_parquet: *parquet_prod
+    label: *label
+    layer: prefilter
+    filter: *regime_bear
+    condition:
+      - "bear_l2_only: sr_strength_max>=0.40 AND spectrum_price_high_freq_ratio>=0.20"
+      - "bear_l2_l3: sr_strength_max>=0.42 AND spectrum_price_high_freq_ratio>=0.22 AND srb_l3_breakout_age_decay>=0.35"
+    out: quick_scan/bear_l2_vs_l3_condition_set.md
+
+  # ── 5) IC：核心 SR 列 vs forward_rr ──
+  - mode: ic-decay
+    features_parquet: *parquet_prod
+    target: forward_rr
+    features: sr_strength_max,srb_l3_breakout_age_decay,wide_sr_dist_atr,spectrum_price_high_freq_ratio,dist_to_nearest_sr
+    horizons: "1,3,5,10,20"
+    filter: *regime_filter
+    out: quick_scan/ic_decay_sr_core.md
+
+  # ── 6) Pair-scan: sr_strength_max × srb_l3_breakout_age_decay 交互 ──
+  - mode: pair-scan
+    features_parquet: *parquet_prod
+    label: *label
+    layer: prefilter
+    filter: *regime_filter
+    pair_a: "sr_strength_max:>=:0.30,0.35,0.40,0.45"
+    pair_b: "srb_l3_breakout_age_decay:>=:0.15,0.25,0.35,0.45"
+    out: quick_scan/strength_x_l3_age_pair.md
+
+  - mode: pair-scan
+    features_parquet: *parquet_prod
+    label: *label
+    layer: prefilter
+    filter: *regime_filter
+    pair_a: "sr_strength_max:>=:0.30,0.40,0.50"
+    pair_b: "wide_sr_dist_atr:<=:0.50,1.00,1.50,2.00"
+    out: quick_scan/strength_x_wide_dist_pair.md
+
+# Phase 3 grid 读完本目录 quick_scan 后再 unlock：
+# variant_grid: config/experiments/20260609_srb_sr_tf_compare/srb_sr_tf_grid.yaml

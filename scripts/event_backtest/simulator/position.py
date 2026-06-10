@@ -1486,12 +1486,7 @@ class PositionSimulator:
             if current_r < _thr:
                 self.last_add_reject_reason = "add_min_current_r"
             else:
-                _trg = dict(add_rules.get("trigger") or {})
-                _tt = str(_trg.get("type", "")).strip().lower()
-                if _tt in {"bpc_follow_signal", "follow_signal"}:
-                    self.last_add_reject_reason = "add_bpc_breakout_mismatch"
-                else:
-                    self.last_add_reject_reason = "add_trigger_feature_rules"
+                self.last_add_reject_reason = "add_trigger_feature_rules"
             return None
         _ok_gate, _gate_why = _shared_add_regime_gate_allows(signal, add_rules)
         if not _ok_gate:

@@ -1,0 +1,48 @@
+# SRB SR时间周期对比 — Phase 3 event_backtest grid
+#
+# 前置：Phase 1 扫描完成后，根据 quick_scan/*.md 结果定 τ/lookback，
+#       创建 config_experiments/srb_l2_only_strategies/ 静态树，
+#       然后跑此 grid。
+#
+# 变体：
+#   - A_srb_prod: 当前生产配置（L2 strength + L3 breakout age decay）
+#   - B_srb_l2_only: 去掉 L3，只用 L2 sr_strength_max + spectrum
+#   - C_srb_l3_relaxed: L3 门槛放宽（age_decay >= 0.20 而非 0.35）
+#
+# 跑法：
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260609_srb_sr_tf_compare/srb_sr_tf_grid.yaml \
+#     --quiet-signal-logs
+#
+# TODO：跑完 Phase 1 扫描后取消注释并更新路径
+
+# experiment_id: srb_sr_tf_compare_20260609
+# decision_doc: config/experiments/20260609_srb_sr_tf_compare/DECISION.md
+# strategy: srb
+# market_segment_path: config/market_segment.yaml
+# data_path: data/parquet_data
+# symbols:
+#   - BTCUSDT
+#   - ETHUSDT
+#   - SOLUSDT
+#   - BNBUSDT
+#   - XRPUSDT
+#   - ADAUSDT
+# 
+# segment_matrix:
+#   segments:
+#     - bear_2022
+#     - bull_2023_2024
+#     - recent_range_to_bear
+#   variants:
+#     - suffix: A_prod
+#       strategies_root: config/strategies
+#       output_dir: results/srb/experiments/sr_tf_compare_20260609/A_prod
+# 
+#     - suffix: B_l2_only
+#       strategies_root: config_experiments/srb_l2_only_strategies
+#       output_dir: results/srb/experiments/sr_tf_compare_20260609/B_l2_only
+# 
+#     - suffix: C_l3_relaxed
+#       strategies_root: config_experiments/srb_l3_relaxed_strategies
+#       output_dir: results/srb/experiments/sr_tf_compare_20260609/C_l3_relaxed

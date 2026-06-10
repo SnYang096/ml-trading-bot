@@ -91,9 +91,6 @@ def test_resolve_float_r_ladder_only_from_trigger_type_only():
         resolve_float_r_ladder_only({"trigger": {"type": "float_r_ladder_only"}})
         is True
     )
-    assert (
-        resolve_float_r_ladder_only({"trigger": {"type": "bpc_follow_signal"}}) is False
-    )
     assert resolve_float_r_ladder_only({}) is False
     assert resolve_float_r_ladder_only({"trigger": {}}) is False
     assert resolve_float_r_ladder_only({"float_r_ladder_only": True}) is False

@@ -1,0 +1,51 @@
+# TPC add-position ablation — fast grid (2026-06-09)
+#
+# 6 variants: no_add / prod / pyramid 3-4 / equal 2-3
+# Only bull_2023_2024 + recent_range_to_bear (add effects most visible in trending markets)
+#
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260610_tpc_macro_pullback_replace/tpc_add_ablation_fast_grid.yaml \
+#     --quiet-signal-logs
+
+experiment_id: tpc_add_ablation_fast_20260609
+strategy: tpc
+market_segment_path: config/market_segment.yaml
+data_path: data/parquet_data
+fast: true
+trading_map: true
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - BNBUSDT
+  - XRPUSDT
+  - ADAUSDT
+
+segment_matrix:
+  segments:
+    - bull_2023_2024
+    - recent_range_to_bear
+  variants:
+    - suffix: E0_prod
+      strategies_root: config/strategies
+      output_dir: results/tpc/experiments/add_ablation_fast_20260609/E0_prod
+
+    - suffix: E_no_add
+      strategies_root: config_experiments/tpc_no_add_strategies
+      output_dir: results/tpc/experiments/add_ablation_fast_20260609/E_no_add
+
+    - suffix: E_pyr_3
+      strategies_root: config_experiments/tpc_pyr_3_strategies
+      output_dir: results/tpc/experiments/add_ablation_fast_20260609/E_pyr_3
+
+    - suffix: E_pyr_4
+      strategies_root: config_experiments/tpc_pyr_4_strategies
+      output_dir: results/tpc/experiments/add_ablation_fast_20260609/E_pyr_4
+
+    - suffix: E_eq_2
+      strategies_root: config_experiments/tpc_eq_2_strategies
+      output_dir: results/tpc/experiments/add_ablation_fast_20260609/E_eq_2
+
+    - suffix: E_eq_3
+      strategies_root: config_experiments/tpc_eq_3_strategies
+      output_dir: results/tpc/experiments/add_ablation_fast_20260609/E_eq_3
