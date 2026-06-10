@@ -1,0 +1,87 @@
+# TPC Regime ADX — Phase 1 label scan (可复现)
+#
+# Phase 0: 先生成带 ADX 的 features_labeled.parquet
+#   PYTHONPATH=src python config/experiments/20260610_tpc_regime_adx_phase1/augment_adx.py \
+#     --input results/train_final/tpc/train_final_20260604_rd_rerun/tpc/features_labeled.parquet \
+#     --output results/train_final/tpc/train_final_20260610_adx/tpc/features_labeled.parquet
+#
+# Phase 1: 跑 label scan
+#   PYTHONPATH=src:scripts python scripts/rd_loop.py \
+#     --hypothesis-yaml config/experiments/20260610_tpc_regime_adx_phase1/rd_loop_tpc_regime_adx.yaml
+
+topic: tpc_regime_adx_20260610
+strategy: tpc
+output_dir: results/rd_loop/tpc_regime_adx
+
+features_parquet: &parquet results/train_final/tpc/train_final_20260610_adx/tpc/features_labeled.parquet
+label: &label success_no_rr_extreme
+
+# 全市场过滤（不做 chop 子集，全样本评估）
+base_filter: &base_filter []
+
+# bull 市场过滤（用于对比：只在牛市样本里评估 ADX）
+bull_filter: &bull_filter
+  - ema_1200_position>=0.10
+
+quick_layer_scans:
+  # ═══════════════════════════════════════════════════════════════
+  # 1) ADX 周期扫描 — 14 vs 50 vs 100 哪个 IC 最高
+  # ═══════════════════════════════════════════════════════════════
+  - mode: ic-decay
+    features_parquet: *parquet
+    label: *label
+    features: >-
+      adx_14,adx_50,adx_100,ema_1200_position,tpc_semantic_chop,path_efficiency_pct,trend_r2_20_f
+    horizons: "1,3,6,12,24"
+    filter: *base_filter
+    out: quick_scan/adx_ic_decay.md
+
+  # ═══════════════════════════════════════════════════════════════
+  # 2) ADX(50) 阈值扫描 — 最佳牛熊分界线
+  # ═══════════════════════════════════════════════════════════════
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: regime
+    feature: adx_50
+    operator: ">="
+    grid: "15,18,20,22,25,28,30,35"
+    filter: *base_filter
+    out: quick_scan/adx50_threshold_ge.md
+
+  # ═══════════════════════════════════════════════════════════════
+  # 3) ADX(50) 条件组合 — ADX + EMA 联合判断
+  # ═══════════════════════════════════════════════════════════════
+  - mode: condition-set
+    features_parquet: *parquet
+    label: *label
+    layer: regime
+    filter: *base_filter
+    condition:
+      - "ADX50_gt25: adx_50>=25"
+      - "ADX50_gt20: adx_50>=20"
+      - "ADX50_gt25_EMA_pos: adx_50>=25 AND ema_1200_position>=0.10"
+      - "ADX50_gt20_EMA_pos: adx_50>=20 AND ema_1200_position>=0.10"
+      - "ADX100_gt25: adx_100>=25"
+      - "ADX14_gt25: adx_14>=25"
+      - "EMA1200_pos_018: ema_1200_position>=0.18"
+      - "EMA1200_pos_015: ema_1200_position>=0.15"
+      - "EMA1200_pos_010: ema_1200_position>=0.10"
+    out: quick_scan/regime_adx_conditions.md
+
+  # ═══════════════════════════════════════════════════════════════
+  # 4) 对比现有指标 — ADX vs 其他 regime 候选
+  # ═══════════════════════════════════════════════════════════════
+  - mode: condition-set
+    features_parquet: *parquet
+    label: *label
+    layer: regime
+    filter: *base_filter
+    condition:
+      - "ADX50_trend: adx_50>=25"
+      - "ADX50_range: adx_50<20"
+      - "EMA_hi: ema_1200_position>=0.18"
+      - "Chop_hi: tpc_semantic_chop>=0.5"
+      - "Eff_hi: path_efficiency_pct>=0.7"
+      - "R2_hi: trend_r2_20_f>=0.55"
+    out: quick_scan/regime_candidates_compare.md
