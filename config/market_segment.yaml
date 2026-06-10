@@ -1,44 +1,22 @@
-# Canonical calendar segments for backtest / promote windows.
-#
-# - Dates here are the source of truth for segment labels.
-# - variant-grid: use ``segment: <id>`` or ``segment_matrix`` (see scripts/event_backtest/market_segment.py).
-#
-# Segment dates (last updated 2026-06-10):
-#   bear_2022 (2022-01-01 → 2023-11-01) — bear baseline incl post-FTX chop
-#   bull_2023_2024 (2023-06-01 → 2025-01-01) — bull market incl ETF rally
-#   recent_range_to_bear (2025-01-01 → 2026-06-01) — long recent window, high-range chop → bear
-#   recent_6m_oos (2025-12-01 → 2026-06-01) — focused 6m very-recent OOS for current regime promote
-#
-# ⚠️ 与早期实验不可直接对比：bear_2022 end 从 2023-01 延至 2023-11，
-#    bull_2023_2024 start 从 2023-01 移至 2023-06。见 DECISION 或 grid.yaml 注明。
-#
-# Usage example (tree IC/rd_loop):
-#   config/experiments/20260601_1210_short_term_swing_wide_top100/rd_loop_....yaml
-#     references recent_6m_oos dates for tau-scan holdout evaluation.
-
 segments:
-  - id: bear_2022
-    label: Bear
-    start_date: "2022-01-01"
-    end_date: "2023-11-01"
-    purpose: 熊市基线
-
-  - id: bull_2023_2024
-    label: Bull
-    start_date: "2023-06-01"
-    end_date: "2025-01-01"
-    purpose: 牛市主段（含 ETF rally）
-
-  - id: recent_range_to_bear
-    label: Bear
-    start_date: "2025-01-01"
-    end_date: "2026-06-01"
-    purpose: High-range chop / pullback into bear (2025–2026)
-
-  # Focused 6-month very-recent OOS (2025-12 → 2026-06) for gate/promote decisions
-  # on current regime. Primary "live-like" OOS for TPC gate promote decisions.
-  - id: recent_6m_oos
-    label: Recent6m
-    start_date: "2025-12-01"
-    end_date: "2026-06-01"
-    purpose: 'Very recent 6-month OOS (2025-12 to 2026-06) — primary current-regime evaluation window for promote decisions'
+- id: bear_2022
+  label: Bear
+  start_date: '2022-01-01'
+  end_date: '2023-11-01'
+  purpose: 熊市基线
+- id: bull_2023_2024
+  label: Bull
+  start_date: '2023-06-01'
+  end_date: '2025-01-01'
+  purpose: 牛市主段（含 ETF rally）
+- id: recent_range_to_bear
+  label: Bear
+  start_date: '2025-01-01'
+  end_date: '2026-04-30'
+  purpose: High-range chop / pullback into bear (2025–2026)
+- id: recent_6m_oos
+  label: Recent6m
+  start_date: '2025-12-01'
+  end_date: '2026-04-30'
+  purpose: Very recent 6-month OOS (2025-12 to 2026-06) — primary current-regime evaluation
+    window for promote decisions
