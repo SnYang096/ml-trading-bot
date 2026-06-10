@@ -6827,8 +6827,6 @@ features:
       high: high
       low: low
       close: close
-      low: low
-      close: close
   adxr_f:
     module: talib
     compute_func: compute_talib_indicator_from_series

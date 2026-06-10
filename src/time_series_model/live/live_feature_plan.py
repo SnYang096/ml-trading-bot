@@ -274,9 +274,11 @@ def extract_features_from_archetypes(
         regime_raw = _load_yaml(regime_path)
         feature_columns |= _extract_features_from_prefilter(regime_raw)
         # labeled regime schema: allowed_regimes.{bull,bear,neutral}.rules
-        for _label_cfg in (regime_raw.get("allowed_regimes") or {}).values():
-            if isinstance(_label_cfg, dict):
-                feature_columns |= _extract_features_from_prefilter(_label_cfg)
+        _ar = regime_raw.get("allowed_regimes") or {}
+        if isinstance(_ar, dict):
+            for _label_cfg in _ar.values():
+                if isinstance(_label_cfg, dict):
+                    feature_columns |= _extract_features_from_prefilter(_label_cfg)
         feature_columns |= _extract_features_from_regime_side_mask(regime_raw)
         multileg = multileg_regime_section(regime_raw)
         if multileg:
