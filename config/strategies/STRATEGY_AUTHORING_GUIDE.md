@@ -174,15 +174,20 @@ python -m scripts.event_backtest \
 ## 8. 实验目录规范
 
 ```
-config_experiments/<experiment_name>_strategies/
-├── grid.yaml                      # variant grid 定义
-├── DECISION.md                    # 实验结论
-├── <variant_name>/
-│   └── <strategy>/archetypes/
-│       └── <changed_file>.yaml    # 只放改动的文件
+config_experiments/<experiment_name>/
+├── grid.yaml                      # variant grid 定义（VariantRunner 入口）
+├── grid_phase2.yaml               # 可选：更多 grid
+├── DECISION.md                    # [推荐] 实验结论
+├── <variant_name>/                # 每个 variant = 一个子目录
+│   └── <strategy>/                # tpc / bpc / me / srb …
+│       └── archetypes/
+│           └── <changed_file>.yaml# 只放相对基线改动的文件
 └── constitution/
     └── <variant>.yaml             # constitution override
 ```
+
+> **注意：** `grid.yaml` 只在 `config_experiments/` 下，不在策略目录中。
+> Variant 子目录只包含**改动**的 archetype 文件，未出现的文件自动继承基线。
 
 ## 9. Portfolio 级策略特殊说明
 
