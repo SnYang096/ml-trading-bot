@@ -8,3 +8,4 @@ symbols:
   SOLUSDT: "高波动高流动，适合趋势策略"
   XRPUSDT: "成交量恢复后的传统大盘币"
   # ADAUSDT: "已移除 - 回测 MeanR=-0.103R，唯一亏损品种"
+  HYPE: "新的交易所"

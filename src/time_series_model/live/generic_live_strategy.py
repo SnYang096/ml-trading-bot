@@ -805,22 +805,21 @@ class ExecutionParamGenerator:
         # ── Regime 自适应退出 (2026-06-10) ──
         # 牛市 (ema1200_position > bull_threshold) → 强制禁止 trailing，只用 structural_exit
         # 非牛市 → 沿用父级 trailing 设置
+        # bull_threshold 默认 0.15：真牛市(0.20+)与弱市/震荡(0.10-0.15)的分界线
         ra_cfg = sl_cfg.get("regime_adaptive_exit") or {}
         if ra_cfg.get("enabled") and features:
             ema_pos = features.get("ema_1200_position")
             if ema_pos is not None:
                 try:
-                    if float(ema_pos) > float(ra_cfg.get("bull_threshold", 0.10)):
+                    _ema_val = float(ema_pos)
+                    _bull_thr = float(ra_cfg.get("bull_threshold", 0.15))
+                    if _ema_val > _bull_thr:
                         bull_ov = ra_cfg.get("bull_override") or {}
                         bull_trail = bull_ov.get("trailing") or {}
                         if bull_trail.get("enabled") is False:
                             result["allow_trailing"] = False
                             result["activation_r"] = None
                             result["trail_r"] = None
-                            logger.debug(
-                                "🐂 Regime-adaptive: bull detected (ema1200_pos=%.3f), trailing DISABLED, structural exit only",
-                                float(ema_pos),
-                            )
                 except (TypeError, ValueError):
                     pass
 

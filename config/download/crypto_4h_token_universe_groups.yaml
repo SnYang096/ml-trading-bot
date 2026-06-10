@@ -15,11 +15,8 @@ universe_sets:
         - BNB
         - ETH
         - SOL
-
-      # note: XRP/ADA 暂移出 starter 池，待 2026-06 segment 验证后再决定
-      # - XRP
-      # - ADA
-
+        - XRP
+        - HYPE
         # - ADA
         # - BCH
         # - LINK
