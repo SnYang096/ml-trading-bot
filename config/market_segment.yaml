@@ -24,19 +24,19 @@ segments:
   - id: bear_2022
     label: Bear
     start_date: "2022-01-01"
-    end_date: "2023-01-01"
+    end_date: "2023-11-01"
     purpose: 熊市基线
 
   - id: bull_2023_2024
     label: Bull
-    start_date: "2023-01-01"
+    start_date: "2023-06-01"
     end_date: "2025-01-01"
     purpose: 牛市主段（含 ETF rally）
 
   - id: recent_range_to_bear
     label: Bear
     start_date: "2025-01-01"
-    end_date: "2026-04-01"
+    end_date: "2026-06-01"
     purpose: High-range chop / pullback into bear (2025–2026)
 
   # Focused very-recent OOS (>=6 months) for gate/promote decisions on current regime.
@@ -45,6 +45,6 @@ segments:
   # Data max as of 20260601 builds: ~2026-03-30.
   - id: recent_6m_oos
     label: Recent6m
-    start_date: "2025-10-01"
-    end_date: "2026-03-31"
+    start_date: "2025-12-01"
+    end_date: "2026-06-01"
     purpose: Very recent 6-month OOS (2025-10 to 2026-03) — primary current-regime evaluation window for promote decisions

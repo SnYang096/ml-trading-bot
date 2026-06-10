@@ -1,12 +1,14 @@
-# TPC execution: 与 BPC 相同（EMA1200 structural exit, 增量加仓）
+# TPC execution: EMA1200 structural exit, 金字塔加仓（2026-06-10 优化）
 add_position:
   add_size_multipliers:
-    - 0.5
     - 0.25
+    - 0.5
+    - 1.0
   inherit_parent_stop: true
   min_current_r_by_add:
     - 0.5
     - 1
+    - 1.5
   min_current_r_unit: atr
   sizing_mode: fixed_multiplier
   trigger:
@@ -18,11 +20,11 @@ holding:
   max_holding_bars: 0
   time_stop_bars: 0
 stop_loss:
-  # 2026-04-22 统一 breakeven 口径（见 position_logic.py）：
-  # measure=atr 保持历史语义；lock_level_r 等价于旧 lock_profit_atr（ATR 单位）。
+  # 2026-06-10: breakeven trigger_r 从 10.0→6.0 ATR（1.5R 锁仓）
+  # 实验依据: Phase 3 breakeven ablation (E9_be_6atr 总R=31.55 vs E8_be_10atr 总R=9.32)
   breakeven:
     enabled: true
-    trigger_r: 10.0
+    trigger_r: 6.0
     lock_level_r: 2
     measure: atr
   guardrails:

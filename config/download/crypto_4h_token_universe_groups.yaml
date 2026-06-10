@@ -12,12 +12,19 @@ universe_sets:
     groups:
       highcap:
         - BTC
+        - BNB
         - ETH
         - SOL
         - BNB
-        - XRP
-        - ADA
+
+      new_stars:  
+        - HYPE
+
+        # - XRP
         # - TRX
+        # - ZEC
+
+        # - ADA
         # - BCH
         # - LINK
         # - AVAX

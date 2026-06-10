@@ -219,7 +219,7 @@ resource_allocation:
     tpc:
       max_risk_per_trade: 0.01
       allow_add_position: true
-      max_add_times: 2
+      max_add_times: 3
       require_locked_profit: true
 
   # 未配置 direction_policy 时 LivePCM 不做事：方向由各策略 / gate 决定。

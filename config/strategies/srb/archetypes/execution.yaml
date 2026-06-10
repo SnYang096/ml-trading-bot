@@ -21,7 +21,7 @@ stop_loss:
     enabled: true
     lock_level_r: 2
     measure: atr
-    trigger_r: 10.0
+    trigger_r: 6.0
   guardrails:
     max_stop_pct: 0.2
     min_stop_pct: 0.01

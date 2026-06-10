@@ -22,7 +22,7 @@ stop_loss:
   # measure=atr 保持历史语义；lock_level_r 等价于旧 lock_profit_atr（ATR 单位）。
   breakeven:
     enabled: true
-    trigger_r: 10.0
+    trigger_r: 6.0
     lock_level_r: 2
     measure: atr
   guardrails:

@@ -1430,6 +1430,32 @@ class EventBacktester:
                     ):
                         continue
 
+                    # 2026-06-10: PCM 已将重复信号转为 add_position=True。
+                    # 此时跳过 open_position()，直接走 try_add_position()。
+                    _pcm_add_intent = bool(getattr(intent, "add_position", False))
+                    if _pcm_add_intent and _add_pos_enabled and _executor:
+                        _win_lc = str(winning_arch or "").strip().lower()
+                        _tried_signal_add = _win_lc not in _strats_float_ladder_meta
+                        added = None
+                        if _tried_signal_add:
+                            added = simulator.try_add_position(
+                                intent,
+                                entry_bar,
+                                entry_feats,
+                                executor=_executor,
+                                runtime_state=_runtime_state,
+                                bar_minutes=winning_bm,
+                            )
+                            if added:
+                                _add_pos_count += 1
+                                funnel.setdefault("add_position_pcm_ok", 0)
+                                funnel["add_position_pcm_ok"] += 1
+                            else:
+                                _add_pos_rejected += 1
+                                funnel.setdefault("add_position_pcm_rejected", 0)
+                                funnel["add_position_pcm_rejected"] += 1
+                        continue
+
                     opened = simulator.open_position(
                         intent, entry_bar, entry_feats, bar_minutes=winning_bm
                     )
@@ -1451,6 +1477,11 @@ class EventBacktester:
                                 _daily_entry_counts.get(_dk2, 0) + 1
                             )
                     if opened is not None:
+                        # 同步 PCM slot evidence（确保下次 decide() 能识别已有持仓 → add_position）
+                        if hasattr(self.pcm, "_record_slot"):
+                            self.pcm._record_slot(
+                                str(sym), str(winning_arch or ""), 0.5
+                            )
                         _opened_pos = simulator._positions.get(opened) or {}
                         _entry_src = (
                             "pcm_scale_in"
@@ -1497,8 +1528,10 @@ class EventBacktester:
                             funnel.setdefault("reject_open_atr_nonpositive", 0)
                             funnel["reject_open_atr_nonpositive"] += 1
                         elif _dup_open and not _lor_open:
-                            funnel.setdefault("reject_open_duplicate_archetype", 0)
-                            funnel["reject_open_duplicate_archetype"] += 1
+                            # 2026-06-10: 同 symbol 同 archetype 已有持仓时不应拒单，
+                            # 应落入下方 _add_pos_enabled 分支尝试 signal_add（PCM 再信号加仓）。
+                            # 之前此处计数 reject_open_duplicate_archetype 导致 signal_add 永为 0。
+                            pass
                         elif _lor_open.startswith("account_risk"):
                             funnel.setdefault("reject_account_risk_limit", 0)
                             funnel["reject_account_risk_limit"] += 1
