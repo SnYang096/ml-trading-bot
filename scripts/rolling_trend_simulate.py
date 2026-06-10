@@ -49,9 +49,7 @@ def load_trades_for_segment(trades_dir: str, segment: str) -> pd.DataFrame:
     # Filter to segment dates if needed
     if segment in SEGMENTS:
         seg_start, seg_end = SEGMENTS[segment]
-        df = df[
-            (df["entry_time"] >= seg_start) & (df["entry_time"] < seg_end)
-        ]
+        df = df[(df["entry_time"] >= seg_start) & (df["entry_time"] < seg_end)]
 
     return df
 
@@ -178,8 +176,7 @@ def run_segment(
     results = {}
     for sym in SYMBOLS:
         sym_trades = all_trades[
-            (all_trades["symbol"] == sym)
-            & (all_trades["is_add_position"] != "True")
+            (all_trades["symbol"] == sym) & (all_trades["is_add_position"] != "True")
         ]
         if len(sym_trades) == 0:
             results[sym] = {

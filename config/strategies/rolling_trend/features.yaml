@@ -1,0 +1,16 @@
+# Rolling Trend 特征配置 — 复用 TPC 信号源
+# 本策略不独立计算特征，所有信号从 TPC 复用
+name: rolling_trend
+description: |
+  Portfolio-level leveraged trend following using TPC signals.
+  No independent feature computation — all entry signals from TPC.
+
+feature_pipeline:
+  # 复用 TPC 完整特征集
+  signal_source_strategy: tpc
+  exclude_columns: []
+  requested_features:
+    - atr_f
+    - tpc_soft_phase_f
+    - bpc_pullback_depth_pct_f
+    - bpc_volume_compression_pct_f

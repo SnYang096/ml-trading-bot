@@ -1,0 +1,8 @@
+# Rolling Trend Prefilter — 使用 TPC 信号 + regime 过滤
+# 本策略的信号来自 TPC，prefilter 仅做 regime 层面的杠杆允许判断
+rules:
+  - feature: ema_1200_position
+    operator: '>='
+    value: 0.10
+    rationale: 牛市趋势确认后才允许杠杆仓位；熊市仅 spot
+    locked: false
