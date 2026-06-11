@@ -87,7 +87,7 @@ a:hover {
 }
 
 .page {
-  padding: 16px 18px;
+  padding: 16px var(--layout-gutter);
 }
 
 .page h2 {
@@ -162,6 +162,10 @@ a:hover {
   border: 1px solid var(--border);
   background: var(--bg-elevated);
   box-shadow: inset 0 0 20px rgba(0, 255, 65, 0.04);
+}
+
+.toolbar-row h2 {
+  margin: 0;
 }
 
 .toolbar-row select,

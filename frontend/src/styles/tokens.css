@@ -29,4 +29,6 @@
   --glow-strong: 0 0 18px rgba(0, 255, 65, 0.75);
   --glow-cyan: 0 0 10px rgba(92, 255, 255, 0.45);
   --radius: 0;
+
+  --layout-gutter: 16px;
 }
