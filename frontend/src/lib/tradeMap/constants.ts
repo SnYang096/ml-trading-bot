@@ -33,6 +33,8 @@ export const CHART_THEME = {
 } as const;
 
 export const DEFAULT_VISIBLE_BARS = 320;
+/** Max metric-matrix columns; wider logical windows keep the tail (latest bars). */
+export const METRICS_TABLE_MAX_COLS = 80;
 export const MAX_FEATURE_SUBCHARTS = 8;
 export const CHOP_REGIME_FILL = 'rgba(0, 255, 65, 0.12)';
 export const PREFILTER_STAGE_FILL = 'rgba(255, 0, 64, 0.12)';
@@ -42,6 +44,17 @@ export const FEATURE_PRESETS: Record<string, string[]> = {
   trend: ['ema_1200_position', 'tpc_pullback_depth', 'tpc_semantic_chop', 'bpc_pullback_depth'],
   spot: ['weekly_ema_200_position'],
   multi_leg: ['bpc_semantic_chop', 'box_pos_60', 'box_stability_60'],
+};
+
+/** Metrics-table row columns when taxonomy / bus catalog is not yet loaded. */
+export const STRATEGY_METRICS_FALLBACK: Record<string, string[]> = {
+  tpc: ['ema_1200_position', 'tpc_pullback_depth', 'tpc_semantic_chop'],
+  bpc: ['ema_1200_position', 'bpc_pullback_depth', 'bpc_semantic_chop'],
+  me: ['ema_1200_position'],
+  srb: ['ema_1200_position'],
+  spot_accum_simple: ['weekly_ema_200_position'],
+  chop_grid: ['bpc_semantic_chop', 'box_pos_60'],
+  trend_scalp: ['trend_confidence', 'bpc_semantic_chop'],
 };
 
 export const ACCOUNT_LAYER_ORDER: AccountLayerId[] = [

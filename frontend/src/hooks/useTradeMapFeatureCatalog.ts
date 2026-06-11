@@ -44,6 +44,22 @@ export function useTradeMapFeatureCatalog(opts?: { catalogEnabled?: boolean }) {
     const cols = data.columns || [];
     setAvailable(cols);
     if (data.taxonomy) setFeatureTaxonomy(data.taxonomy as never);
+
+    const focus = useTradeMapStore.getState().featureStrategyFocus?.trim() || '';
+    if (focus) {
+      const picks = presetColumnsForStrategy(focus, cols, MAX_FEATURE_SUBCHARTS);
+      if (picks.length) {
+        const cur = useTradeMapStore.getState().selectedFeatureColumns;
+        if (
+          picks.length !== cur.length ||
+          picks.some((c, i) => c !== cur[i])
+        ) {
+          setSelected(picks);
+        }
+        return;
+      }
+    }
+
     let next = selected.filter((c) => cols.includes(c));
     if (!next.length && data.defaults?.length) next = [...data.defaults];
     if (!next.length && cols.length) next = [cols[0]];

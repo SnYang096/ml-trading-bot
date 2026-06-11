@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   chopRegimeExitBarTimes,
   chopRegimeHysteresisOnBarTimes,
@@ -34,6 +34,7 @@ export function FeatureMetricsTable({
 }: Props) {
   const sid = String(strategyId || 'chop_grid').toLowerCase();
   const rowSpecs = strategyMetricsRowSpecs(sid, columns, overlays);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const [logicalRange, setLogicalRange] = useState<{ from: number; to: number } | null>(null);
 
@@ -41,12 +42,21 @@ export function FeatureMetricsTable({
     if (!mainChart) return;
     const update = () => setLogicalRange(mainChart.timeScale().getVisibleLogicalRange());
     update();
+    const raf = requestAnimationFrame(update);
     mainChart.timeScale().subscribeVisibleLogicalRangeChange(update);
-    return () => mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(update);
-  }, [mainChart]);
+    return () => {
+      cancelAnimationFrame(raf);
+      mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(update);
+    };
+  }, [mainChart, candles.length]);
+
+  const indexRange = useMemo(
+    () => visibleCandleIndexRange(candles, logicalRange),
+    [candles, logicalRange],
+  );
 
   const { bars, regimeExitTimes, regimeOnTimes } = useMemo(() => {
-    const { from, to } = visibleCandleIndexRange(candles, logicalRange);
+    const { from, to } = indexRange;
     const barList: Array<{ time: number; label: string }> = [];
     for (let i = from; i <= to; i++) {
       const t = candles[i]?.time;
@@ -60,7 +70,18 @@ export function FeatureMetricsTable({
       regimeOnTimes:
         sid === 'chop_grid' ? chopRegimeHysteresisOnBarTimes(candles, overlays) : new Set<number>(),
     };
-  }, [candles, overlays, sid, logicalRange]);
+  }, [candles, overlays, sid, indexRange]);
+
+  const atTail =
+    candles.length > 0 && indexRange.to >= Math.max(0, candles.length - 2);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !bars.length) return;
+    if (atTail) {
+      el.scrollLeft = el.scrollWidth - el.clientWidth;
+    }
+  }, [bars, atTail, indexRange.from, indexRange.to]);
 
   if (!rowSpecs.length) {
     return (
@@ -78,7 +99,7 @@ export function FeatureMetricsTable({
   return (
     <div className={styles.wrap}>
       <div className={styles.caption}>{strategyFocusLabel(sid) || sid} · 指标矩阵</div>
-      <div className={styles.scroll}>
+      <div ref={scrollRef} className={styles.scroll}>
         <table className={styles.table}>
           <thead>
             <tr>

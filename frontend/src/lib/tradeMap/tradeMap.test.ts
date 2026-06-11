@@ -17,13 +17,17 @@ import {
   markersForChartDisplay,
   markersToLwc,
 } from '@/lib/tradeMap/markers.ts';
-import { mergeTradeLinks, tradeLinksForDisplay } from '@/lib/tradeMap/tradeLinks.ts';
+import { mergeTradeLinks, tradeLinksForDisplay, buildTradeLinkLines, resolveTradeLinkEndpoints } from '@/lib/tradeMap/tradeLinks.ts';
 import { forwardFillOverlayToCandles, overlayAsOfAtCandleTimes } from '@/lib/tradeMap/ohlcv.ts';
+import { visibleCandleIndexRange } from '@/lib/tradeMap/chartOverlay.ts';
+import { barSecForTimeframe, orderOnBar, orderRowUnixSec } from '@/lib/tradeMap/orderTime.ts';
 import {
   chopGridMetricsRowCell,
   chopGridMetricsRowSpecs,
   listStrategiesForLayers,
+  resolveMetricsTableColumns,
   setFeatureTaxonomy,
+  strategyMetricsRowSpecs,
 } from '@/lib/tradeMap/features.ts';
 import type { TradeMarker } from '@/lib/tradeMap/types.ts';
 
@@ -144,6 +148,114 @@ describe('tradeMap trade links', () => {
     };
     expect(mergeTradeLinks([a], [a])).toHaveLength(1);
   });
+
+  it('buildTradeLinkLines uses marker times instead of snapped candle times', () => {
+    const candles = [
+      { time: 1000, open: 1, high: 1, low: 1, close: 1 },
+      { time: 8200, open: 1, high: 1, low: 1, close: 1 },
+    ];
+    const markers = [
+      {
+        id: 'trend:positions:p1:entry',
+        time: 1500,
+        symbol: 'XRP',
+        scope: 'trend',
+        strategy: 'tpc',
+        event: 'entry',
+        side: 'long',
+        price: 1.54,
+      },
+      {
+        id: 'trend:positions:p1:exit',
+        time: 7800,
+        symbol: 'XRP',
+        scope: 'trend',
+        strategy: 'tpc',
+        event: 'exit',
+        side: 'long',
+        price: 1.42,
+      },
+    ];
+    const links = [
+      {
+        strategy: 'tpc',
+        status: 'closed',
+        entry_time: 1500,
+        entry_price: 1.54,
+        exit_time: 7800,
+        exit_price: 1.42,
+        entry_marker_id: 'trend:positions:p1:entry',
+        exit_marker_id: 'trend:positions:p1:exit',
+      },
+    ];
+    const layers = {
+      trend: true,
+      spot: true,
+      multiLeg: true,
+      pending: false,
+      chopGrid: true,
+      prefilter: true,
+      gate: false,
+    };
+    const resolved = resolveTradeLinkEndpoints(links[0], markers, candles, '2h');
+    expect(resolved?.entry.time).toBe(1500);
+    expect(resolved?.exit.time).toBe(7800);
+    const lines = buildTradeLinkLines(links, candles, layers, 'tpc', '2h', markers);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].points).toEqual([
+      { time: 1500, value: 1.54 },
+      { time: 7800, value: 1.42 },
+    ]);
+  });
+
+  it('buildTradeLinkLines keeps same-bar links vertical', () => {
+    const candles = [{ time: 1000, open: 1, high: 1, low: 1, close: 1 }];
+    const links = [
+      {
+        strategy: 'tpc',
+        status: 'closed',
+        entry_time: 1000,
+        entry_price: 1.5,
+        exit_time: 1000,
+        exit_price: 1.4,
+        entry_marker_id: 'trend:positions:p1:entry',
+        exit_marker_id: 'trend:positions:p1:exit',
+      },
+    ];
+    const markers = [
+      {
+        id: 'trend:positions:p1:entry',
+        time: 1000,
+        symbol: 'XRP',
+        scope: 'trend',
+        strategy: 'tpc',
+        event: 'entry',
+        side: 'long',
+        price: 1.5,
+      },
+      {
+        id: 'trend:positions:p1:exit',
+        time: 1000,
+        symbol: 'XRP',
+        scope: 'trend',
+        strategy: 'tpc',
+        event: 'exit',
+        side: 'long',
+        price: 1.4,
+      },
+    ];
+    const layers = {
+      trend: true,
+      spot: false,
+      multiLeg: false,
+      pending: false,
+      chopGrid: false,
+      prefilter: false,
+      gate: false,
+    };
+    const lines = buildTradeLinkLines(links, candles, layers, 'tpc', '2h', markers);
+    expect(lines[0].points[0].time).toBe(lines[0].points[1].time);
+  });
 });
 
 describe('tradeMap chop regime hysteresis', () => {
@@ -203,6 +315,34 @@ describe('tradeMap chop regime hysteresis', () => {
   });
 });
 
+describe('visibleCandleIndexRange', () => {
+  const candles = Array.from({ length: 200 }, (_, i) => ({
+    time: 1_700_000_000 + i * 7200,
+    open: 1,
+    high: 2,
+    low: 0.5,
+    close: 1.5,
+  }));
+
+  it('defaults to tail window when logical range is null', () => {
+    const { from, to } = visibleCandleIndexRange(candles, null, 80);
+    expect(to).toBe(199);
+    expect(from).toBe(120);
+  });
+
+  it('keeps tail when logical window is wider than cap', () => {
+    const { from, to } = visibleCandleIndexRange(candles, { from: 0, to: 199 }, 80);
+    expect(to).toBe(199);
+    expect(from).toBe(120);
+  });
+
+  it('follows narrow logical window', () => {
+    const { from, to } = visibleCandleIndexRange(candles, { from: 10, to: 20 }, 80);
+    expect(from).toBe(10);
+    expect(to).toBe(20);
+  });
+});
+
 describe('listStrategiesForLayers', () => {
   it('falls back to KNOWN_STRATEGIES when taxonomy is not loaded', () => {
     setFeatureTaxonomy(null);
@@ -212,5 +352,49 @@ describe('listStrategiesForLayers', () => {
       multiLeg: true,
     });
     expect(multiOnly.map((s) => s.id)).toEqual(['chop_grid', 'trend_scalp']);
+  });
+});
+
+describe('metrics table columns', () => {
+  it('defaults TPC rows without selected columns or bus catalog', () => {
+    setFeatureTaxonomy(null);
+    const cols = resolveMetricsTableColumns('tpc', [], []);
+    expect(cols).toEqual([
+      'ema_1200_position',
+      'tpc_pullback_depth',
+      'tpc_semantic_chop',
+    ]);
+    const rows = strategyMetricsRowSpecs('tpc', [], {});
+    expect(rows.map((r) => r.column)).toEqual(cols);
+  });
+
+  it('defaults chop_grid metrics rows without selection', () => {
+    setFeatureTaxonomy(null);
+    const rows = chopGridMetricsRowSpecs([], {});
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.some((r) => r.column === 'bpc_semantic_chop')).toBe(true);
+  });
+});
+
+describe('orderTime', () => {
+  it('parses ISO order timestamps to unix seconds', () => {
+    const t = orderRowUnixSec({
+      order_id: '1',
+      symbol: 'ETH',
+      scope: 'trend',
+      filled_at: '2024-05-20T12:00:00Z',
+    });
+    expect(t).toBe(Math.floor(Date.parse('2024-05-20T12:00:00Z') / 1000));
+  });
+
+  it('matches order to chart bar time', () => {
+    const bar = 1_715_000_000;
+    const row = {
+      order_id: '1',
+      symbol: 'ETH',
+      scope: 'trend',
+      time: bar + 100,
+    };
+    expect(orderOnBar(row, bar, barSecForTimeframe('1h'))).toBe(true);
   });
 });

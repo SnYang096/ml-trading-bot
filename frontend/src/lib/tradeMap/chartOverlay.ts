@@ -1,5 +1,5 @@
 import type { Candle } from '@/api/types.ts';
-import { CHART_THEME } from './constants.ts';
+import { CHART_THEME, METRICS_TABLE_MAX_COLS } from './constants.ts';
 import type { LayerState } from '@/stores/tradeMapStore.ts';
 
 export interface TimeSpan {
@@ -316,15 +316,27 @@ export function stageBandFill(stage: 'prefilter' | 'gate'): string {
 export function visibleCandleIndexRange(
   candles: Candle[],
   logical: { from: number; to: number } | null,
+  maxCols: number = METRICS_TABLE_MAX_COLS,
 ): { from: number; to: number } {
   const list = candles || [];
   if (!list.length) return { from: 0, to: 0 };
+  let from: number;
+  let to: number;
   if (!logical) {
-    return { from: Math.max(0, list.length - 80), to: list.length - 1 };
+    to = list.length - 1;
+    from = Math.max(0, to - Math.max(1, maxCols) + 1);
+  } else {
+    from = Math.max(0, Math.min(list.length - 1, Math.floor(Number(logical.from))));
+    to = Math.max(0, Math.min(list.length - 1, Math.ceil(Number(logical.to))));
+    from = Math.min(from, to);
+    to = Math.max(from, to);
   }
-  const from = Math.max(0, Math.min(list.length - 1, Math.floor(Number(logical.from))));
-  const to = Math.max(0, Math.min(list.length - 1, Math.ceil(Number(logical.to))));
-  return { from: Math.min(from, to), to: Math.max(from, to) };
+  const span = to - from + 1;
+  const cap = Math.max(1, Number(maxCols) || METRICS_TABLE_MAX_COLS);
+  if (span > cap) {
+    from = to - cap + 1;
+  }
+  return { from, to };
 }
 
 export function formatMetricsBarHeader(timeSec: number): string {

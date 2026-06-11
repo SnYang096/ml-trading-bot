@@ -3,6 +3,7 @@ import {
   ACCOUNT_LAYER_ORDER,
   KNOWN_STRATEGIES,
   STAGE_ORDER,
+  STRATEGY_METRICS_FALLBACK,
 } from './constants.ts';
 import { overlayAsOfAtCandleTimes } from './ohlcv.ts';
 import type {
@@ -650,6 +651,43 @@ const METRICS_TABLE_DEFAULT_STRATEGIES = new Set([
   'spot_accum_simple',
 ]);
 
+/** Taxonomy stage columns for metrics table rows (no bus catalog required). */
+export function taxonomyMetricsColumnsForStrategy(strategyId: string): string[] {
+  const sid = String(strategyId || '').trim().toLowerCase();
+  if (!sid) return [];
+  const strat = knownStrategyRecord(sid);
+  const ordered: string[] = [];
+  if (strat?.stages) {
+    for (const stage of METRICS_TABLE_STAGES) {
+      for (const c of strat.stages[stage] || []) {
+        if (!isRegimeBoxMetricColumn(c) && !ordered.includes(c)) ordered.push(c);
+      }
+    }
+  }
+  if (ordered.length) return ordered;
+  return [...(STRATEGY_METRICS_FALLBACK[sid] || [])];
+}
+
+/** Resolve metrics-table columns: selection → preset → taxonomy fallback. */
+export function resolveMetricsTableColumns(
+  strategyId: string,
+  selectedColumns: string[] | null | undefined,
+  availableColumns: string[] | null | undefined,
+  maxCols = 8,
+): string[] {
+  const sid = String(strategyId || '').trim().toLowerCase();
+  if (!sid) return [];
+  const fromSelected = columnsForStrategy(sid, selectedColumns);
+  if (fromSelected.length) return fromSelected.slice(0, maxCols);
+  const avail = availableColumns || [];
+  const preset = presetColumnsForStrategy(sid, avail, maxCols);
+  if (preset.length) return preset;
+  const fallback = taxonomyMetricsColumnsForStrategy(sid);
+  if (!avail.length) return fallback.slice(0, maxCols);
+  const filtered = fallback.filter((c) => avail.includes(c));
+  return (filtered.length ? filtered : fallback).slice(0, maxCols);
+}
+
 function isRegimeBoxMetricColumn(col: string): boolean {
   return (
     REGIME_BOX_TABLE_COLS.has(col) ||
@@ -725,7 +763,11 @@ export function strategyMetricsColumnSpecs(
   if (sid === 'chop_grid') {
     return chopGridMetricsColumnSpecs(columns);
   }
-  const colSet = new Set(columnsForStrategy(sid, columns));
+  let scoped = columnsForStrategy(sid, columns);
+  if (!scoped.length && METRICS_TABLE_DEFAULT_STRATEGIES.has(sid)) {
+    scoped = taxonomyMetricsColumnsForStrategy(sid);
+  }
+  const colSet = new Set(scoped);
   const specs: MetricsColumnSpec[] = [];
   const seenScalar = new Set<string>();
   const strat = knownStrategyRecord(sid);
@@ -764,7 +806,9 @@ export function strategyMetricsColumnSpecs(
 export function chopGridMetricsColumnSpecs(
   columns: string[] | null | undefined,
 ): MetricsColumnSpec[] {
-  const colSet = new Set(columns || []);
+  const base =
+    columns?.length ? columns : taxonomyMetricsColumnsForStrategy('chop_grid');
+  const colSet = new Set(base);
   const specs: MetricsColumnSpec[] = [];
   if (colSet.has('bpc_semantic_chop')) {
     specs.push({
@@ -1244,6 +1288,14 @@ export function presetColumnsForStrategy(
           if (picks.length >= maxCols) return picks;
         }
       }
+    }
+  }
+  if (!picks.length) {
+    for (const c of taxonomyMetricsColumnsForStrategy(sid)) {
+      if (!avail.size || avail.has(c)) {
+        if (!picks.includes(c)) picks.push(c);
+      }
+      if (picks.length >= maxCols) break;
     }
   }
   return picks;

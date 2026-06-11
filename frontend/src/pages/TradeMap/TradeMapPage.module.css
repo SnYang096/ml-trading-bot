@@ -171,36 +171,5 @@
 }
 
 .markerList {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 8px 12px;
-  border-top: 1px solid var(--border);
-  max-height: 96px;
-  overflow: auto;
-  flex-shrink: 0;
-  background: var(--bg-elevated);
-}
-
-.markerBtn {
-  font-family: var(--font-mono);
-  font-size: 0.76rem;
-  font-weight: 500;
-  padding: 3px 9px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text-muted);
-  cursor: pointer;
-}
-
-.markerBtn:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.markerSelected {
-  border-color: var(--warning);
-  color: var(--warning);
-  box-shadow: 0 0 8px rgba(255, 255, 0, 0.35);
+  display: none;
 }

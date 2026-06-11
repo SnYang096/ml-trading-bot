@@ -41,8 +41,10 @@ import {
   priceRangeForChartAutoscale,
   sanitizeCandlesForLwc,
 } from '@/lib/tradeMap';
+import { visibleLogicalRange } from '@/lib/tradeMap/candles.ts';
 import type { FeatureOverlays } from '@/lib/tradeMap/types.ts';
 import type { LayerState } from '@/stores/tradeMapStore.ts';
+import { useTradeMapStore } from '@/stores/tradeMapStore.ts';
 
 const CHART_OPTS = {
   layout: {
@@ -80,6 +82,7 @@ export interface MainChartParams {
   selectedMarkerId: string | null;
   chartFitPending: boolean;
   onHighlightBarTime: (t: number | null) => void;
+  onChartClick?: (barTimeSec: number) => void;
   onChartReady?: (chart: IChartApi) => void;
 }
 
@@ -242,12 +245,20 @@ export function useTradeMapMainChart(params: MainChartParams) {
     }
     tradeLinkSeriesRef.current = [];
     const p = paramsRef.current;
+    const prepared = prepareChartMarkers(
+      p.markers,
+      p.candles,
+      p.overlays,
+      p.layers,
+      p.strategyFocus,
+    );
     const lines = buildTradeLinkLines(
       p.tradeLinks,
       p.candles,
       p.layers,
       p.strategyFocus,
       p.timeframe,
+      prepared,
     );
     for (const line of lines) {
       const series = chart.addSeries(
@@ -306,6 +317,11 @@ export function useTradeMapMainChart(params: MainChartParams) {
       paramsRef.current.onHighlightBarTime(Number(param.time));
     });
 
+    chart.subscribeClick((param) => {
+      if (!param.time) return;
+      paramsRef.current.onChartClick?.(Number(param.time));
+    });
+
     const ro = new ResizeObserver(() => {
       if (containerRef.current) {
         chart.applyOptions({
@@ -344,7 +360,11 @@ export function useTradeMapMainChart(params: MainChartParams) {
     const clean = sanitizeCandlesForLwc(p.candles) as CandlestickData<Time>[];
     series.setData(clean);
     if (clean.length && p.chartFitPending) {
-      chart.timeScale().fitContent();
+      const lr = visibleLogicalRange(clean.length);
+      if (lr) {
+        chart.timeScale().setVisibleLogicalRange(lr);
+      }
+      useTradeMapStore.getState().setBundlePhase({ chartFitPending: false });
     }
     applyMainOverlays(chart);
     applyChopLayers(chart, series);

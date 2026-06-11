@@ -4,15 +4,18 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { IChartApi } from 'lightweight-charts';
 import { useShallow } from 'zustand/react/shallow';
 import { apiGet } from '@/api/client.ts';
-import type { SymbolRow, TradeMarker } from '@/api/types.ts';
+import type { SymbolRow, OrderRow } from '@/api/types.ts';
 import { usePageVisible } from '@/hooks/usePageVisible.ts';
 import { useTradeMapFeatureCatalog } from '@/hooks/useTradeMapFeatureCatalog.ts';
 import { useTradeMapHistory } from '@/hooks/useTradeMapHistory.ts';
 import { useTradeMapMainChart } from '@/hooks/useTradeMapMainChart.ts';
 import { useTradeMapBundle } from '@/hooks/useTradeMapBundle.ts';
 import {
+  barSecForTimeframe,
   chopGridOverlayEnabled,
+  findMarkerOnBar,
   listStrategiesForLayers,
+  orderRowUnixSec,
   scrollIndexForTime,
 } from '@/lib/tradeMap';
 import { getSymbol, setSymbol, SCOPE_LABELS } from '@/lib/shell.ts';
@@ -27,6 +30,7 @@ import styles from './TradeMapPage.module.css';
 export function TradeMapPage() {
   const [searchParams] = useSearchParams();
   const [mainChart, setMainChart] = useState<IChartApi | null>(null);
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const pageVisible = usePageVisible();
 
   const symbol = useTradeMapStore((s) => s.symbol);
@@ -50,6 +54,7 @@ export function TradeMapPage() {
   const featureDrawerOpen = useTradeMapStore((s) => s.featureDrawerOpen);
   const paneVolume = useTradeMapStore((s) => s.paneVolume);
   const ordersDockOpen = useTradeMapStore((s) => s.ordersDockOpen);
+  const highlightBarTime = useTradeMapStore((s) => s.highlightBarTime);
   const chartFitPending = useTradeMapStore((s) => s.chartFitPending);
   const hasCandles = useTradeMapStore((s) => s.lastCandles.length > 0);
 
@@ -84,6 +89,22 @@ export function TradeMapPage() {
   });
   useTradeMapHistory(mainChart);
 
+  const onChartClick = useCallback(
+    (barTime: number) => {
+      setHighlightBarTime(barTime);
+      const tol = barSecForTimeframe(timeframe);
+      const m = findMarkerOnBar(markers, barTime, tol);
+      if (m?.id) {
+        setSelectedMarkerId(m.id);
+        setSelectedOrderId(null);
+        return;
+      }
+      setSelectedMarkerId(null);
+      setSelectedOrderId(null);
+    },
+    [markers, timeframe, setHighlightBarTime, setSelectedMarkerId],
+  );
+
   const { containerRef, chartRef, candleSeriesRef, labelSpecs } = useTradeMapMainChart({
     candles: lastCandles,
     markers,
@@ -101,6 +122,7 @@ export function TradeMapPage() {
     selectedMarkerId,
     chartFitPending,
     onHighlightBarTime: setHighlightBarTime,
+    onChartClick,
     onChartReady: setMainChart,
   });
 
@@ -161,10 +183,15 @@ export function TradeMapPage() {
     [chartRef, lastCandles, setHighlightBarTime],
   );
 
-  const onMarkerClick = (m: TradeMarker) => {
-    setSelectedMarkerId(m.id);
-    scrollChartToBarTime(Number(m.time));
-  };
+  const onOrderSelect = useCallback(
+    (order: OrderRow) => {
+      setSelectedOrderId(order.order_id);
+      const t = orderRowUnixSec(order);
+      if (t != null) scrollChartToBarTime(t);
+      if (order.marker_id) setSelectedMarkerId(String(order.marker_id));
+    },
+    [scrollChartToBarTime, setSelectedMarkerId],
+  );
 
   const symbolOptions = symbolsQuery.data?.data?.length
     ? symbolsQuery.data.data
@@ -341,7 +368,7 @@ export function TradeMapPage() {
           className={ordersDockOpen ? `${styles.dockBtn} ${styles.dockBtnActive}` : styles.dockBtn}
           onClick={() => setOrdersDockOpen(!ordersDockOpen)}
         >
-          订单表
+          {ordersDockOpen ? '隐藏订单表' : '订单表'}
         </button>
         <button type="button" onClick={() => refreshFull().catch(() => {})}>
           刷新
@@ -371,22 +398,18 @@ export function TradeMapPage() {
               />
             ) : null}
           </div>
-          <div className={styles.markerList}>
-            {markers.slice(0, 60).map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                className={
-                  m.id === selectedMarkerId
-                    ? `${styles.markerBtn} ${styles.markerSelected}`
-                    : styles.markerBtn
-                }
-                onClick={() => onMarkerClick(m)}
-              >
-                {m.strategy}:{m.event} @{m.time}
-              </button>
-            ))}
-          </div>
+          {ordersDockOpen ? (
+            <OrdersDock
+              symbol={symbol}
+              layers={layers}
+              timeframe={timeframe}
+              layout="bottom"
+              selectedOrderId={selectedOrderId}
+              selectedMarkerId={selectedMarkerId}
+              highlightBarTime={highlightBarTime}
+              onSelectOrder={onOrderSelect}
+            />
+          ) : null}
         </div>
         {selectedMarkerId ? (
           <MarkerDetailDrawer
@@ -395,7 +418,6 @@ export function TradeMapPage() {
             onClose={() => setSelectedMarkerId(null)}
           />
         ) : null}
-        {ordersDockOpen ? <OrdersDock symbol={symbol} layers={layers} /> : null}
       </div>
 
       {featureDrawerOpen ? <FeatureDrawer onClose={() => setFeatureDrawerOpen(false)} /> : null}

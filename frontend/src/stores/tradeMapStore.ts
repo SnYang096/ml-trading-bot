@@ -84,7 +84,7 @@ export const useTradeMapStore = create<TradeMapState>((set) => ({
   featureSearchQuery: '',
   featureDrawerOpen: false,
   paneVolume: true,
-  ordersDockOpen: false,
+  ordersDockOpen: true,
   lastCandles: [],
   lastOverlays: {},
   lastMainOverlays: {},

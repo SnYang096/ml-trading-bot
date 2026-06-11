@@ -1,7 +1,7 @@
 import type { Candle, TradeLink } from '@/api/types.ts';
 import { CHART_THEME } from './constants.ts';
-import { barDurationSec } from './ohlcv.ts';
 import type { LayerState } from '@/stores/tradeMapStore.ts';
+import type { TradeMarker } from './types.ts';
 
 export type { TradeLink };
 
@@ -76,7 +76,7 @@ export function nearestLoadedCandleTime(candles: Candle[], rawTime: number): num
 export function clipLinkToCandles(
   link: TradeLink,
   candles: Candle[],
-  timeframe: string,
+  _timeframe?: string,
 ): TradeLink {
   if (!candles.length) return link;
   const times = candles.map((c) => Number(c.time)).filter(Number.isFinite);
@@ -91,10 +91,64 @@ export function clipLinkToCandles(
   if (t1 > last) t1 = last;
   t0 = nearestLoadedCandleTime(candles, t0);
   t1 = nearestLoadedCandleTime(candles, t1);
-  if (t1 <= t0) t1 = Math.min(last, t0 + barDurationSec(timeframe));
+  if (t1 < t0) t1 = t0;
   out.entry_time = t0;
   out.exit_time = t1;
   return out;
+}
+
+function markerById(
+  markers: TradeMarker[] | null | undefined,
+  markerId: string | null | undefined,
+): TradeMarker | null {
+  const id = String(markerId || '').trim();
+  if (!id) return null;
+  return (markers || []).find((m) => m.id === id) || null;
+}
+
+function linkEndpoint(
+  marker: TradeMarker | null,
+  fallbackTime: number,
+  fallbackPrice: number,
+): { time: number; value: number } | null {
+  const tRaw = marker ? Number(marker.time) : fallbackTime;
+  const t = Number.isFinite(tRaw) ? tRaw : fallbackTime;
+  let value = fallbackPrice;
+  if (marker?.price != null && Number.isFinite(Number(marker.price))) {
+    value = Number(marker.price);
+  }
+  if (!Number.isFinite(t) || !Number.isFinite(value)) return null;
+  return { time: t, value };
+}
+
+/** Resolve link endpoints from chart markers when ids match (same times as arrow markers). */
+export function resolveTradeLinkEndpoints(
+  link: TradeLink,
+  markers: TradeMarker[] | null | undefined,
+  candles: Candle[],
+  timeframe: string,
+): { entry: { time: number; value: number }; exit: { time: number; value: number } } | null {
+  const clipped = candles.length ? clipLinkToCandles(link, candles, timeframe) : link;
+  const entryMarker = markerById(markers, link.entry_marker_id);
+  const exitMarker = markerById(markers, link.exit_marker_id);
+  const entry = linkEndpoint(
+    entryMarker,
+    Number(clipped.entry_time),
+    Number(clipped.entry_price),
+  );
+  const exit = linkEndpoint(
+    exitMarker,
+    Number(clipped.exit_time),
+    Number(clipped.exit_price),
+  );
+  if (!entry || !exit) return null;
+  let t0 = entry.time;
+  let t1 = exit.time;
+  if (t1 < t0) t1 = t0;
+  return {
+    entry: { time: t0, value: entry.value },
+    exit: { time: t1, value: exit.value },
+  };
 }
 
 export interface TradeLinkLine {
@@ -108,22 +162,19 @@ export function buildTradeLinkLines(
   layers: LayerState,
   strategyFocus: string,
   timeframe: string,
+  markers?: TradeMarker[] | null,
 ): TradeLinkLine[] {
   const scoped = tradeLinksForDisplay(links, layers, strategyFocus);
   const out: TradeLinkLine[] = [];
   for (const raw of scoped) {
-    const lk = candles.length ? clipLinkToCandles(raw, candles, timeframe) : raw;
-    const t0 = Number(lk.entry_time);
-    let t1 = Number(lk.exit_time);
-    const p0 = Number(lk.entry_price);
-    const p1 = Number(lk.exit_price);
-    if (![t0, t1, p0, p1].every(Number.isFinite)) continue;
-    if (t1 <= t0) t1 = t0 + barDurationSec(timeframe);
+    const resolved = resolveTradeLinkEndpoints(raw, markers, candles, timeframe);
+    if (!resolved) continue;
+    const { entry, exit } = resolved;
     out.push({
-      color: lk.color || CHART_THEME.linkFallback,
+      color: raw.color || CHART_THEME.linkFallback,
       points: [
-        { time: t0, value: p0 },
-        { time: t1, value: p1 },
+        { time: entry.time, value: entry.value },
+        { time: exit.time, value: exit.value },
       ],
     });
   }

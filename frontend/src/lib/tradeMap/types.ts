@@ -31,6 +31,8 @@ export interface TradeMarker {
   side?: string;
   status?: string;
   color?: string;
+  price?: number | null;
+  qty?: number | null;
   pnl_usdt?: number | null;
   is_add?: boolean;
   detail?: TradeMarkerDetail;

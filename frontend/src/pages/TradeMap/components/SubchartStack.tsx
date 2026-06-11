@@ -3,6 +3,7 @@ import type { IChartApi } from 'lightweight-charts';
 import type { Candle } from '@/api/types.ts';
 import {
   orderFeaturePaneItems,
+  resolveMetricsTableColumns,
   resolveSubchartColumns,
   strategyMetricsTableActive,
 } from '@/lib/tradeMap';
@@ -35,7 +36,11 @@ export function SubchartStack({ mainChart, candles, overlays, onBarClick }: Prop
     focus,
     MAX_FEATURE_SUBCHARTS,
   );
-  const tableFirst = strategyMetricsTableActive(focus, colsForPanes);
+  const metricsColumns = useMemo(
+    () => resolveMetricsTableColumns(focus, selected, available, MAX_FEATURE_SUBCHARTS),
+    [focus, selected, available],
+  );
+  const tableFirst = strategyMetricsTableActive(focus, metricsColumns);
   const panePlan = orderFeaturePaneItems(colsForPanes, layers, focus);
 
   const metricsItem = useMemo(
@@ -52,7 +57,7 @@ export function SubchartStack({ mainChart, candles, overlays, onBarClick }: Prop
       {showMetricsTable ? (
         <FeatureMetricsTable
           strategyId={metricsItem?.strategy || focus || 'chop_grid'}
-          columns={metricsItem?.columns || colsForPanes}
+          columns={metricsItem?.columns?.length ? metricsItem.columns : metricsColumns}
           candles={candles}
           overlays={overlays}
           highlightTime={highlightBarTime}

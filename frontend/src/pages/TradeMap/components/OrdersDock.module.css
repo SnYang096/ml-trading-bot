@@ -1,4 +1,15 @@
-.dock {
+.dockBottom {
+  flex-shrink: 0;
+  max-height: min(240px, 32vh);
+  border-top: 1px solid var(--border);
+  background: var(--bg-elevated);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+}
+
+.dockSide {
   width: min(420px, 42vw);
   border-left: 1px solid var(--border);
   background: var(--bg-elevated);
@@ -10,14 +21,21 @@
 .head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
+  gap: 10px;
+  padding: 6px 12px;
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
 .head h3 {
   margin: 0;
   font-size: 0.9rem;
+}
+
+.hint {
+  flex: 1;
+  font-size: 0.72rem;
+  color: var(--text-muted);
 }
 
 .scroll {
@@ -36,4 +54,21 @@
   border: 1px solid var(--border);
   padding: 4px 8px;
   text-align: left;
+}
+
+.table tbody tr {
+  cursor: pointer;
+}
+
+.table tbody tr:hover {
+  background: rgba(0, 255, 65, 0.06);
+}
+
+.rowSelected {
+  background: rgba(255, 255, 0, 0.08);
+  outline: 1px solid var(--warning);
+}
+
+.rowHovered {
+  background: rgba(0, 255, 65, 0.1);
 }

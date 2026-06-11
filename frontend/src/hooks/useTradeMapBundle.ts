@@ -109,7 +109,6 @@ export function useTradeMapBundle() {
         lastMarkerPollSince: new Date().toISOString(),
         historyExhausted: false,
         loading: false,
-        chartFitPending: false,
         statusText: `${candles.length} bars · ${(markersResp.data.markers || []).length} markers · ${(markersResp.data.trade_links || []).length} links · ${latest.selectedFeatureColumns.length} features`,
       });
       saveLayout({
