@@ -1,6 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { apiGet } from '@/api/client.ts';
-import type { MonitoringCard, MonitoringDashboard } from '@/api/types.ts';
+import type {
+  MonitoringCard,
+  MonitoringDashboard,
+  MonitoringIssueRow,
+} from '@/api/types.ts';
 import styles from './MonitoringPage.module.css';
 
 const CADENCE_LABELS: Record<string, string> = {
@@ -10,6 +14,8 @@ const CADENCE_LABELS: Record<string, string> = {
   quarterly: '季更',
   yearly: '年更',
 };
+
+const CADENCE_ORDER = ['weekly', 'daily', 'monthly', 'quarterly', 'yearly'];
 
 function fmtAge(hours: number | null | undefined): string {
   if (hours == null || Number.isNaN(hours)) return '从未运行';
@@ -21,6 +27,18 @@ function statusClass(st: string | undefined): string {
   if (st === 'ALERT') return styles.alert;
   if (st === 'MISSED') return styles.missed;
   return styles.ok;
+}
+
+function fmtStrategy(strategy: string | undefined): string {
+  if (strategy === '_factor_health') return '因子健康 (PSI/IC)';
+  return strategy || '—';
+}
+
+function sortCards(cards: MonitoringCard[]): MonitoringCard[] {
+  return [...cards].sort(
+    (a, b) =>
+      (CADENCE_ORDER.indexOf(a.cadence) ?? 99) - (CADENCE_ORDER.indexOf(b.cadence) ?? 99),
+  );
 }
 
 function CadenceCard({ card }: { card: MonitoringCard }) {
@@ -47,6 +65,24 @@ function CadenceCard({ card }: { card: MonitoringCard }) {
           watchdog：{wd} · drift：{dr}
         </div>
         <div className="muted">上限 {card.max_age_hours}h 内有效</div>
+        {(card.alert_details || []).length ? (
+          <ul className={styles.detailList}>
+            {(card.alert_details || []).map((line) => (
+              <li key={line} className={styles.alertLine}>
+                {line}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {(card.uncalibrated_details || []).length ? (
+          <ul className={styles.detailList}>
+            {(card.uncalibrated_details || []).map((line) => (
+              <li key={line} className={styles.uncalLine}>
+                {line}
+              </li>
+            ))}
+          </ul>
+        ) : null}
         {card.output_dir ? (
           <div className={styles.meta}>
             <code>{card.output_dir}</code>
@@ -54,6 +90,68 @@ function CadenceCard({ card }: { card: MonitoringCard }) {
         ) : null}
       </div>
     </article>
+  );
+}
+
+function IssueTable({
+  title,
+  rows,
+  emptyText,
+  statusLabel,
+  statusClassName,
+}: {
+  title: string;
+  rows: { cadence: string; row: MonitoringIssueRow }[];
+  emptyText: string;
+  statusLabel: string;
+  statusClassName: string;
+}) {
+  return (
+    <section className="panel">
+      <h3>{title}</h3>
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th>Cadence</th>
+            <th>Source</th>
+            <th>Strategy</th>
+            <th>状态</th>
+            <th>详情</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length ? (
+            rows.map((r, i) => (
+              <tr key={`${r.cadence}-${r.row.strategy}-${i}`}>
+                <td>{CADENCE_LABELS[r.cadence] || r.cadence}</td>
+                <td>{r.row.source}</td>
+                <td>
+                  <strong>{fmtStrategy(r.row.strategy)}</strong>
+                </td>
+                <td className={statusClassName}>{statusLabel}</td>
+                <td className={styles.msgCell}>
+                  {(r.row.messages || []).length ? (
+                    <ul className={styles.detailList}>
+                      {(r.row.messages || []).map((m) => (
+                        <li key={m}>{m}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <span className="muted">—</span>
+                  )}
+                </td>
+              </tr>
+            ))
+          ) : (
+            <tr>
+              <td colSpan={5} className="muted">
+                {emptyText}
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </section>
   );
 }
 
@@ -71,12 +169,29 @@ export function MonitoringPage() {
       ? styles.bannerWarn
       : styles.bannerOk;
 
-  const alertRows: { cadence: string; source?: string; strategy?: string }[] = [];
+  const alertRows: { cadence: string; row: MonitoringIssueRow }[] = [];
   for (const [cadence, items] of Object.entries(dashboard?.strategy_alerts || {})) {
-    for (const it of items || []) {
-      alertRows.push({ cadence, ...it });
+    for (const row of items || []) {
+      alertRows.push({ cadence, row });
     }
   }
+  alertRows.sort(
+    (a, b) =>
+      (CADENCE_ORDER.indexOf(a.cadence) ?? 99) - (CADENCE_ORDER.indexOf(b.cadence) ?? 99),
+  );
+
+  const uncalRows: { cadence: string; row: MonitoringIssueRow }[] = [];
+  for (const [cadence, items] of Object.entries(dashboard?.strategy_uncalibrated || {})) {
+    for (const row of items || []) {
+      uncalRows.push({ cadence, row });
+    }
+  }
+  uncalRows.sort(
+    (a, b) =>
+      (CADENCE_ORDER.indexOf(a.cadence) ?? 99) - (CADENCE_ORDER.indexOf(b.cadence) ?? 99),
+  );
+
+  const cards = sortCards(dashboard?.cards || []);
 
   return (
     <div className="page">
@@ -104,49 +219,30 @@ export function MonitoringPage() {
             ) : null}
           </div>
           <div className={styles.cards}>
-            {(dashboard.cards || []).length ? (
-              dashboard.cards!.map((c) => <CadenceCard key={c.cadence} card={c} />)
+            {cards.length ? (
+              cards.map((c) => <CadenceCard key={c.cadence} card={c} />)
             ) : (
               <p className="muted">无调度记录（远程需 enable systemd timer）</p>
             )}
           </div>
-          <section className="panel">
-            <h3>策略级 ALERT</h3>
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Cadence</th>
-                  <th>Source</th>
-                  <th>Strategy</th>
-                </tr>
-              </thead>
-              <tbody>
-                {alertRows.length ? (
-                  alertRows.map((r, i) => (
-                    <tr key={`${r.cadence}-${r.strategy}-${i}`}>
-                      <td>{CADENCE_LABELS[r.cadence] || r.cadence}</td>
-                      <td>{r.source}</td>
-                      <td>
-                        <strong>{r.strategy}</strong>
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={3} className="muted">
-                      无策略级 ALERT
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </section>
+          <IssueTable
+            title="告警详情"
+            rows={alertRows}
+            emptyText="无 ALERT"
+            statusLabel="ALERT"
+            statusClassName="pnl-neg"
+          />
+          <IssueTable
+            title="plateau 未校准"
+            rows={uncalRows}
+            emptyText="无未校准项"
+            statusLabel="未校准"
+            statusClassName={styles.uncalText}
+          />
         </>
       ) : null}
       <p className="status-line">
-        {dataUpdatedAt
-          ? `已刷新 ${new Date(dataUpdatedAt).toLocaleTimeString()}`
-          : ''}
+        {dataUpdatedAt ? `已刷新 ${new Date(dataUpdatedAt).toLocaleTimeString()}` : ''}
       </p>
     </div>
   );

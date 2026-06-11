@@ -84,3 +84,28 @@
 .uncalText {
   color: var(--accent-purple);
 }
+
+.detailList {
+  margin: 8px 0 0;
+  padding-left: 1.1rem;
+  list-style: disc;
+}
+
+.alertLine {
+  color: var(--negative);
+  font-size: 0.8rem;
+}
+
+.uncalLine {
+  color: var(--accent-purple);
+  font-size: 0.8rem;
+}
+
+.msgCell {
+  max-width: 520px;
+  vertical-align: top;
+}
+
+.msgCell .detailList {
+  margin-top: 0;
+}

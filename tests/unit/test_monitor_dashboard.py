@@ -7,6 +7,9 @@ from pathlib import Path
 
 from src.monitoring.dashboard import (
     build_monitoring_dashboard,
+    enrich_cards_with_details,
+    messages_from_monitor_detail,
+    sort_cadence_cards,
     strategy_alerts_by_cadence,
     strategy_uncalibrated_by_cadence,
 )
@@ -95,6 +98,58 @@ def test_strategy_uncalibrated_filters_no_plateaus():
     out = strategy_uncalibrated_by_cadence(events, cards)
     assert len(out["weekly"]) == 1
     assert out["weekly"][0]["strategy"] == "tpc"
+
+
+def test_sort_cadence_cards_weekly_first():
+    cards = [
+        {"cadence": "daily"},
+        {"cadence": "yearly"},
+        {"cadence": "weekly"},
+    ]
+    ordered = [c["cadence"] for c in sort_cadence_cards(cards)]
+    assert ordered == ["weekly", "daily", "yearly"]
+
+
+def test_messages_from_factor_health_detail():
+    detail = json.dumps(
+        {
+            "alerts": ["PSI_DRIFT: ema_1200_position psi=5.351 > 0.25"],
+            "items": [
+                {
+                    "kind": "ic_drift",
+                    "skipped": "target 'forward_rr' not in window",
+                }
+            ],
+        }
+    )
+    msgs = messages_from_monitor_detail(
+        detail, source="watchdog", strategy="_factor_health", status="ALERT"
+    )
+    assert any("PSI_DRIFT" in m for m in msgs)
+    assert any("forward_rr" in m for m in msgs)
+
+
+def test_enrich_cards_with_alert_details():
+    cards = [
+        {"cadence": "weekly", "run_ts": "20260611_0912", "display_status": "ALERT"}
+    ]
+    events = [
+        {
+            "cadence": "weekly",
+            "run_ts": "20260611_0912",
+            "source": "watchdog",
+            "strategy": "_factor_health",
+            "status": "ALERT",
+            "detail_json": json.dumps(
+                {
+                    "alerts": ["PSI_DRIFT: ema_1200_position psi=5.351 > 0.25"],
+                    "items": [],
+                }
+            ),
+        }
+    ]
+    out = enrich_cards_with_details(cards, events)
+    assert out[0]["alert_details"][0].startswith("[因子健康 (PSI/IC)]")
 
 
 def test_load_monitoring_index_from_store(tmp_path):

@@ -159,7 +159,14 @@ export interface MonitoringDashboard {
   };
   index_updated_at?: string;
   cards?: MonitoringCard[];
-  strategy_alerts?: Record<string, { source?: string; strategy?: string }[]>;
+  strategy_alerts?: Record<string, MonitoringIssueRow[]>;
+  strategy_uncalibrated?: Record<string, MonitoringIssueRow[]>;
+}
+
+export interface MonitoringIssueRow {
+  source?: string;
+  strategy?: string;
+  messages?: string[];
 }
 
 export interface MonitoringCard {
@@ -172,6 +179,8 @@ export interface MonitoringCard {
   watchdog_any_alert?: boolean | null;
   drift_any_alert?: boolean | null;
   drift_no_plateaus?: boolean;
+  alert_details?: string[];
+  uncalibrated_details?: string[];
 }
 
 export interface RegimeOpsRow {
