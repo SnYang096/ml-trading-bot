@@ -3,16 +3,23 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useEffect, useMemo, useState } from 'react';
 import { apiGet } from '@/api/client.ts';
 import { usePageVisible, visibleRefetchInterval } from '@/hooks/usePageVisible.ts';
-import type { OrderRow, SymbolRow } from '@/api/types.ts';
+import type { OrderRow, SymbolRow, TradeLink } from '@/api/types.ts';
 import {
+  displayExitKind,
+  displayOrderAction,
+  displayOrderPrice,
   displayOrderQty,
+  displayPositionSideLabel,
+  fmtPnl,
   getScopesDefault,
   getSymbol,
   isAllSymbols,
+  pnlClass,
   setScopesState,
   setSymbol,
   SCOPE_LABELS,
   SYMBOL_ALL,
+  formatUnixTs,
 } from '@/lib/shell.ts';
 import { listStrategiesForLayers, scopesFromLayers as scopesFromLayersLib } from '@/lib/tradeMap';
 
@@ -21,6 +28,8 @@ interface LayerState {
   spot: boolean;
   multiLeg: boolean;
 }
+
+type ViewMode = 'legs' | 'orders';
 
 function scopesFromLayers(layers: LayerState): string {
   return scopesFromLayersLib({ trend: layers.trend, spot: layers.spot, multiLeg: layers.multiLeg });
@@ -33,6 +42,7 @@ export function OrdersPage() {
   const pageVisible = usePageVisible();
   const [searchParams] = useSearchParams();
   const [symbol, setSym] = useState(searchParams.get('symbol') || getSymbol() || 'ETHUSDT');
+  const [viewMode, setViewMode] = useState<ViewMode>('legs');
   const [layers, setLayers] = useState<LayerState>(() => {
     const saved = getScopesDefault();
     return {
@@ -61,6 +71,8 @@ export function OrdersPage() {
     queryFn: () => apiGet<SymbolRow[]>('/api/trade-map/symbols'),
   });
 
+  const legsEnabled = viewMode === 'legs' && !isAllSymbols(symbol);
+
   const ordersQuery = useQuery({
     queryKey: ['orders', symbol, layers, statusFilter, strategyFilter],
     queryFn: () =>
@@ -72,6 +84,20 @@ export function OrdersPage() {
         exclude_status: DEFAULT_EXCLUDE_STATUS,
         limit: isAllSymbols(symbol) ? 100 : 200,
       }),
+    enabled: viewMode === 'orders',
+    refetchInterval: visibleRefetchInterval(pageVisible, 15_000),
+  });
+
+  const linksQuery = useQuery({
+    queryKey: ['orders-trade-links', symbol, layers, strategyFilter],
+    queryFn: () =>
+      apiGet<TradeLink[]>('/api/orders/trade-links', {
+        symbol,
+        scopes: scopesFromLayers(layers),
+        strategy: strategyFilter || undefined,
+        limit: 200,
+      }),
+    enabled: legsEnabled,
     refetchInterval: visibleRefetchInterval(pageVisible, 15_000),
   });
 
@@ -90,22 +116,46 @@ export function OrdersPage() {
   useEffect(() => {
     setPage(0);
     setSelectedIdx(-1);
-  }, [symbol, layers, statusFilter, strategyFilter]);
+  }, [symbol, layers, statusFilter, strategyFilter, viewMode]);
 
-  const rows = ordersQuery.data?.data || [];
+  useEffect(() => {
+    if (viewMode === 'legs' && isAllSymbols(symbol)) {
+      setViewMode('orders');
+    }
+  }, [symbol, viewMode]);
+
+  const orderRows = ordersQuery.data?.data || [];
+  const linkRows = linksQuery.data?.data || [];
+  const rows = viewMode === 'legs' ? linkRows : orderRows;
   const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
-  const pageRows = useMemo(
-    () => rows.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE),
-    [rows, safePage],
+  const pageOrderRows = useMemo(
+    () => orderRows.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE),
+    [orderRows, safePage],
+  );
+  const pageLinkRows = useMemo(
+    () => linkRows.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE),
+    [linkRows, safePage],
   );
   const showSymbol = isAllSymbols(symbol);
-  const selected = selectedIdx >= 0 ? rows[selectedIdx] : null;
+  const selectedOrder = viewMode === 'orders' && selectedIdx >= 0 ? orderRows[selectedIdx] : null;
+  const selectedLink = viewMode === 'legs' && selectedIdx >= 0 ? linkRows[selectedIdx] : null;
+  const isFetching = viewMode === 'legs' ? linksQuery.isFetching : ordersQuery.isFetching;
 
   return (
     <div className="page">
       <div className="toolbar-row">
         <h2>订单</h2>
+        <label>
+          视图
+          <select
+            value={viewMode}
+            onChange={(e) => setViewMode(e.target.value as ViewMode)}
+          >
+            <option value="legs">回合（开平一行）</option>
+            <option value="orders">原始订单</option>
+          </select>
+        </label>
         <label>
           Symbol
           <select value={symbol} onChange={(e) => setSym(e.target.value)}>
@@ -153,16 +203,21 @@ export function OrdersPage() {
             ))}
           </select>
         </label>
-        <label>
-          Status
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-            <option value="all">全部</option>
-            <option value="filled">filled</option>
-            <option value="open">open</option>
-            <option value="pending">pending</option>
-          </select>
-        </label>
-        <button type="button" onClick={() => ordersQuery.refetch()}>
+        {viewMode === 'orders' ? (
+          <label>
+            Status
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+              <option value="all">全部</option>
+              <option value="filled">filled</option>
+              <option value="open">open</option>
+              <option value="pending">pending</option>
+            </select>
+          </label>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => (viewMode === 'legs' ? linksQuery : ordersQuery).refetch()}
+        >
           刷新
         </button>
         <span className="muted">
@@ -180,63 +235,132 @@ export function OrdersPage() {
         </button>
         <Link to={`/account?symbol=${encodeURIComponent(symbol)}`}>账户总览</Link>
       </div>
-      <table className="data-table">
-        <thead>
-          <tr>
-            {showSymbol ? <th>Symbol</th> : null}
-            <th>Scope</th>
-            <th>Strategy</th>
-            <th>Side</th>
-            <th>Status</th>
-            <th>Qty</th>
-            <th>Price</th>
-            <th>PNL</th>
-            <th>Time</th>
-          </tr>
-        </thead>
-        <tbody>
-          {pageRows.length ? (
-            pageRows.map((r, i) => {
-              const globalIdx = safePage * PAGE_SIZE + i;
-              return (
-                <tr
-                  key={`${r.order_id}-${globalIdx}`}
-                  className={globalIdx === selectedIdx ? 'selected' : undefined}
-                  onClick={() => setSelectedIdx(globalIdx)}
-                  style={{ cursor: 'pointer' }}
-                >
-                  {showSymbol ? <td>{r.symbol}</td> : null}
-                  <td>{SCOPE_LABELS[r.scope] || r.scope}</td>
-                  <td>{r.strategy}</td>
-                  <td>{r.side}</td>
-                  <td>{r.status}</td>
-                  <td>{displayOrderQty(r)}</td>
-                  <td>{r.average_price ?? r.price ?? '—'}</td>
-                  <td>{r.pnl_usdt != null ? String(r.pnl_usdt) : r.realized_pnl != null ? String(r.realized_pnl) : '—'}</td>
-                  <td>{String(r.filled_at || r.created_at || r.time || '—').slice(0, 19)}</td>
-                </tr>
-              );
-            })
-          ) : (
+
+      {viewMode === 'legs' ? (
+        <p className="muted" style={{ margin: '0 0 10px', fontSize: '0.85rem' }}>
+          回合视图：同一腿的<strong>开→平</strong>合并为一行（与交易地图连线一致）。挂单、未平仓请切「原始订单」。
+        </p>
+      ) : (
+        <p className="muted" style={{ margin: '0 0 10px', fontSize: '0.85rem' }}>
+          原始订单：交易所逐笔记录。「动作」列用开多/平多/开空/平空代替 BUY/LONG 混排。
+        </p>
+      )}
+
+      {viewMode === 'legs' ? (
+        <table className="data-table">
+          <thead>
             <tr>
-              <td colSpan={showSymbol ? 9 : 8} className="muted">
-                无订单
-              </td>
+              <th>Scope</th>
+              <th>Strategy</th>
+              <th>Leg</th>
+              <th>方向</th>
+              <th>开仓价</th>
+              <th>平仓价</th>
+              <th>PNL</th>
+              <th>平仓方式</th>
+              <th>开仓时间</th>
+              <th>平仓时间</th>
             </tr>
-          )}
-        </tbody>
-      </table>
-      {selected ? (
+          </thead>
+          <tbody>
+            {pageLinkRows.length ? (
+              pageLinkRows.map((r, i) => {
+                const globalIdx = safePage * PAGE_SIZE + i;
+                return (
+                  <tr
+                    key={`${r.entry_marker_id}-${r.exit_marker_id}-${globalIdx}`}
+                    className={globalIdx === selectedIdx ? 'selected' : undefined}
+                    onClick={() => setSelectedIdx(globalIdx)}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    <td>{SCOPE_LABELS[r.scope || ''] || r.scope || '—'}</td>
+                    <td>{r.strategy}</td>
+                    <td>{r.leg || '—'}</td>
+                    <td>{displayPositionSideLabel(r.side)}</td>
+                    <td>{Number.isFinite(Number(r.entry_price)) ? String(r.entry_price) : '—'}</td>
+                    <td>{Number.isFinite(Number(r.exit_price)) ? String(r.exit_price) : '—'}</td>
+                    <td className={pnlClass(r.pnl_usdt)}>
+                      {r.pnl_usdt != null ? fmtPnl(r.pnl_usdt) : '—'}
+                    </td>
+                    <td>{displayExitKind(r.exit_kind)}</td>
+                    <td>{formatUnixTs(r.entry_time)}</td>
+                    <td>{formatUnixTs(r.exit_time)}</td>
+                  </tr>
+                );
+              })
+            ) : (
+              <tr>
+                <td colSpan={10} className="muted">
+                  {legsEnabled ? '无已平仓回合' : '回合视图需选择单个 Symbol'}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      ) : (
+        <table className="data-table">
+          <thead>
+            <tr>
+              {showSymbol ? <th>Symbol</th> : null}
+              <th>Scope</th>
+              <th>Strategy</th>
+              <th>动作</th>
+              <th>Status</th>
+              <th>Qty</th>
+              <th>Price</th>
+              <th>PNL</th>
+              <th>Time</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pageOrderRows.length ? (
+              pageOrderRows.map((r, i) => {
+                const globalIdx = safePage * PAGE_SIZE + i;
+                return (
+                  <tr
+                    key={`${r.order_id}-${globalIdx}`}
+                    className={globalIdx === selectedIdx ? 'selected' : undefined}
+                    onClick={() => setSelectedIdx(globalIdx)}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    {showSymbol ? <td>{r.symbol}</td> : null}
+                    <td>{SCOPE_LABELS[r.scope] || r.scope}</td>
+                    <td>{r.strategy}</td>
+                    <td>{displayOrderAction(r)}</td>
+                    <td>{r.status}</td>
+                    <td>{displayOrderQty(r)}</td>
+                    <td>{displayOrderPrice(r)}</td>
+                    <td className={pnlClass(r.pnl_usdt ?? r.realized_pnl)}>
+                      {r.pnl_usdt != null ? fmtPnl(r.pnl_usdt) : r.realized_pnl != null ? fmtPnl(r.realized_pnl) : '—'}
+                    </td>
+                    <td>{String(r.filled_at || r.created_at || r.time || '—').slice(0, 19)}</td>
+                  </tr>
+                );
+              })
+            ) : (
+              <tr>
+                <td colSpan={showSymbol ? 9 : 8} className="muted">
+                  无订单
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      )}
+
+      {selectedOrder ? (
         <section className="panel">
           <h3>订单详情</h3>
           <dl>
             <dt>订单号</dt>
-            <dd>{selected.order_id}</dd>
+            <dd>{selectedOrder.order_id}</dd>
+            <dt>动作</dt>
+            <dd>{displayOrderAction(selectedOrder)}</dd>
             <dt>标记</dt>
             <dd>
-              {selected.marker_id ? (
+              {selectedOrder.marker_id ? (
                 <Link
-                  to={`/trade-map?symbol=${encodeURIComponent(selected.symbol || symbol)}&marker_id=${encodeURIComponent(String(selected.marker_id))}`}
+                  to={`/trade-map?symbol=${encodeURIComponent(selectedOrder.symbol || symbol)}&marker_id=${encodeURIComponent(String(selectedOrder.marker_id))}`}
                 >
                   在地图查看
                 </Link>
@@ -246,12 +370,50 @@ export function OrdersPage() {
             </dd>
           </dl>
           <pre style={{ fontSize: '0.75rem', overflow: 'auto' }}>
-            {JSON.stringify(selected, null, 2)}
+            {JSON.stringify(selectedOrder, null, 2)}
           </pre>
         </section>
       ) : null}
+
+      {selectedLink ? (
+        <section className="panel">
+          <h3>回合详情</h3>
+          <dl>
+            <dt>方向</dt>
+            <dd>{displayPositionSideLabel(selectedLink.side)}</dd>
+            <dt>开仓</dt>
+            <dd>
+              {selectedLink.entry_price} @ {formatUnixTs(selectedLink.entry_time)}
+            </dd>
+            <dt>平仓</dt>
+            <dd>
+              {selectedLink.exit_price} @ {formatUnixTs(selectedLink.exit_time)}
+            </dd>
+            <dt>地图</dt>
+            <dd>
+              {selectedLink.entry_marker_id ? (
+                <Link
+                  to={`/trade-map?symbol=${encodeURIComponent(symbol)}&marker_id=${encodeURIComponent(String(selectedLink.entry_marker_id))}`}
+                >
+                  查看开平标记
+                </Link>
+              ) : (
+                '—'
+              )}
+            </dd>
+          </dl>
+          <pre style={{ fontSize: '0.75rem', overflow: 'auto' }}>
+            {JSON.stringify(selectedLink, null, 2)}
+          </pre>
+        </section>
+      ) : null}
+
       <p className="status-line">
-        {ordersQuery.isFetching ? '加载中…' : `${rows.length} orders · ${symbol}${strategyFilter ? ` · ${strategyFilter}` : ''}`}
+        {isFetching
+          ? '加载中…'
+          : viewMode === 'legs'
+            ? `${linkRows.length} 回合 · ${symbol}${strategyFilter ? ` · ${strategyFilter}` : ''}`
+            : `${orderRows.length} orders · ${symbol}${strategyFilter ? ` · ${strategyFilter}` : ''}`}
       </p>
     </div>
   );

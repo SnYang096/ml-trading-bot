@@ -46,6 +46,7 @@ export interface Candle {
 export interface TradeLink {
   strategy?: string;
   scope?: string;
+  symbol?: string;
   leg?: string;
   status?: string;
   exit_kind?: string;

@@ -69,3 +69,23 @@ def test_orders_list_all_symbols(client):
     payload = r.json()
     assert payload["meta"]["symbol"] == "ALL"
     assert isinstance(payload["data"], list)
+
+
+def test_orders_trade_links_api(client, multi_leg_db):
+    r = client.get(
+        "/api/orders/trade-links",
+        params={"symbol": "ETHUSDT", "scopes": "multi_leg", "limit": 50},
+    )
+    assert r.status_code == 200
+    payload = r.json()
+    assert payload["meta"]["symbol"] == "ETHUSDT"
+    assert isinstance(payload["data"], list)
+
+
+def test_orders_trade_links_all_symbols_empty(client):
+    r = client.get(
+        "/api/orders/trade-links",
+        params={"symbol": "*", "scopes": "multi_leg"},
+    )
+    assert r.status_code == 200
+    assert r.json()["data"] == []

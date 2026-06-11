@@ -14,6 +14,7 @@ from mlbot_console.services.orders_list import (
     trend_orders,
 )
 from mlbot_console.services.strategy_registry import strategy_account_layer
+from mlbot_console.services.trade_links import collect_trade_links
 from mlbot_console.services.trend_funnel import fetch_funnel_snapshots
 
 router = APIRouter(tags=["orders"])
@@ -21,6 +22,10 @@ router = APIRouter(tags=["orders"])
 
 def _scopes_list(scopes: str) -> List[str]:
     return [s.strip().lower() for s in scopes.split(",") if s.strip()]
+
+
+def _is_all_symbols(symbol: str) -> bool:
+    return str(symbol or "").strip().upper() in {"", "*", "ALL", "__ALL__"}
 
 
 @router.get("/api/orders/list")
@@ -54,8 +59,49 @@ def orders_list(
         engine_data_root=SETTINGS.engine_data_root,
         strategy=strategy,
     )
-    sym_meta = "ALL" if str(symbol).strip().upper() in {"", "*", "ALL", "__ALL__"} else symbol.upper()
+    sym_meta = "ALL" if _is_all_symbols(symbol) else symbol.upper()
     return ok(rows, meta={"count": len(rows), "symbol": sym_meta})
+
+
+@router.get("/api/orders/trade-links")
+def orders_trade_links(
+    symbol: str = Query(..., description="Single symbol only (not *)"),
+    scopes: str = Query("trend,spot,multi_leg"),
+    strategy: Optional[str] = Query(None),
+    limit: int = Query(200, ge=1, le=500),
+) -> dict:
+    """Closed round-trips: entry + exit on one row (same pairing as Trade Map links)."""
+    if _is_all_symbols(symbol):
+        return ok(
+            [],
+            meta={
+                "count": 0,
+                "symbol": "ALL",
+                "hint": "trade-links requires a single symbol",
+            },
+        )
+    sym = symbol.upper()
+    scope_list = _scopes_list(scopes)
+    links, _ = collect_trade_links(
+        multi_leg_db=SETTINGS.multi_leg_db,
+        trend_db=SETTINGS.trend_order_db,
+        spot_db=SETTINGS.spot_order_db,
+        symbol=sym,
+        scopes=scope_list,
+    )
+    strat_filter = str(strategy or "").strip().lower()
+    out: List[dict] = []
+    for raw in links:
+        if strat_filter and str(raw.get("strategy") or "").lower() != strat_filter:
+            continue
+        strat = str(raw.get("strategy") or "")
+        item = dict(raw)
+        item["symbol"] = sym
+        item["scope"] = strategy_account_layer(strat) if strat else ""
+        out.append(item)
+    out.sort(key=lambda r: int(r.get("exit_time") or r.get("entry_time") or 0), reverse=True)
+    out = out[: int(limit)]
+    return ok(out, meta={"count": len(out), "symbol": sym})
 
 
 @router.get("/api/trend/orders")

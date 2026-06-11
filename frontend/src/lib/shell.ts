@@ -41,6 +41,108 @@ export function displayOrderQty(row: {
   return '—';
 }
 
+/** Limit/fill/trigger price; chop_grid SL/TP algo orders use stop_price, not price. */
+export function displayOrderPrice(row: {
+  display_price?: number | null;
+  average_price?: number | null;
+  price?: number | null;
+  stop_price?: number | null;
+  stop_loss_price?: number | null;
+  take_profit_price?: number | null;
+  exit_price?: number | null;
+}): string {
+  for (const key of [
+    'display_price',
+    'average_price',
+    'price',
+    'stop_price',
+    'stop_loss_price',
+    'take_profit_price',
+    'exit_price',
+  ] as const) {
+    const n = Number(row[key]);
+    if (Number.isFinite(n) && n > 0) return String(n);
+  }
+  return '—';
+}
+
+type OrderActionRow = {
+  side?: string | null;
+  position_side?: string | null;
+  purpose?: string | null;
+  order_type?: string | null;
+  order_id?: string | null;
+  status?: string | null;
+};
+
+function orderPositionSide(row: OrderActionRow): 'long' | 'short' | null {
+  const side = String(row.side || '').toUpperCase();
+  const ps = String(row.position_side || '').toUpperCase();
+  if (ps === 'LONG' || side === 'LONG') return 'long';
+  if (ps === 'SHORT' || side === 'SHORT') return 'short';
+  if (side === 'BUY') return 'long';
+  if (side === 'SELL') return 'short';
+  return null;
+}
+
+function orderIsClosing(row: OrderActionRow): boolean {
+  const purpose = String(row.purpose || row.order_type || '').toLowerCase();
+  const oid = String(row.order_id || '').toLowerCase();
+  if (
+    purpose.includes('take_profit') ||
+    purpose.includes('stop_loss') ||
+    purpose.includes('market_exit') ||
+    purpose.includes('exit')
+  ) {
+    return true;
+  }
+  if (oid.includes('_tp') || oid.includes('_sl')) return true;
+  const pos = orderPositionSide(row);
+  const side = String(row.side || '').toUpperCase();
+  if (pos === 'long' && side === 'SELL') return true;
+  if (pos === 'short' && side === 'BUY') return true;
+  if ((side === 'LONG' || side === 'SHORT') && !purpose.includes('entry')) return true;
+  return false;
+}
+
+/** Human-readable open/close label (开多/平多/开空/平空). */
+export function displayOrderAction(row: OrderActionRow): string {
+  const pos = orderPositionSide(row);
+  const closing = orderIsClosing(row);
+  const st = String(row.status || '').toLowerCase();
+  const pending = ['open', 'new', 'pending', 'submitted', 'partially_filled', 'shadow'].includes(st);
+  const suffix = pending ? '·挂' : '';
+  if (pos === 'long') return `${closing ? '平多' : '开多'}${suffix}`;
+  if (pos === 'short') return `${closing ? '平空' : '开空'}${suffix}`;
+  const side = String(row.side || '').toUpperCase();
+  if (side === 'BUY') return `买入${suffix}`;
+  if (side === 'SELL') return `卖出${suffix}`;
+  return side || '—';
+}
+
+export function displayPositionSideLabel(side: unknown): string {
+  const s = String(side || '').toLowerCase();
+  if (s === 'long') return '做多';
+  if (s === 'short') return '做空';
+  return s || '—';
+}
+
+export function formatUnixTs(ts: unknown): string {
+  const n = Number(ts);
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  const ms = n > 1e12 ? n : n * 1000;
+  return new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
+}
+
+export function displayExitKind(kind: unknown): string {
+  const k = String(kind || '').toLowerCase();
+  if (k.includes('take_profit') || k === 'tp') return '止盈';
+  if (k.includes('market_exit')) return '市价平';
+  if (k.includes('stop')) return '止损';
+  if (k === 'exit') return '平仓';
+  return k ? k : '—';
+}
+
 export function setSymbol(sym: string): void {
   if (sym && !isAllSymbols(sym)) localStorage.setItem(SYMBOL_KEY, sym);
 }

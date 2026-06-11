@@ -298,6 +298,33 @@ def test_multileg_orders_list_hydrates_qty_from_raw_json(multi_leg_db) -> None:
     assert float(row["quantity"]) == pytest.approx(0.126)
 
 
+def test_multileg_open_protection_exposes_stop_price_as_display_price(
+    multi_leg_db,
+) -> None:
+    from src.order_management.multi_leg_storage import MultiLegStorage
+
+    storage = MultiLegStorage(str(multi_leg_db))
+    storage.upsert_order(
+        {
+            "local_order_id": "cg_open_tp",
+            "strategy": "chop_grid",
+            "symbol": "BNBUSDT",
+            "side": "LONG",
+            "position_side": "LONG",
+            "purpose": "take_profit",
+            "order_type": "take_profit_market",
+            "quantity": 0.37,
+            "price": None,
+            "stop_price": 592.5,
+            "status": "new",
+            "filled_quantity": 0.0,
+        }
+    )
+    rows = multi_leg_orders_list(multi_leg_db, "BNBUSDT", status="open", limit=20)
+    row = next(r for r in rows if r["order_id"] == "cg_open_tp")
+    assert row["display_price"] == pytest.approx(592.5)
+
+
 def test_multileg_filled_filter_not_starved_by_expired(multi_leg_db) -> None:
     import sqlite3
 

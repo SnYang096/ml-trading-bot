@@ -69,6 +69,19 @@ def _first_positive_price(*values: Any) -> Optional[float]:
     return None
 
 
+def _resolve_display_price(item: Dict[str, Any], row: Dict[str, Any]) -> Optional[float]:
+    """Fill/limit/trigger price for console tables (algo SL/TP store trigger in stop_price)."""
+    return _first_positive_price(
+        item.get("average_price"),
+        item.get("price"),
+        item.get("stop_price"),
+        item.get("stop_loss_price"),
+        item.get("take_profit_price"),
+        item.get("exit_price"),
+        row.get("exit_price"),
+    )
+
+
 def _resolve_filled_quantity(row: Dict[str, Any], status: str) -> float:
     """Prefer filled_quantity; for closed rows fall back to order quantity."""
     filled = float(row.get("filled_quantity") or 0)
@@ -256,6 +269,9 @@ def _normalize(
             item["linked_tp_order_id"] = link_oid
         if row.get("_link_tp_is_repair") or row.get("_link_exit_is_repair"):
             item["linked_tp_is_repair"] = True
+    display = _resolve_display_price(item, row)
+    if display is not None:
+        item["display_price"] = display
     return item
 
 
