@@ -1,0 +1,14 @@
+# C 系月更 — multileg 执行层 KPI（示例；接线 multileg-kpi step 后 enable）
+# 设计说明：docs/strategy/漂移监控_BC统一设计_CN.md §7、§11
+monitor_id: monthly_multileg_c
+output_dir: results/monitoring/monthly_multileg_c/{run_ts}
+
+strategies: [chop_grid, trend_scalp]
+
+steps:
+  # Phase 2: 包装 scripts/multileg_monitor.py → index.json + monitor_event
+  - multileg-kpi:
+      rolling_root: results/trend_scalp/validate_static.full_study/_rolling_sim
+      strategy_types:
+        chop_grid: chop
+        trend_scalp: trend

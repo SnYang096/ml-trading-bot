@@ -5,6 +5,8 @@
 > **运行主路径**：**远程实盘机自动 cron**（systemd timer）；本地可复跑同一命令做复核，**不是**日常监控主入口。
 >
 > **不负责**：改 `archetypes/*.yaml`、自动 promote、在线 Regime 分类器（见 [`NP问题.md`](../experiments/z实验_005_统一研究/archive/NP问题.md) §不足 1，远期）。
+>
+> **B / C 统一拓扑与 cadence 矩阵**（含 regime schema 适配、计划 manifest）：[`漂移监控_BC统一设计_CN.md`](漂移监控_BC统一设计_CN.md)。
 
 ---
 

@@ -1,0 +1,25 @@
+# C 系周更 — 示例 manifest（Phase 2 接线前勿 enable timer）
+# 设计说明：docs/strategy/漂移监控_BC统一设计_CN.md §11
+monitor_id: weekly_c_regime
+output_dir: results/monitoring/weekly_c_regime/{run_ts}
+
+strategies: [chop_grid, trend_scalp]
+# 远程 cron 建议指向 live 镜像（与实盘 regime 一致）
+strategies_root: live/highcap/config/strategies
+
+windows:
+  near:
+    source: feature_bus_export
+    lookback_days: 7
+    timeframe: 120T
+    parquet: results/monitoring/window/{run_ts}/features_c_7d.parquet
+
+watchdog_defaults:
+  regime_share_tol: 0.10
+
+steps:
+  - export-window: { window: near }
+  # Phase 2: watchdog-c — extensions.multileg entry pass_rate + entry_feature PSI
+  # - watchdog-c: { window: near }
+  # Phase 2 optional: prefilter plateau / PSI
+  # - drift-c: { window: near, layer: prefilter }

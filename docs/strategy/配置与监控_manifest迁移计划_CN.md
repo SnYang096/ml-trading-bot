@@ -2,7 +2,7 @@
 
 > **状态**：计划稿（2026-06-02）  
 > **目的**：把 R&D / 监控 / 上线从 `config/strategies/*/research/` 的 pipeline 模板，迁到与 `config/experiments` 同构的 **YAML manifest + CLI**，`config/strategies` 只保留生产契约。  
-> **关联**：[`config/experiments/README.md`](../../config/experiments/README.md) · [`漂移监控_mlbot_monitor_CN.md`](漂移监控_mlbot_monitor_CN.md) · [`R&D工具矩阵_CN.md`](R&D工具矩阵_CN.md) §2 · [`LAYER_PROMOTION_CRITERIA.md`](../../config/experiments/LAYER_PROMOTION_CRITERIA.md)
+> **关联**：[`config/experiments/README.md`](../../config/experiments/README.md) · [`漂移监控_mlbot_monitor_CN.md`](漂移监控_mlbot_monitor_CN.md) · [`漂移监控_BC统一设计_CN.md`](漂移监控_BC统一设计_CN.md) · [`R&D工具矩阵_CN.md`](R&D工具矩阵_CN.md) §2 · [`LAYER_PROMOTION_CRITERIA.md`](../../config/experiments/LAYER_PROMOTION_CRITERIA.md)
 
 ---
 

@@ -2,6 +2,8 @@
 
 Authoritative guide: [`docs/strategy/漂移监控_mlbot_monitor_CN.md`](../../docs/strategy/漂移监控_mlbot_monitor_CN.md).
 
+B / C 统一 cadence 与 regime schema 设计：[`docs/strategy/漂移监控_BC统一设计_CN.md`](../../docs/strategy/漂移监控_BC统一设计_CN.md)（C 系示例 manifest：`weekly_c_regime.yaml.example`、`monthly_multileg_c.yaml.example`）。
+
 Promote 因果门槛 + bundle checklist：[`config/experiments/LAYER_PROMOTION_CRITERIA.md`](../experiments/LAYER_PROMOTION_CRITERIA.md) §4.
 
 ## 发现 labeled parquet（`mlbot monitor catalog`）
