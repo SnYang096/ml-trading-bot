@@ -43,6 +43,7 @@ interface TradeMapState {
   lastMarkerPollSince: string | null;
   statusText: string;
   loading: boolean;
+  historyLoading: boolean;
   chartFitPending: boolean;
   /** Set by history prepend; applied in main chart after setData, then cleared. */
   historyScrollAdjust: LogicalRange | null;
@@ -104,6 +105,7 @@ export const useTradeMapStore = create<TradeMapState>((set) => ({
   lastMarkerPollSince: null,
   statusText: '',
   loading: false,
+  historyLoading: false,
   chartFitPending: true,
   historyScrollAdjust: null,
   mainEma1200: true,
@@ -160,6 +162,7 @@ export function resetHistoryState(): void {
     highlightBarTime: null,
     statusText: '',
     loading: false,
+    historyLoading: false,
     historyExhausted: false,
     chartFitPending: true,
     historyScrollAdjust: null,

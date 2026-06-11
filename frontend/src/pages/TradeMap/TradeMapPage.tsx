@@ -25,6 +25,7 @@ import { FeatureDrawer } from './components/FeatureDrawer.tsx';
 import { MarkerDetailDrawer } from './components/MarkerDetailDrawer.tsx';
 import { OrdersDock } from './components/OrdersDock.tsx';
 import { SubchartStack } from './components/SubchartStack.tsx';
+import { TradeMapBusyHud, TradeMapBusyStatus } from './components/TradeMapBusyHud.tsx';
 import styles from './TradeMapPage.module.css';
 
 export function TradeMapPage() {
@@ -49,6 +50,9 @@ export function TradeMapPage() {
   const selectedFeatureColumns = useTradeMapStore((s) => s.selectedFeatureColumns);
   const statusText = useTradeMapStore((s) => s.statusText);
   const loading = useTradeMapStore((s) => s.loading);
+  const historyLoading = useTradeMapStore((s) => s.historyLoading);
+  const chartBusy = loading || historyLoading;
+  const busyMode = loading ? 'full' : 'history';
   const mainEma1200 = useTradeMapStore((s) => s.mainEma1200);
   const mainWeeklyEma200 = useTradeMapStore((s) => s.mainWeeklyEma200);
   const featureDrawerOpen = useTradeMapStore((s) => s.featureDrawerOpen);
@@ -376,14 +380,25 @@ export function TradeMapPage() {
         <button type="button" onClick={() => refreshFull().catch(() => {})}>
           刷新
         </button>
-        <span className={styles.status}>{loading ? '加载中…' : statusText || scopesFromLayers(layers)}</span>
+        <span className={styles.status}>
+          {chartBusy ? (
+            <TradeMapBusyStatus mode={busyMode} />
+          ) : (
+            statusText || scopesFromLayers(layers)
+          )}
+        </span>
       </div>
 
       <div className={styles.mainRow}>
         <div className={styles.chartColumn}>
           <div className={styles.chartStack}>
-            <div className={styles.chartPane}>
+            <div
+              className={
+                chartBusy ? `${styles.chartPane} ${styles.chartPaneBusy}` : styles.chartPane
+              }
+            >
               <div ref={containerRef} className={styles.chart} />
+              {chartBusy ? <TradeMapBusyHud mode={busyMode} /> : null}
               <ChopGridLabelLayer
                 chart={mainChart}
                 candleSeries={candleSeriesRef.current}
@@ -392,7 +407,7 @@ export function TradeMapPage() {
                 enabled={chopLabelsEnabled}
               />
             </div>
-            {!loading && hasCandles ? (
+            {!chartBusy && hasCandles ? (
               <SubchartStack
                 mainChart={mainChart}
                 candles={lastCandles}

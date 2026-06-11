@@ -165,6 +165,14 @@
   min-height: 280px;
 }
 
+.chartPaneBusy {
+  cursor: progress;
+}
+
+.chartPaneBusy .chart {
+  cursor: progress;
+}
+
 .chart {
   position: absolute;
   inset: 0;

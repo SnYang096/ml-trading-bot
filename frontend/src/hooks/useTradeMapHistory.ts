@@ -57,7 +57,7 @@ export function useTradeMapHistory(mainChart: IChartApi | null) {
     const stageRg = stageRegionsQueryParam(state.layers.prefilter, state.layers.gate);
 
     inFlightRef.current = true;
-    useTradeMapStore.setState({ statusText: '加载更早历史…' });
+    useTradeMapStore.setState({ historyLoading: true, statusText: '加载更早历史…' });
 
     const cols = bundleFeatureColumns(state);
     const needFeatures = cols.length > 0;
@@ -174,6 +174,7 @@ export function useTradeMapHistory(mainChart: IChartApi | null) {
       await refreshMarkersOnly();
     } finally {
       inFlightRef.current = false;
+      useTradeMapStore.setState({ historyLoading: false });
     }
   }, [mainChart, refreshMarkersOnly]);
 

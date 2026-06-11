@@ -1,0 +1,88 @@
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.scanlines {
+  position: absolute;
+  inset: 0;
+  opacity: 0.35;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent 0,
+    transparent 2px,
+    rgba(0, 255, 65, 0.04) 2px,
+    rgba(0, 255, 65, 0.04) 4px
+  );
+  animation: scanDrift 3.2s linear infinite;
+}
+
+.hud {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--accent);
+  text-shadow: var(--glow);
+  background: rgba(2, 4, 2, 0.82);
+  border: 1px solid var(--border-bright);
+  box-shadow: var(--glow);
+}
+
+.spinner {
+  display: inline-block;
+  width: 1.1ch;
+  color: var(--accent-cyan);
+  text-shadow: var(--glow-cyan);
+}
+
+.label {
+  letter-spacing: 0.04em;
+}
+
+.cursor {
+  color: var(--accent-bright);
+  animation: cursorBlink 0.85s step-end infinite;
+}
+
+.statusBusy {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--accent);
+  text-shadow: var(--glow);
+}
+
+.statusSpinner {
+  display: inline-block;
+  width: 1.1ch;
+  color: var(--accent-cyan);
+  text-shadow: var(--glow-cyan);
+}
+
+@keyframes cursorBlink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes scanDrift {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(8px);
+  }
+}
