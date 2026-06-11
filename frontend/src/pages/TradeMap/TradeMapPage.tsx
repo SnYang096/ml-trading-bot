@@ -1,15 +1,11 @@
-import { useQuery } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router-dom';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { IChartApi } from 'lightweight-charts';
-import { useShallow } from 'zustand/react/shallow';
 import { apiGet } from '@/api/client.ts';
-import type { SymbolRow, OrderRow } from '@/api/types.ts';
+import type { OrderRow, SymbolRow } from '@/api/types.ts';
 import { usePageVisible } from '@/hooks/usePageVisible.ts';
+import { useTradeMapBundle } from '@/hooks/useTradeMapBundle.ts';
 import { useTradeMapFeatureCatalog } from '@/hooks/useTradeMapFeatureCatalog.ts';
 import { useTradeMapHistory } from '@/hooks/useTradeMapHistory.ts';
 import { useTradeMapMainChart } from '@/hooks/useTradeMapMainChart.ts';
-import { useTradeMapBundle } from '@/hooks/useTradeMapBundle.ts';
+import { getSymbol, SCOPE_LABELS, setSymbol } from '@/lib/shell.ts';
 import {
   barSecForTimeframe,
   chopGridOverlayEnabled,
@@ -18,8 +14,12 @@ import {
   orderRowUnixSec,
   scrollIndexForTime,
 } from '@/lib/tradeMap';
-import { getSymbol, setSymbol, SCOPE_LABELS } from '@/lib/shell.ts';
-import { scopesFromLayers, useTradeMapStore, POLL_MS } from '@/stores/tradeMapStore.ts';
+import { POLL_MS, scopesFromLayers, useTradeMapStore } from '@/stores/tradeMapStore.ts';
+import { useQuery } from '@tanstack/react-query';
+import type { IChartApi } from 'lightweight-charts';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { useShallow } from 'zustand/react/shallow';
 import { ChopGridLabelLayer } from './components/ChopGridLabelLayer.tsx';
 import { FeatureDrawer } from './components/FeatureDrawer.tsx';
 import { MarkerDetailDrawer } from './components/MarkerDetailDrawer.tsx';
@@ -163,7 +163,7 @@ export function TradeMapPage() {
 
   useEffect(() => {
     featureFetchKeyRef.current = null;
-    refreshFull().catch(() => {});
+    refreshFull().catch(() => { });
   }, [refreshFull, symbol, timeframe]);
 
   const featureFetchKey = useMemo(
@@ -179,18 +179,18 @@ export function TradeMapPage() {
     }
     if (featureFetchKeyRef.current === featureFetchKey) return;
     featureFetchKeyRef.current = featureFetchKey;
-    refreshFeaturesOnly().catch(() => {});
+    refreshFeaturesOnly().catch(() => { });
   }, [featureFetchKey, hasCandles, refreshFeaturesOnly]);
 
 
   useEffect(() => {
     if (!useTradeMapStore.getState().lastCandles.length) return;
-    refreshMarkersOnly().catch(() => {});
+    refreshMarkersOnly().catch(() => { });
   }, [refreshMarkersOnly, layers.trend, layers.spot, layers.multiLeg, layers.pending]);
 
   useEffect(() => {
     if (!pageVisible || !hasCandles) return;
-    const t = window.setInterval(() => refreshPoll().catch(() => {}), POLL_MS);
+    const t = window.setInterval(() => refreshPoll().catch(() => { }), POLL_MS);
     return () => window.clearInterval(t);
   }, [refreshPoll, pageVisible, hasCandles]);
 
@@ -267,7 +267,7 @@ export function TradeMapPage() {
               checked={mainEma1200}
               onChange={(e) => {
                 setBundlePhase({ mainEma1200: e.target.checked });
-                refreshMainOverlays().catch(() => {});
+                refreshMainOverlays().catch(() => { });
               }}
             />
             EMA1200
@@ -278,7 +278,7 @@ export function TradeMapPage() {
               checked={mainWeeklyEma200}
               onChange={(e) => {
                 setBundlePhase({ mainWeeklyEma200: e.target.checked });
-                refreshMainOverlays().catch(() => {});
+                refreshMainOverlays().catch(() => { });
               }}
             />
             W-EMA200
@@ -403,7 +403,7 @@ export function TradeMapPage() {
         >
           {ordersDockOpen ? '隐藏订单表' : '订单表'}
         </button>
-        <button type="button" onClick={() => refreshFull().catch(() => {})}>
+        <button type="button" onClick={() => refreshFull().catch(() => { })}>
           刷新
         </button>
         <span className={styles.status}>

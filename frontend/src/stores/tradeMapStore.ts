@@ -1,6 +1,6 @@
-import { create } from 'zustand';
 import type { BundleData, Candle, MainOverlaySpec, TradeLink, TradeMarker } from '@/api/types.ts';
 import type { FeatureOverlays, LogicalRange } from '@/lib/tradeMap/types.ts';
+import { create } from 'zustand';
 
 export const POLL_MS = 10_000;
 export const LAYOUT_KEY = 'mlbot_trade_map_layout_v2';

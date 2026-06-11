@@ -1,4 +1,13 @@
-import { useEffect, useRef } from 'react';
+import type { Candle } from '@/api/types.ts';
+import {
+  clipOverlayPointsToCandles,
+  forwardFillOverlayToCandles,
+  subchartColor,
+} from '@/lib/tradeMap';
+import { mainChartOverlaySeriesOptions, subchartBaseOptions } from '@/lib/tradeMap/chartOverlay.ts';
+import { syncSubchartToMain } from '@/lib/tradeMap/chartSync.ts';
+import { CHART_THEME } from '@/lib/tradeMap/constants.ts';
+import type { FeatureOverlay } from '@/lib/tradeMap/types.ts';
 import {
   HistogramSeries,
   LineSeries,
@@ -7,16 +16,7 @@ import {
   type ISeriesApi,
   type Time,
 } from 'lightweight-charts';
-import type { Candle } from '@/api/types.ts';
-import { CHART_THEME } from '@/lib/tradeMap/constants.ts';
-import {
-  clipOverlayPointsToCandles,
-  forwardFillOverlayToCandles,
-  subchartColor,
-} from '@/lib/tradeMap';
-import { mainChartOverlaySeriesOptions, subchartBaseOptions } from '@/lib/tradeMap/chartOverlay.ts';
-import { syncSubchartToMain } from '@/lib/tradeMap/chartSync.ts';
-import type { FeatureOverlay } from '@/lib/tradeMap/types.ts';
+import { useEffect, useRef } from 'react';
 import styles from './SubchartStack.module.css';
 
 function featureSeriesData(
