@@ -21,7 +21,7 @@
 
 示例：`20260529_fast_scalp/`（Phase 1）、`20260530_fast_scalp_alts_majors/`（历史 alpha rebuild）、**`20260602_fast_scalp_tree_validate/`**（树模型两轨验证，[`TRAINING.md`](20260602_fast_scalp_tree_validate/TRAINING.md)）。
 
-**变体策略树：** 放在本目录下 `variants/<topic>_strategies/`（仅含本实验相关策略，已剔除无关兄弟目录）。历史根目录 [`config_experiments/`](../config_experiments/) 已弃用，见 [`CONFIG_EXPERIMENTS_MIGRATION.md`](CONFIG_EXPERIMENTS_MIGRATION.md)。
+**变体策略树：** 放在本目录下 `variants/<topic>_strategies/`（仅含本实验相关策略，已剔除无关兄弟目录）。根目录 `config_experiments/` 已删除；迁移记录见 [`CONFIG_EXPERIMENTS_MIGRATION.md`](CONFIG_EXPERIMENTS_MIGRATION.md)。
 
 ## 标准 R&D 流程（新特征 / 新周期 — 必读）
 
