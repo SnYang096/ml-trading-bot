@@ -164,9 +164,27 @@ function scopesParam() {
 function tickClock() {
   const el = document.getElementById("statusClock");
   if (el) el.textContent = new Date().toLocaleTimeString();
+  const corner = document.getElementById("statusCorner");
+  if (corner) {
+    const timeStr = new Date().toLocaleTimeString();
+    const current = (corner.textContent || "").trim();
+    // Initial placeholder or empty → just show time.
+    if (!current || current === "--:--:--") {
+      corner.textContent = timeStr;
+      return;
+    }
+    // Append clock to corner text, replacing any previous HH:MM:SS suffix.
+    const base = current.replace(/ \d{2}:\d{2}:\d{2}$/, "");
+    corner.textContent = (base + " " + timeStr).trim();
+  }
 }
 
 function setStatusLoading() {
+  const corner = document.getElementById("statusCorner");
+  if (corner) {
+    corner.textContent = "加载中…";
+    corner.classList.add("status-corner--loading");
+  }
   document.getElementById("statusPrimary").textContent = "加载中…";
   document.getElementById("statusMeta").textContent = "";
   document.getElementById("statusFeatures").textContent = "";
@@ -174,6 +192,11 @@ function setStatusLoading() {
 }
 
 function setStatusFromBundle(symbol, timeframe, candles, markers, meta, overlays) {
+  const corner = document.getElementById("statusCorner");
+  if (corner) {
+    corner.textContent = `${symbol} ${timeframe}`;
+    corner.classList.remove("status-corner--loading");
+  }
   const deg = meta.degraded_ohlc;
   const parts = [
     `${symbol} ${timeframe}`,
@@ -236,6 +259,11 @@ function setStatusFromBundle(symbol, timeframe, candles, markers, meta, overlays
 }
 
 function setStatus(msg) {
+  const corner = document.getElementById("statusCorner");
+  if (corner) {
+    corner.textContent = msg;
+    corner.classList.add("status-corner--loading");
+  }
   document.getElementById("statusPrimary").textContent = msg;
   document.getElementById("statusMeta").textContent = "";
   document.getElementById("statusFeatures").textContent = "";

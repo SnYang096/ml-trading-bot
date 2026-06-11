@@ -314,6 +314,90 @@ def test_trade_map_bundle_ohlcv_none(client):
     assert len(body["data"]["markers"]) >= 1
 
 
+def test_trade_map_bundle_skip_markers(client):
+    common = {
+        "symbol": "ETHUSDT",
+        "timeframe": "2h",
+        "scopes": "trend",
+        "from": "2024-01-01T00:00:00Z",
+        "to": "2024-01-03T00:00:00Z",
+    }
+    r = client.get(
+        "/api/trade-map/bundle",
+        params={**common, "include_markers": "false"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["data"]["markers"] == []
+    assert body["meta"]["marker_counts"]["total"] == 0
+
+
+def test_trade_map_bundle_skip_features(client):
+    r = client.get(
+        "/api/trade-map/bundle",
+        params={
+            "symbol": "ETHUSDT",
+            "timeframe": "2h",
+            "scopes": "trend",
+            "from": "2024-01-01T00:00:00Z",
+            "to": "2024-01-02T00:00:00Z",
+            "include_features": "false",
+            "feature_columns": "weekly_ema_200_position",
+        },
+    )
+    assert r.status_code == 200
+    assert r.json()["data"]["overlays"] == {}
+
+
+def test_trade_map_bundle_features_without_ohlcv_payload(client):
+    r = client.get(
+        "/api/trade-map/bundle",
+        params={
+            "symbol": "ETHUSDT",
+            "timeframe": "2h",
+            "scopes": "trend",
+            "include_ohlcv": "none",
+            "include_features": "true",
+            "include_markers": "false",
+            "feature_columns": "weekly_ema_200_position",
+            "from": "2024-01-01T00:00:00Z",
+            "to": "2024-01-02T00:00:00Z",
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["data"]["ohlcv"]["candles"] == []
+    assert "weekly_ema_200_position" in body["data"]["overlays"]
+    assert body["data"]["overlays"]["weekly_ema_200_position"]["available"] is True
+
+
+def test_trade_map_bundle_two_phase_markers_match_full(client):
+    common = {
+        "symbol": "ETHUSDT",
+        "timeframe": "2h",
+        "scopes": "trend,spot,multi_leg",
+        "from": "2024-01-01T00:00:00Z",
+        "to": "2024-01-03T00:00:00Z",
+        "include_pending": "true",
+    }
+    full = client.get("/api/trade-map/bundle", params=common)
+    assert full.status_code == 200
+    full_ids = {m["id"] for m in full.json()["data"]["markers"]}
+
+    phase_markers = client.get(
+        "/api/trade-map/bundle",
+        params={
+            **common,
+            "include_ohlcv": "none",
+            "include_features": "false",
+            "include_chop": "false",
+        },
+    )
+    assert phase_markers.status_code == 200
+    phase_ids = {m["id"] for m in phase_markers.json()["data"]["markers"]}
+    assert phase_ids == full_ids
+
+
 def test_bus_ohlcv_window_error(client):
     r = client.get(
         "/api/bus/ohlcv",

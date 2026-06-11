@@ -692,20 +692,28 @@ def fetch_multileg_raw_rows(
     symbol: str,
     *,
     engine_data_root: Optional[Path] = None,
+    start_ts: Optional[int] = None,
+    end_ts: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """All chop_grid-related rows for symbol, including synthetic inventory legs."""
     if not db_path.is_file() or _is_all_symbols(symbol):
         return []
     sym = symbol.upper()
-    sql = """
+    from mlbot_console.services.trade_markers import _sql_time_range_expr
+
+    time_clause, time_params = _sql_time_range_expr(
+        start_ts, end_ts, "COALESCE(filled_at, created_at)"
+    )
+    sql = f"""
         SELECT local_order_id AS order_id, symbol, side, status, order_type, purpose,
                quantity, price, stop_price, filled_quantity, average_price, created_at,
                filled_at, strategy, leg_id, client_order_id
         FROM multi_leg_orders
-        WHERE symbol = ?
+        WHERE symbol = ?{time_clause}
         ORDER BY COALESCE(filled_at, created_at) ASC
+        LIMIT 5000
     """
-    rows = query_rows(db_path, sql, (sym,))
+    rows = query_rows(db_path, sql, (sym, *time_params))
     _supplement_multileg_inventory_entries(
         db_path, sym, rows, engine_data_root=engine_data_root
     )

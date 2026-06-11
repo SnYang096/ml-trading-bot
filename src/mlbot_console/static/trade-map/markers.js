@@ -13,8 +13,7 @@ function applyMarkers(rawMarkers, opts = {}) {
     incoming = incoming.filter((m) => !Core.isFeatureBusRegimeExitMarker(m));
   }
   const focus = String(S.featureStrategyFocus || "").trim().toLowerCase();
-  const chopFocus =
-    !focus || focus === "chop_grid" || focus === "trend_scalp";
+  const chopFocus = !focus || focus === "chop_grid";
   if (
     chopFocus &&
     S.lastCandles?.length &&
@@ -28,9 +27,18 @@ function applyMarkers(rawMarkers, opts = {}) {
     incoming = Core.mergeRegimeExitMarkers(incoming, synth);
   }
   const aligned = alignMarkersToLoadedCandles(incoming);
-  const merged = opts.merge
+  let merged = opts.merge
     ? mergeMarkersById(S.allRawMarkers || [], aligned)
     : aligned;
+  // Filter by enabled account layers when no specific strategy is focused.
+  if (!focus) {
+    const layers = layersState();
+    const enabledScopes = new Set();
+    if (layers.trend) enabledScopes.add("trend");
+    if (layers.spot) enabledScopes.add("spot");
+    if (layers.multiLeg) enabledScopes.add("multi_leg");
+    merged = merged.filter((m) => enabledScopes.has(String(m.scope || "").toLowerCase()));
+  }
   S.allRawMarkers = merged;
   S.markerById = new Map(merged.map((m) => [m.id, m]));
   S.lastRawMarkers = Core.markersForChartDisplay(

@@ -161,6 +161,53 @@ def _candles_for_chart_window(
         return tail
 
 
+def _bundle_internal_ohlcv(
+    symbol: str,
+    tf: str,
+    *,
+    from_: Optional[str],
+    to: Optional[str],
+    full_range: bool,
+) -> tuple[List[Dict[str, Any]], Optional[pd.Timestamp], Optional[pd.Timestamp]]:
+    """Fetch OHLCV for overlay/chop computation when include_ohlcv=none."""
+    try:
+        start, end, use_full = resolve_trade_map_window(
+            tf,
+            start=pd.Timestamp(from_, tz="UTC") if from_ else None,
+            end=pd.Timestamp(to, tz="UTC") if to else None,
+            full_range=full_range,
+        )
+        max_days = (
+            SETTINGS.max_daily_ohlcv_days
+            if tf in ("1d", "1w")
+            else SETTINGS.max_ohlcv_days
+        )
+        start, end = cap_window_to_max_days(start, end, max_days)
+        pack = ohlcv_reader.fetch_ohlcv(
+            SETTINGS.feature_bus_root,
+            symbol,
+            tf,
+            start=start,
+            end=end,
+            max_days=SETTINGS.max_ohlcv_days,
+            full_range=use_full,
+            live_storage_bars_root=SETTINGS.live_storage_bars_root,
+            stitch_live_storage=SETTINGS.stitch_live_storage,
+            macro_kline_root=SETTINGS.macro_spot_kline_root,
+            daily_ohlcv_start=SETTINGS.daily_ohlcv_start,
+            max_daily_ohlcv_days=SETTINGS.max_daily_ohlcv_days,
+            live_data_root=SETTINGS.live_data_root,
+            live_root=SETTINGS.live_root,
+        )
+        candles = list(pack.get("candles") or [])
+        return candles, start, end
+    except Exception:
+        logger.exception(
+            "bundle internal ohlcv fetch failed symbol=%s tf=%s", symbol, tf
+        )
+        return [], None, None
+
+
 @router.get("/api/trade-map/symbols")
 def trade_map_symbols() -> dict:
     symbols = load_universe_symbols(SETTINGS.universe_yaml)
@@ -300,6 +347,9 @@ def trade_map_bundle(
     ohlcv_from: Optional[str] = Query(None, alias="ohlcv_from"),
     ohlcv_to: Optional[str] = Query(None, alias="ohlcv_to"),
     include_features: bool = Query(True),
+    include_markers: bool = Query(True),
+    include_trade_links: bool = Query(True),
+    include_chop: bool = Query(True),
     stage_regions: Optional[str] = Query(
         None,
         description="Comma-separated stages to shade on main chart: prefilter, gate",
@@ -375,30 +425,63 @@ def trade_map_bundle(
     scope_list = _scopes_list(scopes)
     strat_filter = str(strategy or "").strip().lower()
     strat_list = [strat_filter] if strat_filter else None
-    # Keep client from/to for marker DB query; do not narrow to sparse OHLCV span.
-    markers = collect_markers(
-        trend_db=SETTINGS.trend_order_db,
-        spot_db=SETTINGS.spot_order_db,
-        multi_leg_db=SETTINGS.multi_leg_db,
-        symbol=symbol,
-        scopes=scope_list,
-        engine_data_root=SETTINGS.engine_data_root,
-        strategies=strat_list,
-        feature_bus_root=SETTINGS.feature_bus_root,
-        strategies_root=SETTINGS.strategies_root,
-        map_timeframe=tf,
-        **mk,
+    stage_parts = {
+        p.strip().lower()
+        for p in (stage_regions or "").split(",")
+        if p.strip()
+    }
+    include_prefilter_regions = "prefilter" in stage_parts
+    include_gate_regions = "gate" in stage_parts
+    cols = _feature_columns_list(feature_columns, overlay_weekly_ema=overlay_weekly_ema)
+    need_stage_regions = include_prefilter_regions or include_gate_regions
+    need_chop_regime = (
+        include_chop
+        and "multi_leg" in scope_list
+        and (not strat_filter or strat_filter in ("chop_grid", "trend_scalp"))
     )
+    need_internal_candles = ohlcv_mode == "none" and (
+        (cols and include_features) or need_stage_regions or need_chop_regime
+    )
+    internal_candles: List[Dict[str, Any]] = []
+    if need_internal_candles:
+        internal_candles, int_start, int_end = _bundle_internal_ohlcv(
+            symbol,
+            tf,
+            from_=from_,
+            to=to,
+            full_range=full_range,
+        )
+        if start is None:
+            start = int_start
+        if end is None:
+            end = int_end
+    chart_candles = list(ohlcv.get("candles") or []) or internal_candles
+
+    markers: List[Dict[str, Any]] = []
+    if include_markers:
+        markers = collect_markers(
+            trend_db=SETTINGS.trend_order_db,
+            spot_db=SETTINGS.spot_order_db,
+            multi_leg_db=SETTINGS.multi_leg_db,
+            symbol=symbol,
+            scopes=scope_list,
+            engine_data_root=SETTINGS.engine_data_root,
+            strategies=strat_list,
+            feature_bus_root=SETTINGS.feature_bus_root,
+            strategies_root=SETTINGS.strategies_root,
+            map_timeframe=tf,
+            **mk,
+        )
+        if ohlcv_mode == "full" and ohlcv.get("candles"):
+            candle_times = [
+                int(c["time"]) for c in ohlcv["candles"] if c.get("time") is not None
+            ]
+            markers = align_markers_to_candles(markers, candle_times)
     marker_counts = marker_scope_counts(markers)
-    # Tail poll returns only a few bars; aligning to that slice collapses all markers.
-    if ohlcv_mode == "full" and ohlcv.get("candles"):
-        candle_times = [
-            int(c["time"]) for c in ohlcv["candles"] if c.get("time") is not None
-        ]
-        markers = align_markers_to_candles(markers, candle_times)
+
     current_time = None
     current_price = None
-    candles_for_current = ohlcv.get("candles") or []
+    candles_for_current = chart_candles
     if candles_for_current:
         last_candle = candles_for_current[-1]
         current_time = (
@@ -408,35 +491,41 @@ def trade_map_bundle(
             current_price = float(last_candle.get("close"))
         except (TypeError, ValueError):
             current_price = None
-    trade_links, _ = collect_trade_links(
-        multi_leg_db=SETTINGS.multi_leg_db,
-        trend_db=SETTINGS.trend_order_db,
-        spot_db=SETTINGS.spot_order_db,
-        symbol=symbol,
-        scopes=_scopes_list(scopes),
-        start_ts=mk.get("start_ts"),
-        end_ts=mk.get("end_ts"),
-        since_ts=mk.get("since_ts"),
-        current_time=current_time,
-        current_price=current_price,
-    )
-    cols = _feature_columns_list(feature_columns, overlay_weekly_ema=overlay_weekly_ema)
+
+    trade_links: List[Dict[str, Any]] = []
+    if include_trade_links:
+        trade_links, _ = collect_trade_links(
+            multi_leg_db=SETTINGS.multi_leg_db,
+            trend_db=SETTINGS.trend_order_db,
+            spot_db=SETTINGS.spot_order_db,
+            symbol=symbol,
+            scopes=_scopes_list(scopes),
+            start_ts=mk.get("start_ts"),
+            end_ts=mk.get("end_ts"),
+            since_ts=mk.get("since_ts"),
+            current_time=current_time,
+            current_price=current_price,
+        )
+
     overlays: dict = {}
-    if cols and include_features and ohlcv_mode != "none" and ohlcv.get("candles"):
+    if cols and include_features and chart_candles:
         overlay_start = start
         overlay_end = end
         if overlay_start is None and ohlcv.get("range_start"):
             overlay_start = pd.Timestamp(str(ohlcv["range_start"]))
         if overlay_end is None and ohlcv.get("range_end"):
             overlay_end = pd.Timestamp(str(ohlcv["range_end"]))
-        feature_candles = _candles_for_chart_window(
-            ohlcv,
-            ohlcv_mode=ohlcv_mode,
-            symbol=symbol,
-            timeframe=tf,
-            chart_from=from_,
-            chart_to=to,
-        )
+        if ohlcv_mode == "tail" and ohlcv.get("candles"):
+            feature_candles = _candles_for_chart_window(
+                ohlcv,
+                ohlcv_mode=ohlcv_mode,
+                symbol=symbol,
+                timeframe=tf,
+                chart_from=from_,
+                chart_to=to,
+            )
+        else:
+            feature_candles = chart_candles
         overlays = load_feature_overlays(
             SETTINGS.feature_bus_root,
             symbol,
@@ -490,14 +579,7 @@ def trade_map_bundle(
     chop_grid_overlay: dict = {"batches": []}
     chop_regime_regions: list = []
     strategy_stage_regions: dict = {}
-    stage_parts = {
-        p.strip().lower()
-        for p in (stage_regions or "").split(",")
-        if p.strip()
-    }
-    include_prefilter_regions = "prefilter" in stage_parts
-    include_gate_regions = "gate" in stage_parts
-    if (include_prefilter_regions or include_gate_regions) and ohlcv.get("candles"):
+    if need_stage_regions and chart_candles:
         feat_start = start
         feat_end = end
         if feat_start is None and ohlcv.get("range_start"):
@@ -525,7 +607,7 @@ def trade_map_bundle(
         except Exception as exc:
             logger.exception("strategy_stage_regions failed symbol=%s", symbol)
             strategy_stage_regions = {"error": str(exc)}
-    if "multi_leg" in scope_list and (
+    if include_chop and "multi_leg" in scope_list and (
         not strat_filter or strat_filter in ("chop_grid", "trend_scalp")
     ):
         try:
@@ -537,7 +619,7 @@ def trade_map_bundle(
         except Exception as exc:
             logger.exception("chop_grid_map_overlay failed symbol=%s", symbol)
             chop_grid_overlay = {"batches": [], "error": str(exc)}
-        if ohlcv_mode != "none" and ohlcv.get("candles"):
+        if need_chop_regime and chart_candles:
             feat_start = start
             feat_end = end
             if feat_start is None and ohlcv.get("range_start"):

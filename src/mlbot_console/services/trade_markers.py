@@ -52,6 +52,96 @@ STRATEGY_COLORS: Dict[str, str] = {
 CHOP_GRID_REGIME_EXIT_COLOR = "#ff7043"
 
 
+def _iso_from_unix(ts: Optional[int]) -> Optional[str]:
+    """Unix seconds → ISO 8601 UTC string for SQLite TEXT column comparison."""
+    if ts is None:
+        return None
+    try:
+        return datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%S+00:00"
+        )
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def _sql_time_range(
+    start_ts: Optional[int],
+    end_ts: Optional[int],
+    col: str = "created_at",
+) -> tuple[str, List[str]]:
+    """SQL clause + params for TEXT ISO timestamp column range filter."""
+    clauses: List[str] = []
+    params: List[str] = []
+    if start_ts is not None:
+        iso = _iso_from_unix(start_ts)
+        if iso:
+            clauses.append(f"{col} >= ?")
+            params.append(iso)
+    if end_ts is not None:
+        iso = _iso_from_unix(end_ts)
+        if iso:
+            clauses.append(f"{col} <= ?")
+            params.append(iso)
+    if not clauses:
+        return "", []
+    return " AND " + " AND ".join(clauses), params
+
+
+def _sql_time_range_expr(
+    start_ts: Optional[int],
+    end_ts: Optional[int],
+    expr: str,
+) -> tuple[str, List[str]]:
+    """Range filter on a SQL expression (e.g. COALESCE(filled_at, created_at))."""
+    clauses: List[str] = []
+    params: List[str] = []
+    if start_ts is not None:
+        iso = _iso_from_unix(start_ts)
+        if iso:
+            clauses.append(f"{expr} >= ?")
+            params.append(iso)
+    if end_ts is not None:
+        iso = _iso_from_unix(end_ts)
+        if iso:
+            clauses.append(f"{expr} <= ?")
+            params.append(iso)
+    if not clauses:
+        return "", []
+    return " AND " + " AND ".join(clauses), params
+
+
+def _sql_any_col_in_window(
+    start_ts: Optional[int],
+    end_ts: Optional[int],
+    cols: List[str],
+) -> tuple[str, List[str]]:
+    """Row matches if any column falls in [start_ts, end_ts] (positions entry/exit)."""
+    if start_ts is None and end_ts is None:
+        return "", []
+    per_col: List[str] = []
+    params: List[str] = []
+    for col in cols:
+        col_clauses: List[str] = []
+        if start_ts is not None:
+            iso = _iso_from_unix(start_ts)
+            if iso:
+                col_clauses.append(f"{col} >= ?")
+                params.append(iso)
+        if end_ts is not None:
+            iso = _iso_from_unix(end_ts)
+            if iso:
+                col_clauses.append(f"{col} <= ?")
+                params.append(iso)
+        if col_clauses:
+            per_col.append(f"({' AND '.join(col_clauses)})")
+    if not per_col:
+        return "", []
+    return " AND (" + " OR ".join(per_col) + ")", params
+
+
+_MARKER_QUERY_LIMIT = 5000
+
+
 def _parse_ts(raw: Any) -> Optional[int]:
     if raw is None or raw == "":
         return None
@@ -249,14 +339,18 @@ def trend_markers(
     out: List[Dict[str, Any]] = []
     seen: Set[str] = set()
 
-    pos_sql = """
+    pos_time_clause, pos_time_params = _sql_any_col_in_window(
+        start_ts, end_ts, ["entry_time", "exit_time"]
+    )
+    pos_sql = f"""
         SELECT position_id, symbol, side, entry_time, exit_time,
                entry_price, exit_price, realized_pnl, status, strategy_id
         FROM positions
-        WHERE symbol = ?
+        WHERE symbol = ?{pos_time_clause}
         ORDER BY entry_time ASC
+        LIMIT {_MARKER_QUERY_LIMIT}
     """
-    for row in query_rows(db_path, pos_sql, (sym,)):
+    for row in query_rows(db_path, pos_sql, (sym, *pos_time_params)):
         strat = str(row.get("strategy_id") or "unknown").lower()
         side = str(row.get("side") or "long").lower()
         et = _parse_ts(row.get("entry_time"))
@@ -301,16 +395,20 @@ def trend_markers(
                 extra={"time": xt, "position_id": row["position_id"]},
             )
 
-    op_sql = """
+    op_time_clause, op_time_params = _sql_time_range(
+        start_ts, end_ts, col="po.operation_time"
+    )
+    op_sql = f"""
         SELECT po.operation_id, po.position_id, po.operation_type,
                po.operation_time, po.size, po.price, po.reason,
                p.side AS position_side, p.strategy_id
         FROM position_operations po
         JOIN positions p ON p.position_id = po.position_id
-        WHERE p.symbol = ?
+        WHERE p.symbol = ?{op_time_clause}
         ORDER BY po.operation_time ASC
+        LIMIT {_MARKER_QUERY_LIMIT}
     """
-    for row in query_rows(db_path, op_sql, (sym,)):
+    for row in query_rows(db_path, op_sql, (sym, *op_time_params)):
         ot = _parse_ts(row.get("operation_time"))
         if ot is None:
             continue
@@ -349,16 +447,20 @@ def trend_markers(
             },
         )
 
-    ord_sql = """
+    ord_time_clause, ord_time_params = _sql_time_range_expr(
+        start_ts, end_ts, "COALESCE(o.filled_at, o.created_at)"
+    )
+    ord_sql = f"""
         SELECT o.order_id, o.symbol AS symbol, o.side AS side, o.status,
                o.filled_at, o.created_at, o.average_price, o.filled_quantity, o.position_id,
                p.side AS position_side, p.strategy_id
         FROM orders o
         LEFT JOIN positions p ON p.position_id = o.position_id
-        WHERE o.symbol = ?
+        WHERE o.symbol = ?{ord_time_clause}
         ORDER BY COALESCE(o.filled_at, o.created_at) ASC
+        LIMIT {_MARKER_QUERY_LIMIT}
     """
-    for row in query_rows(db_path, ord_sql, (sym,)):
+    for row in query_rows(db_path, ord_sql, (sym, *ord_time_params)):
         status = str(row.get("status") or "").lower()
         filled_qty = _f(row.get("filled_quantity")) or 0.0
         is_filled = status in {"filled", "partially_filled"} or filled_qty > 0
@@ -428,14 +530,17 @@ def spot_markers(
     sym = symbol.upper()
     out: List[Dict[str, Any]] = []
     seen: Set[str] = set()
-    sql = """
+    # Push time range into SQL — spot_orders.created_at is TEXT ISO 8601.
+    time_clause, time_params = _sql_time_range(start_ts, end_ts, col="created_at")
+    sql = f"""
         SELECT order_id, created_at, updated_at, symbol, side, order_type,
                quantity, price, status, filled_quantity, filled_quote_usdt
         FROM spot_orders
-        WHERE symbol = ?
+        WHERE symbol = ?{time_clause}
         ORDER BY created_at ASC
+        LIMIT {_MARKER_QUERY_LIMIT}
     """
-    for row in query_rows(db_path, sql, (sym,)):
+    for row in query_rows(db_path, sql, (sym, *time_params)):
         status = str(row.get("status") or "").lower()
         filled_qty = _f(row.get("filled_quantity")) or 0.0
         if status not in {"filled", "closed", "partially_filled"} and filled_qty <= 0:
@@ -495,18 +600,26 @@ def multi_leg_markers(
         from mlbot_console.services.orders_list import fetch_multileg_raw_rows
 
         raw_rows = fetch_multileg_raw_rows(
-            db_path, sym, engine_data_root=engine_data_root
+            db_path,
+            sym,
+            engine_data_root=engine_data_root,
+            start_ts=start_ts,
+            end_ts=end_ts,
         )
     else:
-        ord_sql = """
+        ml_time_clause, ml_time_params = _sql_time_range_expr(
+            start_ts, end_ts, "COALESCE(filled_at, created_at)"
+        )
+        ord_sql = f"""
             SELECT local_order_id, strategy, symbol, side, purpose, status, order_type,
                    filled_quantity, average_price, filled_at, created_at, price, quantity,
                    stop_price, leg_id
             FROM multi_leg_orders
-            WHERE symbol = ?
+            WHERE symbol = ?{ml_time_clause}
             ORDER BY COALESCE(filled_at, created_at) ASC
+            LIMIT {_MARKER_QUERY_LIMIT}
         """
-        raw_rows = query_rows(db_path, ord_sql, (sym,))
+        raw_rows = query_rows(db_path, ord_sql, (sym, *ml_time_params))
         for row in raw_rows:
             row["order_id"] = row.get("local_order_id")
     for row in raw_rows:
@@ -584,13 +697,17 @@ def multi_leg_markers(
             color=marker_color,
         )
 
-    rep_sql = """
+    rep_time_clause, rep_time_params = _sql_time_range(
+        start_ts, end_ts, col="event_time"
+    )
+    rep_sql = f"""
         SELECT event_id, strategy, symbol, status, execution_type, event_time, order_id
         FROM multi_leg_execution_reports
-        WHERE symbol = ?
+        WHERE symbol = ?{rep_time_clause}
         ORDER BY event_time ASC
+        LIMIT {_MARKER_QUERY_LIMIT}
     """
-    for row in query_rows(db_path, rep_sql, (sym,)):
+    for row in query_rows(db_path, rep_sql, (sym, *rep_time_params)):
         st = str(row.get("status") or "").upper()
         if st not in {"FILLED", "PARTIALLY_FILLED"}:
             continue

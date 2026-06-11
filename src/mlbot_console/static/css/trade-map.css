@@ -317,3 +317,31 @@
 .page-trade-map .map-strategy-hint {
   font-size: 0.8rem;
 }
+
+/* Floating bottom-right status corner (loading + clock). */
+.status-corner {
+  position: fixed;
+  bottom: 12px;
+  right: 16px;
+  z-index: 1000;
+  padding: 4px 12px;
+  border-radius: 6px;
+  background: rgba(22, 27, 34, 0.88);
+  border: 1px solid #30363d;
+  color: #8b949e;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  transition: color 0.3s, border-color 0.3s;
+}
+
+.status-corner--loading {
+  color: #f0883e;
+  border-color: #f0883e;
+  animation: status-corner-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes status-corner-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}

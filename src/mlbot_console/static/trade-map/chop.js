@@ -167,7 +167,7 @@ function chopGridOverlayEnabled() {
   if (!document.getElementById("layerChopGrid")?.checked) return false;
   if (!layersState().multiLeg) return false;
   const focus = String(S.featureStrategyFocus || "").trim().toLowerCase();
-  if (focus && focus !== "chop_grid" && focus !== "trend_scalp") return false;
+  if (focus && focus !== "chop_grid") return false;
   return true;
 }
 
@@ -312,7 +312,9 @@ function bindChopGridLabelSync() {
 
 function addChopFullWidthLine(candles, price, opts = {}) {
   if (!S.chart || price == null || !Number.isFinite(Number(price))) return;
-  const spans = opts.spans || null;
+  const spans = opts.spans;
+  // If spans were explicitly provided but are empty, don't draw (avoid full-width fallback).
+  if (spans !== undefined && spans !== null && !spans.length) return;
   const pts = spans?.length
     ? priceLineInSpans(candles, spans, price)
     : fullWidthPriceLine(candles, price);

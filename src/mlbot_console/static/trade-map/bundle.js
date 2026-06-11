@@ -69,6 +69,106 @@ function mergeStageRegions(existing, incoming) {
   return out;
 }
 
+function finishBundleRefresh(pageUrl) {
+  tickClock();
+  const markerId = pageUrl.searchParams.get("marker_id");
+  if (markerId && S.markerById.has(markerId)) {
+    selectMarker(markerId, { scrollChart: true, showDetail: true });
+  } else if (S.selectedMarkerId && !S.markerById.has(S.selectedMarkerId)) {
+    S.selectedMarkerId = null;
+    highlightOrdersTableRow(null);
+  }
+}
+
+function buildBundleQueryParams(opts) {
+  const {
+    mode,
+    symbol,
+    timeframe,
+    scopes,
+    pending,
+    featParam,
+    mainOl,
+    stageRg,
+    stratFocus,
+    resetOhlcvRange,
+  } = opts;
+  const q = new URLSearchParams({
+    symbol,
+    timeframe,
+    scopes,
+    include_pending: String(pending),
+    ...markerRangeParams(),
+  });
+  if (mode === "poll") {
+    q.set("include_ohlcv", "tail");
+    if (stageRg) q.set("stage_regions", stageRg);
+    if (stratFocus) q.set("strategy", stratFocus);
+    if (mainOl) q.set("main_overlays", mainOl);
+    const pollFeatures = S.selectedFeatureColumns.length > 0;
+    q.set("include_features", pollFeatures ? "true" : "false");
+    q.set("include_markers", "true");
+    q.set("include_trade_links", "true");
+    q.set("include_chop", "true");
+    if (pollFeatures && featParam) q.set("feature_columns", featParam);
+    if (S.lastMarkerPollSince) q.set("since", S.lastMarkerPollSince);
+    if (S.ohlcvLoadedFrom) q.set("from", S.ohlcvLoadedFrom);
+    q.set("to", S.ohlcvLoadedTo || new Date().toISOString());
+    const lastT = S.lastCandles.length ? S.lastCandles[S.lastCandles.length - 1].time : null;
+    if (lastT != null) {
+      const barSec = Core.barDurationSec(timeframe);
+      const tailFrom = Core.isoFromUnixSec(Number(lastT) - barSec * 5);
+      q.set("ohlcv_from", tailFrom);
+      q.set("ohlcv_to", new Date().toISOString());
+    }
+    return q;
+  }
+  if (opts.phase === "markers") {
+    q.set("include_ohlcv", "none");
+    q.set("include_features", "false");
+    q.set("include_markers", "true");
+    q.set("include_trade_links", "true");
+    q.set("include_chop", "false");
+  } else if (opts.phase === "features") {
+    q.set("include_ohlcv", "none");
+    q.set("include_features", "true");
+    q.set("include_markers", "false");
+    q.set("include_trade_links", "false");
+    q.set("include_chop", "true");
+    if (featParam) q.set("feature_columns", featParam);
+    if (stageRg) q.set("stage_regions", stageRg);
+    if (stratFocus) q.set("strategy", stratFocus);
+  } else if (opts.phase === "shell") {
+    q.set("include_ohlcv", "full");
+    q.set("include_features", "false");
+    q.set("include_markers", "false");
+    q.set("include_trade_links", "false");
+    q.set("include_chop", "false");
+    if (mainOl) q.set("main_overlays", mainOl);
+  } else {
+    q.set("include_ohlcv", "full");
+    q.set("include_features", "true");
+    q.set("include_markers", "true");
+    q.set("include_trade_links", "true");
+    q.set("include_chop", "true");
+    if (featParam) q.set("feature_columns", featParam);
+    if (mainOl) q.set("main_overlays", mainOl);
+    if (stageRg) q.set("stage_regions", stageRg);
+    if (stratFocus) q.set("strategy", stratFocus);
+  }
+  if (!S.ohlcvLoadedFrom || resetOhlcvRange) {
+    const init = initialOhlcvRangeIso();
+    if (init.from) q.set("from", init.from);
+    if (init.to) q.set("to", init.to);
+    q.set("full_range", init.full_range || "false");
+  } else {
+    q.set("from", S.ohlcvLoadedFrom);
+    q.set("to", new Date().toISOString());
+    q.set("full_range", "false");
+  }
+  return q;
+}
+
 async function refreshMarkersOnly() {
   const symbol = document.getElementById("symbolSelect").value;
   const timeframe = document.getElementById("timeframeSelect").value;
@@ -79,6 +179,9 @@ async function refreshMarkersOnly() {
     include_pending: String(layersState().pending),
     include_ohlcv: "none",
     include_features: "false",
+    include_markers: "true",
+    include_trade_links: "true",
+    include_chop: "false",
     ...markerRangeParams(),
   });
   const { data, meta } = await Shell.api(`/api/trade-map/bundle?${q}`);
@@ -104,9 +207,6 @@ async function refreshBundle(opts = {}) {
     document.getElementById("layerGate")?.checked
   );
   const stratFocus = String(S.featureStrategyFocus || "").trim();
-  if (mode === "full" && S.ordersDockOpen) {
-    refreshOrdersList().catch((e) => setStatus(String(e)));
-  }
   if (mode === "full") {
     setStatusLoading();
     if (opts.resetMarkerRange) {
@@ -114,55 +214,112 @@ async function refreshBundle(opts = {}) {
     }
   }
 
-  const q = new URLSearchParams({
+  const queryOpts = {
+    mode,
     symbol,
     timeframe,
     scopes,
-    include_pending: String(pending),
-    ...markerRangeParams(),
-  });
+    pending,
+    featParam,
+    mainOl,
+    stageRg,
+    stratFocus,
+    resetOhlcvRange: opts.resetOhlcvRange,
+  };
+  const pageUrl = new URL(window.location.href);
 
-  if (mode === "poll") {
-    q.set("include_ohlcv", "tail");
-    if (stageRg) q.set("stage_regions", stageRg);
-    if (stratFocus) q.set("strategy", stratFocus);
-    if (mainOl) q.set("main_overlays", mainOl);
-    const pollFeatures = S.selectedFeatureColumns.length > 0;
-    q.set("include_features", pollFeatures ? "true" : "false");
-    if (pollFeatures && featParam) q.set("feature_columns", featParam);
-    if (S.lastMarkerPollSince) q.set("since", S.lastMarkerPollSince);
-    if (S.ohlcvLoadedFrom) q.set("from", S.ohlcvLoadedFrom);
-    q.set("to", S.ohlcvLoadedTo || new Date().toISOString());
-    const lastT = S.lastCandles.length ? S.lastCandles[S.lastCandles.length - 1].time : null;
-    if (lastT != null) {
-      const barSec = Core.barDurationSec(timeframe);
-      const tailFrom = Core.isoFromUnixSec(Number(lastT) - barSec * 5);
-      q.set("ohlcv_from", tailFrom);
-      q.set("ohlcv_to", new Date().toISOString());
-    }
-  } else {
-    q.set("include_ohlcv", "full");
-    q.set("include_features", "true");
-    if (!S.ohlcvLoadedFrom || opts.resetOhlcvRange) {
-      const init = initialOhlcvRangeIso();
-      if (init.from) q.set("from", init.from);
-      if (init.to) q.set("to", init.to);
-      q.set("full_range", init.full_range || "false");
+  if (mode === "full") {
+    const shellQ = buildBundleQueryParams({ ...queryOpts, phase: "shell" });
+    const { data: shellData, meta: shellMeta } = await Shell.api(
+      `/api/trade-map/bundle?${shellQ}`
+    );
+    updateMarkerPollSince(shellMeta?.server_timestamp);
+    const candles = Core.sanitizeCandlesForLwc(shellData.ohlcv?.candles || []);
+    S.lastCandles = candles;
+    S.candleSeries.setData(candles);
+    applyLoadedOhlcvRange(shellMeta, candles);
+    applyMainOverlays(shellData.main_overlays || {});
+    if (S.chartFitPending) {
+      applyChartViewport(candles.length);
+      S.chartFitPending = false;
+      requestAnimationFrame(() => {
+        scrollChartToLatestCandles();
+      });
     } else {
-      q.set("from", S.ohlcvLoadedFrom);
-      q.set("to", new Date().toISOString());
-      q.set("full_range", "false");
+      refreshMainPriceAutoscale();
     }
-    if (featParam) q.set("feature_columns", featParam);
-    if (mainOl) q.set("main_overlays", mainOl);
-    if (stageRg) q.set("stage_regions", stageRg);
-    if (stratFocus) q.set("strategy", stratFocus);
+
+    const markersQ = buildBundleQueryParams({ ...queryOpts, phase: "markers" });
+    const featuresQ = buildBundleQueryParams({ ...queryOpts, phase: "features" });
+    let markersData = { markers: [], trade_links: [] };
+    let featuresData = {
+      overlays: {},
+      chop_grid_overlay: { batches: [] },
+      chop_regime_regions: [],
+      strategy_stage_regions: {},
+    };
+    let markersMeta = shellMeta;
+    try {
+      const [markersResp, featuresResp] = await Promise.all([
+        Shell.api(`/api/trade-map/bundle?${markersQ}`),
+        Shell.api(`/api/trade-map/bundle?${featuresQ}`),
+      ]);
+      markersData = markersResp.data || markersData;
+      markersMeta = markersResp.meta || markersMeta;
+      featuresData = featuresResp.data || featuresData;
+      updateMarkerPollSince(markersResp.meta?.server_timestamp);
+    } catch (err) {
+      setStatus(String(err));
+    }
+
+    S.lastMarkerCounts = markersMeta.marker_counts || null;
+    requestAnimationFrame(() => {
+      S.lastChopMapData = {
+        chop_grid_overlay: featuresData.chop_grid_overlay,
+        chop_regime_regions: featuresData.chop_regime_regions,
+        strategy_stage_regions: featuresData.strategy_stage_regions,
+      };
+      applyChopMapLayers(
+        typeof chopMapDataForStrategyFocus === "function"
+          ? chopMapDataForStrategyFocus(S.lastChopMapData)
+          : S.lastChopMapData,
+        candles
+      );
+      S.lastOverlays = featuresData.overlays || {};
+      syncSubcharts(candles, S.lastOverlays);
+      if (
+        typeof refreshFeatureMetricsPanel === "function" &&
+        Core.strategyMetricsTableActive(S.featureStrategyFocus, S.selectedFeatureColumns)
+      ) {
+        refreshFeatureMetricsPanel(S.highlightBarTime ?? S.lastCandleTime ?? null, {
+          rebuild: true,
+          preserveScrollLeft: false,
+        });
+      }
+      const markers = markersData.markers || [];
+      applyMarkers(markers);
+      S.lastTradeLinks = markersData.trade_links || [];
+      applyTradeLinks(S.lastTradeLinks);
+      setStatusFromBundle(
+        symbol,
+        timeframe,
+        S.lastCandles,
+        markers,
+        markersMeta,
+        S.lastOverlays
+      );
+      if (S.ordersDockOpen) {
+        refreshOrdersList().catch((e) => setStatus(String(e)));
+      }
+      finishBundleRefresh(pageUrl);
+    });
+    return;
   }
 
+  const q = buildBundleQueryParams(queryOpts);
   const { data, meta } = await Shell.api(`/api/trade-map/bundle?${q}`);
   updateMarkerPollSince(meta?.server_timestamp);
   S.lastMarkerCounts = meta.marker_counts || null;
-  const pageUrl = new URL(window.location.href);
 
   if (mode === "poll") {
     if (data.ohlcv?.candles?.length) {
@@ -241,41 +398,6 @@ async function refreshBundle(opts = {}) {
     } else {
       syncSubcharts(S.lastCandles, S.lastOverlays || {});
     }
-  } else if (mode !== "poll") {
-    const candles = Core.sanitizeCandlesForLwc(data.ohlcv?.candles || []);
-    S.lastCandles = candles;
-    S.candleSeries.setData(candles);
-    applyMainOverlays(data.main_overlays || {});
-    S.lastChopMapData = {
-      chop_grid_overlay: data.chop_grid_overlay,
-      chop_regime_regions: data.chop_regime_regions,
-      strategy_stage_regions: data.strategy_stage_regions,
-    };
-    applyChopMapLayers(
-      typeof chopMapDataForStrategyFocus === "function"
-        ? chopMapDataForStrategyFocus(S.lastChopMapData)
-        : data,
-      candles
-    );
-    applyLoadedOhlcvRange(meta, candles);
-    if (S.chartFitPending) {
-      applyChartViewport(candles.length);
-      S.chartFitPending = false;
-      scrollChartToLatestCandles();
-    } else {
-      refreshMainPriceAutoscale();
-    }
-    S.lastOverlays = data.overlays || {};
-    syncSubcharts(candles, S.lastOverlays);
-    if (
-      typeof refreshFeatureMetricsPanel === "function" &&
-      Core.strategyMetricsTableActive(S.featureStrategyFocus, S.selectedFeatureColumns)
-    ) {
-      refreshFeatureMetricsPanel(S.highlightBarTime ?? S.lastCandleTime ?? null, {
-        rebuild: true,
-        preserveScrollLeft: false,
-      });
-    }
   }
 
   const markers = data.markers || [];
@@ -302,15 +424,7 @@ async function refreshBundle(opts = {}) {
       data.overlays || {}
     );
   }
-  tickClock();
-
-  const markerId = pageUrl.searchParams.get("marker_id");
-  if (markerId && S.markerById.has(markerId)) {
-    selectMarker(markerId, { scrollChart: true, showDetail: true });
-  } else if (S.selectedMarkerId && !S.markerById.has(S.selectedMarkerId)) {
-    S.selectedMarkerId = null;
-    highlightOrdersTableRow(null);
-  }
+  finishBundleRefresh(pageUrl);
 }
 
 function startPoll() {

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from mlbot_console.services.trade_markers import (
     collect_markers,
+    multi_leg_markers,
     spot_markers,
     trend_markers,
 )
@@ -98,3 +99,62 @@ def test_collect_markers_since_filter(trend_db, spot_db, multi_leg_db):
         since_ts=since,
     )
     assert all(m["time"] > since for m in inc)
+
+
+def _ts(iso: str) -> int:
+    from datetime import datetime, timezone
+
+    s = iso.replace("Z", "+00:00")
+    return int(datetime.fromisoformat(s).timestamp())
+
+
+def test_trend_markers_window_filter(trend_db):
+    start = _ts("2024-01-02T00:00:00+00:00")
+    end = _ts("2024-01-03T00:00:00+00:00")
+    markers = trend_markers(trend_db, "ETHUSDT", start_ts=start, end_ts=end)
+    assert markers == []
+
+
+def test_trend_markers_sql_pushdown_keeps_in_window_under_limit(trend_db):
+    import sqlite3
+
+    conn = sqlite3.connect(trend_db)
+    for i in range(5100):
+        conn.execute(
+            """
+            INSERT INTO positions VALUES (
+                ?, 'ETHUSDT', 'long',
+                '2020-01-01T00:00:00+00:00', '2020-01-01T01:00:00+00:00',
+                1.0, 1.1, 0.0, 'closed', 'tpc', NULL, NULL, 1.0
+            )
+            """,
+            (f"old_{i}",),
+        )
+    conn.commit()
+    conn.close()
+
+    start = _ts("2024-01-01T00:00:00+00:00")
+    end = _ts("2024-01-02T00:00:00+00:00")
+    markers = trend_markers(trend_db, "ETHUSDT", start_ts=start, end_ts=end)
+    ids = {m["id"] for m in markers}
+    assert "trend:positions:p1:entry" in ids
+    assert "trend:positions:p1:exit" in ids
+
+
+def test_multi_leg_execution_report_window_filter(multi_leg_db):
+    start = _ts("2024-01-01T12:00:00+00:00")
+    end = _ts("2024-01-01T12:10:00+00:00")
+    markers = multi_leg_markers(multi_leg_db, "ETHUSDT", start_ts=start, end_ts=end)
+    report_ids = {
+        m["id"]
+        for m in markers
+        if m["id"].startswith("multi_leg:multi_leg_execution_reports:")
+    }
+    assert len(report_ids) == 1
+
+
+def test_spot_markers_window_excludes_outside(spot_db):
+    start = _ts("2024-01-02T07:00:00+00:00")
+    end = _ts("2024-01-02T07:30:00+00:00")
+    markers = spot_markers(spot_db, "ETHUSDT", start_ts=start, end_ts=end)
+    assert markers == []

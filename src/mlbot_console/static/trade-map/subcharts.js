@@ -480,15 +480,13 @@ function renderStrategyMetricsTableHtml(
       const active =
         highlightTimeSec != null && Number(highlightTimeSec) === Number(b.time);
       const on = regimeOnTimes.has(Number(b.time));
-      head += `<th class="bar-col-h bar-regime-on-h${
-        on ? " bar-regime-on-hit" : ""
-      }${active ? " bar-col-active" : ""}" data-time="${b.time}">${
-        on
+      head += `<th class="bar-col-h bar-regime-on-h${on ? " bar-regime-on-hit" : ""
+        }${active ? " bar-col-active" : ""}" data-time="${b.time}">${on
           ? `<span class="bar-regime-on-mark" title="${escHtml(
-              "chop≥0.50 滞回 ON（与 live 一致；无特征=0 视为 OFF）"
-            )}">ON</span>`
+            "chop≥0.50 滞回 ON（与 live 一致；无特征=0 视为 OFF）"
+          )}">ON</span>`
           : '<span class="bar-regime-on-mark bar-regime-on-off">OFF</span>'
-      }</th>`;
+        }</th>`;
     }
     head += "</tr>";
     head += '<tr><th class="row-label-h row-regime-exit-h">regime退出</th>';
@@ -496,15 +494,13 @@ function renderStrategyMetricsTableHtml(
       const active =
         highlightTimeSec != null && Number(highlightTimeSec) === Number(b.time);
       const isExit = regimeExitTimes.has(Number(b.time));
-      head += `<th class="bar-col-h bar-regime-exit-h${
-        isExit ? " bar-regime-exit-hit" : ""
-      }${active ? " bar-col-active" : ""}" data-time="${b.time}">${
-        isExit
+      head += `<th class="bar-col-h bar-regime-exit-h${isExit ? " bar-regime-exit-hit" : ""
+        }${active ? " bar-col-active" : ""}" data-time="${b.time}">${isExit
           ? `<span class="bar-regime-exit-mark" title="${escHtml(
-              "滞回 ON→OFF 当根 bar（chop&lt;0.32），与主图 regime退出 一致"
-            )}">退出</span>`
+            "滞回 ON→OFF 当根 bar（chop&lt;0.32），与主图 regime退出 一致"
+          )}">退出</span>`
           : '<span class="bar-regime-exit-mark bar-regime-exit-empty">·</span>'
-      }</th>`;
+        }</th>`;
     }
     head += "</tr>";
   }
@@ -936,8 +932,10 @@ function syncSubcharts(candles, overlays) {
         ".subchart-strategy-header, .subchart-stage-header, .subchart-strategy-gap, .subchart-threshold-status, .subchart-pane"
       )
       .forEach((el) => el.remove());
+    // Also remove any stale metrics-table DOM from a previous strategy switch.
+    document.querySelectorAll(".subchart-feature-metrics").forEach((el) => el.remove());
     for (const id of [...S.subcharts.keys()]) {
-      if (id.startsWith("feat:")) destroySubchart(id);
+      if (id.startsWith("feat:") || id.startsWith("metrics-")) destroySubchart(id);
     }
   }
   const wantFeatures = new Set(S.selectedFeatureColumns);

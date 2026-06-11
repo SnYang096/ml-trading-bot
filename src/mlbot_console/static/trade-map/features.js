@@ -40,12 +40,12 @@ function syncFeatureStrategySelectOptions() {
   const prev = S.featureStrategyFocus || "";
   const options = strategies.length
     ? [
-        `<option value="">全部（不推荐，附图会混杂）</option>`,
-        ...strategies.map(
-          (s) =>
-            `<option value="${escHtml(s.id)}"${s.id === prev ? " selected" : ""}>${escHtml(s.title || s.id)}</option>`
-        ),
-      ]
+      `<option value="">全部（不推荐，附图会混杂）</option>`,
+      ...strategies.map(
+        (s) =>
+          `<option value="${escHtml(s.id)}"${s.id === prev ? " selected" : ""}>${escHtml(s.title || s.id)}</option>`
+      ),
+    ]
     : [`<option value="">${escHtml(strategyPickerEmptyHint(layers, strategies))}</option>`];
   const html = options.join("");
   for (const id of ["featureStrategySelect", "mapStrategySelect"]) {
@@ -74,12 +74,12 @@ function syncLayerControlsForStrategyFocus() {
   const chopEl = document.getElementById("layerChopGrid");
   const chopOn = !!chopEl?.checked;
   const chopActive =
-    multi && chopOn && (!focus || focus === "chop_grid" || focus === "trend_scalp");
+    multi && chopOn && (!focus || focus === "chop_grid");
   const chopLabel = chopEl?.closest("label");
   if (chopLabel) {
     chopLabel.classList.toggle("layer-inactive", chopOn && !chopActive);
-    if (focus && focus !== "chop_grid" && focus !== "trend_scalp") {
-      chopLabel.title = `当前策略 ${focus}：网格线不生效（仅 Chop Grid / Trend Scalp）`;
+    if (focus && focus !== "chop_grid") {
+      chopLabel.title = `当前策略 ${focus}：网格线不生效（仅 Chop Grid）`;
     } else if (!multi) {
       chopLabel.title = "需勾选 C·Multi-leg";
     } else {
@@ -163,8 +163,7 @@ function renderMapStrategyChips() {
     `<button type="button" class="map-strategy-chip${focus === "" ? " active" : ""}" data-strategy="">全部</button>`,
     ...strategies.map(
       (s) =>
-        `<button type="button" class="map-strategy-chip${
-          focus === s.id ? " active" : ""
+        `<button type="button" class="map-strategy-chip${focus === s.id ? " active" : ""
         }" data-strategy="${escHtml(s.id)}">${escHtml(s.title || s.id)}</button>`
     ),
   ];
