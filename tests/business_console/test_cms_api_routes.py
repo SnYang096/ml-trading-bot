@@ -46,6 +46,7 @@ CMS_GET_ROUTES: list[tuple[str, dict, int]] = [
     ("/api/spot/orders", {"symbol": "ETHUSDT", "limit": "50"}, 200),
     ("/api/multileg/orders", {"symbol": "ETHUSDT", "limit": "50"}, 200),
     ("/api/account/summary", {"lookback_days": "365"}, 200),
+    ("/api/account/reconciliation/all", {"symbol": "*", "lookback_days": "0"}, 200),
     ("/api/trend/regime-ops", {"limit": "5"}, 200),
     (
         "/api/bus/ohlcv",

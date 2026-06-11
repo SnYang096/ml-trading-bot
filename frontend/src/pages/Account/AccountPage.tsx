@@ -2,13 +2,38 @@ import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { useState } from 'react';
 import { apiGet } from '@/api/client.ts';
-import type { AccountSummary, SymbolRow } from '@/api/types.ts';
-import { fmtPnl, getSymbol, isAllSymbols, pnlClass, setSymbol } from '@/lib/shell.ts';
+import type {
+  AccountReconIssue,
+  AccountReconScopeBlock,
+  AccountReconciliationAll,
+  AccountSummary,
+  SymbolRow,
+} from '@/api/types.ts';
+import { fmtPnl, getSymbol, isAllSymbols, pnlClass, setSymbol, SCOPE_LABELS } from '@/lib/shell.ts';
 
 function fmtUsdt(n: unknown): string {
   const v = Number(n);
   if (!Number.isFinite(v)) return '—';
   return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+const RECON_SCOPES = ['spot', 'trend', 'multi_leg'] as const;
+
+function scopeIssues(
+  recon: AccountReconciliationAll | undefined,
+  scope: (typeof RECON_SCOPES)[number],
+): {
+  engine?: AccountReconScopeBlock;
+  pnl?: AccountReconScopeBlock;
+  issues: AccountReconIssue[];
+} {
+  const engine = recon?.engine?.[scope];
+  const pnl = recon?.pnl?.scopes?.[scope];
+  const issues: AccountReconIssue[] = [
+    ...(engine?.issues || []).map((i) => ({ ...i, layer: i.layer || 'engine' })),
+    ...(pnl?.issues || []).map((i) => ({ ...i, layer: i.layer || 'pnl' })),
+  ];
+  return { engine, pnl, issues };
 }
 
 export function AccountPage() {
@@ -33,14 +58,20 @@ export function AccountPage() {
   });
 
   const reconQuery = useQuery({
-    queryKey: ['account-recon', symbol],
-    queryFn: () => apiGet<unknown>('/api/account/reconciliation', { symbol }),
+    queryKey: ['account-recon', symbol, lookback],
+    queryFn: () =>
+      apiGet<AccountReconciliationAll>('/api/account/reconciliation/all', {
+        symbol,
+        lookback_days: lookback,
+      }),
     enabled: reconOpen,
   });
 
   const totals = summaryQuery.data?.data?.totals || {};
   const ledger = summaryQuery.data?.data?.ledger?.totals || {};
   const recent = summaryQuery.data?.data?.recent_realized || {};
+  const recon = reconQuery.data?.data;
+  const reconIssues = recon?.issues?.length ?? 0;
 
   return (
     <div className="page">
@@ -106,17 +137,79 @@ export function AccountPage() {
         </section>
       ) : null}
       <section className="panel">
-        <h3>对账</h3>
+        <div className="toolbar-row" style={{ marginBottom: 8 }}>
+          <h3 style={{ margin: 0 }}>对账</h3>
+          {!reconOpen ? (
+            <button type="button" onClick={() => setReconOpen(true)}>
+              展开对账
+            </button>
+          ) : (
+            <button type="button" onClick={() => reconQuery.refetch()}>
+              刷新对账
+            </button>
+          )}
+        </div>
         {!reconOpen ? (
-          <button type="button" onClick={() => setReconOpen(true)}>
-            展开对账
-          </button>
+          <p className="muted">点击「展开对账」加载 A·Spot / B·Trend / C·Multi-leg 与交易所比对。</p>
+        ) : reconQuery.isFetching && !recon ? (
+          <p className="muted">加载对账…</p>
+        ) : reconQuery.isError ? (
+          <p className="pnl-neg">对账加载失败：{String(reconQuery.error)}</p>
         ) : (
           <>
-            {reconQuery.isFetching ? <p className="muted">加载对账…</p> : null}
-            <pre style={{ fontSize: '0.75rem', overflow: 'auto' }}>
-              {JSON.stringify(reconQuery.data?.data ?? {}, null, 2)}
-            </pre>
+            <p>
+              {recon?.ok ? (
+                <span className="pnl-pos">✓ 交易所与本地数据一致</span>
+              ) : (
+                <span className="pnl-neg">{reconIssues} 项差异需复核</span>
+              )}
+              {recon?.pnl?.fetched_at ? (
+                <span className="muted"> · 交易所快照 {String(recon.pnl.fetched_at)}</span>
+              ) : null}
+            </p>
+            <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
+              {RECON_SCOPES.map((scope) => {
+                const { engine, pnl, issues } = scopeIssues(recon, scope);
+                const ok = (engine?.ok ?? true) && (pnl?.ok ?? true) && issues.length === 0;
+                const exErr = engine?.exchange_snapshot && !(engine.exchange_snapshot as { ok?: boolean }).ok
+                  ? String((engine.exchange_snapshot as { error?: string }).error || '交易所不可用')
+                  : null;
+                return (
+                  <div key={scope} className="panel" style={{ margin: 0, padding: 12 }}>
+                    <div className="toolbar-row" style={{ marginBottom: 6 }}>
+                      <strong>{SCOPE_LABELS[scope] || scope}</strong>
+                      <span className={ok ? 'pnl-pos' : 'pnl-neg'}>{ok ? '一致' : `${issues.length} 项`}</span>
+                    </div>
+                    {exErr ? <p className="muted">{exErr}</p> : null}
+                    {pnl?.local ? (
+                      <p className="muted" style={{ fontSize: '0.85rem', margin: '4px 0' }}>
+                        本地 已实现 {fmtPnl(pnl.local.realized_pnl)} · 浮盈 {fmtPnl(pnl.local.unrealized_pnl)} ·
+                        未平 {pnl.local.open_positions ?? 0}
+                      </p>
+                    ) : null}
+                    {engine?.local_snapshot?.note ? (
+                      <p className="muted" style={{ fontSize: '0.85rem' }}>
+                        {String(engine.local_snapshot.note)}
+                      </p>
+                    ) : null}
+                    {issues.length ? (
+                      <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: '0.85rem' }}>
+                        {issues.map((issue, idx) => (
+                          <li key={`${scope}-${issue.kind}-${idx}`}>
+                            <span className="muted">{issue.layer || 'issue'}</span> · {issue.kind || 'unknown'} —{' '}
+                            {issue.message || JSON.stringify(issue)}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : ok ? (
+                      <p className="pnl-pos" style={{ fontSize: '0.85rem', margin: '8px 0 0' }}>
+                        订单/持仓与交易所一致
+                      </p>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
           </>
         )}
       </section>

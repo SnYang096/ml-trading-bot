@@ -8,7 +8,15 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
-SYMBOLS="${MLBOT_LIVE_SYMBOLS:-BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT}"
+if [ -n "${MLBOT_LIVE_SYMBOLS:-}" ]; then
+  SYMBOLS="${MLBOT_LIVE_SYMBOLS}"
+else
+  SYMBOLS="$(python - <<'PY'
+from src.live_data_stream.universe_symbols import read_universe_symbols
+print(",".join(read_universe_symbols("highcap")))
+PY
+)"
+fi
 KLINE_ROOT="${MLBOT_MACRO_KLINE_ROOT:-live/highcap/data/macro/spot_klines}"
 SEED_ROOT="${MLBOT_WEEKLY_EMA_SEED_ROOT:-live/highcap/data/macro/spot_weekly_ema200}"
 START_DATE="${MLBOT_MACRO_SEED_START_DATE:-2017-01-01}"

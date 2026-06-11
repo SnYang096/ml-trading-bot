@@ -52,6 +52,23 @@ def test_vite_bundle_asset_reachable(client) -> None:
     assert len(r.content) > 1000
 
 
+def test_vite_lazy_trade_map_chunk_reachable(client) -> None:
+    """index.html main chunk must reference an existing TradeMapPage lazy chunk."""
+    index = DIST_ROOT / "index.html"
+    if not index.is_file():
+        pytest.skip("Run: make frontend-build")
+    main_match = re.search(r'src="(/static/assets/index-[^"]+\.js)"', index.read_text())
+    assert main_match
+    main_js = (DIST_ROOT / main_match.group(1).removeprefix("/static/")).read_text(
+        encoding="utf-8"
+    )
+    chunk_match = re.search(r"TradeMapPage-[A-Za-z0-9_-]+\.js", main_js)
+    assert chunk_match, "main bundle missing TradeMapPage lazy import"
+    r = client.get(f"/static/assets/{chunk_match.group(0)}")
+    assert r.status_code == 200
+    assert len(r.content) > 500
+
+
 def test_app_shell_nav_in_source() -> None:
     shell = _read("components/AppShell/AppShell.tsx")
     pages = _read("lib/shell.ts")
@@ -143,6 +160,14 @@ def test_account_recon_lazy_load() -> None:
     assert "reconOpen" in account
     assert "展开对账" in account
     assert "enabled: reconOpen" in account
+    assert "/api/account/reconciliation/all" in account
+    assert "SCOPE_LABELS" in account
+
+
+def test_mini_grid_markers_hide_text() -> None:
+    mini = _read("pages/TradeMapGrid/MiniTradeMapChart.tsx")
+    assert "showText: false" in mini
+    assert "prepareChartMarkers" in mini
 
 
 def test_grid_tail_poll_query() -> None:

@@ -25,12 +25,31 @@ def _parse_symbols(raw: str) -> list[str]:
     return [s.strip().upper() for s in raw.split(",") if s.strip()]
 
 
+def _resolve_symbols(args: argparse.Namespace) -> list[str]:
+    from src.live_data_stream.universe_symbols import resolve_symbols_csv
+
+    csv = resolve_symbols_csv(
+        cli_symbols=args.symbols,
+        universe=str(args.universe),
+        env_symbols=None,
+        project_root=PROJECT_ROOT,
+    )
+    return _parse_symbols(csv)
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
         "--symbols",
-        default="BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT",
-        help="Comma-separated spot symbols",
+        default=None,
+        help=(
+            "Comma-separated spot symbols. Default: live/{universe}/universe.yaml keys."
+        ),
+    )
+    p.add_argument(
+        "--universe",
+        default="highcap",
+        help="Universe name for universe.yaml lookup when --symbols is omitted.",
     )
     p.add_argument(
         "--kline-root",
@@ -63,7 +82,8 @@ def main() -> int:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
     args = parse_args()
-    symbols = _parse_symbols(args.symbols)
+    symbols = _resolve_symbols(args)
+    logger.info("macro seed symbols=%s", ",".join(symbols))
     seed_root = Path(args.seed_root)
     start = date.fromisoformat(str(args.start_date))
     written = prepare_spot_weekly_ema_seed(

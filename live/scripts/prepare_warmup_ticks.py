@@ -58,14 +58,9 @@ VISION_UM_DAILY_ZIP_ONLY_GLOB = "*-aggTrades-????-??-??.zip"
 
 def read_universe_symbols(universe: str) -> List[str]:
     """从 live/{universe}/universe.yaml 读取 symbols 列表"""
-    import yaml
+    from src.live_data_stream.universe_symbols import read_universe_symbols as _read
 
-    universe_path = PROJECT_ROOT / "live" / universe / "universe.yaml"
-    if not universe_path.exists():
-        raise FileNotFoundError(f"Universe file not found: {universe_path}")
-    with open(universe_path, "r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
-    return sorted((cfg.get("symbols") or {}).keys())
+    return _read(universe, project_root=PROJECT_ROOT)
 
 
 def _iter_symbol_dates(ticks_dir: Path, symbol: str) -> List[str]:

@@ -182,3 +182,36 @@ export interface AccountSummary {
   by_scope?: unknown[];
   reconciliation?: unknown;
 }
+
+export interface AccountReconIssue {
+  kind?: string;
+  scope?: string;
+  layer?: string;
+  message?: string;
+  [key: string]: unknown;
+}
+
+export interface AccountReconScopeBlock {
+  scope?: string;
+  ok?: boolean;
+  issues?: AccountReconIssue[];
+  local?: Record<string, number | null>;
+  exchange?: Record<string, number | null>;
+  local_snapshot?: Record<string, unknown>;
+  exchange_snapshot?: Record<string, unknown>;
+  error?: string;
+}
+
+export interface AccountReconciliationAll {
+  ok?: boolean;
+  symbol?: string;
+  lookback_days?: number;
+  issues?: AccountReconIssue[];
+  engine?: Record<string, AccountReconScopeBlock>;
+  pnl?: {
+    ok?: boolean;
+    scopes?: Record<string, AccountReconScopeBlock>;
+    totals?: Record<string, number | null>;
+    fetched_at?: string;
+  };
+}

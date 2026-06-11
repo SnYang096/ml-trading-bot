@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import re
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -57,6 +59,31 @@ _SPA_INDEX = _DIST / "index.html"
 
 if _DIST.is_dir():
     app.mount("/static", StaticFiles(directory=str(_DIST)), name="static")
+
+_logger = logging.getLogger(__name__)
+
+
+def _verify_spa_bundle() -> None:
+    """index.html and hashed JS chunks must come from the same vite build."""
+    if not _SPA_INDEX.is_file():
+        return
+    html = _SPA_INDEX.read_text(encoding="utf-8")
+    match = re.search(r'src="(/static/assets/[^"]+\.js)"', html)
+    if not match:
+        _logger.warning("SPA index.html has no JS bundle reference")
+        return
+    rel = match.group(1).removeprefix("/static/")
+    bundle = _DIST / rel
+    if not bundle.is_file():
+        _logger.error(
+            "SPA bundle missing: index.html -> %s not found under %s; "
+            "run `make frontend-build` and restart the console process",
+            match.group(1),
+            _DIST,
+        )
+
+
+_verify_spa_bundle()
 
 
 @app.get("/")

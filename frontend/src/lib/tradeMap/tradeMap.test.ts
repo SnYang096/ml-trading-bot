@@ -22,6 +22,8 @@ import { forwardFillOverlayToCandles, overlayAsOfAtCandleTimes } from '@/lib/tra
 import {
   chopGridMetricsRowCell,
   chopGridMetricsRowSpecs,
+  listStrategiesForLayers,
+  setFeatureTaxonomy,
 } from '@/lib/tradeMap/features.ts';
 import type { TradeMarker } from '@/lib/tradeMap/types.ts';
 
@@ -65,6 +67,11 @@ describe('tradeMap ohlcv', () => {
 });
 
 describe('tradeMap markers', () => {
+  it('markersToLwc hides text for mini grid', () => {
+    const lwc = markersToLwc(sampleMarkers, null, { showText: false });
+    expect(lwc.every((m) => m.text === '')).toBe(true);
+  });
+
   it('markersToLwc produces shapes', () => {
     const lwc = markersToLwc(sampleMarkers, null);
     expect(lwc).toHaveLength(2);
@@ -193,5 +200,17 @@ describe('tradeMap chop regime hysteresis', () => {
     );
     expect(ff[ff.length - 1].value).toBe(0.55);
     expect(asof[asof.length - 1].value).toBeNull();
+  });
+});
+
+describe('listStrategiesForLayers', () => {
+  it('falls back to KNOWN_STRATEGIES when taxonomy is not loaded', () => {
+    setFeatureTaxonomy(null);
+    const multiOnly = listStrategiesForLayers({
+      trend: false,
+      spot: false,
+      multiLeg: true,
+    });
+    expect(multiOnly.map((s) => s.id)).toEqual(['chop_grid', 'trend_scalp']);
   });
 });

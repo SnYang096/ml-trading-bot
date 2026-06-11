@@ -50,7 +50,13 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--symbols",
-        default=os.getenv("MLBOT_LIVE_SYMBOLS", "BTCUSDT,ETHUSDT,BNBUSDT"),
+        default=None,
+        help="Comma-separated symbols. Default: live/{universe}/universe.yaml keys.",
+    )
+    p.add_argument(
+        "--universe",
+        default="highcap",
+        help="Universe name for universe.yaml lookup when --symbols is omitted.",
     )
     p.add_argument("--lookback-hours", type=float, default=168.0)
     p.add_argument(
@@ -72,7 +78,14 @@ def main() -> int:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
     args = parse_args()
-    symbols = _parse_symbols(args.symbols)
+    from src.live_data_stream.universe_symbols import resolve_symbols_csv
+
+    symbols_csv = resolve_symbols_csv(
+        cli_symbols=args.symbols,
+        universe=str(args.universe),
+        env_symbols=os.getenv("MLBOT_LIVE_SYMBOLS", ""),
+    )
+    symbols = _parse_symbols(symbols_csv)
     if not symbols:
         logger.error("no symbols")
         return 1

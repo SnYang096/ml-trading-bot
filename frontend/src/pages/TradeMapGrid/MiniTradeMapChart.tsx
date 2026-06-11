@@ -19,6 +19,7 @@ import {
   mainChartOverlaySeriesOptions,
   markersForChartDisplay,
   markersToLwc,
+  prepareChartMarkers,
   sanitizeCandlesForLwc,
 } from '@/lib/tradeMap';
 import { CHART_THEME } from '@/lib/tradeMap/constants.ts';
@@ -133,9 +134,12 @@ export const MiniTradeMapChart = memo(function MiniTradeMapChart({
   useEffect(() => {
     const plugin = markersRef.current;
     if (!plugin) return;
-    const display = markersForChartDisplay(markers, '', null);
-    plugin.setMarkers(markersToLwc(display, null) as SeriesMarker<Time>[]);
-  }, [markers, layers.trend, layers.spot, layers.multiLeg, layers.pending]);
+    const scoped = prepareChartMarkers(markers, candles, null, layers, '');
+    const display = markersForChartDisplay(scoped, '', null);
+    plugin.setMarkers(
+      markersToLwc(display, null, { showText: false }) as SeriesMarker<Time>[],
+    );
+  }, [markers, candles, layers.trend, layers.spot, layers.multiLeg, layers.pending]);
 
   useEffect(() => {
     const chart = chartRef.current;

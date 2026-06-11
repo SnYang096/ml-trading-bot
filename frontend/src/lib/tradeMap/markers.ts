@@ -376,10 +376,17 @@ export function chopSegmentedLinePoints(
   return pts;
 }
 
+export interface MarkersToLwcOptions {
+  /** Mini grid charts use shapes only; text labels overlap at low barSpacing. */
+  showText?: boolean;
+}
+
 export function markersToLwc(
   markers: TradeMarker[] | null | undefined,
   selectedId: string | null | undefined,
+  options?: MarkersToLwcOptions,
 ): LwcSeriesMarker[] {
+  const showText = options?.showText !== false;
   return (markers || []).map((m) => {
     const role = markerRole(m);
     const pending = (m.status || 'filled').toLowerCase() === 'pending';
@@ -428,12 +435,13 @@ export function markersToLwc(
     }
     const isTp = role === 'tp';
     const highlightSelected = selected && !isTp;
+    const label = highlightSelected ? `★ ${baseText}` : baseText;
     return {
       time: m.time,
       position,
       color: highlightSelected ? '#ffff00' : markerColor(m),
       shape: markerShape(m),
-      text: highlightSelected ? `★ ${baseText}` : baseText,
+      text: showText ? label : '',
       id: m.id,
     };
   });

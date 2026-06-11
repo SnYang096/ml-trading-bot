@@ -156,6 +156,18 @@ def _parse_symbols(raw: str) -> List[str]:
     return [s.strip().upper() for s in raw.split(",") if s.strip()]
 
 
+def _resolve_symbols(args: argparse.Namespace) -> List[str]:
+    from src.live_data_stream.universe_symbols import resolve_symbols_csv
+
+    csv = resolve_symbols_csv(
+        cli_symbols=args.symbols,
+        universe=str(getattr(args, "universe", "highcap") or "highcap"),
+        env_symbols=os.getenv("MLBOT_LIVE_SYMBOLS", ""),
+        project_root=PROJECT_ROOT,
+    )
+    return _parse_symbols(csv)
+
+
 def _resolve_project_path(raw: str) -> Path:
     path = Path(raw)
     if path.is_absolute():
@@ -187,7 +199,17 @@ def _tick_to_listener_tick(tick: BinanceTick) -> SimpleNamespace:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
-        "--symbols", default="BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT"
+        "--symbols",
+        default=None,
+        help=(
+            "Comma-separated symbols. Default: keys from live/{universe}/universe.yaml, "
+            "then MLBOT_LIVE_SYMBOLS."
+        ),
+    )
+    p.add_argument(
+        "--universe",
+        default="highcap",
+        help="Universe name for universe.yaml lookup when --symbols is omitted.",
     )
     p.add_argument("--feature-bus-root", default="live/shared_feature_bus")
     p.add_argument("--live-storage-base", default="data/live_storage")
@@ -338,7 +360,7 @@ def _refresh_funding_oi_on_startup(symbols: List[str]) -> None:
 
 
 def _prepare_macro_weekly_ema_seed(args: argparse.Namespace) -> None:
-    symbols = _parse_symbols(args.symbols)
+    symbols = _resolve_symbols(args)
     seed_root = _resolve_project_path(args.weekly_ema_seed_root)
     os.environ["MLBOT_WEEKLY_EMA_SEED_ROOT"] = str(seed_root)
 
@@ -404,7 +426,7 @@ def _prepare_live_warmup(args: argparse.Namespace) -> None:
 
     live_storage_base = _resolve_project_path(args.live_storage_base)
     prepare_warmup_dataset(
-        symbols=_parse_symbols(args.symbols),
+        symbols=_resolve_symbols(args),
         months=int(args.warmup_months),
         ticks_dir=live_storage_base / "ticks",
         bars_dir=live_storage_base / "bars",
@@ -531,7 +553,8 @@ async def async_main() -> None:
         "Binance WS MAX_QUEUE_SIZE=%d (override with MLBOT_BINANCE_WS_MAX_QUEUE)",
         ws_queue,
     )
-    symbols = _parse_symbols(args.symbols)
+    symbols = _resolve_symbols(args)
+    logger.info("quant-feature-bus: symbols=%s", ",".join(symbols))
     live_storage_base = _resolve_project_path(args.live_storage_base)
     _configure_feature_bus_audit(live_storage_base)
     os.environ.setdefault("MLBOT_LIVE_STORAGE_BASE", str(live_storage_base))

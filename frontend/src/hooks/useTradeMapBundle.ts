@@ -28,8 +28,8 @@ async function fetchBundle(query: string): Promise<{ data: BundleData; meta?: Re
 }
 
 export function useTradeMapBundle() {
-  const store = useTradeMapStore();
   const pollInFlightRef = useRef(false);
+  const fullInFlightRef = useRef(false);
 
   const refreshMarkersOnly = useCallback(async () => {
     const state = useTradeMapStore.getState();
@@ -72,6 +72,8 @@ export function useTradeMapBundle() {
   }, []);
 
   const refreshFull = useCallback(async () => {
+    if (fullInFlightRef.current) return;
+    fullInFlightRef.current = true;
     const state = useTradeMapStore.getState();
     state.setLoading(true);
     setSymbol(state.symbol);
@@ -81,9 +83,9 @@ export function useTradeMapBundle() {
 
       const { data: shellData, meta: shellMeta } = await fetchBundle(buildFullShellQuery(state));
       const candles = shellData.ohlcv?.candles || [];
-      store.setLastCandles(candles);
+      state.setLastCandles(candles);
       if (shellMeta?.range_start && !state.ohlcvLoadedFrom) {
-        store.setBundlePhase({
+        state.setBundlePhase({
           ohlcvLoadedFrom: String(shellMeta.range_start),
           ohlcvLoadedTo: String(shellMeta.range_end || new Date().toISOString()),
         });
@@ -94,7 +96,8 @@ export function useTradeMapBundle() {
         fetchBundle(buildFullFeaturesQuery(useTradeMapStore.getState(), markerFrom)),
       ]);
 
-      store.setBundlePhase({
+      const latest = useTradeMapStore.getState();
+      latest.setBundlePhase({
         markers: markersResp.data.markers || [],
         lastTradeLinks: (markersResp.data.trade_links || []) as TradeLink[],
         lastOverlays: (featuresResp.data.overlays || {}) as import('@/lib/tradeMap/types.ts').FeatureOverlays,
@@ -107,24 +110,27 @@ export function useTradeMapBundle() {
         historyExhausted: false,
         loading: false,
         chartFitPending: false,
-        statusText: `${candles.length} bars · ${(markersResp.data.markers || []).length} markers · ${(markersResp.data.trade_links || []).length} links · ${state.selectedFeatureColumns.length} features`,
+        statusText: `${candles.length} bars · ${(markersResp.data.markers || []).length} markers · ${(markersResp.data.trade_links || []).length} links · ${latest.selectedFeatureColumns.length} features`,
       });
       saveLayout({
-        layers: state.layers,
-        selectedFeatureColumns: state.selectedFeatureColumns,
-        featureStrategyFocus: state.featureStrategyFocus,
-        mainEma1200: state.mainEma1200,
-        mainWeeklyEma200: state.mainWeeklyEma200,
-        paneVolume: state.paneVolume,
-        ordersDockOpen: state.ordersDockOpen,
+        layers: latest.layers,
+        selectedFeatureColumns: latest.selectedFeatureColumns,
+        featureStrategyFocus: latest.featureStrategyFocus,
+        mainEma1200: latest.mainEma1200,
+        mainWeeklyEma200: latest.mainWeeklyEma200,
+        paneVolume: latest.paneVolume,
+        ordersDockOpen: latest.ordersDockOpen,
       });
       return { shellData, shellMeta, markersResp, featuresResp, candles };
     } catch (e) {
-      store.setLoading(false);
-      store.setStatusText(String(e));
+      const errState = useTradeMapStore.getState();
+      errState.setLoading(false);
+      errState.setStatusText(String(e));
       throw e;
+    } finally {
+      fullInFlightRef.current = false;
     }
-  }, [store]);
+  }, []);
 
   const refreshMainOverlays = useCallback(async () => {
     const state = useTradeMapStore.getState();
@@ -137,22 +143,23 @@ export function useTradeMapBundle() {
   const initFromLayout = useCallback(() => {
     const layout = loadLayout();
     if (!layout) return;
+    const state = useTradeMapStore.getState();
     if (layout.layers && typeof layout.layers === 'object') {
-      store.setLayers(layout.layers as Partial<typeof store.layers>);
+      state.setLayers(layout.layers as Partial<typeof state.layers>);
     }
     if (Array.isArray(layout.selectedFeatureColumns)) {
-      store.setSelectedFeatureColumns(layout.selectedFeatureColumns as string[]);
+      state.setSelectedFeatureColumns(layout.selectedFeatureColumns as string[]);
     }
     if (typeof layout.featureStrategyFocus === 'string') {
-      store.setFeatureStrategyFocus(layout.featureStrategyFocus);
+      state.setFeatureStrategyFocus(layout.featureStrategyFocus);
     }
-    if (typeof layout.mainEma1200 === 'boolean') store.setBundlePhase({ mainEma1200: layout.mainEma1200 });
+    if (typeof layout.mainEma1200 === 'boolean') state.setBundlePhase({ mainEma1200: layout.mainEma1200 });
     if (typeof layout.mainWeeklyEma200 === 'boolean') {
-      store.setBundlePhase({ mainWeeklyEma200: layout.mainWeeklyEma200 });
+      state.setBundlePhase({ mainWeeklyEma200: layout.mainWeeklyEma200 });
     }
-    if (typeof layout.paneVolume === 'boolean') store.setPaneVolume(layout.paneVolume);
-    if (typeof layout.ordersDockOpen === 'boolean') store.setOrdersDockOpen(layout.ordersDockOpen);
-  }, [store]);
+    if (typeof layout.paneVolume === 'boolean') state.setPaneVolume(layout.paneVolume);
+    if (typeof layout.ordersDockOpen === 'boolean') state.setOrdersDockOpen(layout.ordersDockOpen);
+  }, []);
 
   return {
     refreshFull,

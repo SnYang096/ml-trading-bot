@@ -119,19 +119,22 @@ function liveStrategyRecords(): StrategyRecord[] {
     return tax.live_strategies;
   }
   const ids = tax && tax.live_strategy_ids;
-  if (!Array.isArray(ids) || !ids.length) return [];
-  const out: StrategyRecord[] = [];
-  const seen = new Set<string>();
-  for (const rawId of ids) {
-    const sid = String(rawId || '').trim().toLowerCase();
-    if (!sid || seen.has(sid)) continue;
-    const meta = knownStrategyRecord(sid);
-    if (meta) {
-      seen.add(sid);
-      out.push(meta);
+  if (Array.isArray(ids) && ids.length) {
+    const out: StrategyRecord[] = [];
+    const seen = new Set<string>();
+    for (const rawId of ids) {
+      const sid = String(rawId || '').trim().toLowerCase();
+      if (!sid || seen.has(sid)) continue;
+      const meta = knownStrategyRecord(sid);
+      if (meta) {
+        seen.add(sid);
+        out.push(meta);
+      }
     }
+    if (out.length) return out;
   }
-  return out;
+  // Orders / other pages may not load feature taxonomy; keep layer pickers usable.
+  return KNOWN_STRATEGIES.slice();
 }
 
 export function listStrategiesForLayers(

@@ -20,7 +20,8 @@
 #     即 systemctl is-active quant-warmup-prepare == active（Type=oneshot RemainAfterExit）；全新宿主勿勾选，否则 Requires 链会卡住。
 #   quant-macro-seed-prepare — oneshot：Vision spot 1d → weekly EMA200 seed（不阻塞 bus）
 #   quant-macro-seed-prepare.timer — 每日刷新最近日 K + 重算 seed（trend/spot/多腿共用 bus 列时读同一份 parquet）
-#   quant-feature-bus — 唯一行情 WS + warmup(≈180d)+GapFiller 补数 + 特征 + FeatureBus；`--skip-macro-warmup` 只读已有 seed
+#   quant-feature-bus — 唯一行情 WS + warmup(≈180d)+GapFiller 补数 + 特征 + FeatureBus；`--skip-macro-warmup` 只读已有 seed。
+#     symbols 与 trend/multileg 同源：`live/highcap/universe.yaml` keys（warmup / macro / bus 均不传 --symbols）。
 #   quant-trend-swing — 方向性趋势 / swing 账户，只读 bus。
 #   quant-hedge-multileg — Hedge 多腿账户；`MLBOT_MULTI_LEG_SKIP_HEDGE_ON_START=1` 可临时跳过。
 #   quant-spot-accum — 现货吸筹 A 层（spot_accum_simple）；需 BINANCE_SPOT_* Secrets，只读 feature-bus。
@@ -322,20 +323,17 @@ jobs:
             [Service]
             Type=oneshot
             RemainAfterExit=yes
-            Environment=MLBOT_LIVE_SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
             # Docker：--memory-swap 为「内存+swap」合计上限（MiB），且须 > --memory 才允许用 swap。
             # 实际能换出的量还受主机 swap/swapfile 大小限制；warmup 默认按日 Vision ZIP，峰值通常低于单月整包。
             ExecStartPre=-/usr/bin/docker rm -f quant-warmup-prepare
             ExecStart=/usr/bin/docker run --rm --name quant-warmup-prepare \
               --memory=3072m --memory-swap=32768m \
-              -e MLBOT_LIVE_SYMBOLS \
               -v /opt/quant-engine/live/highcap/data:/app/live/highcap/data \
               -v /opt/quant-engine/data:/app/data \
               quant-engine:latest \
               python live/scripts/prepare_warmup_ticks.py \
                 --universe highcap \
                 --months 6 \
-                --symbols ${MLBOT_LIVE_SYMBOLS} \
                 --data-dir data/warmup_raw/highcap \
                 --incremental
 
@@ -353,15 +351,13 @@ jobs:
 
             [Service]
             Type=oneshot
-            Environment=MLBOT_LIVE_SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
             ExecStartPre=-/usr/bin/docker rm -f quant-macro-seed-prepare
             ExecStart=/usr/bin/docker run --rm --name quant-macro-seed-prepare \
               --memory=1024m --memory-swap=4096m \
-              -e MLBOT_LIVE_SYMBOLS \
               -v /opt/quant-engine/live/highcap/data:/app/live/highcap/data \
               quant-engine:latest \
               python scripts/prepare_spot_weekly_ema_seed.py \
-                --symbols ${MLBOT_LIVE_SYMBOLS} \
+                --universe highcap \
                 --kline-root live/highcap/data/macro/spot_klines \
                 --seed-root live/highcap/data/macro/spot_weekly_ema200
 
@@ -395,12 +391,10 @@ jobs:
             [Service]
             Restart=always
             RestartSec=10
-            Environment=MLBOT_LIVE_SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT
             ExecStartPre=-/usr/bin/docker rm -f quant-feature-bus
             ExecStart=/usr/bin/docker run --rm --name quant-feature-bus \
               --memory=1536m --memory-swap=1536m \
               -p 9192:9090 \
-              -e MLBOT_LIVE_SYMBOLS \
               -e MLBOT_WEEKLY_EMA_SEED_ROOT=/app/live/highcap/data/macro/spot_weekly_ema200 \
               -e MLBOT_SKIP_MACRO_WARMUP=1 \
               -e MLBOT_LIVE_STORAGE_BASE=/app/live/highcap/data \
@@ -414,7 +408,7 @@ jobs:
               -v /opt/quant-engine/data:/app/data \
               quant-engine:latest \
               python scripts/run_market_feature_publisher.py \
-                --symbols ${MLBOT_LIVE_SYMBOLS} \
+                --universe highcap \
                 --feature-bus-root live/shared_feature_bus \
                 --live-storage-base live/highcap/data \
                 --strategies-root live/highcap/config/strategies \
