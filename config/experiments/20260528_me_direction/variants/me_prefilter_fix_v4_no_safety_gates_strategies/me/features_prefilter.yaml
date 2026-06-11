@@ -1,0 +1,21 @@
+name: me_short_prefilter
+description: 'ME-Short Prefilter 特征: 向下 ME 的背景条件特征。
+
+  与 ME 主 features 相同特征集，但 prefilter 规则会从做空角度自动发现。
+
+  '
+feature_pipeline:
+  requested_features:
+    - market_cap_normalized_orderflow_f
+    # 下列 ME 模块产出列被 archetypes/prefilter.yaml 直接引用（勿删以免 prefilter 缺列全拒单）
+    - me_soft_phase_f
+    - me_accel_5k_split_f
+    - me_context_f
+    - me_failure_f
+    - dual_ignition_f
+    # Box-structure prefilter upgrade: compression score as a "compression → expansion" prior
+    - box_structure_f
+    # oi_scene_semantic_scores_f：已在主 config/strategies/me/features.yaml 的 requested_features 中启用。
+    # 历史原因：元算法曾易选 oi_compression/ignition 进 prefilter，与 2024-11 急涨段统计冲突
+    # （见 scripts/diagnose_me_rolling_month_funnel.py）。若 prefilter 漏斗漂移，可把该模块加回
+    # features.yaml 的 forbidden_requested_features。

@@ -1,0 +1,40 @@
+# E4 bear — E2_or entry（vol>=0.45 OR delta>=0.15）
+
+filters:
+- id: tpc_long_absorption_follow_trend
+  enabled: false
+  description: prod entry（实验替换）
+  conditions:
+  - feature: tpc_cvd_absorption
+    operator: '>='
+    value: 0.629
+  - feature: tpc_recovery_strength
+    operator: '>='
+    value: 0.039
+- id: tpc_short_absorption_follow_trend
+  enabled: false
+  description: prod entry（实验替换）
+  conditions:
+  - feature: tpc_cvd_absorption
+    operator: '>='
+    value: 0.629
+  - feature: tpc_recovery_strength
+    operator: '>='
+    value: 0.039
+- id: tpc_deep_pullback_vol_confirm
+  enabled: true
+  description: 缩量回踩确认（量能维度）
+  conditions:
+  - feature: tpc_vol_pullback_confirm
+    operator: '>='
+    value: 0.45
+  tier: EXPERIMENT
+- id: tpc_deep_pullback_delta_absorb
+  enabled: true
+  description: 回踩段 delta 吸收（订单流维度）
+  conditions:
+  - feature: bpc_pullback_delta_absorption
+    operator: '>='
+    value: 0.15
+  tier: EXPERIMENT
+combination_mode: or

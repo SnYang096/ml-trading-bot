@@ -1,0 +1,63 @@
+# BPC Regime — 慢变量数据空间约束 + 多空掩码
+#
+# 与 Prefilter / Direction / Gate 的分工：
+#   - regime.yaml  ：数据空间（EMA 带 / chop 上限 / box 状态）+ allowed_sides 多空掩码
+#                    A/B/C 系统共用慢变量层；Tier-0 季度校准（plateau stability contract）
+#   - prefilter.yaml：BPC archetype 入场形态（breakout/pullback/recovery 结构）
+#   - direction.yaml：信号方向 + EMA1200 位置带 signal_match（inner_abs 在此微调）
+#   - gate.yaml    ：执行风险硬 veto（vpin/vol_persistence/vol_leverage_asymmetry）
+#
+# 规则评估顺序（runtime）：Regime → Prefilter → Direction → Gate → Entry → Evidence → Execution
+#
+# tunable: Tier-0 季度 plateau 校准；non-Tier-0 不动。
+# allowed_sides 当前 [long, short]，未来若拆单向策略改这里即可。
+
+allowed_regimes:
+  - bull
+  - bear
+  - neutral
+
+allowed_sides:
+  - long
+  - short
+
+rules:
+  # ── 1. Chop 上限 (从 gate.yaml 迁移过来；与 TPC/ME/SRB 共用同一阈值) ──
+  # 历史：tpc_semantic_chop > 0.4 → 横盘里追势必亏；Tier-0 季度可上下扫 0.30/0.35/0.40/0.45
+  - feature: tpc_semantic_chop
+    operator: "<="
+    value: 0.40
+    locked: true
+    lock_reason: Regime 慢变量 — 高 chop 不交易（与 TPC/ME/SRB 同源 chop 口径）
+
+  # ── 2. Box 状态 (替代原 prefilter 中已删除的 box 规则) ──
+  # 不在 box 中部反复扫单；只允许 box 边缘 (≤0.15 或 ≥0.85) 或已 breakout 的 bar
+  # 历史 (20260425)：TPC inside_box_no_breakout n=154, R=-425
+  - any_of:
+      - feature: box_pos_120
+        operator: "<="
+        value: 0.15
+      - feature: box_pos_120
+        operator: ">="
+        value: 0.85
+      - feature: box_breakout_up
+        operator: ">="
+        value: 0.5
+      - feature: box_breakout_down
+        operator: ">="
+        value: 0.5
+    rationale: 非箱体中部约束 — box mid 反复扫单亏损（20260425 TPC inside_box_no_breakout n=154 R=-425）
+    locked: true
+    lock_reason: Regime 慢变量 — 只在 box 边缘或已突破时入场
+
+# ── 3. EMA1200 dead zone ──
+# inner_abs=0.03 当前在 direction.yaml signal_match_position_band 内部强制，未在此重复声明。
+# Tier-0 校准 EMA dead zone 时一并改 direction.yaml position_band.inner_abs。
+
+last_calibration:
+  timestamp: null
+  data_source: null
+  plateau_overlap: null
+  notes: |
+    初始引入：从历史 gate.yaml/prefilter.yaml 迁移现存阈值；
+    首轮 Tier-0 calibrate 之前保持现值。

@@ -1,0 +1,15 @@
+description: "BPC 方向 — 语义信号与 EMA1200 相对位置同号（signal_match_position_band）"
+
+direction_rules:
+  - id: bpc_breakout_macd_ema1200_align
+    method: signal_match_position_band
+    description: "Donchian 突破优先，MACD 兜底；须落在 EMA1200 多/空带通内"
+    signal_rules:
+      - feature: bpc_breakout_direction
+        transform: raw
+      - feature: macd_atr
+        transform: sign
+    position_band:
+      feature: ema_1200_position
+      inner_abs: 0
+      outer_abs: 1

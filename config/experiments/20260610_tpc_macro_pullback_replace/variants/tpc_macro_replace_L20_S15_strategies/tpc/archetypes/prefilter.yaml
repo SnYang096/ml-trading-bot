@@ -1,0 +1,9 @@
+rules:
+  - any_of:
+      - feature: tpc_macro_pullback_pct_long
+        operator: '>='
+        value: 0.20
+      - feature: tpc_macro_pullback_pct_short
+        operator: '>='
+        value: 0.15
+    rationale: macro_pullback_pct N=240 替代 depth：更严阈值 long≥20% / short≥15%

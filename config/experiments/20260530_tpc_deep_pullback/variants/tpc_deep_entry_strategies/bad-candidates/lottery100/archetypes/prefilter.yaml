@@ -1,0 +1,47 @@
+# Lottery100 Prefilter — 「100x 可存活」的宏观/结构窗口
+#
+# 目标：回答「此刻结构是否支持在很小止损下吃到大尾部行情」。
+# 只保留动量 + 结构类特征（慢变量），订单流确认留给 entry_filters，硬拒绝留给 gate。
+#
+# 来源：reports/lottery100_bundle/v4/ 容量研究（feature_lift + tree_rules + subset_lift）。
+# 选取原则：
+#   1) 站上 EMA1200 才谈「百倍顺势」，但必须未过度拉伸（拉伸后尾部收益显著衰减）。
+#   2) 相对 VWAP1200 落在「深折价到微溢价」窗口，既有均值回复空间，又没有追顶风险。
+#   3) 中长期 CVD（cvd_roll288）非极端负 → 确认更大周期的买盘基础。
+
+rules:
+  - feature: ema_1200_position
+    operator: ">="
+    value: 0.0
+    locked: true
+    lock_reason: 100x 顺势前提：价必须站上 EMA1200
+
+  - feature: ema_1200_position
+    operator: "<="
+    value: 0.10
+    locked: true
+    lock_reason: 过度拉伸区（>0.10）在容量研究中尾部显著衰减，不适合做 100x 顺势
+
+  - feature: macro_tp_vwap_1200_position
+    operator: ">="
+    value: -0.14
+    locked: true
+    lock_reason: 深折价区（<-0.14）结构紊乱，100x 风险过高
+
+  - feature: macro_tp_vwap_1200_position
+    operator: "<="
+    value: 0.09
+    locked: true
+    lock_reason: 溢价 >0.09 属于末端追涨，100x 容量下爆仓风险抬升
+
+  - feature: cvd_roll288
+    operator: ">="
+    value: -200000.0
+    locked: false
+    rationale: 排除更大周期的净卖压崩溃段；阈值按样本量级校准
+
+last_evaluation:
+  timestamp: "2026-04-19"
+  notes: >-
+    来源 reports/lottery100_bundle/v4/：feature_lift_H120_test_bull_only.csv 高 lift 分位
+    + tree_rules_H120_bull_only.md 分裂边界，交由 prefilter 表达「可上 100x 的慢变量窗口」。

@@ -1,0 +1,90 @@
+# FBF (Failed Breakout Failure) 策略特征配置
+
+name: fbf
+description: |
+  Failed Breakout Failure archetype: 关键边界突破失败后的反向清算。
+  初版复用 FER 特征池，先验证 FBF 语义闭环。
+
+feature_pipeline:
+  exclude_columns:
+    - atr
+  requested_features:
+    - atr_f
+    - fer_failure_signals_f
+    - sr_strength_max_f
+    - sqs_hal_low_f
+    - sqs_hal_low_pct_f
+    - bars_since_extreme_f
+    - vwap_position_f
+    - volume_profile_volatility_features_f
+    - cvd_divergence_v2_f
+    - price_momentum_divergence_f
+    - terminal_risk_score_f
+    - volume_participation_score_f
+    - roc_5_f
+    - roc_10_f
+    - roc_20_f
+    - trend_r2_20_f
+    - path_efficiency_pct_f
+    - path_length_pct_f
+    - price_dir_consistency_pct_f
+    - macd_atr_f
+    - rsi_f
+    - atr_percentile_f
+    - bb_width_normalized_pct_f
+    - vpin_features_f
+    - volume_ratio_pct_f
+    - ofci_pct_f
+    - shd_pct_f
+    - cvd_change_features_f
+    - trade_cluster_entropy_zscore_features_f
+    - trade_cluster_imbalance_zscore_features_f
+    - trade_cluster_net_runs_zscore_features_f
+    - trade_cluster_max_buy_run_zscore_features_f
+    - trade_cluster_max_sell_run_zscore_features_f
+    - funding_rate_features_f
+    - funding_scene_semantic_scores_f
+    - oi_features_f
+    - oi_scene_semantic_scores_f
+    - volatility_regime_f
+    - wick_scene_semantic_scores_f
+    - wpt_scene_semantic_scores_f
+    - volume_profile_scene_semantic_scores_f
+    - liquidity_void_scene_semantic_scores_f
+    - sma_200_f
+    - jump_risk_pct_f
+    - liquidity_void_f
+    - footprint_basic_f
+    - fp_imbalance_scene_semantic_scores_f
+    - vpin_scene_semantic_scores_f
+    - dual_exhaustion_f
+    - funding_oi_crowding_f
+    - liquidity_void_x_wpt_risk_rank_f
+    - vpin_zscore_x_trade_cluster_max_buy_run_rank_f
+    - vpin_x_trade_cluster_entropy_rank_f
+    - hurst_price_f
+    - spectrum_features_f
+    - hilbert_phase_f
+    - wpt_price_fluctuation_f
+    - evt_features_f
+    - wpt_price_reconstructed_f
+    - wpt_volume_energy_f
+    - wpt_cvd_fluctuation_f
+    - hurst_cvd_f
+    - bpc_soft_phase_f
+    - bpc_pullback_depth_pct_f
+    - bpc_pullback_duration_f
+    - bpc_pullback_speed_f
+    - bpc_impulse_return_atr_f
+    - bpc_dir_consistency_multi_f
+    - bpc_dir_flip_count_f
+    - bpc_volume_compression_pct_f
+    - bpc_pullback_delta_absorption_f
+    - me_soft_phase_f
+    - me_failure_f
+    - me_context_f
+    - session_features_f
+    - market_cap_normalized_orderflow_f
+  ensure_signal_column:
+    name: signal
+    default_value: 0

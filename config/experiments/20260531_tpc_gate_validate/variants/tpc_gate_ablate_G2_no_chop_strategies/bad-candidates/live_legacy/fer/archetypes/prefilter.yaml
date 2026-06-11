@@ -1,0 +1,29 @@
+# FER Archetype Prefilter — live/highcap 实验版 (2026-04)
+#
+# 目标:
+#   - 弱化「几何阻力/支撑」硬门槛；失败/力竭反转可发生在任意价位
+#   - 用 fer_impulse_failure_score 做强度过滤（连续 [0,1]，近似「事件足够强」）
+#   - 保留原 meta 的 VP POC / OI exhaustion 作为辅助（与旧版数据契约部分兼容）
+#
+# 注意:
+#   - 无滚动分位列时，用固定阈值近似上分位；若笔数过少，把 0.20 降到 0.15~0.18
+#   - fer_sr_failed_breakout_score_pct 为已有 rolling rank pct，可选叠加作「更尾」过滤（当前未强制 AND）
+
+rules:
+  - feature: fer_impulse_failure_score
+    operator: ">="
+    value: 0.20
+    rationale: "仅保留 impulse-failure 强度足够的 bar（实验起点；可据 features_labeled 分位再标定）"
+  - feature: vp_poc_deviation
+    operator: ">"
+    value: 0.6718
+    rationale: "沿用历史 meta 正信号：价相对 POC 偏离（参与分布结构）"
+  - feature: oi_exhaustion_score
+    operator: "<"
+    value: 0.002
+    rationale: "沿用历史 meta：OI 力竭侧约束"
+
+last_evaluation:
+  timestamp: "2026-04-10"
+  data_source: "live/highcap experiment — geometry relaxed, impulse tail prefilter"
+  note: "已移除 dist_to_nearest_sr 硬几何项；与 gate 中对应 mirror 同步删除"

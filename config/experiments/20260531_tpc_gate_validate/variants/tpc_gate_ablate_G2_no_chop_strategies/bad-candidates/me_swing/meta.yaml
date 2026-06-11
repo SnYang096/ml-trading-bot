@@ -1,0 +1,13 @@
+strategy:
+  name: me-swing-120T
+  description: |
+    MomentumExpansion swing-alpha variant.
+    Preserve ME signal semantics and compress holding/risk for swing extraction.
+  owner: quant_team
+  archetype: MomentumExpansion
+  timeframe: "120T"
+  symbol_include: []
+  symbol_exclude: []
+  macro_tp_vwap_anchor:
+    enabled: false
+    symbol: BTCUSDT

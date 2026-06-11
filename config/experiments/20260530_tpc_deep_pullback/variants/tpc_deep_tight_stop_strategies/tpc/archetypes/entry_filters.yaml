@@ -1,0 +1,38 @@
+# E5 — E4 bull + tight stop；entry 同 E2_or
+
+filters:
+- id: tpc_long_absorption_follow_trend
+  enabled: false
+  conditions:
+  - feature: tpc_cvd_absorption
+    operator: '>='
+    value: 0.629
+  - feature: tpc_recovery_strength
+    operator: '>='
+    value: 0.039
+- id: tpc_short_absorption_follow_trend
+  enabled: false
+  conditions:
+  - feature: tpc_cvd_absorption
+    operator: '>='
+    value: 0.629
+  - feature: tpc_recovery_strength
+    operator: '>='
+    value: 0.039
+- id: tpc_deep_pullback_vol_confirm
+  enabled: true
+  description: 缩量回踩确认
+  conditions:
+  - feature: tpc_vol_pullback_confirm
+    operator: '>='
+    value: 0.45
+  tier: EXPERIMENT
+- id: tpc_deep_pullback_delta_absorb
+  enabled: true
+  description: delta 吸收
+  conditions:
+  - feature: bpc_pullback_delta_absorption
+    operator: '>='
+    value: 0.15
+  tier: EXPERIMENT
+combination_mode: or

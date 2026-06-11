@@ -1,0 +1,13 @@
+strategy:
+  name: tpc-swing-120T
+  description: |
+    TrendPullbackContinuation swing-alpha variant.
+    Preserve TPC direction/prefilter/gate while tightening execution.
+  owner: quant_team
+  archetype: TrendPullbackContinuationLong
+  timeframe: "120T"
+  symbol_include: []
+  symbol_exclude: []
+  macro_tp_vwap_anchor:
+    enabled: false
+    symbol: BTCUSDT

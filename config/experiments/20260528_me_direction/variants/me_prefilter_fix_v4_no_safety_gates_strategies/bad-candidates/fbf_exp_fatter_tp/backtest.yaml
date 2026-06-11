@@ -1,0 +1,17 @@
+# FBF 回测配置
+
+backtest:
+  initial_capital: 10000
+  position_size: 0.02
+  max_positions: 3
+  entry:
+    min_impulse_strength: 2.0
+    min_failure_confidence: 0.7
+    max_entry_delay: 3
+  risk:
+    max_loss_per_trade: 0.02
+    stop_loss_atr_multiple: 2.0
+    take_profit_atr_multiple: 4.0
+  time_filter:
+    min_bars_between_trades: 5
+    max_hold_time: 20

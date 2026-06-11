@@ -1,0 +1,21 @@
+# Lottery100 Entry filters — 订单流方向确认（做多）
+#
+# 设计：gate 负责「硬拒绝 / 存活」，prefilter 负责「宏观窗口」，本层只做「方向确认」。
+# 只保留订单流 / 成交结构相关的正向确认，阈值取自 feature_lift_H120_test_bull_only.csv
+# 中 lift >= ~2 的分位，并与运行时可稳定计算的特征对齐。
+
+filters:
+  - id: lottery100_long_orderflow_confirm
+    enabled: true
+    locked: true
+    promote_never_disable: true
+    description: "做多订单流确认：主动买单占优 + 近端 CVD 翻正"
+    conditions:
+      - feature: taker_buy_ratio
+        operator: ">="
+        value: 0.455
+      - feature: cvd_roll20
+        operator: ">="
+        value: 3800.0
+
+combination_mode: or

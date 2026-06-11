@@ -1,0 +1,45 @@
+name: bpc_prefilter
+description: 'BPC Prefilter 特征: Breakout-Pullback-Continuation 结构的因果前提特征。
+
+  SHAP∩Gain 在这些特征上训练 LightGBM, 发现 archetype 边界。
+
+  '
+feature_pipeline:
+  # meta-prefilter 候选列黑名单（支持 * 通配符）
+  # 保留特征做 tree 模型输入和下游软重权，但不允许它们被 meta-algorithm 写成 prefilter 硬规则。
+  # 语义原则：prefilter 只接受「先行信号」——即在行情发生前就有分辨力的原子特征。
+  #   - *_score_*           : 组合分（多个弱信号加权），KS 虚高，regime-shift 时崩
+  #   - *_semantic_extension: 事后末端条件（需要行情已经走出拉伸）
+  # 历史教训：bpc_semantic_ema_discount 被 meta 选为 prefilter ≥0.8058，
+  #   启动月（价在EMA上方、尚未回踩）该特征恒为 0 → BPC 2024-01/2025-11 等月 0 笔。
+  forbidden_prefilter_meta_columns:
+    - "bpc_score_*"
+    - "bpc_semantic_extension"
+    # 原双向合并列（signed / abs 语义）保留黑名单，改用拆分后的 _long / _short 两个单侧列。
+    # 2026-04-22 坑：2025-12 holdout 上 meta 曾选 bpc_impulse_return_atr <= -0.669
+    #   （pass = "只让 impulse 大幅负值 bar 过"），对多头 continuation 语义不自洽。
+    #   拆分方案：bpc_features.py 已输出 _long = max(0, signed) / _short = max(0, -signed)，
+    #   两侧都是 higher_is_better，prefilter 可单调使用。
+    - "bpc_impulse_return_atr"               # 用 _long / _short 替代
+    - "bpc_pullback_delta_absorption"        # 用 _long / _short 替代（同一问题）
+    # 防御性跨策略 score 黑名单（要求 prefilter 只接受本策略 prefix 的特征）
+    - "tpc_score_*"
+    - "me_score_*"
+    - "srb_score_*"
+    - "fbf_score_*"
+  requested_features:
+    - market_cap_normalized_orderflow_f
+    - bpc_soft_phase_f
+    - bpc_pullback_depth_pct_f
+    - bpc_pullback_duration_f
+    - bpc_pullback_speed_f
+    - bpc_dir_consistency_multi_f
+    - bpc_dir_flip_count_f
+    - bpc_impulse_return_atr_f        # 输出含 _long / _short 拆分列（可进 prefilter）
+    - bpc_volume_compression_pct_f
+    - bpc_pullback_delta_absorption_f # 输出含 _long / _short 拆分列（可进 prefilter）
+    - bpc_phase_transition_f
+    - bpc_compression_state_f
+    - dual_compression_f
+    # Box-structure prefilter upgrade: only take pullbacks in small/mid boxes
+    - box_structure_f

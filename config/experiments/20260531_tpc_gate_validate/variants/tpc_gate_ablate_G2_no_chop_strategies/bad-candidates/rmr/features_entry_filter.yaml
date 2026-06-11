@@ -1,0 +1,17 @@
+name: rmr_entry_filter
+description: |
+  RMR Entry Filter 候选池：位置极端 × 动能衰竭 × 极值已离开若干根 × 订单流吸收反转。
+  与 FBF 相反：不请求 fer_failure_signals 中的失败突破 score，只用结构位置子集。
+
+feature_pipeline:
+  exclude_columns:
+    - atr
+  requested_features:
+    - atr_f
+    - fer_failure_signals_f      # 仅用 fer_range_pos_20
+    - bars_since_extreme_f
+    - macd_atr_f
+    - rsi_f
+    - vwap_position_f
+    - cvd_divergence_v2_f        # 提供 cvd_divergence_score_pct（订单流吸收信号）
+    - dual_exhaustion_f          # v2 新增：fer × vpin 双源力竭共振

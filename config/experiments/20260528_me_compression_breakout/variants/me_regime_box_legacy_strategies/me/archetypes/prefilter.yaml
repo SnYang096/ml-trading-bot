@@ -1,0 +1,53 @@
+# CompressionBreakout（原 ME-Short）Prefilter — 突破前压缩语义锚
+#
+# 职责: archetype 成立的前置条件 — 不满足的样本不参与 Gate 训练
+# 与 regime 分工：regime = chop（+ 候选 EMA1200）；prefilter = 压缩释放 + 波动带 + OI
+#
+# 数据源: features_labeled.parquet（2026-03-13 元算法，112361 行）
+
+rules:
+  - feature: atr_percentile
+    operator: ">="
+    value: 0.65
+    locked: true
+    lock_reason: "压缩突破：中高波扩张区，避免低波噪声"
+
+  - feature: atr_percentile
+    operator: "<="
+    value: 0.92
+    locked: true
+    lock_reason: "压缩突破：避免极端尾段过热后追空"
+
+  - feature: recent_compression_decay
+    operator: ">="
+    value: 0.02
+    locked: true
+    lock_reason: "压缩突破：要求近期确实经历压缩释放"
+
+  - feature: recent_compression_decay
+    operator: "<="
+    value: 0.20
+    locked: true
+    lock_reason: "压缩突破：限制在释放早段，避免中后段衰竭"
+
+  - feature: compression_duration
+    operator: ">="
+    value: 0.05
+    locked: true
+    lock_reason: "压缩突破：要求更充分压缩蓄势再扩张"
+
+  - feature: oi_compression_score
+    operator: ">="
+    value: 0.45
+    locked: true
+    lock_reason: "压缩突破：OI 压缩/拥挤门槛，降低无效触发"
+
+last_evaluation:
+  timestamp: "2026-03-13"
+  data_source: "features_labeled.parquet"
+  n_rows: 112361
+  baseline_bad_rate: 0.0000
+  baseline_median_rr: +0.0276
+  positive_signals: []
+  anti_signals: []
+  absence_signals: []

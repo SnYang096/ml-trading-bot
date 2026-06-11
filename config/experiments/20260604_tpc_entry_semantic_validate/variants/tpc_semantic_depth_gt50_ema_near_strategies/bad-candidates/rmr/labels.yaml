@@ -1,0 +1,46 @@
+# RMR 策略标签配置
+#
+# 初版复用 failure_first_label.compute_bpc_failure_label（和 SRB/TPC/BPC 同一个函数），
+# 对 RMR 的物理意义：
+#   success_label = 1 = 好机会 = 区间回归动作在 horizon 内没「失败」（MAE 没超过 1.2×stop 且 MFE 达到 0.3×target）
+#   success_label = 0 = 失败样本（被洗出或无反应）
+#
+# 与 FBF（horizon=50, stop/target=1.0/2.0）的差别：
+#   - horizon=30：RMR 目标距离是中轴，30 根 2h（60h）够一次典型区间回归；再长就是环境已变。
+#   - expected_stop_atr / expected_target_atr 对齐 archetype/execution 的 0.8 / 1.5。
+#
+# 后续：跑出 baseline 后可专门实现 compute_rmr_label，用「朝中轴方向的归一化 forward_rr」。
+
+name: rmr_failure_first
+target_column: success_label
+
+label_generator:
+  module: src.time_series_model.strategies.labels.failure_first_label
+  function: compute_bpc_failure_label
+  params:
+    direction: long
+    horizon: 30
+    expected_stop_atr: 0.8
+    expected_target_atr: 1.5
+    invert: true  # 1=好机会, 0=失败
+
+label_meta:
+  label_type: binary
+  semantic: |
+    success_label = 1 - failure_label
+    1 = 好机会（区间回归动作低失败概率）
+    0 = 失败（被洗出 / 没朝中轴走）
+  failure_definition: |
+    failure = (forward_rr < -0.8) OR (mae > 1.2*stop AND mfe < 0.3*target)
+  horizon: 30 bars
+  expected_stop: 0.8 ATR
+  expected_target: 1.5 ATR
+  audit_mode: true
+  description: |
+    Failure-first 二值标签（反转后），horizon / stop / target 与 RMR execution 对齐。
+
+filters:
+  - column: success_label
+    notna: true
+
+post_label_filters: []

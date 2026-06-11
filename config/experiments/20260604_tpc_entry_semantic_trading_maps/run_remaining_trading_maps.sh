@@ -39,8 +39,8 @@ run_one() {
 exec >>"${LOG_DIR}/remaining.log" 2>&1
 echo "remaining runs start $(date -Iseconds)"
 
-run_one "E2a_or_anti_chase" "config_experiments/tpc_entry_e2a_or_anti_chase_strategies"
-run_one "E1e2_band_or_anti" "config_experiments/tpc_entry_e1e2_band_or_anti_strategies"
-run_one "S50_depth_gt50" "config_experiments/tpc_semantic_depth_gt50_strategies"
+run_one "E2a_or_anti_chase" "config/experiments/20260604_tpc_entry_semantic_trading_maps/variants/tpc_entry_e2a_or_anti_chase_strategies"
+run_one "E1e2_band_or_anti" "config/experiments/20260604_tpc_entry_semantic_trading_maps/variants/tpc_entry_e1e2_band_or_anti_strategies"
+run_one "S50_depth_gt50" "config/experiments/20260604_tpc_entry_semantic_trading_maps/variants/tpc_semantic_depth_gt50_strategies"
 
 echo "remaining runs done $(date -Iseconds)"

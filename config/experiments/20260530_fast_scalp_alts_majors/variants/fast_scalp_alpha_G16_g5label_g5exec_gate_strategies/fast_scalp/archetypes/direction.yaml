@@ -1,0 +1,13 @@
+description: g5-label artifact holdout τ @ q=0.10 (execution_aligned/tau_scan_g5;
+  not H=3 deploy τ)
+source:
+  model: model.yaml
+  score_column: score
+thresholds:
+  long_entry: -0.21338247736253388
+  long_exit: -0.27
+  short_entry: -0.3090097524537344
+  short_exit: -0.25
+  dead_zone: true
+  entry_mode: cross
+per_symbol_thresholds: {}

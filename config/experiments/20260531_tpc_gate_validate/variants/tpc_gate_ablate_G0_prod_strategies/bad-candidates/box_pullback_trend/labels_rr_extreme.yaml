@@ -1,0 +1,27 @@
+# BPT gate label: reuse the generic no-extreme-loss target during research.
+name: box_pullback_trend_rr_extreme
+target_column: success_no_rr_extreme
+
+label_generator:
+  module: src.time_series_model.strategies.labels.failure_first_label
+  function: compute_bpc_failure_rr_extreme_label
+  params:
+    direction: short
+    horizon: 50
+    invert: true
+    direction_aware: false
+
+label_meta:
+  label_type: binary
+  failure_subtype: rr_extreme
+  semantic: |
+    Research label for BPT gate optimization. Direction comes from
+    bpt_macro_box_direction; this label is only used to identify rows with
+    extreme adverse forward paths.
+  horizon: 50 bars
+
+filters:
+  - column: success_no_rr_extreme
+    notna: true
+
+post_label_filters: []

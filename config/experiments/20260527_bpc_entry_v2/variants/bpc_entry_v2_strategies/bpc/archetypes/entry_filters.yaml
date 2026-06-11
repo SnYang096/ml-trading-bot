@@ -1,0 +1,33 @@
+# BPC Entry Filter — 实验 E 式（v2）
+#
+# 对照生产：bpc_orderflow_continuation（cvd_absorption + recovery_strength）
+# 本变体：label scan 候选（chop<=0.40 子样本，20260527）
+#   - bpc_vol_compression>=0.5  succ_hit 58.4% vs 53.2% |z|≈5.0
+#   - bpc_vol_ratio<=1.08       succ_hit 56.9% vs 52.0% |z|≈5.0
+# Gate / regime / prefilter 与生产一致（grid 用 config/strategies 作 baseline）
+
+filters:
+  - id: bpc_compression_vol_calm
+    enabled: true
+    description: 实验 — 波动压缩 + 成交量未爆（对标 TPC E box_compression∧vol_ratio）
+    conditions:
+      - feature: bpc_vol_compression
+        operator: ">="
+        value: 0.5
+      - feature: bpc_vol_ratio
+        operator: "<="
+        value: 1.08
+    tier: A_PLATEAU
+    notes: "rd_loop_bpc_entry 20260527 plateau scan"
+
+  - id: bpc_low_vp_absorption
+    enabled: true
+    description: 实验 — VP 吸收低位（对标 TPC E vp_absorption；BPC 上 |z|弱，作第二腿 OR）
+    conditions:
+      - feature: vp_absorption_score
+        operator: "<="
+        value: 0.11
+    tier: B_SNOTIO
+    notes: "BPC label scan |z|<1.5；保留作 OR 腿对照 TPC E 结构"
+
+combination_mode: or

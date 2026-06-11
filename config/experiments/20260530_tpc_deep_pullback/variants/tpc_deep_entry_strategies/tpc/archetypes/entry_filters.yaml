@@ -1,0 +1,41 @@
+# E2_and — experiment 20260530 (单 filter 内 AND: vol>=0.45 AND delta>=0.15; no cvd)
+# 职责: entry_filters — 硬二值入场扳机；filters 之间 OR
+
+filters:
+- id: tpc_long_absorption_follow_trend
+  enabled: false
+  description: prod 做多 entry（实验 E2 替换）
+  conditions:
+  - feature: tpc_cvd_absorption
+    operator: '>='
+    value: 0.629
+  - feature: tpc_recovery_strength
+    operator: '>='
+    value: 0.039
+  tier: A_PLATEAU
+  notes: disabled for deep_pullback ablation E2
+- id: tpc_short_absorption_follow_trend
+  enabled: false
+  description: prod 做空 entry（实验 E2 替换）
+  conditions:
+  - feature: tpc_cvd_absorption
+    operator: '>='
+    value: 0.629
+  - feature: tpc_recovery_strength
+    operator: '>='
+    value: 0.039
+  tier: A_PLATEAU
+  notes: disabled for deep_pullback ablation E2
+- id: tpc_deep_pullback_vol_delta_and
+  enabled: true
+  description: 深回踩入场 AND：缩量 + delta 同 bar 同时满足（Pass1 tau）
+  conditions:
+  - feature: tpc_vol_pullback_confirm
+    operator: '>='
+    value: 0.45
+  - feature: bpc_pullback_delta_absorption
+    operator: '>='
+    value: 0.15
+  tier: EXPERIMENT
+  notes: 'Pass1: vol snotio 0.45; delta 0.15 (snotio only valid at low tau)'
+combination_mode: or

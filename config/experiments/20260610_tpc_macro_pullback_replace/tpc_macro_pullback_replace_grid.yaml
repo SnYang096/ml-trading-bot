@@ -1,6 +1,6 @@
 # TPC macro_pullback_pct 替代 depth prefilter（2026-06-10）
 #
-# 变体树：config_experiments/tpc_macro_replace_*_strategies/（静态 prefilter，无 prepare 脚本）
+# 变体树：variants/tpc_macro_replace_*_strategies/（静态 prefilter，无 prepare 脚本）
 #
 # 跑法：
 #   PYTHONPATH=src:scripts python -m scripts.event_backtest \
@@ -32,9 +32,9 @@ segment_matrix:
       output_dir: results/tpc/experiments/macro_pullback_replace_20260610/E0_prod
 
     - suffix: M_replace_L15_S12
-      strategies_root: config_experiments/tpc_macro_replace_L15_S12_strategies
+      strategies_root: config/experiments/20260610_tpc_macro_pullback_replace/variants/tpc_macro_replace_L15_S12_strategies
       output_dir: results/tpc/experiments/macro_pullback_replace_20260610/M_replace_L15_S12
 
     - suffix: M_replace_L20_S15
-      strategies_root: config_experiments/tpc_macro_replace_L20_S15_strategies
+      strategies_root: config/experiments/20260610_tpc_macro_pullback_replace/variants/tpc_macro_replace_L20_S15_strategies
       output_dir: results/tpc/experiments/macro_pullback_replace_20260610/M_replace_L20_S15

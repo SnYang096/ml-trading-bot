@@ -1,0 +1,29 @@
+# BPC Entry Filter Archetype
+# Auto-promoted by optimize_entry_filter_plateau.py (统计方法)
+# Date: 2026-05-12 07:15
+# Promoted: 3 filters (method=distribution_ks)
+# Locked pool: 1 filters (missing ones auto-disabled)
+# Significance: 统计验证 + robustness ≥ 0.5
+#
+# 职责: "现在该入场吗?" → 硬二值控制
+# 多个 filter 之间是 OR 关系
+
+filters:
+  - id: bpc_orderflow_continuation
+    enabled: true
+    locked: true
+    promote_never_disable: true
+    description: 回踩后 CVD 吸收 + 恢复力度（BPC 订单流确认），适用于 long/short
+    conditions:
+      - feature: bpc_cvd_absorption
+        operator: ">="
+        value: 1.0
+      - feature: bpc_recovery_strength
+        operator: ">="
+        value: 0.25
+    lock_reason: null
+    notes:
+      "promote_never_disable: z-test未过，保留磁盘历史阈值, auto-disabled(no passing threshold), auto-disabled(no passing threshold),
+      auto-disabled(no passing threshold), auto-disabled(no passing threshold), auto-disabled(no passing threshold), auto-disabled(no
+      passing threshold)"
+combination_mode: or

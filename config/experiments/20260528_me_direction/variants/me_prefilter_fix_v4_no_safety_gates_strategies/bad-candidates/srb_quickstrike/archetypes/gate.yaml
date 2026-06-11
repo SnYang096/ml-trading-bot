@@ -1,0 +1,17 @@
+# SRB QuickStrike Gate：短打版先不引入 EMA1200 2b 趋势门。
+# 20260425 趋势化 SRB 全量回测里，该 2b hard gate 在训练诊断中反复负 lift；
+# 短打版让 prefilter 管真突破窗口、entry 管订单流推进，gate 只保留空壳给 pipeline 优化。
+schema:
+  phases:
+    - system_safety
+    - hard_gate
+    - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+
+hard_gates: []
+guardrails: []
+system_safety: []

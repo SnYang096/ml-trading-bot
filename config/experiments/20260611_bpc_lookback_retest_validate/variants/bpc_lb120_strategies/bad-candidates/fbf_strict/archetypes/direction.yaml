@@ -1,0 +1,14 @@
+# FBF Direction Determination
+
+version: 1.0
+
+direction_rules:
+  - method: feature_sign
+    feature: fer_sr_failed_breakout_direction_signed
+    description: "SR 边界失败突破方向（signed）"
+    transform: raw
+    locked: true
+
+validation:
+  require_nonzero: true
+  allowed_values: [-1, 1]

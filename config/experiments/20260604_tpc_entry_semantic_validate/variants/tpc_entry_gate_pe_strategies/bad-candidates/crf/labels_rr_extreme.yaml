@@ -1,0 +1,29 @@
+# CRF RR-extreme 标签：与默认 failure-first 同源逻辑，单独文件给慢速流水线用。
+
+name: crf_rr_extreme # 本标签配置在流水线里的标识名
+target_column: success_label # 模型要预测/对齐的列名（invert=true 时即「好机会」列）
+
+label_generator:
+  # 用哪个 Python 函数从行情 df 生成标签列
+  module: src.time_series_model.strategies.labels.failure_first_label # 实现所在模块路径
+  function: compute_bpc_failure_label # BPC 包装的 failure-first：先算 failure 再按需反转为 success
+  params:
+    # 传给该函数的关键字参数
+    direction: "auto" # 方向：auto 时由 direction_signal / 流水线决定；必要时 pipeline 会拆 long、short 各算一份
+    horizon: 50 # 向前看的 bar 数（持仓/路径评估窗口长度）
+    expected_stop_atr: 1.0 # 预期止损宽度，以 ATR 倍数定义（影响 MAE 等是否算「穿止损」）
+    expected_target_atr: 1.5 # 预期目标宽度（ATR 倍数）；CRF 对边 edge 时常用略小于默认 2R 的 1.5
+    invert: true # true：输出 success_label（1=好机会/非失败，0=失败）；false 则输出 failure 语义
+# 失败 =
+# forward_rr < -0.8（按风险归一化后的路径 RR，文档里写成 -0.8R）
+# 或者
+# （MAE > 1.2 × expected_stop 并且 MFE < 0.3 × expected_target）
+label_meta:
+  # 文档/审计用元信息（部分流水线或报告会读；非函数参数）
+  label_type: binary # 二分类标签
+  audit_mode: true # 审计模式：便于追溯标签语义与中间量（具体行为见项目文档/流水线）
+
+filters:
+  # 生成标签后、训练前对样本行的过滤规则
+  - column: success_label # 针对该列
+    notna: true # 只保留标签非 NaN 的行（无法打标签的 bar 不参与训练）

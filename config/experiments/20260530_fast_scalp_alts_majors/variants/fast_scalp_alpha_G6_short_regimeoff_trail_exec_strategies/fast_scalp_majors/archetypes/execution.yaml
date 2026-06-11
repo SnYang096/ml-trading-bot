@@ -1,0 +1,29 @@
+add_position:
+  enabled: false
+execution_constraints:
+  allow_add_on: false
+  min_order_interval_minutes: 0
+holding:
+  max_holding_bars: 12
+  time_stop_bars: 12
+stop_loss:
+  type: trailing
+  initial_r: 2.5
+  atr_col: atr
+  atr_window: 14
+  trailing:
+    enabled: true
+    activation_r: 1.0
+    trail_r: 0.5
+  guardrails:
+    min_stop_pct: 0.01
+    max_stop_pct: 0.2
+take_profit:
+  enabled: true
+  r: 1.5
+position_sizing:
+  type: atr_risk
+  risk_pct: 0.005
+  atr_col: atr
+  atr_window: 14
+  max_size_cap: 5

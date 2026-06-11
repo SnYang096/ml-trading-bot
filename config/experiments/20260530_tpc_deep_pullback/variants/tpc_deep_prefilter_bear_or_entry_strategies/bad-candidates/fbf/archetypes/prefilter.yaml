@@ -1,0 +1,39 @@
+# FBF Prefilter: SR 失败突破语义锚点 + 制度闸（稀疏 / 高置信）
+# 强趋势少做；只在结构清晰、失败突破更「像样」、区间有足够宽度时放行
+
+rules:
+  - feature: sqs_hal_low_pct
+    operator: ">="
+    value: 0.3247
+    locked: true
+    lock_reason: 20260413/20260416 稳定 FBF run 的结构区间下界过滤
+  - feature: sqs_hal_low_pct
+    operator: "<="
+    value: 1.0
+    locked: true
+    lock_reason: 保留历史稳定 run 的 HAL 位置上界
+  - feature: vp_width_ratio
+    operator: "<="
+    value: 0.6057
+    locked: true
+    lock_reason: 20260413/20260416 稳定 FBF run 的 VP 宽度过滤，避免过宽噪声区
+  - feature: fer_sr_failed_breakout_score
+    operator: ">="
+    value: 0.38
+    locked: true
+    lock_reason: 提高失败突破强度门槛，减少弱信号与噪声开仓
+  - feature: sr_strength_max
+    operator: ">="
+    value: 0.52
+    locked: true
+    lock_reason: 关键位强度更高时才参与边界反转
+  - feature: fer_ols_width_norm
+    operator: ">="
+    value: 0.22
+    locked: true
+    lock_reason: 区间要有足够「盒子」宽度，偏波动区而非极窄噪声
+  - feature: trend_r2_20
+    operator: "<="
+    value: 0.50
+    locked: true
+    lock_reason: 制度闸略收紧：更少在偏趋势环境出手

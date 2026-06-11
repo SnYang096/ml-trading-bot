@@ -1,0 +1,71 @@
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+
+# ==========================================================================
+# CRF gate.yaml —— range-fade 执行风险层。
+# --------------------------------------------------------------------------
+# 设计理念：
+#   - prefilter 定义"是不是稳定盒子 + 是否在边缘"；
+#   - gate 拦截"虽然像盒子，但更可能是趋势起点/方向未定/非震荡"的高风险点。
+# ==========================================================================
+
+hard_gates:
+- id: gate_crf_semantic_chop_low
+  tag: HARD_CRF_SEMANTIC_CHOP_LOW
+  phase: hard_gate
+  priority: 5
+  reason: CRF 只吃明确震荡；semantic_chop 太低时更像趋势/突破起点，不做 range fade
+  when:
+    bpc_semantic_chop:
+      value_lt: 0.40
+  then:
+    action: deny
+  comment: "CRF 反向使用 trend 策略的 chop 语义：BPC/TPC 中 semantic_chop 高=应拒绝追趋势；CRF 中 high chop 才是可交易震荡。20260425_094142: chop>=0.40 的成交 n=139, R=+6.49；低于 0.40 的成交贡献主要为负。"
+  locked: true
+  frozen: true
+  promote_never_disable: true
+  lock_reason: "CRF 波动区语义：必须处于 BB 压缩且方向置信低的来回扫环境"
+
+- id: gate_crf_ema1200_deadzone
+  tag: HARD_CRF_EMA1200_DEADZONE
+  phase: hard_gate
+  priority: 6
+  reason: 价在 EMA1200 中轴附近容易是趋势起点或方向未定；CRF 放弃起点优势，只做已确认震荡
+  when:
+    all_of:
+      - ema_1200_position:
+          value_gt: -0.05
+      - ema_1200_position:
+          value_lt: 0.05
+  then:
+    action: deny
+  comment: "近 EMA1200 中轴点位可能是启动点也可能是无方向点；tail/range 取舍上宁愿不要早期信号。20260425_094142: |ema_1200_position|<0.05 的 CRF 成交 n=110, R=-15.46。"
+  locked: true
+  frozen: true
+  promote_never_disable: true
+  lock_reason: "放弃 EMA1200 附近的趋势起点/方向未定区"
+
+guardrails: []
+
+system_safety:
+- id: gate_vol_persistence
+  tag: HARD_VOL_PERSISTENCE
+  phase: system_safety
+  priority: 12
+  reason: 波动率持久性极端低时通常意味着假盘整（蓄势突破前夜），不适合 fade
+  when:
+    vol_persistence:
+      value_lt: 0.005
+  then:
+    action: deny
+  comment: 'CRF 专用：低波持久性 → 马上要突破，避免做 fade'
+  locked: false
+  lock_reason: 系统性风险兜底（MVP，可由 meta 调整）

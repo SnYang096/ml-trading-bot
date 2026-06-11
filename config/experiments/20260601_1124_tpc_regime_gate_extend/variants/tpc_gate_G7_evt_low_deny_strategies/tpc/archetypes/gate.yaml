@@ -1,0 +1,77 @@
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+hard_gates:
+- id: gate_tpc_semantic_chop_high
+  tag: HARD_TPC_SEMANTIC_CHOP
+  phase: hard_gate
+  priority: 6
+  reason: 高 chop 不追趋势回调（与 BPC/ME/SRB regime chop 口径 0.40 对齐）
+  when:
+    tpc_semantic_chop:
+      value_gt: 0.4
+  then:
+    action: deny
+  locked: true
+  promote_never_disable: true
+  lock_reason: 波动区过滤 — 高 chop bar 上虚假回调/来回扫（TPC gate；宏观带由 regime EMA1200）
+guardrails: []
+system_safety:
+- id: gate_evt_var_99_low_deny
+  tag: HARD_EVT_VAR_99_EVT_VAR_99
+  phase: system_safety
+  priority: 10
+  reason: '20260601: 单调扫描 — 高 EVT 更好；试单边 deny 低尾'
+  when:
+    evt_var_99:
+      value_lt: 0.55
+  then:
+    action: deny
+  comment: 'G7: evt<0.55 deny 全 regime（无 ema 条件）'
+  locked: true
+  lock_reason: EVT 左尾风险强度：中高风险拖泥带水区间对趋势策略表现最差
+  disabled: false
+- id: gate_vol_persistence_vol_persistence_bull_only
+  tag: HARD_VOL_PERSISTENCE_VOL_PERSISTENCE
+  phase: system_safety
+  priority: 12
+  reason: 统计验证规则 (lift=1.24)；regime-conditional：仅在 ema_1200_position>0.10 强多头时启用，bear
+    段允许通过以避免误杀
+  when:
+    all_of:
+    - vol_persistence:
+        value_gt: 0.0029
+    - vol_persistence:
+        value_lt: 0.0616
+    - ema_1200_position:
+        value_gt: 0.1
+  then:
+    action: deny
+  comment: 'Variant H: vol gates only active in ema_strong_bull (ema_1200_position>0.10)'
+  locked: true
+  lock_reason: 波动率持久性：低波噪声切换/拖泥带水期对趋势策略不利（仅 bull 段）
+- id: gate_tpc_vol_leverage_asymmetry_mid_bull_only
+  tag: HARD_TPC_VOL_LEVERAGE_ASYMMETRY
+  phase: system_safety
+  priority: 13
+  reason: 与 BPC/ME/SRB 对齐：波动杠杆非对称严重时趋势容易被拖垮；regime-conditional：仅 bull 段启用
+  when:
+    all_of:
+    - vol_leverage_asymmetry:
+        value_gt: 0.0558
+    - vol_leverage_asymmetry:
+        value_lt: 0.1482
+    - ema_1200_position:
+        value_gt: 0.1
+  then:
+    action: deny
+  locked: true
+  promote_never_disable: true
+  lock_reason: 波动杠杆非对称安全门（仅 bull 段）

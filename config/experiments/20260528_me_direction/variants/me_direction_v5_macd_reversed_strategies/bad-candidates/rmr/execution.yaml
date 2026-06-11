@@ -1,0 +1,18 @@
+# 策略根级 execution（legacy 兼容占位；实际执行以 archetypes/execution.yaml 为准）
+version: 1
+
+execution_constraints:
+  allow_add_on: false
+  min_order_interval_minutes: 15
+
+stop_loss:
+  type: fixed
+  initial_r: 0.8
+
+take_profit:
+  enabled: true
+  target_r: 1.5
+
+holding:
+  max_holding_bars: null
+  time_stop_bars: 24

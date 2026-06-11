@@ -1,0 +1,13 @@
+rules:
+  - any_of:
+      - feature: tpc_macro_pullback_pct_long
+        operator: '>='
+        value: 0.12
+      - feature: tpc_macro_pullback_pct_short
+        operator: '>='
+        value: 0.10
+    rationale: macro@240 大回撤背景（放宽 τ 0.12/0.10）
+  - feature: tpc_macro_vol_contraction
+    operator: '>='
+    value: 0.30
+    rationale: macro 级别量能收缩 — Phase1 scan τ=0.30 |z|=3.84 (61笔 85% success)；range_convergence 废弃(全0)

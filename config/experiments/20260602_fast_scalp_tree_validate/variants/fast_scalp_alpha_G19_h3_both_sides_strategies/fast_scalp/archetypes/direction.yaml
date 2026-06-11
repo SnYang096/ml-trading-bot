@@ -1,0 +1,12 @@
+description: H=3 both sides holdout τ q=0.15 (pred quantile scan)
+source:
+  model: model.yaml
+  score_column: score
+thresholds:
+  long_entry: 0.30362548890796487
+  long_exit: 0.2536254889079649
+  short_entry: 0.1071185872856852
+  short_exit: 0.1571185872856852
+  dead_zone: true
+  entry_mode: level
+per_symbol_thresholds: {}

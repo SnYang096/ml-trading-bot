@@ -1,0 +1,44 @@
+# MSR Entry Filter: 进一步确认"方向 × L3 边界侧向"一致
+#
+# 做空：fer_sr_failed_breakout_direction_signed == -1 ∧ 价格靠近 L3 上沿
+# 做多：fer_sr_failed_breakout_direction_signed == +1 ∧ 价格靠近 L3 下沿
+#
+# wide_sr_side 是 [-1, +1] 的连续量：
+#   +1 ≈ 价格贴近 L3 上沿 (upper)，-1 ≈ 贴近 L3 下沿 (lower)
+#   阈值 ±0.3 ≈ 价格位于 L3 区间靠近对应边界 35% 的位置
+#
+# 这两条 OR 分支 + prefilter 的 wide_sr_dist_atr ≤ 2.0 共同构成"大级别假破反转"的硬铆钉。
+# locked:true 防止 plateau 优化器在稀疏样本下误删除核心语义。
+
+filters:
+  - id: msr_short_upper_fail
+    enabled: true
+    locked: true
+    description: "做空：价格触及 L3 上沿 (wide_sr_upper_px) 后假破反转"
+    conditions:
+      - feature: fer_sr_failed_breakout_direction_signed
+        operator: "<="
+        value: -1
+      - feature: wide_sr_side
+        operator: ">="
+        value: 0.3
+      - feature: fer_sr_failed_breakout_score
+        operator: ">="
+        value: 0.32
+
+  - id: msr_long_lower_fail
+    enabled: true
+    locked: true
+    description: "做多：价格触及 L3 下沿 (wide_sr_lower_px) 后假破反转"
+    conditions:
+      - feature: fer_sr_failed_breakout_direction_signed
+        operator: ">="
+        value: 1
+      - feature: wide_sr_side
+        operator: "<="
+        value: -0.3
+      - feature: fer_sr_failed_breakout_score
+        operator: ">="
+        value: 0.32
+
+combination_mode: or

@@ -15,19 +15,19 @@ trading_map: false
 
 runs:
   - variant: G0_gate_prod
-    strategies_root: config_experiments/tpc_gate_ablate_G0_prod_strategies
+    strategies_root: config/experiments/20260531_tpc_gate_validate/variants/tpc_gate_ablate_G0_prod_strategies
     start_date: "2023-01-01"
     end_date: "2025-01-01"
     output_dir: results/tpc/experiments/gate_validate/G0_gate_prod
 
   - variant: G1_no_bull_vol_gates
-    strategies_root: config_experiments/tpc_gate_ablate_G1_no_bull_vol_strategies
+    strategies_root: config/experiments/20260531_tpc_gate_validate/variants/tpc_gate_ablate_G1_no_bull_vol_strategies
     start_date: "2023-01-01"
     end_date: "2025-01-01"
     output_dir: results/tpc/experiments/gate_validate/G1_no_bull_vol_gates
 
   - variant: G2_no_chop_gate
-    strategies_root: config_experiments/tpc_gate_ablate_G2_no_chop_strategies
+    strategies_root: config/experiments/20260531_tpc_gate_validate/variants/tpc_gate_ablate_G2_no_chop_strategies
     start_date: "2023-01-01"
     end_date: "2025-01-01"
     output_dir: results/tpc/experiments/gate_validate/G2_no_chop_gate

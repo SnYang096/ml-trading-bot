@@ -1,0 +1,113 @@
+# ============================================================
+# FBF old-stable locked fast validation
+# Uses config/strategies/bad-candidates/fbf as an old stable short-cycle config,
+# but disables the turbo threshold chain so fast rolling does not rewrite it.
+# Reference slow runs: 20260416_223806, 20260413_162634.
+# ============================================================
+
+dates:
+  start_date: "2023-01-01"
+  end_date: "2024-12-31"
+  holdout_months: 15
+  validation_months: 3
+
+global_toggles:
+  locked_threshold_tuning_enabled: false
+
+rolling:
+  mode: turbo_fixed_features
+  windows:
+    calibration_months: 6
+    structure_lookback_months: 12
+  turbo_fixed_features:
+    fixed_strategies_root: config/strategies
+    disable_feature_search: true
+
+rolling_calibration:
+  enable_model_training: false
+  step_months: 1
+  threshold_calibration:
+    enabled: false
+  prefilter:
+    optimize: false
+  symbol_threshold_calibration:
+    enabled: false
+  execution_opt:
+    enabled: false
+  pcm_eval:
+    enabled: false
+  direction_tuning:
+    enabled: false
+    compare_features: false
+    promote_after_validate: false
+
+universe_group:
+  file: config/download/crypto_4h_token_universe_groups.yaml
+  universe_set: starter_a
+  group: highcap
+
+data_path: data/parquet_data
+
+download:
+  enabled: true
+  data_dir: data/agg_data
+  parquet_dir: data/parquet_data
+
+strategies:
+  fbf:
+    config: config/strategies/bad-candidates/fbf
+    timeframe: 120T
+    prepare_features: features.yaml
+    labels_gate: labels_rr_extreme.yaml
+    has_prefilter: true
+    has_direction: true
+    kpi_gates:
+      prefilter:
+        min_pass_rate: 0.05
+        min_rows: 300
+        target_trades_min: 40
+        target_trades_max: 140
+        trade_penalty_low: 0.0021
+        trade_penalty_high: 0.0014
+        stability_penalty: 0.0
+        enforce_locked_rules_in_experiment: true
+        locked_rules_source: production_prefilter
+        locked_threshold_tuning:
+          enabled: false
+        scoring_method_fallbacks:
+          - distribution_ks
+          - mean_effect
+      entry_filter:
+        meta_algorithm: false
+        archetype_plateau: false
+        significance_p: 0.10
+        significance_min_trades: 4
+        plateau_window: 4
+        archetype_scoring_method: distribution_ks
+        target_trades_min: 40
+        target_trades_max: 140
+        trade_penalty_low: 0.0021
+        trade_penalty_high: 0.0014
+        stability_penalty: 0.0
+        scoring_method_fallbacks:
+          - distribution_ks
+          - mean_effect
+        min_score_improvement: 0.008
+      gate:
+        require_positive_effect: false
+        min_combined_pass_rate: 0.0
+        stat_fallback_on_empty: false
+        stat_fallback_max_rules: 0
+        stat_fallback_min_source_features: 0
+      backtest:
+        min_trades: 0
+      deploy:
+        min_trades: 0
+
+event_backtest:
+  enabled: true
+  promote: false
+  map_extra_months: 4
+
+output:
+  history_dir: results/fbf/calibrate_roll.default-old-locked

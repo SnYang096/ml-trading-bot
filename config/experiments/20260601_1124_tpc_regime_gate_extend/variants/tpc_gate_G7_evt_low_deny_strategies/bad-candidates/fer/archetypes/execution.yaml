@@ -1,0 +1,20 @@
+execution_constraints:
+  allow_add_on: false
+  min_order_interval_minutes: 15
+holding:
+  max_holding_bars: null
+  time_stop_bars: 40
+stop_loss:
+  initial_r: 5.0
+  trailing:
+    activation_r: 3.0
+    step_r: 0.5
+    trail_r: 1.5
+  type: trailing
+take_profit:
+  enabled: true
+  target_r: 5.0
+breakeven:
+  enabled: true
+  trigger_r: 2
+version: 51

@@ -1,0 +1,30 @@
+name: cdr_entry_filter
+description: |
+  CDR Entry Filter 候选池：late trend context + participation loss/compression
+  + CVD/OI confirmation。保留 failed-breakout，但不再强制所有分支依赖 FER。
+
+feature_pipeline:
+  exclude_columns:
+    - atr
+  requested_features:
+    - atr_f
+    - wide_sr_swing_f
+    - box_structure_f
+    - fer_failure_signals_f
+    - bars_since_extreme_f
+    - cvd_divergence_v2_f
+    - price_momentum_divergence_f
+    - terminal_risk_score_f
+    - roc_5_f
+    - atr_percentile_f
+    - bb_width_normalized_pct_f
+    - vpin_features_f
+    - evt_features_f
+    - hilbert_phase_f
+    - funding_scene_semantic_scores_f
+    - oi_features_f
+    - oi_scene_semantic_scores_f
+    - dual_exhaustion_f
+    - ema_1200_position_f
+    - ema_1200_slope_f
+    - market_cap_normalized_orderflow_f

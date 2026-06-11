@@ -1,7 +1,7 @@
 # TPC macro + depth 叠加 prefilter — fast 模式重跑（2026-06-11）
 #
 # 持仓更新用策略主周期 bar（120T），非 1min 精确 SL；适合 trend R&D 筛 variant。
-# 变体树：config_experiments/tpc_macro_add_L15_S12_strategies/
+# 变体树：config/experiments/20260610_tpc_macro_pullback_replace/variants/tpc_macro_add_L15_S12_strategies/
 #
 # 跑法：
 #   PYTHONPATH=src:scripts python -m scripts.event_backtest \
@@ -34,5 +34,5 @@ segment_matrix:
       output_dir: results/tpc/experiments/macro_pullback_add_fast_20260611/E0_prod
 
     - suffix: M_add_L15_S12
-      strategies_root: config_experiments/tpc_macro_add_L15_S12_strategies
+      strategies_root: config/experiments/20260610_tpc_macro_pullback_replace/variants/tpc_macro_add_L15_S12_strategies
       output_dir: results/tpc/experiments/macro_pullback_add_fast_20260611/M_add_L15_S12

@@ -1,0 +1,39 @@
+# Outcome Audit 策略标签配置
+# 🟥 套路 B：archetype 审计（必须无信仰）
+# - 全样本都有 forward_rr
+# - archetype 检测条件作为 feature，不是筛选条件
+
+name: outcome_audit
+target_column: forward_rr
+
+label_generator:
+  module: src.time_series_model.strategies.labels.archetype_audit_labels
+  function: compute_generic_outcome_audit_label
+  params:
+    archetype: generic
+    direction: long
+    horizon: 50
+    return_features: false
+
+# 标签元信息
+# ❗ 关键区别：
+# - rr_type: path_extreme（不绑定执行政策）
+# - exit_model: none（无止损止盈）
+# - audit_mode: true（审计模式）
+label_meta:
+  rr_type: path_extreme
+  horizon: 50 bars
+  exit_model: none
+  risk_unit: ATR
+  audit_mode: true
+  description: |
+    纯 Outcome-Based 审计标签：
+    - 全样本都有 forward_rr
+    - 检测条件作为 feature
+    - 树学习“哪些状态下 forward_rr 系统性为负”
+
+filters:
+  - column: forward_rr
+    notna: true
+
+post_label_filters: []

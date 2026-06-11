@@ -1,0 +1,18 @@
+# Phase 1 — 执行参数扫描矩阵（配合 scripts/srb_execution_grid.py 生成命令）
+# 仅改 archetypes/execution.yaml 中 stop_loss.initial_r / trailing.*，其余保持不变
+
+matrix_initial_r:
+  description: "单因子 initial_r"
+  base_execution_yaml: config/strategies/srb/archetypes/execution.yaml
+  sweep:
+    initial_r: [4.0, 5.0, 6.0, 7.0]
+
+matrix_activation_r:
+  description: "单因子 stop_loss.trailing.activation_r（initial_r 仍用 yaml 默认）"
+  sweep:
+    activation_r: [4.0, 5.0, 6.0, 7.0]
+
+matrix_trail_r:
+  description: "单因子 stop_loss.trailing.trail_r"
+  sweep:
+    trail_r: [3.5, 4.0, 5.0, 6.0]

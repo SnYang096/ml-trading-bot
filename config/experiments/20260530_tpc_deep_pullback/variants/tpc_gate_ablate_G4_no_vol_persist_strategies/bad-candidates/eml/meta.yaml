@@ -1,0 +1,27 @@
+# EML — EMA1200 Trend Umbrella（已迁入 bad-candidates）
+# 路径：config/strategies/bad-candidates/eml — 原因见同目录 README.md（开仓偏多、置信度低于 BPC/TPC/ME，仅作基线）。
+# 用 EMA1200 位置 + 斜率划定大结构，entry filter 承接 BPC/TPC/ME/SRB 的吸收/动量触发。
+
+strategy:
+  name: eml-120T
+  description: |
+    EMA1200 Trend Umbrella（多空）：价在 EMA1200 一侧且 EMA1200 斜率同向时定义大结构；
+    BPC/TPC 的吸收延续、ME 的动量点火、SRB 的关键位推进作为 entry filter 候选。
+    Gate 只过滤极端不利场景；执行层为 ATR 初始止损 + 浮盈 R 阶梯加仓 + EMA1200 结构出场。
+    非生产策略；用于验证趋势族能否合并到统一 EMA 趋势框架。
+
+    定位：可作「大结构 / base 层」实验——先回答「这条 K 上允不允许做趋势多/空」，
+    再挂子语义（BPC=延续、TPC=回调、ME=动量、SRB=位破）。它本身不是对 BPC/TPC/ME
+    的替代：缺少各家族完整门控/标签管线时，R 与样本通常 weaker；适合作为研究对照与
+    umbrella 设计稿，不模糊时再用 production 策略填 slot。
+
+    已移至 bad-candidates：相对 BPC/TPC/ME 开仓更密、门控更宽，单笔语义置信度偏低，只保留为基线对照。
+
+  owner: quant_team
+  archetype: TrendPullbackContinuationLong
+
+  timeframe: "120T"
+
+  macro_tp_vwap_anchor:
+    enabled: false
+    symbol: BTCUSDT

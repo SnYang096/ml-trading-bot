@@ -1,0 +1,42 @@
+# FBF 实验：Pure Trailing（取消固定 TP，尾部完全交给 trail）
+#
+# 动机：见 docs/z实验_005_统一研究/FBF_vs_MSR_verdict_20260422.md
+#   FBF 04-16 baseline/fatter-TP 所有 TP 赢单精确卡在 1.9x~1.98R，没有一笔突破 2.0R；
+#   TP/SL 时间比 1.4x，说明赢单是慢熬持续型走势 —— 有尾部红利被 target_r=2.0 封顶吞掉。
+#
+# 本实验：take_profit.enabled=false；1.5R 触发 breakeven；activation_r=1.5 开 trail；
+#         trail_r=0.8（从 HWM 回撤 0.8 ATR 离场），time_stop 48 bars（比 36 宽一点给尾部）。
+#
+# 对比基线：config/strategies/fbf/archetypes/execution.yaml（target_r=2.0 / 无 trail）
+
+execution_constraints:
+  allow_add_on: false
+  min_order_interval_minutes: 15
+
+holding:
+  max_holding_bars: null
+  time_stop_bars: 48
+
+stop_loss:
+  type: fixed
+  initial_r: 1.0
+  trailing:
+    enabled: true
+    activation_r: 1.5
+    step_r: 0.5
+    # trail_r: 2H 重放扫描（reports/trail_exp/）显示 0.5 最优（totalR +85%, Sharpe 2.26→2.86）
+    # 0.8 稳妥次优；1.2 太宽会吃掉 retrace。
+    trail_r: 0.5
+    expand_with_primary_atr: false
+
+take_profit:
+  enabled: false
+  target_r: 2.0
+
+breakeven:
+  enabled: true
+  trigger_r: 1.0
+  lock_level_r: 0.0
+  measure: atr
+
+version: 54

@@ -1,0 +1,23 @@
+# Promoted 2026-05-31 — deep_pullback E2_or (vol OR delta; Pass1 tau 0.45/0.15)
+# Prefilter/gate unchanged. Smoke: E2_or_smoke (+6.71R, 44 closes BTC+ETH 23-25)
+
+filters:
+- id: tpc_deep_pullback_vol_confirm
+  enabled: true
+  description: 缩量回踩确认（量能维度）
+  conditions:
+  - feature: tpc_vol_pullback_confirm
+    operator: '>='
+    value: 0.45
+  tier: EXPERIMENT
+  notes: 'Pass1 snotio 0.45'
+- id: tpc_deep_pullback_delta_absorb
+  enabled: true
+  description: 回踩段 delta 吸收（订单流维度）
+  conditions:
+  - feature: bpc_pullback_delta_absorption
+    operator: '>='
+    value: 0.15
+  tier: EXPERIMENT
+  notes: 'Pass1 delta 0.15'
+combination_mode: or

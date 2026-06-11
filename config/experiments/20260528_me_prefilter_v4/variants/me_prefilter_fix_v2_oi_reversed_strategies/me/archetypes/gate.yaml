@@ -1,0 +1,120 @@
+# ME Gate (optimized, auto-promoted)
+# 来源: /home/yin/trading/ml_trading_bot/results/me/validate_static.full_study/me/20260512_082437/strategies/me/gate_draft.yaml
+# 优化规则: 0/5 条通过优化
+# Phase split: system_safety=3, hard_gate=4
+
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+# NOTE: gate_me_semantic_chop_high 已迁移至 archetypes/regime.yaml。
+hard_gates:
+- id: gate_me_late_long_above_ema1200
+  tag: HARD_ME_LATE_LONG_EMA1200
+  phase: hard_gate
+  priority: 7
+  reason: 价远高于 EMA1200（动量末端追涨）
+  when:
+    ema_1200_position:
+      value_gt: 0.1
+  then:
+    action: deny
+  comment: 'semantic: aligned with TPC/BPC late-long EMA stretch gate'
+  locked: true
+  promote_never_disable: true
+  lock_reason: 高位远离 EMA1200 时不追多
+  disabled: true
+  disabled_reason: 允许牛市单边动量扩张肥尾；末端风险交给 semantic_chop / prefilter / execution 管
+- id: gate_me_late_short_below_ema1200
+  tag: HARD_ME_LATE_SHORT_EMA1200
+  phase: hard_gate
+  priority: 7
+  reason: 价远低于 EMA1200（动量末端追空）
+  when:
+    ema_1200_position:
+      value_lt: -0.1
+  then:
+    action: deny
+  comment: 'semantic: symmetric late chase on ema_1200_position'
+  locked: true
+  promote_never_disable: true
+  lock_reason: 低位远离 EMA1200 时不追空
+  disabled: true
+  disabled_reason: 允许熊市单边动量扩张肥尾；末端风险交给 semantic_chop / prefilter / execution 管
+- id: gate_me_vpin_ma20_high
+  tag: HARD_ME_VPIN_MA20
+  phase: hard_gate
+  priority: 11
+  reason: 借用 BPC：VPIN 知情交易活跃度过高时不追动量
+  when:
+    vpin_quantile_rank_20:
+      value_gt: 0.8
+  then:
+    action: deny
+  locked: true
+  promote_never_disable: true
+  lock_reason: BPC 同款订单流风险门；用于压 ME 过度开仓与高噪声追入
+  comment: 'promote_never_disable: optimizer no_valid_threshold, kept YAML threshold (No threshold meets basic lift/pass_rate
+    requirements)'
+  disabled: true
+  disabled_reason: 2023-2026 全样本方向统计里 deny 子集未显示劣势，先关闭以减轻过筛
+guardrails: []
+system_safety:
+- id: gate_me_evt_var_99_mid_high
+  tag: HARD_ME_EVT_VAR_99
+  phase: system_safety
+  priority: 12
+  reason: 借用 TPC：中高 EVT 左尾风险窄带拒绝，测试是否能压 ME 回撤
+  when:
+    all_of:
+    - evt_var_99:
+        value_gt: 0.6706
+    - evt_var_99:
+        value_lt: 0.7976
+  then:
+    action: deny
+  locked: true
+  promote_never_disable: true
+  lock_reason: TPC EVT 风险门实验版；ME 当前过度交易，先严格过滤再看 score
+  comment: 'promote_never_disable: optimizer no_valid_threshold, kept YAML threshold (No threshold meets basic lift/pass_rate
+    requirements)'
+  disabled: true
+  disabled_reason: 2023-2026 全样本方向统计里 deny 子集未显示劣势，先关闭以减轻过筛
+- id: gate_me_vol_persistence_mid
+  tag: HARD_ME_VOL_PERSISTENCE
+  phase: system_safety
+  priority: 20
+  reason: 借用 BPC/TPC：低波噪声切换/拖泥带水期不做动量扩张
+  when:
+    all_of:
+    - vol_persistence:
+        value_gt: 0.0029
+    - vol_persistence:
+        value_lt: 0.0616
+  then:
+    action: deny
+  locked: true
+  promote_never_disable: true
+  lock_reason: BPC/TPC 同款波动持久性安全门
+- id: gate_me_vol_leverage_asymmetry_mid
+  tag: HARD_ME_VOL_LEVERAGE_ASYMMETRY
+  phase: system_safety
+  priority: 21
+  reason: 借用 BPC：波动杠杆非对称严重时趋势容易被拖垮
+  when:
+    all_of:
+    - vol_leverage_asymmetry:
+        value_gt: 0.0558
+    - vol_leverage_asymmetry:
+        value_lt: 0.1482
+  then:
+    action: deny
+  locked: true
+  promote_never_disable: true
+  lock_reason: BPC 同款 vol leverage asymmetry 安全门

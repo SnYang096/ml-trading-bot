@@ -1,0 +1,250 @@
+# config_experiments → experiments/variants migration
+
+Mode: applied
+
+## Copied variant trees
+
+- `20260527_bpc_entry_v2/variants/bpc_entry_v2_strategies`
+- `20260527_bpc_layer_validation/variants/bpc_B_vol_off_strategies`
+- `20260527_bpc_layer_validation/variants/bpc_H_bull_vol_strategies`
+- `20260527_bpc_layer_validation/variants/bpc_no_breakout_strategies`
+- `20260527_bpc_regime_ema/variants/bpc_ema_plus_slope_strategies`
+- `20260527_bpc_regime_ema/variants/bpc_regime_box_legacy_strategies`
+- `20260528_me_compression_breakout/variants/me_regime_box_legacy_strategies`
+- `20260528_me_direction/variants/me_direction_v5_macd_reversed_strategies`
+- `20260528_me_direction/variants/me_direction_v6_ema_only_strategies`
+- `20260528_me_direction/variants/me_direction_v7_reversed_bull_strategies`
+- `20260528_me_direction/variants/me_prefilter_fix_v4_no_safety_gates_strategies`
+- `20260528_me_prefilter_v4/variants/me_prefilter_fix_v1_no_compdur_strategies`
+- `20260528_me_prefilter_v4/variants/me_prefilter_fix_v2_oi_reversed_strategies`
+- `20260528_me_prefilter_v4/variants/me_prefilter_fix_v3_atr_loose_strategies`
+- `20260528_me_prefilter_v4/variants/me_prefilter_fix_v4_no_safety_gates_strategies`
+- `20260529_tpc_direction_ema_align/variants/tpc_direction_ema1200_align_strategies`
+- `20260529_tpc_direction_ema_align/variants/tpc_trail_mid_strategies`
+- `20260529_tpc_direction_ema_align/variants/tpc_trail_wide_strategies`
+- `20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G0_baseline_strategies`
+- `20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G0_baseline_strategies/fast_scalp/archetypes/direction.yaml`
+- `20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G10_short_wide_tight_regimeoff_strategies`
+- `20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G12_short_regimeoff_gate_tight_exec_strategies`
+- `20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G13_short_regimeoff_gate_wide_tight_exec_strategies`
+- `20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G14_g5label_g5exec_strategies`
+- `20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G15_g10label_g10exec_strategies`
+- `20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G16_g5label_g5exec_gate_strategies`
+- `20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G1_short_only_strategies`
+- `20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G1_short_only_strategies/fast_scalp/archetypes/direction.yaml`
+- `20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G2_regime_off_strategies`
+- `20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G3_short_regime_off_strategies`
+- `20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G4_exec_timeout_strategies`
+- `20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G5_short_regimeoff_tight_exec_strategies`
+- `20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G6_short_regimeoff_trail_exec_strategies`
+- `20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G7_dual_head_strategies`
+- `20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G8_short_regimeoff_gate_strategies`
+- `20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G9_short_wide_tight_regimeon_strategies`
+- `20260530_tpc_deep_pullback/variants/tpc_anti_cont_gate_strategies`
+- `20260530_tpc_deep_pullback/variants/tpc_deep_entry_strategies`
+- `20260530_tpc_deep_pullback/variants/tpc_deep_gate_pe_or_entry_strategies`
+- `20260530_tpc_deep_pullback/variants/tpc_deep_prefilter_bear_or_entry_strategies`
+- `20260530_tpc_deep_pullback/variants/tpc_deep_prefilter_bull_or_entry_strategies`
+- `20260530_tpc_deep_pullback/variants/tpc_deep_pullback_full_bear_no_pe_strategies`
+- `20260530_tpc_deep_pullback/variants/tpc_deep_pullback_full_bear_strategies`
+- `20260530_tpc_deep_pullback/variants/tpc_deep_pullback_full_bull_no_pe_strategies`
+- `20260530_tpc_deep_pullback/variants/tpc_deep_pullback_full_bull_strategies`
+- `20260530_tpc_deep_pullback/variants/tpc_deep_tight_stop_strategies`
+- `20260530_tpc_deep_pullback/variants/tpc_gate_ablate_G0_prod_strategies`
+- `20260530_tpc_deep_pullback/variants/tpc_gate_ablate_G1_no_bull_vol_strategies`
+- `20260530_tpc_deep_pullback/variants/tpc_gate_ablate_G2_no_chop_strategies`
+- `20260530_tpc_deep_pullback/variants/tpc_gate_ablate_G4_no_vol_persist_strategies`
+- `20260530_tpc_deep_pullback/variants/tpc_gate_ablate_G5_no_vol_lev_strategies`
+- `20260531_tpc_gate_validate/variants/tpc_gate_ablate_G0_prod_strategies`
+- `20260531_tpc_gate_validate/variants/tpc_gate_ablate_G1_no_bull_vol_strategies`
+- `20260531_tpc_gate_validate/variants/tpc_gate_ablate_G2_no_chop_strategies`
+- `20260601_1124_tpc_regime_gate_extend/variants/Fp_ema_plus_slope_strategies`
+- `20260601_1124_tpc_regime_gate_extend/variants/tpc_gate_G6_vol_lev_low_deny_strategies`
+- `20260601_1124_tpc_regime_gate_extend/variants/tpc_gate_G7_evt_low_deny_strategies`
+- `20260601_1124_tpc_regime_gate_extend/variants/tpc_gate_G9_vol_persist_all_regimes_strategies`
+- `20260601_1124_tpc_regime_gate_extend/variants/tpc_gate_ablate_G0_prod_strategies`
+- `20260601_1124_tpc_regime_gate_extend/variants/tpc_gate_ablate_G1_no_bull_vol_strategies`
+- `20260601_1125_tpc_gate_validate/variants/tpc_gate_ablate_G0_prod_strategies`
+- `20260601_1125_tpc_gate_validate/variants/tpc_gate_ablate_G1_no_bull_vol_strategies`
+- `20260601_1126_tpc_gate_monotonic_validate/variants/tpc_gate_ablate_G1_no_bull_vol_strategies`
+- `20260601_1130_tpc_gate_final_lock/variants/tpc_gate_G10_vla_lt003_bull_strategies`
+- `20260601_1130_tpc_gate_final_lock/variants/tpc_gate_ablate_G0_prod_strategies`
+- `20260601_1130_tpc_gate_final_lock/variants/tpc_gate_ablate_G1_no_bull_vol_strategies`
+- `20260601_1300_tpc_gate_canonical_g0_g1/variants/tpc_gate_ablate_G0_prod_strategies`
+- `20260601_1300_tpc_gate_canonical_g0_g1/variants/tpc_gate_ablate_G1_no_bull_vol_strategies`
+- `20260602_fast_scalp_tree_validate/variants/fast_scalp_alpha_G14_g5label_g5exec_strategies`
+- `20260602_fast_scalp_tree_validate/variants/fast_scalp_alpha_G16_g5label_g5exec_gate_strategies`
+- `20260602_fast_scalp_tree_validate/variants/fast_scalp_alpha_G17_dual_head_reg_regimeoff_strategies`
+- `20260602_fast_scalp_tree_validate/variants/fast_scalp_alpha_G17_dual_head_reg_strategies`
+- `20260602_fast_scalp_tree_validate/variants/fast_scalp_alpha_G18_g3_h3_gate_strategies`
+- `20260602_fast_scalp_tree_validate/variants/fast_scalp_alpha_G19_h3_both_sides_strategies`
+- `20260602_fast_scalp_tree_validate/variants/fast_scalp_alpha_G20_h3_both_sides_ema_regime_strategies`
+- `20260602_fast_scalp_tree_validate/variants/fast_scalp_alpha_G21_independent_sides_strategies`
+- `20260602_fast_scalp_tree_validate/variants/fast_scalp_alpha_G3_short_regime_off_strategies`
+- `20260602_fast_scalp_tree_validate/variants/fast_scalp_alpha_G5_short_regimeoff_tight_exec_strategies`
+- `20260602_fast_scalp_tree_validate/variants/fast_scalp_alpha_G7_dual_head_strategies`
+- `20260604_tpc_entry_semantic_trading_maps/variants/tpc_entry_e1e2_band_or_anti_strategies`
+- `20260604_tpc_entry_semantic_trading_maps/variants/tpc_entry_e2a_or_anti_chase_strategies`
+- `20260604_tpc_entry_semantic_trading_maps/variants/tpc_semantic_depth_gt50_strategies`
+- `20260604_tpc_entry_semantic_validate/variants/tpc_entry_anti_chase_strategies`
+- `20260604_tpc_entry_semantic_validate/variants/tpc_entry_depth_ge15_strategies`
+- `20260604_tpc_entry_semantic_validate/variants/tpc_entry_gate_pe_strategies`
+- `20260604_tpc_entry_semantic_validate/variants/tpc_exec_turbo_20260424_strategies`
+- `20260604_tpc_entry_semantic_validate/variants/tpc_semantic_depth_gt50_ema_near_strategies`
+- `20260604_tpc_entry_semantic_validate/variants/tpc_semantic_depth_gt50_strategies`
+- `20260607_tpc_s50_pcm_leverage/variants/tpc_s50_bpc_pcm_3x_strategies`
+- `20260607_tpc_s50_pcm_leverage/variants/tpc_s50_bpc_pcm_strategies`
+- `20260607_tpc_s50_pcm_leverage/variants/tpc_semantic_depth_gt50_3x_strategies`
+- `20260607_tpc_s50_pcm_leverage/variants/tpc_semantic_depth_gt50_strategies`
+- `20260610_tpc_macro_pullback_replace/variants/tpc_eq_2_strategies`
+- `20260610_tpc_macro_pullback_replace/variants/tpc_eq_3_strategies`
+- `20260610_tpc_macro_pullback_replace/variants/tpc_macro_add_L15_S12_strategies`
+- `20260610_tpc_macro_pullback_replace/variants/tpc_macro_replace_L15_S12_strategies`
+- `20260610_tpc_macro_pullback_replace/variants/tpc_macro_replace_L20_S15_strategies`
+- `20260610_tpc_macro_pullback_replace/variants/tpc_macro_wide_exec_strategies`
+- `20260610_tpc_macro_pullback_replace/variants/tpc_no_add_strategies`
+- `20260610_tpc_macro_pullback_replace/variants/tpc_pyr_3_strategies`
+- `20260610_tpc_macro_pullback_replace/variants/tpc_pyr_4_strategies`
+- `20260610_tpc_regime_adx_phase1/variants/tpc_add_full_ablation_strategies/E9_be_6atr`
+- `20260610_tpc_regime_adx_phase1/variants/tpc_add_full_ablation_strategies/constitution`
+- `20260610_tpc_regime_adx_phase1/variants/tpc_add_full_ablation_strategies/constitution/locked_max3.yaml`
+- `20260610_tpc_regime_adx_phase1/variants/tpc_regime_adaptive_exit/E21_regime_adaptive`
+- `20260610_tpc_regime_adx_phase1/variants/tpc_regime_adaptive_exit/E22_adx`
+- `20260610_tpc_regime_adx_phase1/variants/tpc_regime_adaptive_exit/E23_bear_structural`
+- `20260610_tpc_regime_adx_phase1/variants/tpc_regime_adaptive_exit/E24_adx18`
+- `20260610_tpc_regime_adx_phase1/variants/tpc_regime_adaptive_exit/constitution`
+- `20260611_bpc_lookback_retest_validate/variants/bpc_lb120_retest_strategies`
+- `20260611_bpc_lookback_retest_validate/variants/bpc_lb120_retest_strategies/_shared`
+- `20260611_bpc_lookback_retest_validate/variants/bpc_lb120_retest_strategies/bad-candidates`
+- `20260611_bpc_lookback_retest_validate/variants/bpc_lb120_retest_strategies/bpc/archetypes/prefilter.yaml`
+- `20260611_bpc_lookback_retest_validate/variants/bpc_lb120_retest_strategies/feature_dependencies.yaml`
+- `20260611_bpc_lookback_retest_validate/variants/bpc_lb120_strategies`
+- `20260611_bpc_lookback_retest_validate/variants/bpc_lb120_strategies/_shared`
+- `20260611_bpc_lookback_retest_validate/variants/bpc_lb120_strategies/bad-candidates`
+- `20260611_bpc_lookback_retest_validate/variants/bpc_lb120_strategies/bpc`
+- `20260611_bpc_lookback_retest_validate/variants/bpc_lb120_strategies/feature_dependencies.yaml`
+- `20260611_bpc_lookback_retest_validate/variants/bpc_lb20_retest_strategies`
+- `20260611_bpc_lookback_retest_validate/variants/bpc_lb240_strategies`
+- `20260611_bpc_lookback_retest_validate/variants/bpc_lb240_strategies/_shared`
+- `20260611_bpc_lookback_retest_validate/variants/bpc_lb240_strategies/bad-candidates`
+- `20260611_bpc_lookback_retest_validate/variants/bpc_lb240_strategies/bpc`
+- `20260611_bpc_lookback_retest_validate/variants/bpc_lb240_strategies/feature_dependencies.yaml`
+- `_smoke/variants/BE_combo_strategies`
+- `_smoke/variants/B_gate_only_chop_strategies`
+- `_smoke/variants/H_bull_conditional_vol_strategies`
+
+## Pruned sibling strategies
+
+- config/experiments/20260527_bpc_entry_v2/variants/bpc_entry_v2_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'tpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid', 'fast_scalp']
+- config/experiments/20260527_bpc_layer_validation/variants/bpc_B_vol_off_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'tpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid', 'fast_scalp']
+- config/experiments/20260527_bpc_layer_validation/variants/bpc_H_bull_vol_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'tpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid', 'fast_scalp']
+- config/experiments/20260527_bpc_layer_validation/variants/bpc_no_breakout_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'tpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid', 'fast_scalp']
+- config/experiments/20260527_bpc_regime_ema/variants/bpc_ema_plus_slope_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'tpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid', 'fast_scalp']
+- config/experiments/20260527_bpc_regime_ema/variants/bpc_regime_box_legacy_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'tpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid', 'fast_scalp']
+- config/experiments/20260528_me_compression_breakout/variants/me_regime_box_legacy_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'tpc', 'bpc', 'spot_ft', 'tree_strategies', 'chop_grid', 'fast_scalp']
+- config/experiments/20260528_me_direction/variants/me_direction_v5_macd_reversed_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'tpc', 'bpc', 'spot_ft', 'tree_strategies', 'chop_grid', 'fast_scalp']
+- config/experiments/20260528_me_direction/variants/me_direction_v6_ema_only_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'tpc', 'bpc', 'spot_ft', 'tree_strategies', 'chop_grid', 'fast_scalp']
+- config/experiments/20260528_me_direction/variants/me_direction_v7_reversed_bull_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'tpc', 'bpc', 'spot_ft', 'tree_strategies', 'chop_grid', 'fast_scalp']
+- config/experiments/20260528_me_direction/variants/me_prefilter_fix_v4_no_safety_gates_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'tpc', 'bpc', 'spot_ft', 'tree_strategies', 'chop_grid', 'fast_scalp']
+- config/experiments/20260528_me_prefilter_v4/variants/me_prefilter_fix_v1_no_compdur_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'tpc', 'bpc', 'spot_ft', 'tree_strategies', 'chop_grid', 'fast_scalp']
+- config/experiments/20260528_me_prefilter_v4/variants/me_prefilter_fix_v2_oi_reversed_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'tpc', 'bpc', 'spot_ft', 'tree_strategies', 'chop_grid', 'fast_scalp']
+- config/experiments/20260528_me_prefilter_v4/variants/me_prefilter_fix_v3_atr_loose_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'tpc', 'bpc', 'spot_ft', 'tree_strategies', 'chop_grid', 'fast_scalp']
+- config/experiments/20260528_me_prefilter_v4/variants/me_prefilter_fix_v4_no_safety_gates_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'tpc', 'bpc', 'spot_ft', 'tree_strategies', 'chop_grid', 'fast_scalp']
+- config/experiments/20260529_tpc_direction_ema_align/variants/tpc_direction_ema1200_align_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid', 'fast_scalp']
+- config/experiments/20260529_tpc_direction_ema_align/variants/tpc_trail_mid_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid', 'fast_scalp']
+- config/experiments/20260529_tpc_direction_ema_align/variants/tpc_trail_wide_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid', 'fast_scalp']
+- config/experiments/20260530_tpc_deep_pullback/variants/tpc_anti_cont_gate_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260530_tpc_deep_pullback/variants/tpc_deep_entry_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260530_tpc_deep_pullback/variants/tpc_deep_gate_pe_or_entry_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260530_tpc_deep_pullback/variants/tpc_deep_prefilter_bear_or_entry_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260530_tpc_deep_pullback/variants/tpc_deep_prefilter_bull_or_entry_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260530_tpc_deep_pullback/variants/tpc_deep_pullback_full_bear_no_pe_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260530_tpc_deep_pullback/variants/tpc_deep_pullback_full_bear_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260530_tpc_deep_pullback/variants/tpc_deep_pullback_full_bull_no_pe_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260530_tpc_deep_pullback/variants/tpc_deep_pullback_full_bull_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260530_tpc_deep_pullback/variants/tpc_deep_tight_stop_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260530_tpc_deep_pullback/variants/tpc_gate_ablate_G0_prod_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260530_tpc_deep_pullback/variants/tpc_gate_ablate_G1_no_bull_vol_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260530_tpc_deep_pullback/variants/tpc_gate_ablate_G2_no_chop_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260530_tpc_deep_pullback/variants/tpc_gate_ablate_G4_no_vol_persist_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260530_tpc_deep_pullback/variants/tpc_gate_ablate_G5_no_vol_lev_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260531_tpc_gate_validate/variants/tpc_gate_ablate_G0_prod_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260531_tpc_gate_validate/variants/tpc_gate_ablate_G1_no_bull_vol_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260531_tpc_gate_validate/variants/tpc_gate_ablate_G2_no_chop_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260601_1124_tpc_regime_gate_extend/variants/Fp_ema_plus_slope_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260601_1124_tpc_regime_gate_extend/variants/tpc_gate_G6_vol_lev_low_deny_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260601_1124_tpc_regime_gate_extend/variants/tpc_gate_G7_evt_low_deny_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260601_1124_tpc_regime_gate_extend/variants/tpc_gate_G9_vol_persist_all_regimes_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260601_1124_tpc_regime_gate_extend/variants/tpc_gate_ablate_G0_prod_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260601_1124_tpc_regime_gate_extend/variants/tpc_gate_ablate_G1_no_bull_vol_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260601_1125_tpc_gate_validate/variants/tpc_gate_ablate_G0_prod_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260601_1125_tpc_gate_validate/variants/tpc_gate_ablate_G1_no_bull_vol_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260601_1126_tpc_gate_monotonic_validate/variants/tpc_gate_ablate_G1_no_bull_vol_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260601_1130_tpc_gate_final_lock/variants/tpc_gate_G10_vla_lt003_bull_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260601_1130_tpc_gate_final_lock/variants/tpc_gate_ablate_G0_prod_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260601_1130_tpc_gate_final_lock/variants/tpc_gate_ablate_G1_no_bull_vol_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260601_1300_tpc_gate_canonical_g0_g1/variants/tpc_gate_ablate_G0_prod_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260601_1300_tpc_gate_canonical_g0_g1/variants/tpc_gate_ablate_G1_no_bull_vol_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260604_tpc_entry_semantic_trading_maps/variants/tpc_entry_e1e2_band_or_anti_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260604_tpc_entry_semantic_trading_maps/variants/tpc_entry_e2a_or_anti_chase_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260604_tpc_entry_semantic_trading_maps/variants/tpc_semantic_depth_gt50_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260604_tpc_entry_semantic_validate/variants/tpc_entry_anti_chase_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260604_tpc_entry_semantic_validate/variants/tpc_entry_depth_ge15_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260604_tpc_entry_semantic_validate/variants/tpc_entry_gate_pe_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260604_tpc_entry_semantic_validate/variants/tpc_exec_turbo_20260424_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260604_tpc_entry_semantic_validate/variants/tpc_semantic_depth_gt50_ema_near_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260604_tpc_entry_semantic_validate/variants/tpc_semantic_depth_gt50_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260607_tpc_s50_pcm_leverage/variants/tpc_s50_bpc_pcm_3x_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260607_tpc_s50_pcm_leverage/variants/tpc_s50_bpc_pcm_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260607_tpc_s50_pcm_leverage/variants/tpc_semantic_depth_gt50_3x_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260607_tpc_s50_pcm_leverage/variants/tpc_semantic_depth_gt50_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260610_tpc_macro_pullback_replace/variants/tpc_macro_replace_L15_S12_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260610_tpc_macro_pullback_replace/variants/tpc_macro_replace_L20_S15_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260611_bpc_lookback_retest_validate/variants/bpc_lb120_retest_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'tpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260611_bpc_lookback_retest_validate/variants/bpc_lb120_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'tpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/20260611_bpc_lookback_retest_validate/variants/bpc_lb240_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'tpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/_smoke/variants/BE_combo_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/_smoke/variants/B_gate_only_chop_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+- config/experiments/_smoke/variants/H_bull_conditional_vol_strategies: dropped ['spot_accum_simple', 'trend_scalp', 'srb', 'bpc', 'me', 'spot_ft', 'tree_strategies', 'chop_grid']
+
+## Missing references (not on disk)
+
+- `20260526_chop_grid_semantic_proxy`: `config_experiments/chop_grid_proxy_bb_width_normalized/grid.yaml`
+- `20260526_chop_grid_semantic_proxy`: `config_experiments/chop_grid_proxy_chop_not_box/grid.yaml`
+- `20260526_chop_grid_semantic_proxy`: `config_experiments/chop_grid_proxy_hurst_cvd/grid.yaml`
+- `20260526_chop_grid_semantic_proxy`: `config_experiments/chop_grid_proxy_tpc_semantic_chop/grid.yaml`
+- `20260527_bpc_layer_validation`: `config_experiments/bpc_`
+- `20260527_tpc_regime_slope_signed`: `config_experiments/tpc_regime_bear_trend_strategies`
+- `20260527_tpc_regime_slope_signed`: `config_experiments/tpc_regime_bull_trend_strategies`
+- `20260530_fast_scalp_alts_majors`: `config_experiments/fast_scalp_alpha_G`
+- `20260530_fast_scalp_alts_majors`: `config_experiments/fast_scalp_alpha_G14_.../fast_scalp`
+- `20260530_tpc_deep_pullback`: `config_experiments/tpc_`
+- `20260530_tpc_deep_pullback`: `config_experiments/tpc_deep_prefilter_strategies`
+- `20260530_tpc_deep_pullback`: `config_experiments/tpc_deep_pullback_full_strategies`
+- `20260531_tpc_gate_validate`: `config_experiments/tpc_gate_ablate_`
+- `20260601_1300_tpc_gate_canonical_g0_g1`: `config_experiments/tpc_gate_ablate_G`
+- `20260602_fast_scalp_tree_validate`: `config_experiments/fast_scalp_alpha_G`
+- `20260602_fast_scalp_tree_validate`: `config_experiments/fast_scalp_alpha_G19_`
+- `20260604_tpc_entry_semantic_validate`: `config_experiments/tpc_`
+- `20260609_srb_sr_tf_compare`: `config_experiments/srb_l2_only_strategies`
+- `20260609_srb_sr_tf_compare`: `config_experiments/srb_l3_relaxed_strategies`
+- `20260610_tpc_macro_pullback_replace`: `config_experiments/tpc_macro_replace_`
+- `20260611_bpc_lookback_retest_validate`: `config_experiments/bpc_lb`
+
+## Orphan dirs still under config_experiments/
+
+These were not referenced by any experiment card and were left in place.
+
+- `C_chop_plus_evt_strategies/`
+- `D_regime_strict_0p12_strategies/`
+- `E_entry_v2_strategies/`
+- `F_regime_dead_slope_strategies/`
+- `G_chop_short_only_strategies/`
+- `rolling_position_strategy/`
+- `tpc_antichase_gate/`
+- `tpc_deep_entry_delta_strategies/`
+- `tpc_deep_entry_or_strategies/`
+- `tpc_deep_entry_vol_strategies/`
+- `tpc_deep_prefilter_bear_strategies/`
+- `tpc_deep_prefilter_bull_strategies/`
+- `tpc_exit_regime_ablation/`

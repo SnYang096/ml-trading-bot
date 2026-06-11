@@ -1,0 +1,22 @@
+# ME / CompressionBreakout — 配置目录 config/strategies/me
+# 对外 slug 仍为 `me`；语义：压缩蓄势 → 波动扩张突破（见 prefilter 压缩锚 + direction 动量级联）
+
+strategy:
+  name: me
+  description: |
+    CompressionBreakout（MomentumExpansion）：突破前压缩释放 + 波动扩张；
+    regime=chop（+ 候选 EMA1200@120T）；prefilter=压缩/OI 锚；direction=short-only 待 rd_loop promote。
+
+  owner: quant_team
+  archetype: CompressionBreakout
+
+  # 默认时间粒度（研发 + 实盘统一）
+  timeframe: "120T"
+  symbol_include: []
+  symbol_exclude: []
+
+  # false：macro_tp_vwap_1200_position 用各 symbol 自身 K 线算 VWAP（默认，更贴品种节奏）。
+  # true：改为锚定 symbol（如 BTCUSDT）的宏观位置，与部分 BPC 文档表述一致；按需打开。
+  macro_tp_vwap_anchor:
+    enabled: false
+    symbol: BTCUSDT

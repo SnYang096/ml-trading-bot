@@ -30,9 +30,9 @@ segment_matrix:
       output_dir: results/tpc/experiments/macro_pullback_replace_20260610/E0_prod
 
     - suffix: M_replace_L15_S12
-      strategies_root: config_experiments/tpc_macro_replace_L15_S12_strategies
+      strategies_root: config/experiments/20260610_tpc_macro_pullback_replace/variants/tpc_macro_replace_L15_S12_strategies
       output_dir: results/tpc/experiments/macro_pullback_replace_20260610/M_replace_L15_S12
 
     - suffix: M_add_L15_S12
-      strategies_root: config_experiments/tpc_macro_add_L15_S12_strategies
+      strategies_root: config/experiments/20260610_tpc_macro_pullback_replace/variants/tpc_macro_add_L15_S12_strategies
       output_dir: results/tpc/experiments/macro_pullback_add_20260610/M_add_L15_S12

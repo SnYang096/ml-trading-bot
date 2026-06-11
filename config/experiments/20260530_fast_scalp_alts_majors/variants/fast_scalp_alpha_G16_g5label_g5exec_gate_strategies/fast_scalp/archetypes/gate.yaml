@@ -1,0 +1,16 @@
+enabled: true
+description: Rejection tree veto; train on failure/bad-trade label with model_gate.yaml
+gate_model: results/rd_loop/fast_scalp_tree_validate/track_b/gate/ic_prune_v2/model.joblib
+reject_if_prob_bad_gt: 0.55
+hard_gates: []
+system_safety: []
+guardrails: []
+gate_feature_names:
+- vol_accel
+- me_accel_5k
+- evt_scale
+- evt_scale_left
+- me_accel_5k_long
+- evt_var_99
+- evt_var_99_left
+- spectrum_cvd_low_freq_ratio

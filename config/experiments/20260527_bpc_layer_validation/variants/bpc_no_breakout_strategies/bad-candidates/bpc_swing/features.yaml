@@ -1,0 +1,15 @@
+feature_groups:
+  baseline:
+    - bpc_volume_compression_pct_f
+    - bpc_recent_breakout_strength_f
+    - bpc_pullback_depth_f
+    - bpc_recovery_strength_f
+    - bpc_breakout_direction_f
+    - bpc_semantic_chop_ts_q_f
+    - ema_1200_position_f
+    - macd_atr_f
+    - oi_exhaustion_score_f
+    - oi_zscore_f
+    - vol_persistence_f
+    - vol_leverage_asymmetry_f
+    - vpin_ma20_f

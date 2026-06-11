@@ -1,0 +1,53 @@
+# Lottery100 Execution — 为「100x 不爆仓」量身定制的执行层
+#
+# 设计原则（与 100x 目标一一对应）：
+# 1) 极窄硬止损：max_stop_pct ≤ 0.8%。100x 名义杠杆下，价格逆向 ≈1% 触发维持保证金，
+#    因此硬止损必须远在爆仓线以内，宁可被扫也不让仓位进入「维持保证金危险区」。
+# 2) 不加仓：max_add_times = 0。100x 单次命中即全部收益/全部风险，禁止金字塔。
+# 3) 快速结构出场：structural_exit=ema1200。价一旦跌破 EMA1200，结构失败立即止盈/止损。
+# 4) 短持仓：max_holding_bars=60 (2H × 60 ≈ 5 天)。容量研究 H=120（10 天）是统计视角，
+#    执行层更短，避免 funding / overnight 风险在高杠杆下堆积。
+# 5) 显式止盈：take_profit.target_r=5.0。100x 下的尾部收益必须及时兑现，不等 trailing 回吐。
+# 6) 结构/时间/止盈/硬止损串联：任何一条触发即出场。
+
+version: 2
+
+execution_constraints:
+  allow_add_on: false
+  min_order_interval_minutes: 15
+
+holding:
+  max_holding_bars: 60
+  time_stop_bars: 60
+
+stop_loss:
+  type: fixed
+  initial_r: 1.2
+  structural_exit: ema1200
+  trailing:
+    enabled: false
+    activation_r: 1.5
+    trail_r: 2.0
+  guardrails:
+    # 硬止损百分比上限：100x 爆仓缓冲核心约束
+    max_stop_pct: 0.008
+    min_stop_pct: 0.003
+  breakeven:
+    enabled: true
+    trigger_r: 1.5
+    lock_profit_atr: 0.5
+
+take_profit:
+  enabled: true
+  target_r: 5.0
+
+add_position:
+  max_add_times: 0
+  trigger:
+    type: disabled
+
+last_evaluation:
+  timestamp: null
+  notes: >-
+    事件回测 KPI（见 config/kpi_gates/lottery100.yaml backtest）写入 last_evaluation.metrics；
+    max_stop_pct / max_add_times / take_profit.target_r 为 100x 存活关键参数，adopt 前需校验未被改动。

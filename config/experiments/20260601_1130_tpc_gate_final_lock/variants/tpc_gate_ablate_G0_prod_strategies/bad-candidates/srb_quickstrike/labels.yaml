@@ -1,0 +1,42 @@
+# Failure-first 标签配置（用于BPC训练）
+# 🟥 Failure-first Tree：树学习"在什么结构条件下会系统性失败"
+# - success_label = 1: 好机会（可以交易）
+# - success_label = 0: 失败（不可接受的交易）
+
+name: bpc_failure_first
+target_column: success_label
+
+label_generator:
+  module: src.time_series_model.strategies.labels.failure_first_label
+  function: compute_bpc_failure_label
+  params:
+    direction: long
+    horizon: 50
+    expected_stop_atr: 1.0
+    expected_target_atr: 2.0
+    invert: true  # 1=好机会，0=失败
+
+# 标签元信息
+label_meta:
+  label_type: binary
+  semantic: |
+    success_label = 1 - failure_label
+    1 = 好机会（低 failure prob）
+    0 = 失败（不可接受的交易）
+  failure_definition: |
+    failure = (forward_rr < -0.8) OR (mae > 1.2*stop AND mfe < 0.3*target)
+  horizon: 50 bars
+  expected_stop: 1.0 ATR
+  expected_target: 2.0 ATR
+  audit_mode: true
+  description: |
+    Failure-first 二值标签（反转后）：
+    - 1 = 好机会（低 failure prob）
+    - 0 = 失败（MAE过大/MFE过小）
+    - 高预测值 = 应该交易
+
+filters:
+  - column: success_label
+    notna: true
+
+post_label_filters: []

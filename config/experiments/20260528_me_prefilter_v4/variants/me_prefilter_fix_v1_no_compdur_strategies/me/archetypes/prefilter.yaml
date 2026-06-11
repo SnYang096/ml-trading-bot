@@ -1,0 +1,45 @@
+# CompressionBreakout — Prefilter v1: 删除 compression_duration（与 atr_p>=0.65 互斥）
+#
+# 数据诊断 (2026-05-28, train_final_20260519_133835_rr_extreme parquet):
+#   - compression_duration > 0 与 atr_percentile >= 0.65 在 59592 行上 0 交集
+#   - 当前 prod prefilter 全集通过率 = 0；移除该条后 chop 子集通过 ~14-1494 行（视 oi 约束）
+#
+# v1 仅做最小修正：保留 atr_p band + recent_compression_decay band + oi>=0.45 (prod 阈值)
+# 作为「移除 compression_duration」单变量 baseline，与 prod / v2 / v3 对照。
+
+rules:
+  - feature: atr_percentile
+    operator: ">="
+    value: 0.65
+    locked: true
+    lock_reason: "压缩突破：中高波扩张区，避免低波噪声"
+
+  - feature: atr_percentile
+    operator: "<="
+    value: 0.92
+    locked: true
+    lock_reason: "压缩突破：避免极端尾段过热后追空"
+
+  - feature: recent_compression_decay
+    operator: ">="
+    value: 0.02
+    locked: true
+    lock_reason: "压缩突破：要求近期确实经历压缩释放"
+
+  - feature: recent_compression_decay
+    operator: "<="
+    value: 0.20
+    locked: true
+    lock_reason: "压缩突破：限制在释放早段，避免中后段衰竭"
+
+  - feature: oi_compression_score
+    operator: ">="
+    value: 0.45
+    locked: false
+    lock_reason: "实验中：与 prod 一致以隔离 compression_duration 影响"
+
+last_evaluation:
+  timestamp: "2026-05-28"
+  data_source: "results/train_final/me/train_final_20260519_133835_rr_extreme/me/features_labeled.parquet"
+  n_rows: 59592
+  notes: "v1 baseline — 仅移除 compression_duration，其余与 prod 一致"

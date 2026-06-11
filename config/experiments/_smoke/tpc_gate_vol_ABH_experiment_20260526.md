@@ -11,7 +11,7 @@
 | ID | 配置路径 | vol_persistence | vol_leverage_asymmetry | chop |
 |----|----------|-----------------|------------------------|------|
 | **A** | `config/strategies/tpc/`（改前 baseline） | 全局 ON | 全局 ON | ON |
-| **B** | `config_experiments/B_gate_only_chop_strategies/` | **disabled** | **disabled** | ON |
+| **B** | `config/experiments/_smoke/variants/B_gate_only_chop_strategies/` | **disabled** | **disabled** | ON |
 | **H** | 已 promote 到主 config | **仅 `ema_1200_position > 0.10` 时 ON** | 同上 | ON |
 | C | `C_chop_plus_evt_strategies/` | disabled | disabled | ON + EVT veto |
 | D | `D_regime_strict_strategies/` | baseline | baseline | regime \|pos\|>0.12 |
@@ -106,8 +106,8 @@ Doctrine：B 系统不抓 fattail；用 H 换 **~13R/year** 换 **bull 段 DD �
 |------|------|
 | `config/strategies/tpc/archetypes/gate.yaml` | H |
 | `live/highcap/config/strategies/tpc/archetypes/gate.yaml` | H 同步 |
-| `config_experiments/H_bull_conditional_vol_strategies/` | 实验树（含全策略目录） |
-| `config_experiments/B_gate_only_chop_strategies/` | 对照 B |
+| `config/experiments/_smoke/variants/H_bull_conditional_vol_strategies/` | 实验树（含全策略目录） |
+| `config/experiments/_smoke/variants/B_gate_only_chop_strategies/` | 对照 B |
 | `scripts/regime_watchdog.py` | 周度监控 |
 | `config/monitoring/regime_watchdog_baseline.json` | bull_share 16.9%, trigger rates |
 | `docs/strategy/regime_layer.md` | TPC gate 说明更新 |
@@ -118,7 +118,7 @@ Doctrine：B 系统不抓 fattail；用 H 换 **~13R/year** 换 **bull 段 DD �
 cd /home/yin/trading/ml_trading_bot
 PYTHONPATH=src:scripts python3 scripts/event_backtest.py \
   --strategy tpc \
-  --strategies-root config_experiments/H_bull_conditional_vol_strategies \
+  --strategies-root config/experiments/_smoke/variants/H_bull_conditional_vol_strategies \
   --symbols BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT \
   --start-date 2025-04-01 --end-date 2026-04-01 \
   --trades-csv results/tpc/experiments/H_recent/event_trades_tpc.csv \

@@ -16,7 +16,7 @@ symbols:
 
 runs:
   - variant: v4_no_safety_gates_holdout
-    strategies_root: config_experiments/me_prefilter_fix_v4_no_safety_gates_strategies
+    strategies_root: config/experiments/20260528_me_prefilter_v4/variants/me_prefilter_fix_v4_no_safety_gates_strategies
     start_date: "2024-03-01"
     end_date: "2026-05-01"
     output_dir: results/me/experiments/prefilter_fix/v4_no_safety_gates_holdout

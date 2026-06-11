@@ -35,8 +35,8 @@ PYTHONPATH=src:scripts python scripts/research/prepare_fast_scalp_alpha_snapshot
 每棵树 **仅含** `fast_scalp/`（单包）。币种子集在 event grid 的 `symbols:` 指定，见 [`cohorts.yaml`](cohorts.yaml)。
 
 ```bash
-diff -ru config_experiments/fast_scalp_alpha_G0_baseline_strategies/fast_scalp/archetypes/direction.yaml \
-         config_experiments/fast_scalp_alpha_G1_short_only_strategies/fast_scalp/archetypes/direction.yaml
+diff -ru config/experiments/20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G0_baseline_strategies/fast_scalp/archetypes/direction.yaml \
+         config/experiments/20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G1_short_only_strategies/fast_scalp/archetypes/direction.yaml
 ```
 
 ## Grid 引用

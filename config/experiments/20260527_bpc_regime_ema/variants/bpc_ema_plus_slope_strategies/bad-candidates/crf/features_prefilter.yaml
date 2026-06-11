@@ -1,0 +1,14 @@
+name: crf_prefilter
+description: |
+  CRF prefilter 特征：仅需 box_structure 系列即可完整表达
+  "当前处于真盒子 + 位置靠近边缘"。
+
+feature_pipeline:
+  requested_features:
+    - market_cap_normalized_orderflow_f
+    - box_structure_f
+    - volatility_regime_f
+    - bb_width_normalized_pct_f
+    - bpc_soft_phase_f
+    - ema_1200_position_f
+    - ema_1200_slope_f

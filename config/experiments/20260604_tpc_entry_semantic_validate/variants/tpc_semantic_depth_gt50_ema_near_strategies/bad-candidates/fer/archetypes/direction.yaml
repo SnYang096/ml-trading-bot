@@ -1,0 +1,23 @@
+# FER Direction Determination
+# 版本: 1.1
+# 语义更新:
+#   - 仅在「可命名失败事件」发生时给方向
+#   - 移除 CVD/ROC 全覆盖兜底，避免在非失败上下文里强行给方向
+#   - 方向为 0 时交由下游过滤（不入场）
+
+version: 1.1
+
+direction_rules:
+  # 规则 1: SR 子语义（边界失败突破）方向，命中时优先
+  - method: feature_sign
+    feature: fer_sr_failed_breakout_direction_signed
+    description: "SR 边界失败突破方向（signed）"
+    transform: raw
+    locked: true
+
+  # 规则 2: impulse 失败方向（无 SR 命中时回退）
+  - method: feature_sign
+    feature: fer_impulse_failure_direction_signed
+    description: "impulse 失败方向（signed）"
+    transform: raw
+    locked: true

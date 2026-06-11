@@ -1,0 +1,21 @@
+# Shared EMA1200 macro band with fast_scalp / TPC/B.
+
+allowed_regimes:
+  - bull
+  - bear
+  - neutral
+
+allowed_sides:
+  - long
+  - short
+
+rules:
+  - any_of:
+      - feature: ema_1200_position
+        operator: ">="
+        value: 0.10
+      - feature: ema_1200_position
+        operator: "<="
+        value: -0.10
+    rationale: Leave EMA1200 mid-axis dead zone
+    locked: true

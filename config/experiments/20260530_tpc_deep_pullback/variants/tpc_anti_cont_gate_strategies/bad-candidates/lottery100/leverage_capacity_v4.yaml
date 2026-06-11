@@ -1,0 +1,46 @@
+# 杠杆容量分析 v4 — 宏观牛门（YAML 单一数据源）
+# 由 scripts/analyze_leverage_capacity_v4.py 读取；勿与 gate_draft 的特征门混为一谈。
+#
+# v4 相对 v3：在「周线收盘 > 周线 EMA」之外，默认再要求 **BTC 月线 6 个月收益 > min_return**
+# （月度收盘更新、滞后 lag_months，避免偷看当月未走完的收盘）。
+
+schema:
+  name: leverage_capacity_v4
+  description: Stricter bull regime for lottery-capacity research
+  version: "20260418"
+
+regime:
+  anchor_symbol: BTCUSDT
+
+  # ── v3 同款：周线结构牛 ─────────────────────────────────────────────
+  weekly_close_gt_ema:
+    enabled: true
+    ema_span_weeks: 50
+    weekly_anchor: W-FRI
+    lag_weeks: 1
+
+  # ── v4 收紧：中期动量为正（6 个月持有期收益）────────────────────────
+  monthly_6m_return:
+    enabled: true
+    # 月线末收盘相对 6 个月前的收益；bar 上使用该值在「上一个完整月度」更新后的读数
+    min_return: 0.0
+    lag_months: 1
+
+  # ── 可选：周线 EMA 本身在抬升（约 1 个月斜率）──────────────────────
+  weekly_ema_uptrend:
+    enabled: false
+    weeks_back: 4
+    lag_weeks: 1
+
+# 与 CLI 一致的默认分析窗口（可被命令行覆盖）
+windows:
+  train: "2022-08-01:2023-09-30"
+  test: "2023-10-01:2024-03-31"
+  oos: "2024-04-01:2026-02-28"
+
+defaults:
+  symbols: [BTCUSDT, ETHUSDT]
+  timeframe: "120T"
+  horizons: [48, 120]
+  fs_layer: features_me_120T_e98fe79b58
+  mmr: 0.004

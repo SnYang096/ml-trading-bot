@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Materialize config_experiments trees for 20260604_tpc_entry_semantic_validate."""
+"""Materialize variant trees for 20260604_tpc_entry_semantic_validate."""
 
 from __future__ import annotations
 
@@ -140,7 +140,9 @@ SNAPSHOTS: dict[str, dict[str, object]] = {
 
 
 def _copy_tree(name: str) -> Path:
-    dst = REPO / "config_experiments" / name
+    dst = (
+        REPO / "config/experiments/20260604_tpc_entry_semantic_validate/variants" / name
+    )
     if dst.exists():
         shutil.rmtree(dst)
     shutil.copytree(SRC, dst)

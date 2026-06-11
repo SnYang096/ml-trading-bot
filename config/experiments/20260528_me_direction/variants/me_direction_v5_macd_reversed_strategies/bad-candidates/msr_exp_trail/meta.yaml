@@ -1,0 +1,34 @@
+# MSR (Macro SR Reversal) — L3 大级别 SR 假破反转
+# 与 FBF (L2 POC/HAL) / SRB (L1 局部结构突破延续) 的边界见
+#   docs/z实验_005_统一研究/strategy_families_BPC_TPC_ME_FBF_SRB_RMR.md
+#   docs/z实验_005_统一研究/FBF_RMR_HubRebound_verdict_20260420.md
+
+strategy:
+  name: msr-exp-trail-120T
+  description: |
+    MacroSRReversal：大级别 swing SR (240 bar ≈ 1 月) 附近的假破反转。
+      入场：价格触及 wide_sr_upper/lower_px（L3 边界）且失败突破标志触发（与 FBF 共用 fer_failure_signals）。
+      止损：较 FBF 宽（L3 边界有更大噪声容忍度），initial_r = 1.2 ATR，不加仓。
+      退出：RR 目标 ~2.5-3.0（L3 反转移动幅度更大），time_stop 更长（60 bar ≈ 5 天）。
+    与其它策略的边界：
+      FBF  (L2)：POC/HAL 盒子边沿失败突破（~160 bar 中观 SR）
+      MSR  (L3)：240 bar swing 高/低假破反转（本策略）
+      SRB  (L1+): 局部 SR 成功突破延续，已独立
+    数据支撑：FBF 诊断发现 wide_sr_dist_atr≤2 子集 meanR ~20× 基线，胜率 ~76%（样本极稀疏 ~0.01%/bar）。
+    事件率：预期 1-2 单/币/月，portfolio 权重按 Sharpe × 样本数定，不按频率。
+
+  owner: quant_team
+  archetype: MacroSRReversal
+
+  timeframe: "120T"
+
+  decision_alignment:
+    enabled: true
+    mode: prefilter_recent_window
+    window_bars: 3
+    layers_allow_recent_window: [prefilter]
+    layers_required_same_bar: [direction, gate, entry_filter]
+
+  macro_tp_vwap_anchor:
+    enabled: false
+    symbol: BTCUSDT

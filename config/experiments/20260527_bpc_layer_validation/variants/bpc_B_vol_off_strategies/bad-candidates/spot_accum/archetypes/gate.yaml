@@ -1,0 +1,13 @@
+schema:
+  phases:
+    - system_safety
+    - hard_gate
+    - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+system_safety: []
+hard_gates: []
+guardrails: []

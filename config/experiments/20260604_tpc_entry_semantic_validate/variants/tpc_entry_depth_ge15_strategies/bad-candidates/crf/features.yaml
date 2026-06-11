@@ -1,0 +1,40 @@
+# CRF 策略特征配置
+# 语义：盘整盒子内的双向均值回归
+#
+# 核心思想：CRF 不是"动量后衰竭"，也不是"趋势回踩延续"，而是"盒子里来回扫"。
+# 所以 feature 不要引入带趋势色彩的特征（避免把单边冲击也当成 CRF 信号）。
+
+name: crf
+description: |
+  ConsolidationRangeFade archetype: 在稳定盒子中双向波段。
+  核心特征：box_structure 系列（盒子识别 + 位置 + 稳定性 + 触及次数）。
+
+feature_pipeline:
+  exclude_columns:
+    - atr
+  requested_features:
+    # ========== 必需的 scale 列（label 计算）==========
+    - atr_f
+
+    # ========== CRF 核心：盒子结构 ==========
+    - box_structure_f
+      # 输出：box_hi/lo/width_pct/pos/stability/touches × {60,120,240}
+      # + box_compression_score / box_regime_label / box_breakout_up/down
+      # + box_prior_trend_sign（可选辅助）
+
+    # ========== 辅助：市场体量 + 波动率体制 ==========
+    - market_cap_normalized_orderflow_f
+    - volatility_regime_f
+    - atr_percentile_f
+    - bb_width_normalized_pct_f
+
+    # ========== Gate 防御：震荡语义 + EMA1200 中轴/斜率 ==========
+    # bpc_soft_phase_f 输出 bpc_semantic_chop；CRF 反向使用它：
+    #   趋势策略里 high chop = 拒绝追趋势；CRF 里 low chop = 不像 range，不交易。
+    - bpc_soft_phase_f
+    - ema_1200_position_f
+    - ema_1200_slope_f
+
+    # ========== 辅助：衰竭 / 极值 ==========
+    # 让 CRF 知道"盒子边缘"是不是已经进入衰竭（提高 fade 胜率）
+    - fer_failure_signals_f

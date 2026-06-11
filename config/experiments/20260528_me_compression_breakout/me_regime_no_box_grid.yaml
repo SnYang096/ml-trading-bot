@@ -21,7 +21,7 @@ runs:
     output_dir: results/me/experiments/no_box_holdout
 
   - variant: box_legacy_holdout
-    strategies_root: config_experiments/me_regime_box_legacy_strategies
+    strategies_root: config/experiments/20260528_me_compression_breakout/variants/me_regime_box_legacy_strategies
     start_date: "2024-03-01"
     end_date: "2026-05-01"
     output_dir: results/me/experiments/box_legacy_holdout
@@ -33,7 +33,7 @@ runs:
     output_dir: results/me/experiments/no_box_bull_2024
 
   - variant: box_legacy_bull_2024
-    strategies_root: config_experiments/me_regime_box_legacy_strategies
+    strategies_root: config/experiments/20260528_me_compression_breakout/variants/me_regime_box_legacy_strategies
     start_date: "2024-01-01"
     end_date: "2025-01-01"
     output_dir: results/me/experiments/box_legacy_bull_2024

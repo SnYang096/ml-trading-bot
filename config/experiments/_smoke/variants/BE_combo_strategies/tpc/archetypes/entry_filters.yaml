@@ -1,0 +1,35 @@
+# TPC Entry Filter Archetype
+# Auto-promoted by optimize_entry_filter_plateau.py
+# Date: 2026-05-11 23:53
+# Promoted: 2 filters (1 plateau + 0 snotio-only)
+# Locked pool kept: 2 (missing -> disabled)
+# Baseline snotio: 0.2899, σ=1.485
+# Significance: z-test one-sided p<0.1, min_trades=4
+#
+# 职责: "现在该入场吗?" → 硬二值控制入场时机
+# 多个 filter 之间是 OR 关系
+# Tier A = plateau + 显著, Tier B = snotio + 显著 (no plateau)
+
+filters:
+- id: tpc_compression_vol_calm
+  enabled: true
+  description: 实验 E — 入场时 box 压缩 + 成交量未爆量（box_compression≥0.36 ∧ tpc_vol_ratio≤1.08，离线 effect +3.7% / +3.2%）
+  conditions:
+  - feature: box_compression_score
+    operator: '>='
+    value: 0.355
+  - feature: tpc_vol_ratio
+    operator: '<='
+    value: 1.08
+  tier: A_PLATEAU
+  notes: '实验 E candidate from label scan: box_compression_score≥0.355 eff=+3.71% p=1e-10; tpc_vol_ratio≤1.079 eff=+3.21% p=2e-8'
+- id: tpc_low_vp_absorption
+  enabled: true
+  description: 实验 E — VP 吸收低位（vp_absorption_score≤0.11，离线 effect +2.2%）
+  conditions:
+  - feature: vp_absorption_score
+    operator: '<='
+    value: 0.113
+  tier: B_SNOTIO
+  notes: '实验 E candidate: vp_absorption_score<=0.113 eff=+2.16% p=4e-5'
+combination_mode: or

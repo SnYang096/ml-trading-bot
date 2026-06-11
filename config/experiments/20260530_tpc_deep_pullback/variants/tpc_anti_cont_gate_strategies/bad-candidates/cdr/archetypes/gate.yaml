@@ -1,0 +1,73 @@
+# CDR Gate — chop / 未决宏观 / 稳定箱体中部
+# --------------------------------------------------------------------------
+# 语义：CDR 抓变盘与反转，但在「典型震荡 + 宏观未表态 + 箱体内耗」里假信号多。
+# 参考 BPC gate_bpc_semantic_chop_high：用可观测 primitive 拼「chop」，不复用 bpc_semantic_chop
+#（CDR 特征池无该列）。
+# 约束：prod_train_pipeline_2h_turbo_cdr_only.yaml 里 max_hard_gates: 2，此处仅 2 条 hard_gate。
+# 策略根目录：config/strategies/bad-candidates/cdr（见 README.md）。
+# 教训（见 BPC gate 注释）：避免单条 ema_1200_position 单边 hard veto 误杀肥尾趋势月；
+# 此处 EMA 仅与「窄斜率 deadband」联用，表示宏观未决而非「价在均线上方就禁」。
+# --------------------------------------------------------------------------
+
+schema:
+  phases:
+    - system_safety
+    - hard_gate
+    - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+
+hard_gates:
+  - id: gate_cdr_bb_compressed_trend_weak
+    tag: HARD_CDR_BB_COMPRESS_TREND_WEAK
+    phase: hard_gate
+    priority: 6
+    reason: BB 宽度百分位偏低且短期线性趋势弱 → 典型压缩/来回扫区，不利于变盘反转入场
+    when:
+      all_of:
+        - bb_width_normalized_pct:
+            value_lt: 0.14
+        - trend_r2_20:
+            value_lt: 0.26
+    then:
+      action: deny
+    comment: "手调初版：窄 BB × 低 R²；若误杀过多可略放宽 bb 或 trend_r2 阈值"
+    locked: true
+    frozen: false
+    promote_never_disable: true
+    lock_reason: CDR 专用 chop 代理（与 BPC semantic chop 同思路，primitive 实现）
+
+  - id: gate_cdr_macro_dead_or_stable_midbox
+    tag: HARD_CDR_MACRO_DEAD_OR_MIDBOX
+    phase: hard_gate
+    priority: 7
+    reason: 宏观价贴 EMA1200 且斜率近零（未决），或箱体内稳定中部 → 不适合押结构性反转
+    when:
+      any_of:
+        - all_of:
+            - ema_1200_position:
+                value_gt: -0.055
+                value_lt: 0.055
+            - ema_1200_slope_10:
+                value_gt: -0.032
+                value_lt: 0.032
+        - all_of:
+            - box_pos_120:
+                value_gt: 0.42
+                value_lt: 0.58
+            - box_stability_120:
+                value_gt: 0.60
+    then:
+      action: deny
+    comment: "any_of：宏观 deadband OR 稳定中箱；单边 EMA 位置 veto 不在此列"
+    locked: true
+    frozen: false
+    promote_never_disable: true
+    lock_reason: 防止趋势未立 / 箱体内耗期开仓；与 CDR 变盘语义兼容的结构性过滤
+
+guardrails: []
+
+system_safety: []

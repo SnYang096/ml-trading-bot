@@ -64,10 +64,10 @@ Entry 阈值 promote 前必须看 snotio 或 E4 回测的 Mean R，不能只凭 
 |----|------|--------|
 | E0 | prod（direction align + 旧 entry） | `config/strategies` |
 | E1 | prefilter depth 双边带 | `config_experiments/tpc_deep_prefilter_strategies` |
-| E2 | entry 吸收 + 反延续 | `config_experiments/tpc_deep_entry_strategies` |
-| E3 | gate 挡延续 | `config_experiments/tpc_anti_cont_gate_strategies` |
+| E2 | entry 吸收 + 反延续 | `config/experiments/20260530_tpc_deep_pullback/variants/tpc_deep_entry_strategies` |
+| E3 | gate 挡延续 | `config/experiments/20260530_tpc_deep_pullback/variants/tpc_anti_cont_gate_strategies` |
 | E4 | E1+E2+E3 | `config_experiments/tpc_deep_pullback_full_strategies` |
-| E5 | E4 + initial_r:2, min_stop_pct:0.015 | `config_experiments/tpc_deep_tight_stop_strategies` |
+| E5 | E4 + initial_r:2, min_stop_pct:0.015 | `config/experiments/20260530_tpc_deep_pullback/variants/tpc_deep_tight_stop_strategies` |
 
 ## Phase 3 — Promote 前检查（②）
 

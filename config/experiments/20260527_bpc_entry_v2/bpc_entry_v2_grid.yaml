@@ -1,7 +1,7 @@
 # BPC entry 对照：生产 orderflow vs entry_v2（不动 gate/regime/prefilter）
 #
 #   entry_baseline → config/strategies（bpc_orderflow_continuation）
-#   entry_v2       → config_experiments/bpc_entry_v2_strategies
+#   entry_v2       → config/experiments/20260527_bpc_entry_v2/variants/bpc_entry_v2_strategies
 #
 # PYTHONPATH=src:scripts python -m scripts.event_backtest \
 #   --variant-grid config/experiments/20260527_bpc_entry_v2/bpc_entry_v2_grid.yaml --quiet-signal-logs
@@ -24,7 +24,7 @@ runs:
     output_dir: results/bpc/experiments/entry_baseline_bull_2024
 
   - variant: entry_v2_bull_2024
-    strategies_root: config_experiments/bpc_entry_v2_strategies
+    strategies_root: config/experiments/20260527_bpc_entry_v2/variants/bpc_entry_v2_strategies
     start_date: "2024-01-01"
     end_date: "2025-01-01"
     output_dir: results/bpc/experiments/entry_v2_bull_2024
@@ -36,7 +36,7 @@ runs:
     output_dir: results/bpc/experiments/entry_baseline_recent
 
   - variant: entry_v2_recent
-    strategies_root: config_experiments/bpc_entry_v2_strategies
+    strategies_root: config/experiments/20260527_bpc_entry_v2/variants/bpc_entry_v2_strategies
     start_date: "2025-04-01"
     end_date: "2026-04-01"
     output_dir: results/bpc/experiments/entry_v2_recent

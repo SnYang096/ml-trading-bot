@@ -1,0 +1,35 @@
+# FBF 短打执行基线（恢复 20260413/20260416/20260417 稳定 run 的共同配置）
+#
+# 共同特征：
+# - allow_add_on=false
+# - initial_r=1.0
+# - fixed target_r=2.0
+# - time_stop_bars=36
+# - no trailing / no breakeven
+
+execution_constraints:
+  allow_add_on: false
+  min_order_interval_minutes: 15
+
+holding:
+  max_holding_bars: null
+  time_stop_bars: 36
+
+stop_loss:
+  type: fixed
+  initial_r: 1.0
+  trailing:
+    enabled: false
+    activation_r: 3.0
+    step_r: 0.5
+    trail_r: 1.5
+
+take_profit:
+  enabled: true
+  target_r: 2.0
+
+breakeven:
+  enabled: false
+  trigger_r: 2
+
+version: 55

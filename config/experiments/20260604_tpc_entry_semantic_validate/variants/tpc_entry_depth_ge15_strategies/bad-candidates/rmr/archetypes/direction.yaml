@@ -1,0 +1,27 @@
+# RMR Direction Determination
+#
+# 语义：朝「动能反向」做（fade momentum），让价格在区间高/低位有衰竭迹象时朝中轴回归。
+#
+# MVP 占位：用 macd_atr 的 negate_sign
+#   - macd_atr > 0（动能偏多）→ direction = -1（做空回中轴）
+#   - macd_atr < 0（动能偏空）→ direction = +1（做多回中轴）
+# 真正的「远离中轴」位置约束由 entry_filter 的 long/short 分支承担；
+# 真正的「非趋势环境」约束由 prefilter 的 trend_r2_20 / ADX 低制度承担。
+#
+# 后续（需 code 改动）：新增专用 signed 特征 rmr_mean_revert_direction_signed，
+#   其符号 = sign(0.5 - fer_range_pos_20) × （衰竭强度门限），届时 direction 直接
+#   切换到 transform: raw 的显式 signed 特征，与 FBF 的 fer_sr_failed_breakout_direction_signed
+#   形成对称。
+
+version: 1.0
+
+direction_rules:
+  - method: feature_sign
+    feature: macd_atr
+    description: "MVP: fade momentum — negate_sign(macd_atr)"
+    transform: negate_sign
+    locked: true
+
+validation:
+  require_nonzero: true
+  allowed_values: [-1, 1]

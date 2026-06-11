@@ -1,0 +1,14 @@
+name: fbf_entry_filter
+description: |
+  FBF Entry Filter 候选池：失败突破后极值邻近与边界位置确认。
+
+feature_pipeline:
+  exclude_columns:
+    - atr
+  requested_features:
+    - atr_f
+    - fer_failure_signals_f
+    - bars_since_extreme_f
+    - vwap_position_f
+    - cvd_divergence_v2_f
+    - market_cap_normalized_orderflow_f

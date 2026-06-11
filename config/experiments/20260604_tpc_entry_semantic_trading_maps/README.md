@@ -5,9 +5,9 @@
 | 变体 | strategies_root | 说明 |
 |------|-----------------|------|
 | E0_prod | `config/strategies` | prod 基线 |
-| E2a_or_anti_chase | `config_experiments/tpc_entry_e2a_or_anti_chase_strategies` | prod prefilter + `(vol OR delta) AND` bars_since |
-| E1e2_band_or_anti | `config_experiments/tpc_entry_e1e2_band_or_anti_strategies` | `0.15≤depth≤0.85` + 同 E2a entry |
-| S50_depth_gt50 | `config_experiments/tpc_semantic_depth_gt50_strategies` | `depth>0.5` 深回踩-only（对照 BPC） |
+| E2a_or_anti_chase | `config/experiments/20260604_tpc_entry_semantic_trading_maps/variants/tpc_entry_e2a_or_anti_chase_strategies` | prod prefilter + `(vol OR delta) AND` bars_since |
+| E1e2_band_or_anti | `config/experiments/20260604_tpc_entry_semantic_trading_maps/variants/tpc_entry_e1e2_band_or_anti_strategies` | `0.15≤depth≤0.85` + 同 E2a entry |
+| S50_depth_gt50 | `config/experiments/20260604_tpc_entry_semantic_trading_maps/variants/tpc_semantic_depth_gt50_strategies` | `depth>0.5` 深回踩-only（对照 BPC） |
 
 树由 `scripts/research/prepare_tpc_entry_semantic_snapshots.py` 生成（含 E2a / E1e2）。
 

@@ -41,27 +41,27 @@ segment_matrix:
       output_dir: results/tpc/experiments/entry_semantic_validate_20260604/E0_prod
 
     - suffix: S50_depth_gt50
-      strategies_root: config_experiments/tpc_semantic_depth_gt50_strategies
+      strategies_root: config/experiments/20260604_tpc_entry_semantic_validate/variants/tpc_semantic_depth_gt50_strategies
       output_dir: results/tpc/experiments/entry_semantic_validate_20260604/S50_depth_gt50
 
     - suffix: S51_depth_gt50_ema_near
-      strategies_root: config_experiments/tpc_semantic_depth_gt50_ema_near_strategies
+      strategies_root: config/experiments/20260604_tpc_entry_semantic_validate/variants/tpc_semantic_depth_gt50_ema_near_strategies
       output_dir: results/tpc/experiments/entry_semantic_validate_20260604/S51_depth_gt50_ema_near
 
     - suffix: E1_depth_ge15
-      strategies_root: config_experiments/tpc_entry_depth_ge15_strategies
+      strategies_root: config/experiments/20260604_tpc_entry_semantic_validate/variants/tpc_entry_depth_ge15_strategies
       output_dir: results/tpc/experiments/entry_semantic_validate_20260604/E1_depth_ge15
 
     - suffix: E2_anti_chase
-      strategies_root: config_experiments/tpc_entry_anti_chase_strategies
+      strategies_root: config/experiments/20260604_tpc_entry_semantic_validate/variants/tpc_entry_anti_chase_strategies
       output_dir: results/tpc/experiments/entry_semantic_validate_20260604/E2_anti_chase
 
     - suffix: E3_gate_pe
-      strategies_root: config_experiments/tpc_entry_gate_pe_strategies
+      strategies_root: config/experiments/20260604_tpc_entry_semantic_validate/variants/tpc_entry_gate_pe_strategies
       output_dir: results/tpc/experiments/entry_semantic_validate_20260604/E3_gate_pe
 
     - suffix: E4_turbo_exec
-      strategies_root: config_experiments/tpc_exec_turbo_20260424_strategies
+      strategies_root: config/experiments/20260604_tpc_entry_semantic_validate/variants/tpc_exec_turbo_20260424_strategies
       output_dir: results/tpc/experiments/entry_semantic_validate_20260604/E4_turbo_exec
 
 # 全窗 highcap（与 trading_map 对齐，便于看 SOL 等单币）
@@ -73,13 +73,13 @@ runs:
     output_dir: results/tpc/experiments/entry_semantic_validate_20260604/full/E0_prod
 
   - variant: S50_depth_gt50_full
-    strategies_root: config_experiments/tpc_semantic_depth_gt50_strategies
+    strategies_root: config/experiments/20260604_tpc_entry_semantic_validate/variants/tpc_semantic_depth_gt50_strategies
     start_date: "2022-01-01"
     end_date: "2026-04-01"
     output_dir: results/tpc/experiments/entry_semantic_validate_20260604/full/S50_depth_gt50
 
   - variant: S51_depth_gt50_ema_near_full
-    strategies_root: config_experiments/tpc_semantic_depth_gt50_ema_near_strategies
+    strategies_root: config/experiments/20260604_tpc_entry_semantic_validate/variants/tpc_semantic_depth_gt50_ema_near_strategies
     start_date: "2022-01-01"
     end_date: "2026-04-01"
     output_dir: results/tpc/experiments/entry_semantic_validate_20260604/full/S51_depth_gt50_ema_near

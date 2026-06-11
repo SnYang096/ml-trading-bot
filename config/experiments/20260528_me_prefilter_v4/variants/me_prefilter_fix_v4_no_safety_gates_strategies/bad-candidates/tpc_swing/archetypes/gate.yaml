@@ -1,0 +1,58 @@
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+hard_gates:
+- id: gate_tpc_semantic_chop_high
+  tag: HARD_TPC_SEMANTIC_CHOP
+  phase: hard_gate
+  priority: 6
+  reason: TPC 专用：BB 偏窄且方向置信低 → 典型震荡来回扫区
+  when:
+    tpc_semantic_chop:
+      value_gt: 0.4
+  then:
+    action: deny
+  locked: true
+  frozen: true
+  promote_never_disable: true
+  lock_reason: 波动区过滤（标准）：与 BPC/ME 三策略同构，避免 chop bar 上的虚假回调
+guardrails: []
+system_safety:
+- id: gate_evt_var_99_evt_var_99
+  tag: HARD_EVT_VAR_99_EVT_VAR_99
+  phase: system_safety
+  priority: 10
+  reason: 统计验证规则 (lift=1.54)
+  when:
+    all_of:
+    - evt_var_99:
+        value_gt: 0.6706
+    - evt_var_99:
+        value_lt: 0.7976
+  then:
+    action: deny
+  locked: true
+  disabled: true
+  disabled_reason: 放开大级别多空回调；需要尾部统计带时再打开并重跑优化
+- id: gate_vol_persistence_vol_persistence
+  tag: HARD_VOL_PERSISTENCE_VOL_PERSISTENCE
+  phase: system_safety
+  priority: 12
+  reason: 统计验证规则 (lift=1.24)
+  when:
+    all_of:
+    - vol_persistence:
+        value_gt: 0.0029
+    - vol_persistence:
+        value_lt: 0.0616
+  then:
+    action: deny
+  locked: true
+  lock_reason: 波动率持久性：低波噪声切换/拖泥带水期对趋势策略不利

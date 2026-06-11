@@ -1,0 +1,77 @@
+# FER Evidence (auto-discovered)
+# 来源: results/train_final_20260308_205007_rr_extreme/fer/logs_gated.parquet
+# 方法: Spearman + Quintile Monotonicity (p < 0.01)
+# 候选: 3/288 通过筛选
+
+schema:
+  label_semantics:
+    suppress: 强烈不利 - 极度限制仓位/信心
+    downweight: 不利 - 降低信心/仓位
+    neutral: 中性 - 标准执行
+    favor: 有利 - 提高信心/仓位
+    amplify: 强烈有利 - 最大化执行
+evidence:
+- id: evidence_bpc_garch_compression
+  feature: bpc_garch_compression
+  rank: 1
+  direction: negative
+  usage_hint: sp_r=-0.135 WR:59.8%→41.7% | bpc_garch_compression现为BB二阶压缩，语义与GARCH相同
+  affects:
+  - position_size
+  - tp_range
+  quantile_mapping:
+    bins:
+    - 0.22999999999999998
+    - 0.48
+    - 0.72
+    - 0.91
+    labels:
+    - amplify
+    - favor
+    - neutral
+    - downweight
+    - suppress
+  split_count: 5
+- id: evidence_fer_trapped_shorts_score
+  feature: fer_trapped_shorts_score
+  rank: 2
+  direction: positive
+  usage_hint: sp_r=+0.134 WR:46.6%→63.2%
+  affects:
+  - position_size
+  - tp_range
+  quantile_mapping:
+    bins:
+    - 0.06514717909881348
+    - 0.7325017752710444
+    - 1.6805380786778337
+    - 3.064612896444677
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  split_count: 5
+- id: evidence_vol_mom_10
+  feature: vol_mom_10
+  rank: 3
+  direction: positive
+  usage_hint: sp_r=+0.126 WR:48.7%→63.5%
+  affects:
+  - position_size
+  - tp_range
+  quantile_mapping:
+    bins:
+    - -0.17646770218316127
+    - -0.043125547739033515
+    - 0.06667568804238604
+    - 0.25608258368129844
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  split_count: 5
+min_score: 0.0

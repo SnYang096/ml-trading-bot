@@ -2,7 +2,7 @@
 #
 # Prefilter: macro@240 背景 only（τ 放宽 0.12/0.10），吸收确认由 entry vol_confirm 承担
 # Execution: initial_r=8, trail_r=10, activation=6, structural=ema1200
-# 变体树：config_experiments/tpc_macro_wide_exec_strategies/
+# 变体树：config/experiments/20260610_tpc_macro_pullback_replace/variants/tpc_macro_wide_exec_strategies/
 #
 #   PYTHONPATH=src:scripts python -m scripts.event_backtest \
 #     --variant-grid config/experiments/20260610_tpc_macro_pullback_replace/tpc_macro_wide_exec_fast_grid.yaml \
@@ -34,5 +34,5 @@ segment_matrix:
       output_dir: results/tpc/experiments/macro_wide_exec_fast_20260609/E0_prod
 
     - suffix: M_wide_exec
-      strategies_root: config_experiments/tpc_macro_wide_exec_strategies
+      strategies_root: config/experiments/20260610_tpc_macro_pullback_replace/variants/tpc_macro_wide_exec_strategies
       output_dir: results/tpc/experiments/macro_wide_exec_fast_20260609/M_wide_exec

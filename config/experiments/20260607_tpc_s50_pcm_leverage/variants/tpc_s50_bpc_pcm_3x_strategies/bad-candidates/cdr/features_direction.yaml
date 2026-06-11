@@ -1,0 +1,13 @@
+name: cdr_direction
+description: |
+  CDR Direction 特征候选池：
+  初版直接使用 fer_sr_failed_breakout_direction_signed，代表失败突破后的反向交易方向。
+
+feature_pipeline:
+  requested_features:
+    - fer_failure_signals_f
+    - ema_1200_position_f
+    - wide_sr_swing_f
+    - box_structure_f
+    - cvd_divergence_v2_f
+    - price_momentum_divergence_f

@@ -1,0 +1,14 @@
+strategy:
+  name: bpc-swing-120T
+  description: |
+    BreakoutPullbackContinuation swing-alpha variant.
+    Keep BPC signal stack but use tighter swing execution semantics.
+  owner: quant_team
+  archetype: BreakoutPullbackContinuationLong
+  timeframe: "120T"
+  symbol_include: []
+  symbol_exclude:
+    - XRPUSDT
+  macro_tp_vwap_anchor:
+    enabled: false
+    symbol: BTCUSDT

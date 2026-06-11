@@ -1,0 +1,53 @@
+# RMR Prefilter: 仅在「非趋势 + 结构稳定 + 区间有宽度」的纯波动区里放行
+#
+# 设计原则：
+#   • 不使用任何 fer_sr_failed_breakout_* / fer_failure_signals_*（那是 FBF 的语义锚）。
+#   • 主动排斥 SRB / BPC / TPC / ME 偏好的趋势环境。
+#   • 保证区间足够宽，避免在极窄噪声里做无意义的微幅回归。
+#
+# v2 (2026-04-20): 首跑 baseline 显示大趋势月（2024-03/07/11）prefilter 未能过滤
+# 单边行情。收紧三项 "非趋势" 阈值，新增 price_dir_consistency_pct、
+# bb_width_normalized_pct、atr_percentile 三条结构保护。
+
+rules:
+  - feature: trend_r2_20
+    operator: "<="
+    value: 0.22
+    locked: true
+    lock_reason: 非趋势环境锚点：20 根 OLS R² 低 → 区间波动而非单边趋势 (v2 收紧 0.30→0.22)
+
+  - feature: path_efficiency_pct
+    operator: "<="
+    value: 0.38
+    locked: true
+    lock_reason: 路径效率偏低（来回震荡为主），配合低 R² 强化「非趋势」判定 (v2 收紧 0.45→0.38)
+
+  - feature: price_dir_consistency_pct
+    operator: "<="
+    value: 0.60
+    locked: true
+    lock_reason: 价格方向一致性低 → 阻挡单边持续推进的趋势月 (v2 新增)
+
+  - feature: fer_ols_width_norm
+    operator: ">="
+    value: 0.28
+    locked: true
+    lock_reason: 区间宽度下限：回中轴的目标距离要能覆盖 ≥ 1R 止损
+
+  - feature: bb_width_normalized_pct
+    operator: ">="
+    value: 0.25
+    locked: true
+    lock_reason: BB 宽度可见，避免极窄无效区间 (v2 新增)
+
+  - feature: sr_strength_max
+    operator: ">="
+    value: 0.40
+    locked: true
+    lock_reason: 边界结构清晰度：两侧 SR 较硬，回归中轴不易被穿
+
+  - feature: atr_percentile
+    operator: "<="
+    value: 0.85
+    locked: true
+    lock_reason: 排除极端波动率尖峰 (panic move / 事件驱动单边) (v2 新增)

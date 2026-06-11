@@ -1,0 +1,28 @@
+# Phase 4 — 组合与消融（文档索引；实际以 stitched_total_r 选优胜）
+#
+# 启用顺序建议：
+# 1) 仅 Phase 1：调 execution.yaml 中 initial_r / activation_r / trail_r（regime + sr 全 false）
+# 2) Phase 2：regime_execution.enabled: true（sr_structural_exit.enabled: false）
+# 3) Phase 3：sr_structural_exit.enabled: true（可与 2 同开，但先做消融）
+#
+# 代码锚点：
+# - 特征注入：scripts/event_backtest.py（maybe_inject_srb_experiment_features）
+# - SRB 加仓门控：src/time_series_model/live/srb_regime.py（srb_add_position_allowed）；
+#   execution.yaml 中 srb_add_position_policy + add_position（ME 对齐 float_r_ladder_only）
+# - 参数生成：src/time_series_model/live/generic_live_strategy.py ExecutionParamGenerator
+# - SR 结构出场：src/time_series_model/live/position_logic.py enforce_position 步骤 3e
+# - 报告：scripts/srb_experiment_report.py
+
+presets:
+  baseline_only:
+    regime_execution.enabled: false
+    sr_structural_exit.enabled: false
+  regime_only:
+    regime_execution.enabled: true
+    sr_structural_exit.enabled: false
+  sr_exit_only:
+    regime_execution.enabled: false
+    sr_structural_exit.enabled: true
+  regime_plus_sr:
+    regime_execution.enabled: true
+    sr_structural_exit.enabled: true

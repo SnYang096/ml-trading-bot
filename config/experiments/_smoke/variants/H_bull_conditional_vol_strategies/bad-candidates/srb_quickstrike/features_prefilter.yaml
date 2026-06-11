@@ -1,0 +1,11 @@
+name: srb_prefilter
+description: |
+  SRB Prefilter：只使用 L3 关键 SR 带 / L2 结构强度 / L3 突破窗口；方向列供 direction archetype。
+
+feature_pipeline:
+  requested_features:
+    - market_cap_normalized_orderflow_f
+    - sr_strength_max_f
+    - wide_sr_swing_f
+    - srb_l3_breakout_window_f
+    - roc_20_f

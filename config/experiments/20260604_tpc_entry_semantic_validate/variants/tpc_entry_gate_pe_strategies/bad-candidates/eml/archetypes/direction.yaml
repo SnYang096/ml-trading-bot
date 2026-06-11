@@ -1,0 +1,15 @@
+# EML 方向：EMA1200 大结构。价格在 EMA1200 一侧，且 EMA1200 斜率同向。
+
+description: "EML — ema_1200_slope_10 sign × ema_1200_position 多/空带通（inner=0.003）"
+
+direction_rules:
+  - id: eml_ema1200_side_slope_align
+    method: signal_match_position_band
+    description: "EMA1200 斜率为正须在多头带；斜率为负须在空头带"
+    signal_rules:
+      - feature: ema_1200_slope_10
+        transform: sign
+    position_band:
+      feature: ema_1200_position
+      inner_abs: 0.003
+      outer_abs: 1

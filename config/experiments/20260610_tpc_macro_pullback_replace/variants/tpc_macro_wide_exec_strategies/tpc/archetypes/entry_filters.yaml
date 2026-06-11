@@ -1,0 +1,22 @@
+# Macro entry: 去掉 20-bar 微观 entry filters（vol_confirm / delta_absorb）
+# 吸收确认由 prefilter 的 tpc_macro_vol_contraction + tpc_macro_range_convergence 承担
+# 在 macro 回撤语境中，20-bar 缩量/吸收信号不匹配 240-bar 事件尺度
+
+filters:
+- id: tpc_deep_pullback_vol_confirm
+  enabled: false
+  description: 缩量回踩确认（量能维度）— 关闭：20-bar 微观尺度不匹配 macro 策略
+  conditions:
+  - feature: tpc_vol_pullback_confirm
+    operator: '>='
+    value: 0.45
+  tier: EXPERIMENT
+- id: tpc_deep_pullback_delta_absorb
+  enabled: false
+  description: 回踩段 delta 吸收（订单流维度）— 关闭：同上
+  conditions:
+  - feature: bpc_pullback_delta_absorption
+    operator: '>='
+    value: 0.15
+  tier: EXPERIMENT
+combination_mode: or

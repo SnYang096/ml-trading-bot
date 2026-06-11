@@ -1,0 +1,47 @@
+# CRF prefilter — 只允许"当前处于稳定、可反复触达的 120 短打盒子"的 bar 参与决策。
+# prefilter 只做"是不是可交易盒子"的门；方向由 archetypes/direction.yaml 在 box_pos 基础上判断。
+rules:
+  # stability = 1 - R² of linear fit over past 120 bars
+  #   • 2022-2026Q1 诊断：120 + edge_chop 短打比 240 对边持有更稳定；
+  #     这里把 CRF 从“大中枢等对边”降级为“震荡区边缘短打”。
+  #   • 旧定义 (low>=box_lo-tol & high<=box_hi+tol) 恒为 True，因此 0.70 没挡住任何 bar；
+  #     新定义区分度大，CRF 只吃高置信盒子。
+  - feature: box_stability_120
+    operator: ">="
+    value: 0.85
+    locked: true
+    lock_reason: "CRF 短打语义锚点 1/3：必须是 120 根低趋势强度盘整段 (1-R² ≥ 0.85)"
+
+  - feature: box_width_pct_120
+    operator: ">="
+    value: 0.04
+    locked: true
+    lock_reason: "CRF 语义锚点 2/3：盒子够宽才有 fade 空间（≥ 4%）"
+
+  # 短打盒子不追求大中枢；过宽更像 regime-change 中段。
+  - feature: box_width_pct_120
+    operator: "<="
+    value: 0.30
+    locked: true
+    lock_reason: "CRF 短打语义锚点 3/3：盒子不能无限放宽；>30% 多为趋势/突破过程，不适合做 range fade"
+
+  # 真盒子不是只横着走，还需要上下沿都被反复测试；否则容易是单边趋势的滚动高低点。
+  - feature: box_touches_hi_120
+    operator: ">="
+    value: 5
+    locked: true
+    lock_reason: "120 根盒子上沿至少 5 次触达，确认顶部可交易边界"
+
+  - feature: box_touches_lo_120
+    operator: ">="
+    value: 5
+    locked: true
+    lock_reason: "120 根盒子下沿至少 5 次触达，确认底部可交易边界"
+
+last_evaluation:
+  timestamp: "2026-04-25"
+  data_source: "synthetic + highcap 2024-01..2026-03 causal 2H"
+  n_rows: 59046
+  notes: |
+    2026-04-25 更新：跨期诊断显示 240 对边持有不稳定；CRF 降级为
+    120 盒子 edge_chop 短打，目标是先吃中线/ATR 级别回归，而不是等完整对边。

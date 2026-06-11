@@ -1,0 +1,18 @@
+name: box_pullback_trend
+description: |
+  Feature request list for macro-aligned box/chop pullback research.
+
+feature_pipeline:
+  exclude_columns:
+    - atr
+  requested_features:
+    - atr_f
+    - box_structure_f
+    - bpt_macro_box_direction_f
+    - bb_width_normalized_pct_f
+    - ema_1200_position_f
+    - ema_1200_slope_f
+    - macd_atr_f
+    - rsi_f
+    - sma_200_f
+    - sma_200_slope_f

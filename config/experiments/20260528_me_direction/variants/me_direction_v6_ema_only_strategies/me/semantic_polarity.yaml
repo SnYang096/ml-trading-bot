@@ -1,0 +1,40 @@
+# ==========================================================================
+# ME (Momentum Expansion) — Semantic Polarity
+# ==========================================================================
+# 作用: 给 ME 策略下「单调方向明确」的特征打方向标签, meta-algorithm sweep
+#       只扫描与语义一致的方向, 杜绝 `me_volume_surge <= 0.34` 这类反向规则。
+#
+# 加载: scripts/meta_algorithm_unified.py 按策略加载
+#       config/strategies/{strategy}/semantic_polarity.yaml
+#       (不同策略对同一特征的语义可能不同, 所以不用共享文件)
+#
+# 值:
+#   higher_is_better → sweep 只允许 deny low (op="<"), skip range
+#   lower_is_better  → sweep 只允许 deny high (op=">"), skip range
+#   未列入 / unknown → 两侧方向 + range 都扫 (保留原自由度)
+# --------------------------------------------------------------------------
+
+polarity:
+  # ── ME 动量扩张语义 (值越大越倾向入场) ──
+  me_volume_surge:        higher_is_better
+  me_cvd_strength:        higher_is_better
+  me_accel_persistence:   higher_is_better   # 近 5 根加速根数
+  me_multi_tf_alignment:  higher_is_better   # 多周期方向一致度
+
+  # ── ME 反向风险 / 场景语义 (值越大越差) ──
+  me_reflex_risk:         lower_is_better
+  me_semantic_chop:       lower_is_better   # BB 带窄 × 多周期发散 (值越高越压缩/震荡)
+  me_semantic_chop_ts_q:  lower_is_better   # 同品种 rolling 分位，高=相对近期更 chop
+
+  # ── 活跃度 / 流动性 (ME 视角: 值越大越好) ──
+  # 其他策略如果也用到这些特征, 需要在各自的 semantic_polarity.yaml 里声明一次,
+  # 因为「活跃成交/压缩/点火」对不同策略的方向含义可能不同。
+  dollar_volume_over_mcap:           higher_is_better  # 活跃成交相对市值
+  vpin_zscore_20:                    higher_is_better  # VPIN 压力 zscore
+  trade_cluster_net_runs_zscore_20:  higher_is_better  # 成交簇方向持续
+  dual_compression_score:            higher_is_better  # funding × vpin 压缩
+  dual_ignition_score:               higher_is_better  # funding × footprint 点火
+
+  # ── 未声明 (留 unknown): 保留 meta-algo 自由度 ──
+  # me_atr_pct    — 太低死盘, 太高噪声, 非单调
+  # me_vol_regime — 类别型 regime 标签, 由 forbidden_prefilter_meta_columns 黑名单兜底

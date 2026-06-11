@@ -1,0 +1,20 @@
+feature_groups:
+  baseline:
+    - ema_1200_position_f
+    - macro_tp_vwap_1200_position_f
+    - me_accel_5k_f
+    - me_cvd_alignment_f
+    - me_vwap_structure_bypass_direction_f
+    - me_semantic_chop_ts_q_f
+    - cvd_divergence_score_pct_f
+    - atr_percentile_f
+    - me_accel_persistence_f
+    - me_multi_tf_alignment_f
+    - box_compression_score_f
+    - box_pos_120_f
+    - box_breakout_up_f
+    - box_breakout_down_f
+    # Order flow（与 archetypes entry_filters 中 VPIN/点火列对齐；实盘/增量 FC 仍以 archetypes 自动解析为准）
+    - vpin_features_f
+    - vpin_scene_semantic_scores_f
+    - dual_ignition_f

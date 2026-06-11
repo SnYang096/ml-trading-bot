@@ -1,0 +1,17 @@
+# MSR 回测配置
+
+backtest:
+  initial_capital: 10000
+  position_size: 0.01
+  max_positions: 2
+  entry:
+    min_impulse_strength: 1.5
+    min_failure_confidence: 0.6
+    max_entry_delay: 3
+  risk:
+    max_loss_per_trade: 0.01
+    stop_loss_atr_multiple: 1.2
+    take_profit_atr_multiple: 3.6
+  time_filter:
+    min_bars_between_trades: 12
+    max_hold_time: 60

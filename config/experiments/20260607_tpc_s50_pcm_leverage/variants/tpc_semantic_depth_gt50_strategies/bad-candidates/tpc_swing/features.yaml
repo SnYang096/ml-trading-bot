@@ -1,0 +1,13 @@
+feature_groups:
+  baseline:
+    - ema_1200_position_f
+    - macd_atr_f
+    - tpc_pullback_depth_f
+    - tpc_cvd_absorption_f
+    - tpc_recovery_strength_f
+    - tpc_semantic_chop_f
+    - box_pos_120_f
+    - box_breakout_up_f
+    - box_breakout_down_f
+    - evt_var_99_f
+    - vol_persistence_f

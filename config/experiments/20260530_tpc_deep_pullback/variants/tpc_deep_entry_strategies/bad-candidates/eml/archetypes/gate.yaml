@@ -1,0 +1,93 @@
+# EML gate：chop + 窄箱贴 EMA1200 + 末端极端 + 跳变风险（全部 frozen，避免 Gate Optimize 误关/误改阈值）
+
+schema:
+  phases:
+    - system_safety
+    - hard_gate
+    - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+
+hard_gates:
+  - id: eml_tpc_semantic_chop_high
+    tag: HARD_EML_SEMANTIC_CHOP
+    phase: hard_gate
+    priority: 6
+    reason: "BB 偏窄且方向置信低 → 与 TPC/BPC 同构的震荡来回扫区"
+    when:
+      tpc_semantic_chop:
+        value_gt: 0.40
+    then:
+      action: deny
+    locked: true
+    frozen: true
+    promote_never_disable: true
+    lock_reason: "波动区标准过滤；依赖 tpc_soft_phase 的 tpc_semantic_chop"
+
+  - id: eml_tight_box_near_ema1200
+    tag: HARD_EML_TIGHT_BOX_NEAR_EMA1200
+    phase: hard_gate
+    priority: 7
+    reason: "120bar 箱体极窄且价仍贴近 EMA1200 → 大结构不明、易扫损"
+    when:
+      all_of:
+        - box_width_pct_120:
+            value_lt: 0.045
+        - ema_1200_position:
+            value_gt: -0.014
+        - ema_1200_position:
+            value_lt: 0.014
+    then:
+      action: deny
+    locked: true
+    frozen: true
+    promote_never_disable: true
+    lock_reason: "与 prefilter 死区衔接：略离 EMA 但仍夹在窄箱内"
+
+  - id: eml_late_long_ema1200_extreme
+    tag: HARD_EML_LATE_LONG_EMA1200
+    phase: hard_gate
+    priority: 5
+    reason: "价相对 EMA1200 过高 → 末端追涨"
+    when:
+      ema_1200_position:
+        value_gt: 0.18
+    then:
+      action: deny
+    locked: true
+    frozen: true
+    lock_reason: "与 BPC/TPC late-long 语义一致"
+
+  - id: eml_late_short_ema1200_extreme
+    tag: HARD_EML_LATE_SHORT_EMA1200
+    phase: hard_gate
+    priority: 5
+    reason: "价相对 EMA1200 过低 → 末端追空"
+    when:
+      ema_1200_position:
+        value_lt: -0.18
+    then:
+      action: deny
+    locked: true
+    frozen: true
+    lock_reason: "与 late-short 语义对称"
+
+system_safety:
+  - id: eml_jump_risk_extreme
+    tag: HARD_EML_JUMP_RISK_EXTREME
+    phase: system_safety
+    priority: 8
+    reason: "跳空/跳变风险过高，趋势入场易被瞬时回撤击穿"
+    when:
+      jump_risk_pct:
+        value_gt: 0.95
+    then:
+      action: deny
+    locked: true
+    frozen: true
+    lock_reason: "极端跳变风险保护"
+
+guardrails: []

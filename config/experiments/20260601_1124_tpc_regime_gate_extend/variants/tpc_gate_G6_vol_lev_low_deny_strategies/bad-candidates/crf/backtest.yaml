@@ -1,0 +1,30 @@
+# CRF 回测配置
+# Failure-first 模型（invert=true）：预测 success_prob（不会失败的概率）
+# 与 BPC 一致，高于阈值才入场。
+
+backtest:
+  enabled: true
+  params:
+    price_col: close
+    freq: 2H
+    use_signal_direction: true     # CRF 是双向，用 direction rule 决定方向
+
+    long_entry_threshold: 0.60
+    short_entry_threshold: 0.60
+
+    exit_mode: none
+    entry_mode: level
+    strategy_direction: bidirectional
+    max_holding_bars: 120
+    use_rr_exit: true
+    rr:
+      atr_window: 14
+      max_holding_bars: 120
+      stop_loss_r: 1.0
+      take_profit_r: 1.5
+      entry_offset: 1
+      use_time_exit: true
+      use_trailing_stop: false   # CRF 是 fade，拖尾反而容易错过对边 TP
+    initial_cash: 10000
+    fee: 0.0004
+    slippage: 0.0001

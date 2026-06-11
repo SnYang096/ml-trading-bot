@@ -1,0 +1,13 @@
+rules:
+  - feature: tpc_pullback_depth
+    operator: <=
+    value: 0.849993
+    rationale: prod 锚点保留：20-bar 回踩深度受控（当根仍在回撤腿，非大回撤背景下的反弹）
+  - any_of:
+      - feature: tpc_macro_pullback_pct_long
+        operator: '>='
+        value: 0.15
+      - feature: tpc_macro_pullback_pct_short
+        operator: '>='
+        value: 0.12
+    rationale: macro_pullback_pct N=240 叠加 depth：bull long≥15% / bear short≥12%（Phase1 τ；AND 非替代）

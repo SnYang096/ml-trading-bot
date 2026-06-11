@@ -1,0 +1,41 @@
+rules:
+- feature: bpc_volume_compression_pct
+  operator: '>='
+  value: 0.9295
+  rationale: meta-algorithm, KS=0.1055, return_uplift=+1.6074, robustness=100%, holdout验证通过
+- feature: bpc_recent_breakout_strength
+  operator: '>='
+  value: 0.4
+  rationale: 语义锁定：近 lookback_breakout 根内确实出现过突破（bpc_score_breakout rolling max），排除纯横盘里的
+    pullback
+  locked: true
+  lock_reason: BPC 语义锚点 1/3：Breakout 成立
+- feature: bpc_pullback_depth
+  operator: <=
+  value: 0.55
+  rationale: 语义锁定：回撤不能过深，过深更接近结构失败或反转语义；放宽到既有候选上沿以保留牛熊单边里的深回踩肥尾
+  locked: true
+  lock_reason: BPC 语义锚点 2/3：Pullback 受控（未破结构，允许较深但仍有效的趋势回踩）
+- feature: bpc_recovery_strength
+  operator: '>='
+  value: 0.5
+  rationale: 语义锁定：回踩后必须有恢复力度，确认 continuation 的可执行性
+  locked: true
+  lock_reason: BPC 语义锚点 3/3：Continuation 确认
+- feature: bpc_pullback_depth
+  operator: '>='
+  value: 0.12
+  rationale: Phase1 scan depth>=0.12 |z|=5.15；反贴顶延续，与 depth<=0.55 成带
+- feature: box_pos_120
+  operator: <=
+  value: 0.85
+  rationale: Phase1 anti_chase box_pos>=0.85 Δpp=-10.3pp |z|=7.4；替代 box_breakout 追高语义
+last_evaluation:
+  timestamp: '2026-05-11'
+  data_source: features_labeled.parquet
+  n_rows: 93121
+  baseline_bad_rate: 0.0
+  baseline_median_rr: 0.034
+  positive_signals: []
+  anti_signals: []
+  absence_signals: []

@@ -1,0 +1,9 @@
+rules:
+  - any_of:
+      - feature: tpc_macro_pullback_pct_long
+        operator: '>='
+        value: 0.15
+      - feature: tpc_macro_pullback_pct_short
+        operator: '>='
+        value: 0.12
+    rationale: macro_pullback_pct N=240 替代 depth：bull long≥15% / bear short≥12%（扫描 τ 初稿）

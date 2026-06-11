@@ -1,0 +1,29 @@
+# Majors-only; τ from dedicated BTC/ETH model holdout (q=0.08).
+
+backtest:
+  enabled: true
+  params:
+    price_col: close
+    freq: "120T"
+    use_signal_direction: true
+    top_quantile: 0.08
+    bottom_quantile: 0.08
+    entry_mode: cross
+    entry_exit_conflict: block_entry_on_exit
+    initial_cash: 10000
+    fee: 0.0004
+    slippage: 0.0001
+    max_holding_bars: 6
+    allow_flip: false
+    use_trailing_stop: true
+    trailing_atr_mult: 1.5
+    atr_col: atr
+    atr_window: 14
+    pyramiding:
+      enabled: false
+    position_sizing:
+      type: atr_risk
+      risk_pct: 0.005
+      atr_col: atr
+      atr_window: 14
+      max_size_cap: 5

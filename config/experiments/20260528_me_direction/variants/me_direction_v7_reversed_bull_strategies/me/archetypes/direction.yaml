@@ -1,0 +1,24 @@
+# ME / CompressionBreakout direction — v7_reversed_bull
+#
+# 假设（最强证据）：condition-set on v3 prefilter base 上
+#   "EMA1200_position > 0  AND  macd_atr < 0" combo（n=68）
+#   succ% +17.74 pp vs base，|z|=3.21 ⭐⭐ 最强候选。
+# 直接落实为 direction：cand = -sign(macd_atr)，再要求与 EMA1200_position 同侧；
+# 对称地 EMA<0 & macd>0 → SHORT。去掉 direction_filter。
+
+description: "CompressionBreakout 方向 — v7: 直接复现 reversed_bull combo（EMA>0 & macd<0 → LONG）"
+
+direction_rules:
+  - id: me_v7_macd_negate_ema_band
+    method: signal_match_position_band
+    description: "cand = -sign(macd_atr)；EMA1200 同侧带 + slope 同向"
+    signal_rules:
+      - feature: macd_atr
+        transform: negate_sign
+    position_band:
+      feature: ema_1200_position
+      inner_abs: 0.03
+      outer_abs: 1
+    require_sign_agreement:
+      feature: ema_1200_slope_10
+      deadband: 0.0

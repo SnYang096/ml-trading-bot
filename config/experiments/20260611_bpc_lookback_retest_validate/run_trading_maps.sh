@@ -14,8 +14,8 @@ mkdir -p "$LOG_DIR"
 
 VARIANTS=(
   "B0_prod|config/strategies"
-  "B_L120_retest|config_experiments/bpc_lb120_retest_strategies"
-  "B_L120|config_experiments/bpc_lb120_strategies"
+  "B_L120_retest|config/experiments/20260611_bpc_lookback_retest_validate/variants/bpc_lb120_retest_strategies"
+  "B_L120|config/experiments/20260611_bpc_lookback_retest_validate/variants/bpc_lb120_strategies"
 )
 
 run_one() {

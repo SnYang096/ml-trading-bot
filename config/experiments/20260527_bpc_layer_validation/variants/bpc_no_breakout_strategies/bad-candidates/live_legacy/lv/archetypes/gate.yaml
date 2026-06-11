@@ -1,0 +1,30 @@
+# LV Gate (optimized, auto-promoted)
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/lv/20260308_220712/strategies/lv/gate_draft.yaml
+# 优化规则: 0/1 条通过优化
+
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+hard_gates:
+- id: gate_fer_volume_price_divergence_fer_volume_price_divergence
+  tag: HARD_FER_VOLUME_PRICE_DIVERGENCE_FER_VOLUME_PRICE_DIVERGENCE
+  phase: hard_gate
+  priority: 10
+  reason: 统计验证规则 (lift=1.05)
+  when:
+    all_of:
+    - fer_volume_price_divergence:
+        value_gt: 0.775
+    - fer_volume_price_divergence:
+        value_lt: 0.875
+  then:
+    action: deny
+  comment: 'optimizer: stable_plateau_found, threshold=0.4375, lift=0.181'
+guardrails: []

@@ -1,0 +1,39 @@
+# MSR Prefilter: L3 (240 bar swing) 边界锚 + 失败突破证据
+#
+# 关键选择：
+#   - 使用 wide_sr_dist_atr ≤ 2.0 作为硬锚（对标诊断里 +20× meanR 的子集）
+#   - 要求 wide_sr_range_width_atr ≥ 4.0：排除窄 swing（L3 盒子太小 → 几何上无反转空间）
+#   - 要求 fer_sr_failed_breakout_score ≥ 0.32：略低于 FBF 的 0.38，
+#       因为 FBF 已经靠 sr_strength_max/fer_ols_width_norm 过掉大量噪声，
+#       MSR 这层要给 L3 边界事件足够通过率；靠后续 entry_filter 再收
+#   - 趋势闸放宽到 ≤ 0.60（L3 反转常在趋势末段出现）
+#   - 刻意不加 sr_strength_max / fer_ols_width_norm（那是 L2 结构，
+#       会系统性把 L3 候选过掉；详见 FBF_RMR_HubRebound_verdict_20260420.md）
+#
+# 事件率目标：0.02%-0.05% 级别（全市场 ~50k bar 产生 10-25 单，月度 plateau 可能样本不足，
+# 后续 pipeline 里用 slow 的 3 个月 calibration + 12 个月 structure lookback 支持）
+
+rules:
+  - feature: wide_sr_dist_atr
+    operator: "<="
+    value: 2.0
+    locked: true
+    lock_reason: "L3 硬锚：价格必须靠近大级别 swing 边界（2 ATR 内）"
+
+  - feature: wide_sr_range_width_atr
+    operator: ">="
+    value: 4.0
+    locked: true
+    lock_reason: "L3 盒子宽度下限：太窄的 swing 没有反转空间"
+
+  - feature: fer_sr_failed_breakout_score
+    operator: ">="
+    value: 0.32
+    locked: true
+    lock_reason: "有失败突破证据，避免裸边界触达；阈值低于 FBF 因无其它结构过滤"
+
+  - feature: trend_r2_20
+    operator: "<="
+    value: 0.60
+    locked: true
+    lock_reason: "允许中强趋势：L3 反转常在趋势末段尾部出现（比 FBF 的 0.50 宽）"

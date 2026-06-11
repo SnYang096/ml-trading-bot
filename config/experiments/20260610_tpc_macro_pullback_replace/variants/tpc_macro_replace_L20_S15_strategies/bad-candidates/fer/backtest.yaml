@@ -1,0 +1,24 @@
+# FER 回测配置
+
+backtest:
+  # 基础参数
+  initial_capital: 10000
+  position_size: 0.02  # 2% per trade
+  max_positions: 3
+  
+  # FER特定：反转策略参数
+  entry:
+    min_impulse_strength: 2.0      # 最小impulse强度（必须有明确单边）
+    min_failure_confidence: 0.7    # 最小失败置信度
+    max_entry_delay: 3             # 最大入场延迟（bars）
+  
+  # 风险管理
+  risk:
+    max_loss_per_trade: 0.02      # 单笔最大亏损2%
+    stop_loss_atr_multiple: 2.0   # 止损=2倍ATR
+    take_profit_atr_multiple: 4.0 # 止盈=4倍ATR（反转空间大）
+  
+  # 时间过滤
+  time_filter:
+    min_bars_between_trades: 5    # 最小交易间隔
+    max_hold_time: 20             # 最大持仓时间

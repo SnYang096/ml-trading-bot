@@ -1,0 +1,12 @@
+name: rmr_direction
+description: |
+  RMR Direction 特征候选池：
+  MVP 用 macd_atr 的 negate_sign 做「fade momentum」方向占位。
+  后续可引入专用 signed 特征 rmr_mean_revert_direction_signed（例：sign(0.5 - fer_range_pos_20)
+  × 衰竭确认强度），届时此文件再补相应 _f 包。
+
+feature_pipeline:
+  requested_features:
+    - macd_atr_f
+    - rsi_f
+    - fer_failure_signals_f      # 仅用 fer_range_pos_20 / fer_ols_pos 做位置参考

@@ -1,0 +1,6 @@
+# Lottery100 Evidence — 可选软评分层；默认空（彩票排序主要来自离线容量/树）
+#
+# 若将来接入 composite score，在此声明 evidence 特征与 min_score。
+
+min_score: 0.0
+evidence: []

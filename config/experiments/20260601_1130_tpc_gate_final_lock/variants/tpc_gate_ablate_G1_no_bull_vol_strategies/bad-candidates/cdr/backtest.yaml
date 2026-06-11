@@ -1,0 +1,17 @@
+# CDR 回测配置
+
+backtest:
+  initial_capital: 10000
+  position_size: 0.01
+  max_positions: 2
+  entry:
+    min_impulse_strength: 1.0
+    min_failure_confidence: 0.5
+    max_entry_delay: 3
+  risk:
+    max_loss_per_trade: 0.01
+    stop_loss_atr_multiple: 1.35
+    take_profit_atr_multiple: 4.32
+  time_filter:
+    min_bars_between_trades: 12
+    max_hold_time: 72

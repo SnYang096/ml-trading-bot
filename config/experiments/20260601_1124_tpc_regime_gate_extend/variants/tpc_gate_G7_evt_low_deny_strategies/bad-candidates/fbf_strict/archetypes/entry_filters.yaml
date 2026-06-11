@@ -1,0 +1,83 @@
+# FBF Strict Entry Filter V2: 边界缓冲带 + 失败突破事件 + 衰竭证据 (OR)
+#
+# === V1 → V2 变化（2026-04-23）===
+# 1. 删除 `fer_sr_failed_breakout_direction_signed` 方向硬锚。
+#    根因：`diag_fbf_strict_gate_funnel.py` 显示该特征在 32,904 个 2H bar 中：
+#      value=0  : 30,518 (92.7%)   ← 绝大多数 bar 无 failed-breakout 事件
+#      value=+1 :  2,060 ( 6.3%)
+#      value=-1 :    326 ( 1.0%)   ← short 方向全期就 326 bar，是 V1 总 36 笔
+#                                    / short 仅 14 笔的元凶。
+#    方向由 OLS side 自然隐含（下轨=long，上轨=short），语义完全等价且自洽。
+#    `fer_sr_failed_breakout_score ≥ 0.38` 仍然保证"确实发生了失败突破事件"。
+#
+# 2. `fer_ols_pos` 门槛从 `≥ 0.90 / ≤ 0.10` 放宽到 `≥ 0.75 / ≤ 0.25`。
+#    V1 实盘数据显示 clip 到 0.00/1.00 饱和的入场大多还在"真突破中"（亏钱），
+#    缓冲带 0.10-0.22 反而都是真正"已经从极端拉回"的点（盈利）。
+#
+# 3. 保留：failed_breakout_score ≥ 0.38（事件锚），flip OR absorp 衰竭证据。
+#
+# 预估：离线 funnel 扫 ~267 个 candidate bar → 过 exec/冷却后 ≈ 110-130 trades
+# （对比 V1 的 36 trades，long/short 也会平衡）。
+
+filters:
+  - id: fbf_short_upper_fail_flip
+    enabled: true
+    locked: true
+    description: "做空: OLS 上轨缓冲带 (≥0.75) + 失败突破事件 + 效率翻转"
+    conditions:
+      - feature: fer_ols_pos
+        operator: ">="
+        value: 0.75
+      - feature: fer_sr_failed_breakout_score
+        operator: ">="
+        value: 0.38
+      - feature: fer_efficiency_flip_strength
+        operator: ">="
+        value: 0.80
+
+  - id: fbf_short_upper_fail_absorp
+    enabled: true
+    locked: true
+    description: "做空: OLS 上轨缓冲带 (≥0.75) + 失败突破事件 + 主动吸收"
+    conditions:
+      - feature: fer_ols_pos
+        operator: ">="
+        value: 0.75
+      - feature: fer_sr_failed_breakout_score
+        operator: ">="
+        value: 0.38
+      - feature: fer_aggressor_absorption
+        operator: ">="
+        value: 0.76
+
+  - id: fbf_long_lower_fail_flip
+    enabled: true
+    locked: true
+    description: "做多: OLS 下轨缓冲带 (≤0.25) + 失败突破事件 + 效率翻转"
+    conditions:
+      - feature: fer_ols_pos
+        operator: "<="
+        value: 0.25
+      - feature: fer_sr_failed_breakout_score
+        operator: ">="
+        value: 0.38
+      - feature: fer_efficiency_flip_strength
+        operator: ">="
+        value: 0.80
+
+  - id: fbf_long_lower_fail_absorp
+    enabled: true
+    locked: true
+    description: "做多: OLS 下轨缓冲带 (≤0.25) + 失败突破事件 + 主动吸收"
+    conditions:
+      - feature: fer_ols_pos
+        operator: "<="
+        value: 0.25
+      - feature: fer_sr_failed_breakout_score
+        operator: ">="
+        value: 0.38
+      - feature: fer_aggressor_absorption
+        operator: ">="
+        value: 0.76
+
+combination_mode: or

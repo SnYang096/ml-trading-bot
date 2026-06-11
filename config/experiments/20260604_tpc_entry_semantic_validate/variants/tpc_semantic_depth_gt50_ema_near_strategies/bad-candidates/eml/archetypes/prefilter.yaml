@@ -1,0 +1,23 @@
+# EML prefilter — 只划分 EMA1200 大结构环境；方向细节由 direction.yaml 判定。
+rules:
+  - any_of:
+      - feature: ema_1200_position
+        operator: ">="
+        value: 0.003
+      - feature: ema_1200_position
+        operator: "<="
+        value: -0.003
+    rationale: "价在 EMA1200 上方或下方离开死区，避免贴线震荡段"
+    locked: true
+    lock_reason: "多空对称宏观锚"
+
+  - any_of:
+      - feature: ema_1200_slope_10
+        operator: ">"
+        value: 0
+      - feature: ema_1200_slope_10
+        operator: "<"
+        value: 0
+    rationale: "EMA1200 斜率非零，避免平坦慢线阶段"
+    locked: true
+    lock_reason: "过滤 EMA1200 平线无方向 bar"

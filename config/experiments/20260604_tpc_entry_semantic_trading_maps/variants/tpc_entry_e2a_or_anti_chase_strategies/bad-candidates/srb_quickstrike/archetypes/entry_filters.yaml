@@ -1,0 +1,14 @@
+# SRB QuickStrike entry filter — 真突破后的订单流/价格推进确认。
+# Prefilter 只管 L3 真突破窗口；这里确认突破不是空穿。
+filters:
+  - id: srb_orderflow_success_breakout
+    enabled: true
+    locked: true
+    promote_never_disable: true
+    description: "近 SR 成功推进：价格与 CVD 同向、且与突破方向一致"
+    conditions:
+      - feature: srb_sr_success_breakout_score
+        operator: ">="
+        value: 0.12
+
+combination_mode: or

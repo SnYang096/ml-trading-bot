@@ -1,0 +1,9 @@
+name: msr_direction
+description: |
+  MSR Direction 特征候选池：失败突破方向 + L3 侧向位置。
+
+feature_pipeline:
+  requested_features:
+    - wide_sr_swing_f
+    - fer_failure_signals_f
+    - bars_since_extreme_f

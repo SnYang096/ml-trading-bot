@@ -1,0 +1,28 @@
+filters:
+- id: tpc_long_absorption_follow_trend
+  enabled: true
+  description: 做多：大级别偏多 + 回调吸收成立后顺势入场
+  conditions:
+  - feature: tpc_cvd_absorption
+    operator: '>='
+    value: 0.629
+  - feature: tpc_recovery_strength
+    operator: '>='
+    value: 0.039
+  tier: A_PLATEAU
+  promote_never_disable: true
+  locked: true
+- id: tpc_short_absorption_follow_trend
+  enabled: true
+  description: 做空：大级别偏空 + 回调吸收成立后顺势入场
+  conditions:
+  - feature: tpc_cvd_absorption
+    operator: '>='
+    value: 0.629
+  - feature: tpc_recovery_strength
+    operator: '>='
+    value: 0.039
+  tier: A_PLATEAU
+  promote_never_disable: true
+  locked: true
+combination_mode: or

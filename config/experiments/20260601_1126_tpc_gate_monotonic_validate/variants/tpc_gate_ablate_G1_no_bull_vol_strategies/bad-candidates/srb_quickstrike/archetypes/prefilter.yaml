@@ -1,0 +1,52 @@
+# SRB QuickStrike prefilter — 只回答「是否刚完成 L3 大结构真突破」
+#
+# SRB = Structural Range Breakout：在 **有质量的 SR 结构** 上，价格处于 **突破/刚突破**
+# 的典型语境。订单流、EMA 2b、impulse 确认不放在 prefilter，分别交给 entry / gate / direction。
+#
+# 与其它策略分工：
+# - **BPC**：Donchian 突破 → **回踩** 深度/恢复（pullback continuation）。
+# - **ME**：accel / VWAP 带（动量扩张），不强调「刚穿关键价位」。
+# - **TPC**：EMA1200 + **pullback_depth**（大趋势回调不破）。
+# - **SRB QuickStrike（本文件）**：L3 上/下沿已突破 + SR 结构质量 + 突破频谱。
+#
+# 说明：`wide_sr_dist_atr` = min(|close−上沿|, |close−下沿|)/ATR，**小**表示贴近 **大级别阻力或支撑带之一**，
+# 与 BPC 的「回踩链」、TPC 的「回调深度」不是同一套条件。
+
+rules:
+  - feature: sr_strength_max
+    operator: ">="
+    value: 0.42
+    locked: true
+    lock_reason: 关键位结构强度（L2 HAL/POC 语义），SRB 锚点
+
+  - feature: spectrum_price_high_freq_ratio
+    operator: ">="
+    value: 0.22
+    locked: true
+    lock_reason: SR 突破专用频谱（策略内建语义，非泛趋势指标）
+
+  # 短打只吃新鲜突破窗口；太老的突破留给 BPC/TPC/ME，不归 SRB QuickStrike。
+  - feature: srb_l3_breakout_age_decay
+    operator: ">="
+    value: 0.35
+    locked: true
+    lock_reason: 只做 L3 真突破后的短窗口推进，不追长趋势尾段
+
+  # 不吃箱体中部起点：SRB 只允许贴近 box 边缘或已完成 box 突破。
+  # 与 BPC/TPC/ME 的通用防波动门一致，但不额外套 EMA 近零 / semantic_chop，
+  # 因为最新 SRB 样本里这两类过滤并未呈现负贡献。
+  - any_of:
+      - feature: box_pos_120
+        operator: "<="
+        value: 0.25
+      - feature: box_pos_120
+        operator: ">="
+        value: 0.75
+      - feature: box_breakout_up
+        operator: ">="
+        value: 0.5
+      - feature: box_breakout_down
+        operator: ">="
+        value: 0.5
+    locked: true
+    lock_reason: SRB 只做 SR/box 边界与突破，不在箱体中部未确认区提前开仓

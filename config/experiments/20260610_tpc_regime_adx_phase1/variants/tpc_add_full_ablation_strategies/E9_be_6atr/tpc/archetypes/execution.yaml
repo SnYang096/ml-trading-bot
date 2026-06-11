@@ -1,0 +1,41 @@
+# E8_float_pyr3x: locked + float_r_ladder_only + 金字塔 [0.25, 0.5, 1.0] × 3
+add_position:
+  add_size_multipliers:
+    - 0.25
+    - 0.5
+    - 1.0
+  inherit_parent_stop: true
+  min_current_r_by_add:
+    - 0.5
+    - 1
+    - 1.5
+  min_current_r_unit: atr
+  sizing_mode: fixed_multiplier
+  trigger:
+    type: float_r_ladder_only
+execution_constraints:
+  allow_add_on: true
+  min_order_interval_minutes: 60
+holding:
+  max_holding_bars: 0
+  time_stop_bars: 0
+stop_loss:
+  breakeven:
+    enabled: true
+    trigger_r: 6.0
+    lock_level_r: 2
+    measure: atr
+  guardrails:
+    max_stop_pct: 0.2
+    min_stop_pct: 0.01
+  initial_r: 4.0
+  structural_exit: ema1200
+  trailing:
+    activation_r: 3.5
+    enabled: true
+    expand_with_primary_atr: true
+    trail_r: 6.0
+  type: trailing
+take_profit:
+  enabled: false
+version: 1

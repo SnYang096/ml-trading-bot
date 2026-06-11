@@ -1,0 +1,3 @@
+model:
+  type: rule_based
+  notes: "Research-only swing variant; event_backtest uses archetypes execution."

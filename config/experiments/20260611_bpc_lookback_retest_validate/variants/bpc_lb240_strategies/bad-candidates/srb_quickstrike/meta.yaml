@@ -1,0 +1,29 @@
+# SRB QuickStrike (Structural Range Breakout) — 关键位真突破后的短打推进
+# 与 BPC/TPC/FBF/RMR 边界见 docs/z实验_005_统一研究/strategy_families_BPC_TPC_ME_FBF_SRB_RMR.md
+
+strategy:
+  name: srb-quickstrike-120T
+  description: |
+    StructuralRangeBreakout QuickStrike：纯粹的"SR 真突破 → 同向短打推进"策略。
+      入场：L3 wide SR 上/下沿已被因果突破，entry 再确认订单流/价格同向推进。
+      方向：优先使用 L3 breakout side；不把 SRB 做成 BPC/TPC 式长趋势骑乘。
+      执行：参考 FBF 稳定短打基线，1R 初始风险、2R 固定目标、36 根 2H time stop、默认不加仓。
+      被止损后：不自动反手、不同向再入 —— 扫到单子是策略应尽风险。
+    与其它策略的边界：
+      FBF：事前预判 SR 位假破、反向入场。RMR / Hub Rebound 已废弃（数据统计无优势），不归 SRB。
+      SRB QuickStrike 只负责「真突破 → 同向短打」，不是「真突破 → 长趋势肥尾」。
+    SR 多层结构（全仓库统一）：
+      L1 局部 SR（≈1-2 日）  — srb_regime.swing_sr_levels(lookback=20)，srb_sr_{support,resistance}
+      L2 中期 SR（≈2 周）    — poc_hal_features_*_f (poc_window=160)，sr_strength_max / dist_to_nearest_sr
+      L3 大级别 SR（≈1 月）  — wide_sr_swing_f (wide_window=240, anchor_shift=12)，
+                               wide_sr_{upper,lower}_px / wide_sr_dist_atr（与 FBF 共用特征）
+    SRB QuickStrike 用法：L3 做真突破方向锚点，L2/SR 强度与频谱过滤结构质量。
+
+  owner: quant_team
+  archetype: StructuralRangeBreakoutQuickStrike
+
+  timeframe: "120T"
+
+  macro_tp_vwap_anchor:
+    enabled: false
+    symbol: BTCUSDT

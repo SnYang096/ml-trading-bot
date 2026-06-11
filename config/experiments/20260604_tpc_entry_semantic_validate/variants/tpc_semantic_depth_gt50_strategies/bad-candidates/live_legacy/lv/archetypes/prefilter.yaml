@@ -1,0 +1,12 @@
+# LV Archetype Prefilter
+# 职责: archetype 成立的前置条件 — 不满足的样本不参与 Gate 训练
+# 对应研究配置: config/strategies/lv/prefilter.yaml (候选特征声明)
+#
+# Meta-Algorithm 发现 1 条规则 (KS=0.0629, uplift=+0.0185, deny=5%)
+# 注: promotion 逻辑有 bug 导致规则丢失, 这里手动补回
+
+rules:
+- feature: oi_exhaustion_score
+  operator: "<"
+  value: 0.0006858
+  note: "meta-algorithm holdout-valid (KS=0.0629, uplift=+0.0185, deny=5%)"

@@ -33,7 +33,7 @@ macro `tpc_macro_pullback_pct` prefilter **替代** prod `depth<=0.85` 后，在
 
 ## Follow-up：`M_add_L15_S12`（macro AND depth）
 
-- 变体树：`config_experiments/tpc_macro_add_L15_S12_strategies/`
+- 变体树：`config/experiments/20260610_tpc_macro_pullback_replace/variants/tpc_macro_add_L15_S12_strategies/`
 - 假设：大回撤背景（macro≥τ）+ 当根深回踩（depth≤0.85）交集
 
 | variant | bear R | bull R | recent R | sum R | worst maxDD | trades |

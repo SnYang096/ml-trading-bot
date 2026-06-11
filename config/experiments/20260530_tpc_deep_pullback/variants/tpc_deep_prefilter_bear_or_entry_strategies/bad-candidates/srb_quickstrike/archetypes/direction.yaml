@@ -1,0 +1,14 @@
+# SRB QuickStrike 方向 — 只认 L3 wide SR 真突破方向。
+# Prefilter 已要求突破窗口，因此不再用 ROC/EMA fallback 把普通动量误解释为 SRB。
+
+description: "SRB QuickStrike 方向 — L3 SR 上破做多、下破做空"
+
+direction_rules:
+  - id: srb_l3_breakout_side
+    feature: srb_l3_breakout_side
+    transform: sign
+    description: "L3 wide SR 上沿突破=LONG，下沿跌破=SHORT；解决 prefilter 只发多的问题"
+
+validation:
+  require_nonzero: true
+  allowed_values: [-1, 1]

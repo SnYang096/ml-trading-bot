@@ -1,0 +1,15 @@
+description: "Box Pullback Trend direction — synthetic macro-aligned box-edge signal"
+
+direction_rules:
+  - id: bpt_macro_box_direction
+    method: feature_sign
+    description: |
+      Synthetic research feature:
+        +1 = BTC macro up and symbol is at lower box edge.
+        -1 = BTC macro down and symbol is at upper box edge.
+         0 = flat macro, middle box, or counter-macro edge.
+      The current production feature pipeline does not emit this feature yet;
+      scripts/diagnose_box_pullback_trend.py is the source of truth for the
+      initial diagnostic.
+    feature: bpt_macro_box_direction
+    transform: raw

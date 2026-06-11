@@ -1,0 +1,29 @@
+# L3 彩票 — B+ 简化回测默认参数（lottery_backtest_bplus.py）
+# 非完整实盘漏斗；用于从杠杆容量样本生成交易级 PnL 与资金曲线。
+
+schema:
+  name: lottery_backtest_bplus
+  version: "20260418"
+
+data:
+  # glob 或单文件；须含 timestamp, symbol, side, horizon, close, lmax_adj, fund_cost_window
+  samples_glob: results/lottery100_bundle/v4/BTCUSDT_120T_H120_samples_bull_only.parquet
+  fs_layer: features_me_120T_e98fe79b58
+  timeframe: "120T"
+
+signal:
+  symbol: BTCUSDT
+  side: long
+  horizon: 120
+  min_lmax_adj: 100.0
+
+execution:
+  # 名义倍数：会与样本里的 lmax_adj 取 min（cap），避免纸上超过容量
+  leverage: 50
+  cap_leverage_to_lmax: true
+  # 往返费用占「价差收益一侧」的保守扣减（taker 开平合一）
+  fee_round_trip_bps: 8.0
+  non_overlapping: true
+
+output:
+  directory: results/lottery100_bundle/bplus

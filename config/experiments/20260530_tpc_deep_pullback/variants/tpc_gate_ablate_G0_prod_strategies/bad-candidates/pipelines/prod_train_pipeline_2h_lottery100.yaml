@@ -1,0 +1,135 @@
+# ============================================================
+# Lottery100 训练/研究流水线（2H，无 NN）— 仅供历史复现实验
+#
+# 策略 YAML 已归档：**`config/strategies/bad-candidates/lottery100/`**  
+# （不从 PCM/宪法启用；固定风险仓位与顺势策略高度重叠时无独立实盘价值。）
+# ────────────────────────────────────────────────────────────
+# 与 `prod_train_pipeline_2h_slow_bpc_only.yaml` **结构对齐**（dates / strategies / kpi_gates /
+# event_backtest 块）。
+#
+# 执行：`auto_research_pipeline.py` / `mlbot pipeline` 在检测到 **`strategies.*.strategy_family:
+# lottery100`** 时走统一分支：**Feature Store → event_backtest（含交易地图）→ 将事件指标快照写入实验目录
+# `archetypes/execution.yaml`**，可用 **`--adopt`** 与其它策略相同方式合并回生产 config。
+#
+# 说明：`lottery_bundle` 仅保留为离线容量研究兼容入口（手工需要时可单独跑，不参与主决策）。
+# ============================================================
+
+dates:
+  start_date: "2022-08-01"
+  end_date: "2026-03-31"
+  holdout_months: 26
+  validation_months: 3
+
+training:
+  seeds: [42]
+  seed_selection: best_sharpe
+
+global_toggles:
+  locked_threshold_tuning_enabled: false
+
+strategy_scope:
+  direction: long_only
+
+rolling:
+  mode: slow_realistic
+  windows:
+    calibration_months: 3
+    structure_lookback_months: 12
+  slow_realistic:
+    cadence_months: 3
+
+lottery_bundle:
+  # bundle 脚本读取以下路径执行子命令（非 mlbot 内置 Step）
+  # 默认产出放在 results/（与 reports/ 区分）；管线实验 run 写入 run_dir/results/lottery100_bundle/
+  analyze_script: scripts/analyze_leverage_capacity_v4.py
+  regime_config: config/strategies/bad-candidates/lottery100/leverage_capacity_v4.yaml
+  backtest_script: scripts/lottery_backtest_bplus.py
+  backtest_config: config/strategies/bad-candidates/lottery100/backtest_bplus.yaml
+  output_root: results/lottery100_bundle
+
+universe_group:
+  file: config/download/crypto_4h_token_universe_groups.yaml
+  universe_set: starter_a
+  group: highcap
+
+data_path: data/parquet_data
+
+download:
+  enabled: true
+  data_dir: data/agg_data
+  parquet_dir: data/parquet_data
+
+strategies:
+  lottery100:
+    config: config/strategies/bad-candidates/lottery100
+    timeframe: "120T"
+    strategy_family: lottery100
+    dates:
+      holdout_months: 26
+      validation_months: 3
+    # 以下字段与常规策略保持同构；lottery100 由 strategy_family 分支直接走 event_backtest
+    prepare_features: features.yaml
+    labels_gate: labels_rr_extreme.yaml
+    has_prefilter: true
+    has_direction: true
+    # KPI 数值与 config/kpi_gates/lottery100.yaml → kpi_gates 保持一致
+    kpi_gates:
+      prefilter:
+        min_bull_bar_fraction: 0.35
+        max_bull_bar_fraction: 0.92
+      gate:
+        min_top1_lift_vs_base: 3.0
+      entry_filter:
+        enabled: false
+      backtest:
+        min_trades: 15
+        max_drawdown_approx: -0.45
+        min_win_rate: 0.25
+      deploy:
+        min_trades: 10
+    simple_execution:
+      hold_bars: 120
+      fee_round_trip_bps: 8.0
+      leverage_nominal: 50.0
+      cap_leverage_to_lmax: true
+
+event_backtest:
+  enabled: true
+  promote: false
+  map_extra_months: 4
+  sym_r_default: "1.0:1:6.0"
+  sym_r_by_family:
+    lottery100: "2.0:1:8.0"
+  exec_objective_default: sharpe
+  exec_objective_params:
+    near_stop_threshold_r: -0.9
+    near_stop_penalty: 0.0
+    max_dd_penalty: 0.0
+    min_trades_soft: 5
+    undertrade_penalty: 0.0
+
+shap_feature_selection:
+  enabled: false
+
+comparison:
+  min_trades: 10
+  sharpe_adopt_ratio: 0.7
+  sharpe_reject_floor: 0.0
+retrain_triggers:
+  schedule_days: 90
+  sharpe_decay_ratio: 0.5
+  consecutive_losses: 8
+  max_data_age_days: 120
+
+deploy_gate:
+  trigger_sharpe_improve: 0.05
+  trigger_drift_level: "HIGH"
+  min_sharpe_change: 0.03
+  require_adopt: false
+  min_trades: 10
+  require_human_confirm: true
+
+# 历史实验目录：`results/research_history/<strategy>/<timestamp>/`
+# Bundle 工件目录：`results/lottery100_bundle/`（见 lottery_bundle.output_root）
+output:
+  history_dir: results/research_history

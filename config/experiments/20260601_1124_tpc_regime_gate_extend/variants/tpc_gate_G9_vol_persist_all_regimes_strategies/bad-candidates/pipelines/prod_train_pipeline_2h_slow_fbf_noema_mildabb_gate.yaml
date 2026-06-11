@@ -1,0 +1,206 @@
+# FBF-only slow rolling: strategy uses no EMA1200 entry filter + mild AB-B thresholds
+# (see config/strategies/fbf/archetypes/entry_filters.yaml). Gate from archetypes/gate.yaml.
+# Diff from prod_train_pipeline_2h_slow_fbf_only.yaml: output.history_dir only.
+
+# ============================================================
+# 上线前训练流水线 (2H, FBF-only, 慢模式 / slow_realistic)
+# 底稿: prod_train_pipeline_2h_slow_bpc_only.yaml 的 rolling / SHAP / 快环契约
+#       + prod_train_pipeline_2h_turbo_2024bull_thresholds_only_fbf_only.yaml 的 dates / strategies.fbf
+#
+# 与 turbo 差异:
+#   - rolling.mode: slow_realistic，cadence 月重跑结构快照，rolling_sim 内 feature_search_enabled=true
+#   - 不设 rolling_calibration.enable_model_training（不设即默认开启树训练）（与 slow_bpc 一致，走完整训练/SHAP 路径）
+#   - direction_tuning: compare_features + promote_after_validate 开启
+#
+# 示例:
+#   mlbot pipeline run --all --config config/prod_train_pipeline_2h_slow_fbf_only.yaml --stage rolling_sim
+#   mlbot pipeline run --all --config config/prod_train_pipeline_2h_slow_fbf_only.yaml --stage rolling_sim --skip-shap
+#
+# 备选「仅 2024 自然年 12 个月」窗口: 见 docs/z实验_005_统一研究/ROLLING_SIM_TIME_WINDOWS_CN.md（调整 dates + holdout_months）
+# ============================================================
+
+dates:
+  start_date: "2022-08-01"
+  end_date: "2024-12-31"
+  # 11 → holdout 从 2024-01-01 起，与 end_date 合起来共 12 个日历月；勿改成 12 除非接受多滚 2023-12
+  holdout_months: 15
+  validation_months: 3
+
+training:
+  seeds:
+    - 42
+  seed_selection: best_sharpe
+
+global_toggles:
+  locked_threshold_tuning_enabled: true
+
+strategy_scope:
+  direction: all
+
+rolling:
+  mode: slow_realistic
+  windows:
+    calibration_months: 3
+    structure_lookback_months: 12
+  slow_realistic:
+    cadence_months: 3
+    triggered_retrain_enabled: true
+  turbo_fixed_features:
+    fixed_strategies_root: config/strategies
+    disable_feature_search: true
+
+rolling_calibration:
+  step_months: 1
+  threshold_calibration:
+    enabled: true
+  prefilter:
+    optimize: true
+  symbol_threshold_calibration:
+    enabled: true
+  # 稀疏 + 固定 RR：不在月度网格里强行 sym_r trailing，避免覆盖 archetype 的 fixed SL/TP
+  execution_opt:
+    enabled: false
+  pcm_eval:
+    enabled: false
+  direction_tuning:
+    enabled: true
+    compare_features: true
+    promote_after_validate: true
+
+
+
+event_backtest:
+  enabled: true
+  promote: true
+  map_extra_months: 4
+  sym_r_default: "1.0:1:6.0"
+  # execution_opt 关闭时仅作文档参考；若重新开启优化可配合独立 exec_grid
+  sym_r_by_family:
+    fbf: "1:0.5:2"
+  exec_objective_default: sharpe
+  exec_objective_params:
+    near_stop_threshold_r: -0.9
+    near_stop_penalty: 0.0
+    max_dd_penalty: 0.0
+    min_trades_soft: 0
+    undertrade_penalty: 0.0
+
+universe_group:
+  file: config/download/crypto_4h_token_universe_groups.yaml
+  universe_set: starter_a
+  group: highcap
+
+data_path: data/parquet_data
+
+download:
+  enabled: true
+  data_dir: data/agg_data
+  parquet_dir: data/parquet_data
+
+strategies:
+  fbf:
+    config: config/strategies/fbf
+    prepare_features: features.yaml
+    labels_gate: labels_rr_extreme.yaml
+    has_prefilter: true
+    has_direction: true
+    kpi_gates:
+      prefilter:
+        min_pass_rate: 0.02
+        min_rows: 150
+        target_trades_min: 6
+        target_trades_max: 55
+        trade_penalty_low: 0.0021
+        trade_penalty_high: 0.0014
+        stability_penalty: 0.0
+        enforce_locked_rules_in_experiment: true
+        locked_rules_source: production_prefilter
+        locked_threshold_tuning:
+          enabled: false
+          mode: auto_if_locked
+          skip_if_cached: false
+          max_cases: 12
+          min_trades_target: 20
+          trade_penalty: 0.0025
+          target_trades_min: 6
+          target_trades_max: 55
+          trade_penalty_low: 0.0021
+          trade_penalty_high: 0.0014
+          stability_penalty: 0.0
+        scoring_method_fallbacks:
+          - distribution_ks
+          - mean_effect
+      entry_filter:
+        meta_algorithm: false
+        archetype_plateau: true
+        significance_p: 0.10
+        significance_min_trades: 3
+        plateau_window: 4
+        archetype_scoring_method: distribution_ks
+        target_trades_min: 6
+        target_trades_max: 55
+        trade_penalty_low: 0.0021
+        trade_penalty_high: 0.0014
+        stability_penalty: 0.0
+        scoring_method_fallbacks:
+          - distribution_ks
+          - mean_effect
+        min_score_improvement: 0.008
+      gate:
+        require_positive_effect: true
+        min_combined_pass_rate: 0.30
+        stat_fallback_on_empty: true
+        stat_fallback_max_rules: 3
+        stat_fallback_min_source_features: 2
+      backtest:
+        min_trades: 12
+      deploy:
+        min_trades: 12
+    simple_execution:
+      sl_r: 1.0
+      tp_r: 2.0
+      timeout_bars: 108
+
+shap_feature_selection:
+  enabled: false
+  n_folds: 8
+  top_k: 20
+  stability_threshold: 0.8
+  min_stable_features: 1
+  protected_nodes:
+    - atr_f
+  apply_to:
+    - features.yaml
+
+comparison:
+  min_trades: 10
+  sharpe_adopt_ratio: 0.7
+  sharpe_reject_floor: 0.0
+retrain_triggers:
+  schedule_days: 90
+  sharpe_decay_ratio: 0.5
+  consecutive_losses: 8
+  max_data_age_days: 120
+  leading_indicator_decay: 0.5
+
+deploy_gate:
+  trigger_sharpe_improve: 0.05
+  trigger_drift_level: HIGH
+  min_sharpe_change: 0.03
+  require_adopt: true
+  min_trades: 12
+  require_human_confirm: true
+
+data_flow:
+  model_predictions: predictions.parquet
+  gated_logs: logs_gated.parquet
+  step_inputs:
+    prefilter: predictions.parquet
+    gate_train: predictions.parquet
+    gate_apply: predictions.parquet
+    execution: logs_gated.parquet
+    backtest: logs_gated.parquet
+
+output:
+  history_dir: results/fbf/research_roll.features_on-noema-mildabb
+  # isolated output for no-ema + mild AB-B + gate runs

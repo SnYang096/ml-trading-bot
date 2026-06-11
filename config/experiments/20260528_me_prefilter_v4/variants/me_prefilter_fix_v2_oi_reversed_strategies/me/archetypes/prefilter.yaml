@@ -1,0 +1,51 @@
+# CompressionBreakout — Prefilter v2: v1 + 反转 oi_compression_score 方向
+#
+# 数据诊断 (2026-05-28, base = chop+atr_p[0.65,0.92]+recent_decay[0.02,0.20], n=1007):
+#   oi_score 分位        n     succ%   mean_fr
+#   [0.005, 0.048]     202    69.80%   +1.07R   ← 最佳
+#   (0.048, 0.085]     201    65.17%   +1.44R
+#   (0.085, 0.127]     201    49.25%   -0.68R
+#   (0.127, 0.207]     201    52.74%   -1.57R
+#   (0.207, 0.841]     202    53.47%   -1.51R
+#
+#   oi>=0.45 (prod)     14    35.71%   -3.45R   ← 完全选反
+#
+# 语义假设：oi 拥挤度低 = 未拥挤 / 释放早段，是「压缩突破」的更佳条件。
+# v2 用 oi<=0.10 替代 oi>=0.45，验证反向 prefilter 是否实际跑出成交且 R-positive。
+
+rules:
+  - feature: atr_percentile
+    operator: ">="
+    value: 0.65
+    locked: true
+    lock_reason: "压缩突破：中高波扩张区，避免低波噪声"
+
+  - feature: atr_percentile
+    operator: "<="
+    value: 0.92
+    locked: true
+    lock_reason: "压缩突破：避免极端尾段过热后追空"
+
+  - feature: recent_compression_decay
+    operator: ">="
+    value: 0.02
+    locked: true
+    lock_reason: "压缩突破：要求近期确实经历压缩释放"
+
+  - feature: recent_compression_decay
+    operator: "<="
+    value: 0.20
+    locked: true
+    lock_reason: "压缩突破：限制在释放早段，避免中后段衰竭"
+
+  - feature: oi_compression_score
+    operator: "<="
+    value: 0.10
+    locked: false
+    lock_reason: "实验：oi 拥挤度低位带（quintile 数据显示 succ 69.8%, mean_fr +1.07R）"
+
+last_evaluation:
+  timestamp: "2026-05-28"
+  data_source: "results/train_final/me/train_final_20260519_133835_rr_extreme/me/features_labeled.parquet"
+  n_rows: 59592
+  notes: "v2 — 反向 oi_compression_score；与 v1（同向）对照"

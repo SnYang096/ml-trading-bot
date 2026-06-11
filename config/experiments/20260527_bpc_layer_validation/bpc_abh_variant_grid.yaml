@@ -29,19 +29,19 @@ runs:
     output_dir: results/bpc/experiments/A_bull_2024
 
   - variant: B_bull_2024
-    strategies_root: config_experiments/bpc_B_vol_off_strategies
+    strategies_root: config/experiments/20260527_bpc_layer_validation/variants/bpc_B_vol_off_strategies
     start_date: "2024-01-01"
     end_date: "2025-01-01"
     output_dir: results/bpc/experiments/B_bull_2024
 
   - variant: H_bull_2024
-    strategies_root: config_experiments/bpc_H_bull_vol_strategies
+    strategies_root: config/experiments/20260527_bpc_layer_validation/variants/bpc_H_bull_vol_strategies
     start_date: "2024-01-01"
     end_date: "2025-01-01"
     output_dir: results/bpc/experiments/H_bull_2024
 
   - variant: no_breakout_bull_2024
-    strategies_root: config_experiments/bpc_no_breakout_strategies
+    strategies_root: config/experiments/20260527_bpc_layer_validation/variants/bpc_no_breakout_strategies
     start_date: "2024-01-01"
     end_date: "2025-01-01"
     output_dir: results/bpc/experiments/no_breakout_bull_2024
@@ -54,19 +54,19 @@ runs:
     output_dir: results/bpc/experiments/A_recent
 
   - variant: B_recent
-    strategies_root: config_experiments/bpc_B_vol_off_strategies
+    strategies_root: config/experiments/20260527_bpc_layer_validation/variants/bpc_B_vol_off_strategies
     start_date: "2025-04-01"
     end_date: "2026-04-01"
     output_dir: results/bpc/experiments/B_recent
 
   - variant: H_recent
-    strategies_root: config_experiments/bpc_H_bull_vol_strategies
+    strategies_root: config/experiments/20260527_bpc_layer_validation/variants/bpc_H_bull_vol_strategies
     start_date: "2025-04-01"
     end_date: "2026-04-01"
     output_dir: results/bpc/experiments/H_recent
 
   - variant: no_breakout_recent
-    strategies_root: config_experiments/bpc_no_breakout_strategies
+    strategies_root: config/experiments/20260527_bpc_layer_validation/variants/bpc_no_breakout_strategies
     start_date: "2025-04-01"
     end_date: "2026-04-01"
     output_dir: results/bpc/experiments/no_breakout_recent

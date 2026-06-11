@@ -1,0 +1,36 @@
+schema:
+  phases:
+  - hard_gate
+  - guardrail
+  evaluation_order: hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+hard_gates:
+- id: gate_tpc_semantic_chop_high
+  tag: HARD_TPC_SEMANTIC_CHOP
+  phase: hard_gate
+  priority: 6
+  reason: 高 chop 不追趋势回调（与 BPC/ME/SRB regime chop 口径 0.40 对齐）
+  when:
+    tpc_semantic_chop:
+      value_gt: 0.4
+  then:
+    action: deny
+  locked: true
+  promote_never_disable: true
+  lock_reason: 波动区过滤 — 高 chop bar 上虚假回调/来回扫（TPC gate；宏观带由 regime EMA1200）
+- id: gate_path_efficiency_continuation
+  tag: HARD_PATH_EFFICIENCY_CONTINUATION
+  phase: hard_gate
+  priority: 7
+  reason: 高 path_efficiency = 延续区，留给 BPC（实验 E3）
+  when:
+    path_efficiency_pct:
+      value_gt: 0.15
+  then:
+    action: deny
+  comment: deny 高 PE；低 PE 回踩区保留给 TPC
+guardrails: []
+system_safety: []

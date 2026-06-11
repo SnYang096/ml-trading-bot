@@ -1,0 +1,63 @@
+# RMR (RangeMeanRevert) 策略元信息 — **已归档（bad-candidates）**
+#
+# 2026-04：慢滚与特征诊断结论为负期望；宪法已移除 rmr。保留配置仅供对照。
+# 裁决与数据：`docs/z实验_005_统一研究/FBF_RMR_HubRebound_verdict_20260420.md`
+#
+# 语义定位（与 FBF / SRB / TPC / BPC / ME 正交）
+# ──────────────────────────────────────────────────────────────
+# RMR = 纯「波动区内向中轴回归」。
+#
+# 与各家族的边界：
+#   • FBF（FailedBreakoutFailure）
+#       - FBF 是**事件驱动**：必须先发生「边界失败突破」事件（fer_sr_failed_breakout_*）才会触发，
+#         方向由「失败突破方向」决定，是边界反手。
+#       - RMR **不依赖**任何失败突破事件，只看「价格是否远离区间中轴 + 动能是否衰竭 + 环境是否非趋势」。
+#         因此 RMR 的 prefilter / direction / entry_filters 必须**不出现** fer_sr_failed_breakout_*
+#         与 fer_failure_signals_* 等 FBF 专属锚点，避免语义污染。
+#
+#   • SRB（StructuralRangeBreakout）
+#       - SRB 是边界**成功**突破后的顺势延续（与 FBF 事件极性相反）。
+#       - RMR 的 prefilter 应主动排斥 SRB 环境：要求 trend_r2_20 低、ADX 低、区间宽度稳定。
+#
+#   • TPC / BPC
+#       - TPC/BPC 都是「趋势中回踩再延续」。RMR 在趋势环境里**不出手**，由低 trend / ADX 约束。
+#
+#   • ME（MomentumExpansion）
+#       - ME 是动量扩张、流动性加速。RMR 与之相反：要求动量**衰竭**而不是扩张。
+#
+# 触发要素（非事件触发，以「位置 × 衰竭 × 结构」三维组合）：
+#   1. 位置维：fer_range_pos_20 远离 0.5 中轴（高位 ≥ 0.70 或低位 ≤ 0.30）。
+#   2. 衰竭维：macd_atr 与方向相反（顶部 macd>0 回落、底部 macd<0 抬头）、rsi 极值回撤、
+#              path_efficiency 衰减 等。
+#   3. 结构维：区间足够宽（fer_ols_width_norm ≥ 阈值）+ 趋势弱（trend_r2_20 低）+
+#              ADX/ER 落在 low bucket。
+#
+# 方向确定：RMR 做「朝中轴方向」——price 在高位时做空回中轴，price 在低位时做多回中轴。
+#   MVP 使用 negate_sign(macd_atr) 作为方向占位（fade momentum 语义），后续可引入
+#   专用 signed 特征 rmr_mean_revert_direction_signed。
+#
+# 目标 RR：小 TP（中轴距离天然有限），initial_r 偏小，time_stop 偏短。
+# ──────────────────────────────────────────────────────────────
+
+strategy:
+  name: rmr-120T
+  description: |
+    RangeMeanRevert archetype: 纯波动区内向中轴回归。
+    触发 = 位置远离中轴 × 动能衰竭 × 区间结构稳定（低趋势 / 足够宽度）。
+    不依赖任何「边界突破」事件，与 FBF（假破反手）、SRB（真破延续）语义正交。
+
+  owner: quant_team
+  archetype: RangeMeanRevert
+
+  timeframe: "120T"
+
+  decision_alignment:
+    enabled: true
+    mode: prefilter_recent_window
+    window_bars: 3
+    layers_allow_recent_window: [prefilter]
+    layers_required_same_bar: [direction, gate, entry_filter]
+
+  macro_tp_vwap_anchor:
+    enabled: false
+    symbol: BTCUSDT

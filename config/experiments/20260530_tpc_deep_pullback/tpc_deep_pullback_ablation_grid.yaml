@@ -11,10 +11,10 @@
 # config_experiments 变体树（Phase 2 建好后替换 strategies_root）:
 #   E0 prod          → config/strategies
 #   E1 deep prefilter → config_experiments/tpc_deep_prefilter_strategies
-#   E2 deep entry    → config_experiments/tpc_deep_entry_strategies
-#   E3 anti cont gate → config_experiments/tpc_anti_cont_gate_strategies
+#   E2 deep entry    → config/experiments/20260530_tpc_deep_pullback/variants/tpc_deep_entry_strategies
+#   E3 anti cont gate → config/experiments/20260530_tpc_deep_pullback/variants/tpc_anti_cont_gate_strategies
 #   E4 full          → config_experiments/tpc_deep_pullback_full_strategies
-#   E5 tight stop    → config_experiments/tpc_deep_tight_stop_strategies
+#   E5 tight stop    → config/experiments/20260530_tpc_deep_pullback/variants/tpc_deep_tight_stop_strategies
 
 experiment_id: tpc_deep_pullback_ablation_20260530
 strategy: tpc
@@ -52,5 +52,5 @@ runs:
 
   # --- smoke: E5 tight stop ---
   # - variant: E5_bull_smoke
-  #   strategies_root: config_experiments/tpc_deep_tight_stop_strategies
+  #   strategies_root: config/experiments/20260530_tpc_deep_pullback/variants/tpc_deep_tight_stop_strategies
   #   ...

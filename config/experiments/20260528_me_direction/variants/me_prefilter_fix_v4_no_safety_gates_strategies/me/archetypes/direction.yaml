@@ -1,0 +1,32 @@
+# ME / CompressionBreakout 方向 — signal_match_position_band（与 BPC 同方法）
+#
+# short-only：规则正常评估，最终仅放行空头（direction_filter: short）
+# 优化流程（勿手改阈值猜方向）：
+#   1) PYTHONPATH=src:scripts python scripts/rd_loop.py \
+#        --hypothesis-yaml config/experiments/me/rd_loop_me_direction.yaml
+#   2) event_backtest --variant-grid config/experiments/me/me_direction_grid.yaml
+#   3) 人审 → promote direction.yaml
+#
+# 候选变体（见 rd_loop）：tpc_macd_only / bpc_breakout_macd / 当前 me_accel 全栈
+
+description: "CompressionBreakout 方向 — 动量级联与 EMA1200 带通（待 rd_loop promote）"
+direction_filter: short
+
+direction_rules:
+  - id: me_accel_cvd_macd_ema1200_align
+    method: signal_match_position_band
+    description: "动量级联；须价在 EMA1200 单侧带（|p|>inner 死区），且与斜率同向"
+    signal_rules:
+      - feature: me_accel_5k
+        transform: sign
+      - feature: me_cvd_alignment
+        transform: center_sign
+      - feature: macd_atr
+        transform: sign
+    position_band:
+      feature: ema_1200_position
+      inner_abs: 0.03
+      outer_abs: 1
+    require_sign_agreement:
+      feature: ema_1200_slope_10
+      deadband: 0.0

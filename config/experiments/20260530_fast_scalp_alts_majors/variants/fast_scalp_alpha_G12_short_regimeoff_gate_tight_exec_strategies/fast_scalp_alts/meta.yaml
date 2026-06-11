@@ -1,0 +1,28 @@
+# fast_scalp_alts: alt-only deployment (SOL/BNB/XRP/ADA).
+# Inference uses pooled 6-coin model; alt-only retrain underperformed on holdout.
+
+strategy:
+  name: fast-scalp-tree-alts-120T
+  description: |
+    Alt-only execution slug. Score from pooled fast_scalp 6-coin tree artifact;
+    τ promoted on alt holdout subset (q=0.05). Do not use alt-only retrain
+    artifact (weaker holdout vs pooled model on same 4 coins).
+  owner: quant_team
+  archetype: TreeDirectionFast
+  timeframe: "120T"
+  symbol_include:
+    - SOLUSDT
+    - BNBUSDT
+    - XRPUSDT
+    - ADAUSDT
+  symbol_exclude: []
+  deployment:
+    enabled: true
+    live_slug: fast_scalp_alts
+  macro_tp_vwap_anchor:
+    enabled: false
+    symbol: BTCUSDT
+  model_artifact:
+    # Pooled 6-coin train — best alt holdout (mean Sharpe 1.31 @ q=0.05)
+    train_run: results/train_final/fast_scalp/train_final_20260530_141451_ic_top35/fast_scalp
+    alt_only_retrain_reference: results/train_final/fast_scalp_alts/train_final_latest/fast_scalp_alts

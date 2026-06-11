@@ -1,0 +1,33 @@
+allowed_regimes:
+  bear:
+    description: "\u5F31\u52BF/\u4E0B\u8DCC \u2014 ADX50\u226420 \u6216 EMA1200\u4E0B\
+      \u65B9"
+    match: any
+    rules:
+    - feature: adx_50
+      operator: <=
+      value: 20
+    - feature: ema_1200_position
+      operator: <=
+      value: -0.1
+  bull:
+    description: "\u5F3A\u8D8B\u52BF\u5E02 \u2014 ADX50>18 \u4E14 EMA1200>0.1\uFF08\
+      \u9608\u503C\u4ECE25\u964D\u81F318\uFF09"
+    match: all
+    rules:
+    - feature: adx_50
+      operator: '>='
+      value: 18
+    - feature: ema_1200_position
+      operator: '>='
+      value: 0.1
+  neutral:
+    description: "\u9707\u8361/\u65E0\u65B9\u5411 \u2014 \u9ED8\u8BA4\u56DE\u9000"
+    match: any
+    rules:
+    - feature: adx_50
+      operator: <=
+      value: 25
+allowed_sides:
+- long
+- short

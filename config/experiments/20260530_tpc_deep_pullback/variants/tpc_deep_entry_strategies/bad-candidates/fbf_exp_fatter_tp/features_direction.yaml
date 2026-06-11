@@ -1,0 +1,9 @@
+name: fbf_direction
+description: |
+  FBF Direction 特征候选池：边界失败突破方向优先，避免非失败上下文兜底污染。
+
+feature_pipeline:
+  requested_features:
+    - fer_failure_signals_f
+    - sr_strength_max_f
+    - bars_since_extreme_f

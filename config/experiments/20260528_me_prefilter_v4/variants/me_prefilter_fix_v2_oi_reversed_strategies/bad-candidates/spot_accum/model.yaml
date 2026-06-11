@@ -1,0 +1,3 @@
+model:
+  type: rule_based
+  notes: "A-layer weak-regime accumulator profile."

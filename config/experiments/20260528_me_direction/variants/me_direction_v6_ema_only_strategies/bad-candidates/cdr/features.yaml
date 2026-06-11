@@ -1,0 +1,64 @@
+# CDR (Conversion Divergence Reversal) 策略特征配置
+# 核心：结构失败突破 + 背离 / 衰竭确认。
+
+name: cdr
+description: |
+  ConversionDivergenceReversal: 结构级行情切换的反转捕捉。
+  固定特征池围绕 L3 SR、box 边界、失败突破、CVD/动量/OI/funding 背离构建。
+
+feature_pipeline:
+  exclude_columns:
+    - atr
+  requested_features:
+    - atr_f
+    - wide_sr_swing_f
+    - box_structure_f
+    - fer_failure_signals_f
+    - sr_strength_max_f
+    - bars_since_extreme_f
+    - vwap_position_f
+    - cvd_divergence_v2_f
+    - price_momentum_divergence_f
+    - terminal_risk_score_f
+    - roc_5_f
+    - roc_10_f
+    - roc_20_f
+    - trend_r2_20_f
+    - path_efficiency_pct_f
+    - path_length_pct_f
+    - price_dir_consistency_pct_f
+    - macd_atr_f
+    - rsi_f
+    - atr_percentile_f
+    - bb_width_normalized_pct_f
+    - vpin_features_f
+    - vpin_scene_semantic_scores_f
+    - volume_ratio_pct_f
+    - ofci_pct_f
+    - shd_pct_f
+    - cvd_change_features_f
+    - trade_cluster_entropy_zscore_features_f
+    - trade_cluster_imbalance_zscore_features_f
+    - trade_cluster_net_runs_zscore_features_f
+    - trade_cluster_max_buy_run_zscore_features_f
+    - trade_cluster_max_sell_run_zscore_features_f
+    - funding_rate_features_f
+    - funding_scene_semantic_scores_f
+    - oi_features_f
+    - oi_scene_semantic_scores_f
+    - volatility_regime_f
+    - wick_scene_semantic_scores_f
+    - volume_profile_scene_semantic_scores_f
+    - dual_exhaustion_f
+    - funding_oi_crowding_f
+    - evt_features_f
+    - hilbert_phase_f
+    - footprint_basic_f
+    - fp_imbalance_scene_semantic_scores_f
+    - ema_1200_position_f
+    - ema_1200_slope_f
+    - session_features_f
+    - market_cap_normalized_orderflow_f
+  ensure_signal_column:
+    name: signal
+    default_value: 0

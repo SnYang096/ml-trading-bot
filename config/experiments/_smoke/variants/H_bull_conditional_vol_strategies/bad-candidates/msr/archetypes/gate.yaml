@@ -1,0 +1,17 @@
+# MSR Gate 初版：空白，等首轮 predictions 出来后由 optimize_gate_unified 自动生成
+# 不预置 L2 尺度的 deny 规则，避免语义污染。
+
+schema:
+  phases:
+    - system_safety
+    - hard_gate
+    - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+
+hard_gates: []
+guardrails: []
+system_safety: []

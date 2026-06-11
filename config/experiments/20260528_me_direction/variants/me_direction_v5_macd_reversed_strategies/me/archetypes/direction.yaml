@@ -1,0 +1,30 @@
+# ME / CompressionBreakout direction — v5_macd_reversed
+#
+# 假设：当前 3-rule cascade 中 macd_atr 反向（IC chop_only H=1 = -0.092, p≈2e-26）。
+# 把 macd_atr 改成 negate_sign + consensus_mode: all 强制全部一致；
+# 去掉 v4 的 direction_filter，让 long/short 都出。
+#
+# Baseline (v4): me_accel_5k.sign + me_cvd_alignment.center_sign + macd_atr.sign，
+#                consensus "first"（取 first 非零，等于 me_accel.sign），direction_filter: short。
+
+description: "CompressionBreakout 方向 — v5: macd_atr 翻转 + consensus all + 双向"
+
+direction_rules:
+  - id: me_v5_macd_reversed_cascade
+    method: signal_match_position_band
+    description: "me_accel + cvd + macd_atr(negate) 三票一致，再过 EMA1200 带 + slope 同向"
+    consensus_mode: all
+    signal_rules:
+      - feature: me_accel_5k
+        transform: sign
+      - feature: me_cvd_alignment
+        transform: center_sign
+      - feature: macd_atr
+        transform: negate_sign
+    position_band:
+      feature: ema_1200_position
+      inner_abs: 0.03
+      outer_abs: 1
+    require_sign_agreement:
+      feature: ema_1200_slope_10
+      deadband: 0.0

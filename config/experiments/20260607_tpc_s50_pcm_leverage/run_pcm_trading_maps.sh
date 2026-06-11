@@ -42,7 +42,7 @@ exec >>"${LOG_DIR}/pcm_maps.log" 2>&1
 echo "pcm trading maps start $(date -Iseconds)"
 
 run_one "pcm_s50_tpc_heavy" \
-  "config_experiments/tpc_s50_bpc_pcm_strategies" \
+  "config/experiments/20260607_tpc_s50_pcm_leverage/variants/tpc_s50_bpc_pcm_strategies" \
   "config/experiments/20260607_tpc_s50_pcm_leverage/constitution/pcm_tpc_heavy.yaml"
 
 run_one "pcm_prod_baseline" \

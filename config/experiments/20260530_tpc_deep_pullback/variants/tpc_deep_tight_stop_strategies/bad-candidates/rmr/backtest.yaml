@@ -1,0 +1,17 @@
+# RMR 回测配置（占位）
+
+backtest:
+  initial_capital: 10000
+  position_size: 0.02
+  max_positions: 3
+  entry:
+    min_impulse_strength: 1.0    # RMR 不依赖 impulse，保留字段兼容，阈值放低
+    min_failure_confidence: 0.0  # RMR 不依赖失败突破置信度
+    max_entry_delay: 3
+  risk:
+    max_loss_per_trade: 0.02
+    stop_loss_atr_multiple: 1.5
+    take_profit_atr_multiple: 2.5
+  time_filter:
+    min_bars_between_trades: 5
+    max_hold_time: 24

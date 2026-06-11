@@ -21,7 +21,7 @@
 
 示例：`20260529_fast_scalp/`（Phase 1）、`20260530_fast_scalp_alts_majors/`（历史 alpha rebuild）、**`20260602_fast_scalp_tree_validate/`**（树模型两轨验证，[`TRAINING.md`](20260602_fast_scalp_tree_validate/TRAINING.md)）。
 
-**不在此目录：** 整棵策略变体树 → 仓库根 [`config_experiments/`](../config_experiments/)（与 `config/strategies` 对照）。
+**变体策略树：** 放在本目录下 `variants/<topic>_strategies/`（仅含本实验相关策略，已剔除无关兄弟目录）。历史根目录 [`config_experiments/`](../config_experiments/) 已弃用，见 [`CONFIG_EXPERIMENTS_MIGRATION.md`](CONFIG_EXPERIMENTS_MIGRATION.md)。
 
 ## 标准 R&D 流程（新特征 / 新周期 — 必读）
 
@@ -32,7 +32,7 @@ Phase 0  特征可算（parquet）
     ↓
 Phase 1  IC + label scan / 历史窗宽扫描  ← 证明「有用」+ 候选 τ / lookback
     ↓
-Phase 2  人读扫描 → DECISION 定参 → config_experiments 静态树
+Phase 2  人读扫描 → DECISION 定参 → 本实验 `variants/` 静态树
     ↓
 Phase 3  segment_matrix variant-grid（因果 R）
     ↓
@@ -156,6 +156,6 @@ PYTHONPATH=src:scripts python -m scripts.event_backtest \
 2. **先** `rd_loop_*.yaml` 编排 **`mlbot research scan`**（Phase 1）；**不要**新写 `scripts/research/scan_*.py`（TPC lookback OHLC 例外见 `LAYER_PROMOTION_CRITERIA.md`）
 3. `DECISION.md` 记录 Phase 2 定参（τ、lookback、多尺度对齐说明）
 4. **再** `*_grid.yaml`（Phase 3）；`variant_grid` 用**项目根相对路径**
-5. 变体策略树：`config_experiments/<topic>_strategies/`（静态 YAML，**无** prepare 脚本除非历史例外）
+5. 变体策略树：`config/experiments/<dir>/variants/<topic>_strategies/`（只保留本策略子目录 + `_shared` / `feature_dependencies.yaml`）
 6. `run_trading_maps.sh`（Phase 4，可选）
 7. 在本表追加一行索引；README 标明当前 **Phase 0–5 进度**

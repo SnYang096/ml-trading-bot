@@ -1,0 +1,67 @@
+# EML entry filters — 在 EMA1200 大结构内，用吸收延续或动量点火触发入场。
+# 大方向由 direction.yaml 决定；这里仅回答「现在是否值得入场」。
+
+filters:
+  - id: eml_tpc_absorption_continuation
+    enabled: true
+    locked: true
+    promote_never_disable: true
+    description: "TPC/BPC 类：回调吸收后恢复，顺大结构延续"
+    conditions:
+      - feature: tpc_cvd_absorption
+        operator: ">="
+        value: 1.0
+      - feature: tpc_recovery_strength
+        operator: ">="
+        value: 0.15
+
+  - id: eml_me_momentum_expansion
+    enabled: true
+    locked: true
+    promote_never_disable: true
+    description: "ME 类：方向参与增强 + 加速持续"
+    conditions:
+      - feature: me_cvd_strength
+        operator: ">="
+        value: 0.55
+      - feature: me_accel_persistence
+        operator: ">="
+        value: 0.35
+
+  - id: eml_srb_success_breakout
+    enabled: true
+    locked: true
+    promote_never_disable: true
+    description: "SRB 类：关键 SR 附近成功推进"
+    conditions:
+      - feature: srb_sr_success_breakout_score
+        operator: ">="
+        value: 0.08
+
+  - id: eml_positive_momentum_continuation
+    enabled: true
+    locked: true
+    promote_never_disable: true
+    description: "轻量动量：正 ROC + 正 MACD"
+    conditions:
+      - feature: macd_atr
+        operator: ">="
+        value: 0.05
+      - feature: roc_20
+        operator: ">="
+        value: 0.01
+
+  - id: eml_negative_momentum_continuation
+    enabled: true
+    locked: true
+    promote_never_disable: true
+    description: "轻量动量：负 ROC + 负 MACD"
+    conditions:
+      - feature: macd_atr
+        operator: "<="
+        value: -0.05
+      - feature: roc_20
+        operator: "<="
+        value: -0.01
+
+combination_mode: or

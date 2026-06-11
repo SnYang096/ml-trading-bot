@@ -1,0 +1,37 @@
+name: eml
+description: |
+  EML 精简特征集：EMA1200 大结构 + 少数吸收/动量/SR 入场触发 + 极端风险 gate。
+  参考 BPC 的策略语义组织方式：只请求本策略 runtime 真正消费的模块，避免把趋势族全集塞进 EML。
+
+feature_pipeline:
+  exclude_columns:
+    - atr
+  requested_features:
+    - atr_f
+
+    # ========== 大结构：EMA1200 方向框架 ==========
+    - ema_1200_position_f
+    - ema_1200_slope_f
+
+    # ========== 基础动量（entry 轻量确认） ==========
+    - roc_20_f
+    - macd_atr_f
+
+    # ========== 吸收 / 回踩延续（TPC；覆盖 BPC/TPC 的订单流吸收语义） ==========
+    - tpc_soft_phase_f
+
+    # ========== 箱体结构（gate：窄箱 + 价贴 EMA1200） ==========
+    - box_structure_f
+
+    # ========== 动量点火 / 扩张（ME） ==========
+    - me_soft_phase_f
+
+    # ========== SR 成功推进（SRB 最小语义） ==========
+    - srb_sr_success_breakout_f
+
+    # ========== Gate 极端不利过滤 ==========
+    - jump_risk_pct_f
+
+  ensure_signal_column:
+    name: signal
+    default_value: 0

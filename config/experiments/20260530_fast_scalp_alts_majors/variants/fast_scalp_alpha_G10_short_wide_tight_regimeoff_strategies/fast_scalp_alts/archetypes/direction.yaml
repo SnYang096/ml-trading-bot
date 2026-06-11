@@ -1,0 +1,25 @@
+description: fast_scalp_alts — pooled model score, alt-only symbols
+source:
+  model: model.yaml
+  score_column: score
+thresholds:
+  long_entry: 0.3701
+  long_exit: 0.3
+  short_entry: -0.0074
+  short_exit: 0.05
+  dead_zone: true
+  entry_mode: cross
+per_symbol_thresholds:
+  SOLUSDT:
+    long_entry: 0.3827
+    short_entry: -0.0065
+  BNBUSDT:
+    long_entry: 0.3783
+    short_entry: 0.0056
+  XRPUSDT:
+    long_entry: 0.3651
+    short_entry: -0.0108
+  ADAUSDT:
+    long_entry: 0.3534
+    short_entry: -0.0109
+direction_filter: short

@@ -1,0 +1,56 @@
+# BPC 方向「工作区」— 与 features_prefilter / gate_draft / entry_filter 同级叙事
+# 职责: candidates + last_evaluation；可选草稿 direction_rules（慢速 compare-features 或手写）
+# --promote: 合并写入 archetypes — 保留 archetypes 中 locked: true 规则，非 locked 槽位由工作区 direction_rules 整体替换；
+#   若工作区 YAML 无 direction_rules 键则跳过 promote（不误覆盖）。单条规则 enabled: false 等价于保留配置但不参与级联。
+# 生产入口: archetypes/direction.yaml（实盘与 Phase1 验证）
+# 当前生产规则: method single_position_band on macro_tp_vwap_1200_position（inner_abs / outer_abs 带通）。
+#
+# 用法:
+#   # 默认模式: 只对比本文件 candidates 中的特征
+#   python scripts/direction_strict_validation.py \
+#       --logs results/train_final_xxx/bpc/features_labeled.parquet \
+#       --strategy bpc --compare-features
+#
+#   # 发现模式: 扫描全部数值特征, 用于发现新候选
+#   python scripts/direction_strict_validation.py \
+#       --logs results/train_final_xxx/bpc/features_labeled.parquet \
+#       --strategy bpc --compare-features --all-features
+#
+#   # 加 --temporal 查看时间稳定性
+#   ... --compare-features --temporal
+
+description: "BPC 方向特征候选 — 结构突破方向 (跟结构走)"
+
+# ════════════════════════════════════════════════════════════════
+# 候选特征 (输入) — 脚本从这里读取待评估的特征列表
+# ════════════════════════════════════════════════════════════════
+# 每个条目: feature (必须), transform (可选, 自动检测)
+# transform: sign (有正负的特征) | center_sign (百分位数 [0,1]) | raw (直接用) | negate_sign (取反)
+#
+# 语义约束:
+#   BPC = Breakout Pullback Continuation, 方向 = "跟结构走"
+#   禁止: 瞬时 delta/wick/absorption (属 ME 语义)
+#   禁止: funding_rate (属 LV 语义)
+
+candidates:
+  # ── BPC 核心: 结构突破方向 ──
+  - feature: bpc_breakout_direction # Donchian 突破方向 [-1, 0, +1]
+    transform: raw
+  - feature: bpc_direction_confidence # 突破方向置信度 [0,1]
+    transform: center_sign
+
+  # ── BPC 方向一致性 ──
+  - feature: bpc_dir_consistency_short # 短期方向一致性
+  - feature: bpc_dir_consistency_mid # 中期方向一致性
+  - feature: bpc_dir_consistency_long # 长期方向一致性
+
+  # ── 通用动量方向 ──
+  - feature: roc_20 # 20 期 ROC (有正负)
+  - feature: macd_atr # MACD/ATR (有正负)
+  - feature: sma_200_position # SMA200 相对位置
+  - feature: macro_tp_vwap_1200_position # 典型价滚动 VWAP(1200) 相对位置
+  - feature: ema_1200_position # EMA(1200) 相对位置
+
+  # ── 订单流方向 ──
+  - feature: oi_delta_price_sign # OI 变化 × 价格方向
+  - feature: fp_volume_skew # Footprint 成交量偏斜

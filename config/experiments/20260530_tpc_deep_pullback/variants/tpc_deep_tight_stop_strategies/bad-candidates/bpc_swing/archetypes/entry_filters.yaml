@@ -1,0 +1,26 @@
+filters:
+- id: ef_oi_exhaustion_score_pct_0.2
+  enabled: true
+  description: 'auto: oi_exhaustion_score <= 0.00596'
+  conditions:
+  - feature: oi_exhaustion_score
+    operator: <=
+    value: 0.00596
+  notes: method=distribution_ks, effect=+0.7857, ks=0.098, rob=1.00, pass=20.0%
+- id: ef_oi_exhaustion_score_pct_0.3
+  enabled: true
+  description: 'auto: oi_exhaustion_score <= 0.008382'
+  conditions:
+  - feature: oi_exhaustion_score
+    operator: <=
+    value: 0.008382
+  notes: method=distribution_ks, effect=+0.7354, ks=0.092, rob=0.67, pass=30.0%
+- id: ef_oi_zscore_pct_0.8
+  enabled: true
+  description: 'auto: oi_zscore >= 1.390684'
+  conditions:
+  - feature: oi_zscore
+    operator: '>='
+    value: 1.390684
+  notes: method=distribution_ks, effect=+0.2839, ks=0.091, rob=0.67, pass=13.9%
+combination_mode: or

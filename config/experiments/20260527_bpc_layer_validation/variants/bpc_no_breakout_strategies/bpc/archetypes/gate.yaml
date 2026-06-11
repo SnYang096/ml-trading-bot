@@ -1,0 +1,68 @@
+# BPC Gate (optimized, auto-promoted)
+# 来源: /home/yin/trading/ml_trading_bot/results/bpc/validate_static.full_study/bpc/20260512_061250/strategies/bpc/gate_draft.yaml
+# 优化规则: 0/2 条通过优化
+# Phase split: system_safety=2, hard_gate=2
+
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+hard_gates:
+- id: gate_vpin_ma20
+  tag: HARD_VPIN_MA20
+  phase: hard_gate
+  priority: 10
+  reason: 统计验证规则 (lift=1.27)
+  when:
+    vpin_ma20:
+      value_gt: 0.3044
+  then:
+    action: deny
+  comment: 'statistical(lift=1.27): vpin_ma20 > 0.3044'
+  locked: true
+  disabled: true
+  disabled_reason: 'optimization_no_valid_threshold: No threshold meets basic lift/pass_rate requirements'
+  lock_reason: VPIN 知情交易活跃度：信息不对称过高时入场胜率下降
+# NOTE: gate_bpc_semantic_chop_high 已迁移至 archetypes/regime.yaml
+#       （regime 层是 A/B/C 共用的慢变量层，chop 上限是数据空间约束）。
+#       Tier-0 季度 plateau 校准统一在 regime_threshold_calibrate 中处理。
+guardrails: []
+system_safety:
+- id: gate_vol_persistence_vol_persistence
+  tag: HARD_VOL_PERSISTENCE_VOL_PERSISTENCE
+  phase: system_safety
+  priority: 12
+  reason: 统计验证规则 (lift=1.24)
+  when:
+    all_of:
+    - vol_persistence:
+        value_gt: 0.0029
+    - vol_persistence:
+        value_lt: 0.0616
+  then:
+    action: deny
+  comment: 'optimizer: no_stable_plateau, threshold=0.1500, lift=0.133'
+  locked: true
+  lock_reason: 波动率持久性：低波噪声切换/拖泥带水期对趋势策略不利
+- id: gate_vol_leverage_asymmetry_vol_leverage_asymmetry
+  tag: HARD_VOL_LEVERAGE_ASYMMETRY_VOL_LEVERAGE_ASYMMETRY
+  phase: system_safety
+  priority: 13
+  reason: 统计验证规则 (lift=1.08)
+  when:
+    all_of:
+    - vol_leverage_asymmetry:
+        value_gt: 0.0558
+    - vol_leverage_asymmetry:
+        value_lt: 0.1482
+  then:
+    action: deny
+  comment: 'optimizer: stable_plateau_found, threshold=0.2095, lift=0.983'
+  locked: true
+  lock_reason: 波动杠杆非对称：α/γ 严重失衡期趋势容易被拖垮

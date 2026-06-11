@@ -1,0 +1,70 @@
+# MSR (Macro SR Reversal) 策略特征配置
+# 核心锚点: wide_sr_swing_f 提供 L3 SR 距离/侧向
+# 共享失败突破语义: fer_failure_signals_f（同 FBF）
+
+name: msr
+description: |
+  MacroSRReversal: 大级别 swing SR (240 bar) 附近的假破反转。
+  与 FBF 共用 fer_failure_signals，但锚点尺度不同（L3 vs L2），execution 亦独立。
+
+feature_pipeline:
+  exclude_columns:
+    - atr
+  requested_features:
+    - atr_f
+    - wide_sr_swing_f
+    - fer_failure_signals_f
+    - sr_strength_max_f
+    - sqs_hal_low_f
+    - sqs_hal_low_pct_f
+    - bars_since_extreme_f
+    - vwap_position_f
+    - volume_profile_volatility_features_f
+    - cvd_divergence_v2_f
+    - price_momentum_divergence_f
+    - terminal_risk_score_f
+    - volume_participation_score_f
+    - roc_5_f
+    - roc_10_f
+    - roc_20_f
+    - trend_r2_20_f
+    - path_efficiency_pct_f
+    - path_length_pct_f
+    - price_dir_consistency_pct_f
+    - macd_atr_f
+    - rsi_f
+    - atr_percentile_f
+    - bb_width_normalized_pct_f
+    - vpin_features_f
+    - volume_ratio_pct_f
+    - ofci_pct_f
+    - shd_pct_f
+    - cvd_change_features_f
+    - trade_cluster_entropy_zscore_features_f
+    - trade_cluster_imbalance_zscore_features_f
+    - funding_rate_features_f
+    - funding_scene_semantic_scores_f
+    - oi_features_f
+    - oi_scene_semantic_scores_f
+    - volatility_regime_f
+    - wick_scene_semantic_scores_f
+    - wpt_scene_semantic_scores_f
+    - volume_profile_scene_semantic_scores_f
+    - liquidity_void_scene_semantic_scores_f
+    - sma_200_f
+    - jump_risk_pct_f
+    - liquidity_void_f
+    - footprint_basic_f
+    - fp_imbalance_scene_semantic_scores_f
+    - vpin_scene_semantic_scores_f
+    - dual_exhaustion_f
+    - funding_oi_crowding_f
+    - hurst_price_f
+    - spectrum_features_f
+    - hilbert_phase_f
+    - evt_features_f
+    - session_features_f
+    - market_cap_normalized_orderflow_f
+  ensure_signal_column:
+    name: signal
+    default_value: 0

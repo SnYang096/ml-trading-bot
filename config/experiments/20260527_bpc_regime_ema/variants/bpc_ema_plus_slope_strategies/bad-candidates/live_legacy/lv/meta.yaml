@@ -1,0 +1,31 @@
+# LV (LeverageVulnerability) 策略元信息
+
+strategy:
+  name: lv
+  description: |
+    LeverageVulnerability archetype: 杠杆脆弱性驱动的清算型策略。
+    识别杠杆极端 + 流动性薄弱的结构，捕捉"强迫移动"（清算瀑布/逼空）。
+    
+    核心公式:
+      Liquidation Risk ∝ 杠杆集中度 × 单边持仓比例 × 订单簿深度薄弱度
+    
+    不依赖:
+      - 价格压缩 / breakout 结构
+      - 趋势 acceleration
+      
+    核心关注:
+      - OI 异常增长 + 价格滞涨（清算燃料堆积）
+      - Funding Rate 极端偏离（单边拥挤）
+      - 订单簿深度薄弱（流动性真空）
+      
+  tags:
+    - liquidation
+    - leverage
+    - vulnerability
+    - forced_move
+    - cascade
+  owner: quant_team
+  archetype: LeverageVulnerability
+  
+  # 默认时间粒度: 15分钟 (快进快出，与 BPC/ME/FER 的 4H 不同)
+  timeframe: "15T"

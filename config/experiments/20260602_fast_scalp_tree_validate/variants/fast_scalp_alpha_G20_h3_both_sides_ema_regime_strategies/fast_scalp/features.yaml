@@ -1,0 +1,31 @@
+name: fast_scalp
+description: 'IC-pruned @ holdout best_lag<=5, |IC|>=0.02, target=label, top-20 columns
+  (column singletons).
+
+  '
+feature_pipeline:
+  exclude_columns:
+  - atr
+  requested_features:
+  - atr_f
+  - box_stability_60
+  - evt_var_99_right
+  - evt_es_99
+  - evt_es_99_left
+  - evt_var_99
+  - evt_var_99_left
+  - evt_tail_shape
+  - evt_tail_shape_left
+  - hour_sin
+  - me_accel_5k
+  - liquidity_void_retracement
+  - me_accel_5k_long
+  - shd_pct
+  - vol_accel
+  - spectrum_cvd_low_freq_ratio
+  - bpc_recovery_strength
+  - macro_tp_vwap_1200_position
+  - evt_scale
+  - evt_scale_left
+  - spectrum_price_centroid
+  - ema_1200_slope_f

@@ -1,0 +1,22 @@
+description: fast_scalp entry tree — score sign = direction, |score| vs τ = timing
+source:
+  model: model.yaml
+  score_column: score
+thresholds:
+  long_entry: 0.55
+  long_exit: 0.5
+  short_entry: 0.45
+  short_exit: 0.5
+  dead_zone: true
+dual_head:
+  enabled: true
+  long:
+    score_column: score_long
+    entry_threshold: 0.55
+    exit_threshold: 0.45
+  short:
+    score_column: score_short
+    entry_threshold: 0.55
+    exit_threshold: 0.45
+  reject_if_both_high: true
+  reject_if_contradiction: true

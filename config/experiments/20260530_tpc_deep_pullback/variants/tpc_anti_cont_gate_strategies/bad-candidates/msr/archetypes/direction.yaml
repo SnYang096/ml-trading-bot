@@ -1,0 +1,16 @@
+# MSR Direction Determination
+# 方向与 FBF 一致：失败突破的反向 = 交易方向。
+# fer_sr_failed_breakout_direction_signed = -1 → SHORT, +1 → LONG
+
+version: 1.0
+
+direction_rules:
+  - method: feature_sign
+    feature: fer_sr_failed_breakout_direction_signed
+    description: "L3 边界失败突破方向（signed，与 FBF 共用语义）"
+    transform: raw
+    locked: true
+
+validation:
+  require_nonzero: true
+  allowed_values: [-1, 1]

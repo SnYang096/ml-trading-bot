@@ -1,0 +1,62 @@
+# LV Evidence (auto-discovered)
+# 来源: results/train_final_20260308_221111_rr_extreme/lv/logs_gated.parquet
+# 方法: Spearman + Quintile Monotonicity (p < 0.01)
+# 候选: 3/284 通过筛选
+
+schema:
+  label_semantics:
+    suppress: 强烈不利 - 极度限制仓位/信心
+    downweight: 不利 - 降低信心/仓位
+    neutral: 中性 - 标准执行
+    favor: 有利 - 提高信心/仓位
+    amplify: 强烈有利 - 最大化执行
+evidence:
+- id: evidence_macd_histogram_atr
+  feature: macd_histogram_atr
+  rank: 1
+  direction: positive
+  usage_hint: sp_r=+0.029 WR:48.0%→50.8%
+  affects:
+  - position_size
+  - tp_range
+  quantile_mapping:
+    bins:
+    - -0.2140585094310768
+    - -0.060458905571409524
+    - 0.07258409246433531
+    - 0.22272758518435715
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  split_count: 5
+- id: evidence_vpin_min
+  feature: vpin_min
+  rank: 2
+  direction: positive
+  usage_hint: sp_r=+0.028 WR:47.6%→50.7%
+  affects:
+  - position_size
+  - tp_range
+  quantile_mapping:
+    bins:
+    - 0.16431898738572273
+    - 0.22459353343677244
+    - 0.261424306742712
+    - 0.30923377180056816
+    labels:
+    - suppress
+    - downweight
+    - neutral
+    - favor
+    - amplify
+  split_count: 5
+# DISABLED: garch_features_f removed for live performance (370s/cycle)
+# - id: evidence_garch_volatility
+#   feature: garch_volatility
+#   rank: 3
+#   direction: negative
+#   usage_hint: sp_r=-0.027 WR:50.7%→48.1%
+min_score: 0.0

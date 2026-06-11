@@ -6,8 +6,8 @@
 
 ```bash
 # 1. 基于当前最好的 G1 树复制
-cp -a config_experiments/tpc_gate_ablate_G1_no_bull_vol_strategies \
-   config_experiments/tpc_gate_G10_vla_lt003_bull_strategies
+cp -a config/experiments/20260601_1130_tpc_gate_final_lock/variants/tpc_gate_ablate_G1_no_bull_vol_strategies \
+   config/experiments/20260601_1130_tpc_gate_final_lock/variants/tpc_gate_G10_vla_lt003_bull_strategies
 
 # 2. 修改 gate.yaml 里的 vol_leverage 规则
 #    把原来的中间带改成极低尾单边：

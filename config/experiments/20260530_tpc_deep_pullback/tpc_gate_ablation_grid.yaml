@@ -13,44 +13,44 @@ trading_map: false
 
 runs:
   - variant: G0_gate_prod
-    strategies_root: config_experiments/tpc_gate_ablate_G0_prod_strategies
+    strategies_root: config/experiments/20260530_tpc_deep_pullback/variants/tpc_gate_ablate_G0_prod_strategies
     start_date: "2023-01-01"
     end_date: "2025-01-01"
     output_dir: results/tpc/experiments/gate_ablation/G0_gate_prod
 
   - variant: G1_no_bull_vol_gates
-    strategies_root: config_experiments/tpc_gate_ablate_G1_no_bull_vol_strategies
+    strategies_root: config/experiments/20260530_tpc_deep_pullback/variants/tpc_gate_ablate_G1_no_bull_vol_strategies
     start_date: "2023-01-01"
     end_date: "2025-01-01"
     output_dir: results/tpc/experiments/gate_ablation/G1_no_bull_vol_gates
 
   - variant: G2_no_chop_gate
-    strategies_root: config_experiments/tpc_gate_ablate_G2_no_chop_strategies
+    strategies_root: config/experiments/20260530_tpc_deep_pullback/variants/tpc_gate_ablate_G2_no_chop_strategies
     start_date: "2023-01-01"
     end_date: "2025-01-01"
     output_dir: results/tpc/experiments/gate_ablation/G2_no_chop_gate
 
   - variant: G4_no_vol_persist_bull
-    strategies_root: config_experiments/tpc_gate_ablate_G4_no_vol_persist_strategies
+    strategies_root: config/experiments/20260530_tpc_deep_pullback/variants/tpc_gate_ablate_G4_no_vol_persist_strategies
     start_date: "2023-01-01"
     end_date: "2025-01-01"
     output_dir: results/tpc/experiments/gate_ablation/G4_no_vol_persist_bull
 
   - variant: G5_no_vol_lev_bull
-    strategies_root: config_experiments/tpc_gate_ablate_G5_no_vol_lev_strategies
+    strategies_root: config/experiments/20260530_tpc_deep_pullback/variants/tpc_gate_ablate_G5_no_vol_lev_strategies
     start_date: "2023-01-01"
     end_date: "2025-01-01"
     output_dir: results/tpc/experiments/gate_ablation/G5_no_vol_lev_bull
 
   # Bull-heavy window (hypothesis: vol bull gates hurt 2024 bull)
   - variant: G0_gate_prod_bull2024
-    strategies_root: config_experiments/tpc_gate_ablate_G0_prod_strategies
+    strategies_root: config/experiments/20260530_tpc_deep_pullback/variants/tpc_gate_ablate_G0_prod_strategies
     start_date: "2024-01-01"
     end_date: "2024-07-01"
     output_dir: results/tpc/experiments/gate_ablation/G0_gate_prod_bull2024
 
   - variant: G1_no_bull_vol_bull2024
-    strategies_root: config_experiments/tpc_gate_ablate_G1_no_bull_vol_strategies
+    strategies_root: config/experiments/20260530_tpc_deep_pullback/variants/tpc_gate_ablate_G1_no_bull_vol_strategies
     start_date: "2024-01-01"
     end_date: "2024-07-01"
     output_dir: results/tpc/experiments/gate_ablation/G1_no_bull_vol_bull2024

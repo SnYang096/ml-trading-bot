@@ -89,7 +89,7 @@ Event grid 示例：
 
 ```yaml
 strategy: fast_scalp
-strategies_root: config_experiments/fast_scalp_alpha_G14_g5label_g5exec_strategies
+strategies_root: config/experiments/20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G14_g5label_g5exec_strategies
 symbols: [SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]   # cohort 在实验层
 ```
 

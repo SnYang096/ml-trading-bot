@@ -24,19 +24,19 @@ runs:
     output_dir: results/tpc/maps/compare_entry_semantic_20260604/E0_prod
 
   - variant: E2a_or_anti_chase
-    strategies_root: config_experiments/tpc_entry_e2a_or_anti_chase_strategies
+    strategies_root: config/experiments/20260604_tpc_entry_semantic_trading_maps/variants/tpc_entry_e2a_or_anti_chase_strategies
     start_date: "2022-01-01"
     end_date: "2026-04-01"
     output_dir: results/tpc/maps/compare_entry_semantic_20260604/E2a_or_anti_chase
 
   - variant: E1e2_band_or_anti
-    strategies_root: config_experiments/tpc_entry_e1e2_band_or_anti_strategies
+    strategies_root: config/experiments/20260604_tpc_entry_semantic_trading_maps/variants/tpc_entry_e1e2_band_or_anti_strategies
     start_date: "2022-01-01"
     end_date: "2026-04-01"
     output_dir: results/tpc/maps/compare_entry_semantic_20260604/E1e2_band_or_anti
 
   - variant: S50_depth_gt50
-    strategies_root: config_experiments/tpc_semantic_depth_gt50_strategies
+    strategies_root: config/experiments/20260604_tpc_entry_semantic_trading_maps/variants/tpc_semantic_depth_gt50_strategies
     start_date: "2022-01-01"
     end_date: "2026-04-01"
     output_dir: results/tpc/maps/compare_entry_semantic_20260604/S50_depth_gt50

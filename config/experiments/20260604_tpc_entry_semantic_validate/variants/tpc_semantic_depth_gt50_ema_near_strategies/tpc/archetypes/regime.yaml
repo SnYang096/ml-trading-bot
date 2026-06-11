@@ -1,0 +1,34 @@
+allowed_regimes:
+- bull
+- bear
+- neutral
+allowed_sides:
+- long
+- short
+rules:
+- any_of:
+  - feature: ema_1200_position
+    operator: '>='
+    value: 0.03
+  - feature: ema_1200_position
+    operator: <=
+    value: -0.03
+  rationale: S51：收窄 EMA1200 死区至 |pos|>0.03，允许略低于均线深回踩
+  locked: true
+  lock_reason: Regime 慢变量 — EMA1200 宏观带（TPC 专用，替代原 chop+box）
+last_calibration:
+  timestamp: '2026-06-03T05:41:24Z'
+  data_source: results/monitoring/tier0/tpc_20260603/features_labeled_recent_6m_oos.parquet
+  segment: recent_6m_oos
+  plateau_overlap: null
+  plateaus:
+  - feature: ema_1200_position
+    operator: '>='
+    plateau:
+      start: -0.4176
+      end: 0.009
+      mid: -0.1056
+    action: TIER0_LOCAL
+    reason: recent_6m_oos p10-p95 band from train_final_20260523 slice
+  notes: 'Tier-0 local 2026-06-03: ema_1200_position distribution band on recent_6m_oos
+    (2025-10-01 .. 2026-03-31 intent; source parquet max ts 2026-02-23).'

@@ -224,7 +224,7 @@ PYTHONPATH=src:scripts python -m scripts.event_backtest \
 - [ ] 从 deploy 复制 `features.yaml` / `model.yaml`（两棵 binary classifier 或扩展 train 管线）
 - [ ] 训练产物 `predictions.parquet` 含 `score_long`, `score_short`
 - [ ] `export_tree_scores_for_event_backtest.py` 双列注入
-- [ ] `config_experiments/fast_scalp_alpha_G7_dual_head_strategies/` 快照 + validate grid
+- [ ] `config/experiments/20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G7_dual_head_strategies/` 快照 + validate grid
 - [ ] event 对照：G0 vs G3 vs G7 @ recent_6m_oos
 
 **判决：** dual_head 仅当 event Return / mean_r **显著优于 G3** 才进入 E4 promote 候选；否则 **short-biased（G3）为默认架构**。

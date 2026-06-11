@@ -33,17 +33,17 @@ segment_matrix:
       output_dir: results/bpc/experiments/lookback_retest_fast_20260611/B0_prod
 
     - suffix: B0_retest
-      strategies_root: config_experiments/bpc_lb20_retest_strategies
+      strategies_root: config/experiments/20260611_bpc_lookback_retest_validate/variants/bpc_lb20_retest_strategies
       output_dir: results/bpc/experiments/lookback_retest_fast_20260611/B0_retest
 
     - suffix: B_L120
-      strategies_root: config_experiments/bpc_lb120_strategies
+      strategies_root: config/experiments/20260611_bpc_lookback_retest_validate/variants/bpc_lb120_strategies
       output_dir: results/bpc/experiments/lookback_retest_fast_20260611/B_L120
 
     - suffix: B_L240
-      strategies_root: config_experiments/bpc_lb240_strategies
+      strategies_root: config/experiments/20260611_bpc_lookback_retest_validate/variants/bpc_lb240_strategies
       output_dir: results/bpc/experiments/lookback_retest_fast_20260611/B_L240
 
     - suffix: B_L120_retest
-      strategies_root: config_experiments/bpc_lb120_retest_strategies
+      strategies_root: config/experiments/20260611_bpc_lookback_retest_validate/variants/bpc_lb120_retest_strategies
       output_dir: results/bpc/experiments/lookback_retest_fast_20260611/B_L120_retest

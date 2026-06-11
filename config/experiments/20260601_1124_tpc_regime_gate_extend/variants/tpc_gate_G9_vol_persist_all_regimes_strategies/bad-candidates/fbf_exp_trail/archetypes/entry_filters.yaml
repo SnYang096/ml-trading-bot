@@ -1,0 +1,44 @@
+# FBF Entry Filter: 稀疏高置信（边界更极端 + 极值更近）
+# 与 execution 固定 RR 2:1 配套：少开仓、少被震荡洗出
+
+filters:
+  - id: fbf_short_upper_fail
+    enabled: true
+    locked: true
+    description: "做空: 上沿失败突破 + 高位极值邻近（收紧）"
+    conditions:
+      - feature: fer_sr_failed_breakout_direction_signed
+        operator: "<="
+        value: -1
+      - feature: fer_range_pos_20
+        operator: ">="
+        value: 0.62
+      - feature: bars_since_local_high
+        operator: "<="
+        value: 0.22
+      - feature: fer_sr_failed_breakout_score
+        operator: ">="
+        value: 0.38
+
+  - id: fbf_long_lower_fail
+    enabled: true
+    locked: true
+    description: "做多: 下沿失败突破 + 低位极值邻近（收紧）"
+    conditions:
+      - feature: fer_sr_failed_breakout_direction_signed
+        operator: ">="
+        value: 1
+      - feature: fer_range_pos_20
+        operator: "<="
+        value: 0.38
+      - feature: bars_since_local_low
+        operator: "<="
+        value: 0.22
+      - feature: fer_sr_failed_breakout_score
+        operator: ">="
+        value: 0.38
+
+# L3 大级别 SR 反转语义已迁出 FBF → 独立策略 MSR (config/strategies/msr/)，见
+#   docs/z实验_005_统一研究/FBF_RMR_HubRebound_verdict_20260420.md
+# FBF 保留 L2 (POC/HAL) 失败突破语义；MSR 独立吃 L3 (240 bar swing) 的假破反转。
+combination_mode: or

@@ -1,0 +1,87 @@
+# Lottery100 Gate — 「100x 存活」硬拒绝层
+#
+# 语义：单根 bar 的硬否决条件；一旦命中任一条，本 bar 绝不进场。
+# 这一层的每一条都服务于同一个目标：在 100x 名义杠杆下「不爆仓」。
+# 订单流正向确认（做多应当出现的买盘迹象）放到 entry_filters，不放在这里。
+#
+# 特征名须与运行时 incremental feature computer 输出一致（event_backtest 能解析的键）。
+
+schema:
+  phases:
+    - system_safety
+    - hard_gate
+    - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: survival_first (liquidation avoidance at 100x nominal)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+
+hard_gates:
+  - id: lottery100_late_long_ema1200
+    tag: HARD_LOTTERY_LATE_LONG_EMA1200
+    phase: hard_gate
+    priority: 7
+    reason: 价远高于 EMA1200 → 动量末端，100x 下回踩即爆仓
+    when:
+      ema_1200_position:
+        value_gt: 0.10
+    then:
+      action: deny
+    locked: true
+    lock_reason: 与 BPC late-long 语义一致；100x 不追极端拉伸
+
+  - id: lottery100_vwap_premium
+    tag: HARD_LOTTERY_VWAP_PREMIUM
+    phase: hard_gate
+    priority: 8
+    reason: 相对 VWAP1200 溢价 >0.09，容量样本显著衰减
+    when:
+      macro_tp_vwap_1200_position:
+        value_gt: 0.09
+    then:
+      action: deny
+    locked: true
+    lock_reason: tree_rules + subset_lift 共同约束
+
+  - id: lottery100_vwap_too_cheap
+    tag: HARD_LOTTERY_VWAP_TOO_CHEAP
+    phase: hard_gate
+    priority: 8
+    reason: 相对 VWAP1200 折价 <-0.14，结构崩溃概率高，100x 不可用
+    when:
+      macro_tp_vwap_1200_position:
+        value_lt: -0.14
+    then:
+      action: deny
+    locked: true
+    lock_reason: 与 v4 高密区边界一致
+
+  - id: lottery100_cvd60_extreme_sell
+    tag: HARD_LOTTERY_CVD60_EXTREME_SELL
+    phase: hard_gate
+    priority: 9
+    reason: 60 根窗口 CVD 断崖式负 → 即期订单流崩溃，100x 顺势失败代价极大
+    when:
+      cvd_roll60:
+        value_lt: -16500.0
+    then:
+      action: deny
+    locked: true
+    lock_reason: tree_rules_H120_bull_only.md 左分裂点，容量研究中该边界下尾部命中急剧下降
+
+  - id: lottery100_cvd20_extreme_sell
+    tag: HARD_LOTTERY_CVD20_EXTREME_SELL
+    phase: hard_gate
+    priority: 9
+    reason: 20 根窗口 CVD 极端负 → 短周期卖压占优，100x 入场易打穿止损
+    when:
+      cvd_roll20:
+        value_lt: -22000.0
+    then:
+      action: deny
+    locked: true
+    lock_reason: 与 cvd_roll60 形成多尺度一致性约束
+
+guardrails: []
+system_safety: []

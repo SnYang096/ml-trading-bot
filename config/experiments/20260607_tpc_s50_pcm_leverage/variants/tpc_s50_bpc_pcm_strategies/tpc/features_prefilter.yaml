@@ -1,0 +1,34 @@
+name: tpc_prefilter
+description: 'TPC Prefilter 特征: Trend-Pullback-Continuation 结构的因果前提特征。
+
+  使用 tpc_soft_phase_f 替代 bpc_soft_phase_f（无突破门控）。
+
+  '
+feature_pipeline:
+  # meta-prefilter 候选列黑名单（支持 * 通配符）
+  # 与 BPC 同构：禁止「组合分 / 事后末端条件 / 跨策略污染」进入 prefilter 硬规则层。
+  # TPC 2024-03 曾因 meta 选 tpc_semantic_extension >=0.487 (actual=0) 拦了 78 bar → 0 笔。
+  # 跨策略污染：TPC prefilter 曾被 meta 注入 bpc_volume_compression_pct ≤0.1092（非 tpc_ 前缀的 score）。
+  forbidden_prefilter_meta_columns:
+    - "tpc_score_*"
+    - "tpc_semantic_extension"
+    # 原双向合并列（signed / abs）保留黑名单，改用 _long / _short 拆分列。
+    - "bpc_impulse_return_atr"
+    - "bpc_pullback_delta_absorption"
+    # 跨策略前缀 score：禁止 meta 把其他策略的 score 写进 TPC prefilter。
+    - "bpc_score_*"
+    - "me_score_*"
+    - "srb_score_*"
+    - "fbf_score_*"
+  requested_features:
+    - market_cap_normalized_orderflow_f
+    - tpc_soft_phase_f
+    - bpc_pullback_depth_pct_f
+    - bpc_pullback_duration_f
+    - bpc_pullback_speed_f
+    - bpc_dir_consistency_multi_f
+    - bpc_dir_flip_count_f
+    - bpc_impulse_return_atr_f
+    - bpc_volume_compression_pct_f
+    - bpc_pullback_delta_absorption_f
+    - dual_compression_f

@@ -3,7 +3,7 @@
 # 假设：macro≥τ 提供大级别回撤背景，prod depth<=0.85 约束当根仍在回踩区；
 #       相对 E0_prod 改善 bull R，且优于 M_replace（仅 macro、无 depth）。
 #
-# 变体树：config_experiments/tpc_macro_add_L15_S12_strategies/
+# 变体树：config/experiments/20260610_tpc_macro_pullback_replace/variants/tpc_macro_add_L15_S12_strategies/
 #
 # 跑法：
 #   PYTHONPATH=src:scripts python -m scripts.event_backtest \
@@ -35,5 +35,5 @@ segment_matrix:
       output_dir: results/tpc/experiments/macro_pullback_add_20260610/E0_prod
 
     - suffix: M_add_L15_S12
-      strategies_root: config_experiments/tpc_macro_add_L15_S12_strategies
+      strategies_root: config/experiments/20260610_tpc_macro_pullback_replace/variants/tpc_macro_add_L15_S12_strategies
       output_dir: results/tpc/experiments/macro_pullback_add_20260610/M_add_L15_S12

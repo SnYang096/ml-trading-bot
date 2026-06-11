@@ -1,0 +1,15 @@
+name: rmr_prefilter
+description: |
+  RMR Prefilter 特征候选池：区间结构 / 非趋势 / SR 清晰度 / 订单流稳定性。
+  注意 fer_failure_signals_f 只用其中的结构字段（range_pos / ols_pos / ols_width_norm），
+  不引用 fer_sr_failed_breakout_*（那是 FBF 语义）。
+
+feature_pipeline:
+  requested_features:
+    - fer_failure_signals_f      # 仅用结构位置子集
+    - sr_strength_max_f
+    - path_efficiency_pct_f
+    - trend_r2_20_f
+    - atr_percentile_f
+    - bb_width_normalized_pct_f
+    - price_dir_consistency_pct_f   # v2 新增：过滤单边一致性

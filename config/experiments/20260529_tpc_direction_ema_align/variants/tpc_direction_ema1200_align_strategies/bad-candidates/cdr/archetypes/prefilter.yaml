@@ -1,0 +1,74 @@
+# CDR Prefilter: late-trend exhaustion candidate pool
+#
+# 目标不是普通 range fade，而是在趋势末端或结构转换处寻找反向接管点。
+# Prefilter 只负责保留候选池；方向化确认放在 entry filters。
+
+rules:
+  - any_of:
+      - feature: wide_sr_dist_atr
+        operator: "<="
+        value: 3.5
+      - feature: wide_sr_dist_atr
+        operator: ">="
+        value: 6.0
+      - feature: box_pos_120
+        operator: "<="
+        value: 0.35
+      - feature: box_pos_120
+        operator: ">="
+        value: 0.65
+      - feature: box_pos_240
+        operator: "<="
+        value: 0.35
+      - feature: box_pos_240
+        operator: ">="
+        value: 0.65
+    locked: true
+    lock_reason: "结构候选池：靠近/远离 L3 边界或处于 120/240 盒子上下半区；精确方向交给 entry"
+
+  - any_of:
+      - feature: wide_sr_range_width_atr
+        operator: ">="
+        value: 2.5
+      - feature: box_width_pct_120
+        operator: ">="
+        value: 0.035
+      - feature: box_width_pct_240
+        operator: ">="
+        value: 0.08
+    locked: true
+    lock_reason: "结构空间下限：L3 或 box 至少有足够反转幅度"
+
+  - any_of:
+      - feature: fer_sr_failed_breakout_score
+        operator: ">="
+        value: 0.18
+      - feature: trade_cluster_max_buy_run_ma20
+        operator: "<="
+        value: 0.030
+      - feature: trade_cluster_total_runs_ma20
+        operator: "<="
+        value: 0.23
+      - feature: atr_percentile
+        operator: "<="
+        value: 0.12
+      - feature: bb_width_normalized_pct
+        operator: "<="
+        value: 0.05
+      - feature: oi_zscore
+        operator: "<="
+        value: -2.0
+      - feature: trend_div_tension
+        operator: ">="
+        value: 0.04
+      - feature: div_location_pressure
+        operator: ">="
+        value: 0.04
+      - feature: terminal_risk_score
+        operator: ">="
+        value: 0.01
+      - feature: cvd_divergence_score_pct
+        operator: ">="
+        value: 0.75
+    locked: true
+    lock_reason: "至少出现一种失败突破、参与度衰竭、压缩或背离迹象；强度由 entry filter 确认"

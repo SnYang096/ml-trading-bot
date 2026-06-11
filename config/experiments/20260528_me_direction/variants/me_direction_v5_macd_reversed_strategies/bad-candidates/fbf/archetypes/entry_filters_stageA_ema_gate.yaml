@@ -1,0 +1,45 @@
+# Stage A: EMA1200 + gate (no AB-B extra constraints)
+filters:
+  - id: fbf_short_upper_fail
+    enabled: true
+    locked: true
+    description: "做空: 上沿失败突破 + EMA1200 同向"
+    conditions:
+      - feature: fer_sr_failed_breakout_direction_signed
+        operator: "<="
+        value: -1
+      - feature: fer_range_pos_20
+        operator: ">="
+        value: 0.62
+      - feature: bars_since_local_high
+        operator: "<="
+        value: 0.22
+      - feature: fer_sr_failed_breakout_score
+        operator: ">="
+        value: 0.38
+      - feature: ema_1200_position
+        operator: "<="
+        value: 0.0
+
+  - id: fbf_long_lower_fail
+    enabled: true
+    locked: true
+    description: "做多: 下沿失败突破 + EMA1200 同向"
+    conditions:
+      - feature: fer_sr_failed_breakout_direction_signed
+        operator: ">="
+        value: 1
+      - feature: fer_range_pos_20
+        operator: "<="
+        value: 0.38
+      - feature: bars_since_local_low
+        operator: "<="
+        value: 0.22
+      - feature: fer_sr_failed_breakout_score
+        operator: ">="
+        value: 0.38
+      - feature: ema_1200_position
+        operator: ">="
+        value: 0.0
+
+combination_mode: or

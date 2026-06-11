@@ -1,0 +1,35 @@
+# Research prefilter: box/chop selects pullback windows before direction.
+rules:
+  - feature: box_stability_120
+    operator: ">="
+    value: 0.90
+    rationale: "Only use stable wider boxes as pullback windows; box does not provide direction."
+    locked: false
+
+  - feature: box_width_pct_120
+    operator: ">="
+    value: 0.04
+    rationale: "Avoid too-narrow boxes where spread/slippage and noise dominate."
+    locked: false
+
+  - feature: box_width_pct_120
+    operator: "<="
+    value: 0.25
+    rationale: "Avoid extremely wide unresolved trend ranges."
+    locked: false
+
+  - any_of:
+      - feature: box_pos_120
+        operator: "<="
+        value: 0.15
+      - feature: box_pos_120
+        operator: ">="
+        value: 0.85
+    rationale: "Only trade edge pullbacks, not box middle."
+    locked: false
+
+  - feature: bpt_semantic_chop
+    operator: ">="
+    value: 0.40
+    rationale: "Require chop-like local regime so entry is a pullback window, not a momentum chase."
+    locked: false

@@ -1,0 +1,28 @@
+name: lottery100_long_rr_extreme
+target_column: success_no_rr_extreme
+
+# 占位标签配置：当前 lottery100 主流程不走 train/final。
+# 保留该文件以对齐策略目录结构，便于未来需要时接入统一训练链。
+label_generator:
+  module: src.time_series_model.strategies.labels.failure_first_label
+  function: compute_bpc_failure_rr_extreme_label
+  params:
+    direction: long
+    horizon: 120
+    invert: true
+    direction_aware: false
+
+label_meta:
+  label_type: binary
+  failure_subtype: rr_extreme
+  semantic: |
+    success_no_rr_extreme = 1 - failure_rr_extreme
+    1 = 未来路径不出现极端 RR 失败
+    0 = 出现极端 RR 失败
+  horizon: 120 bars
+
+filters:
+  - column: success_no_rr_extreme
+    notna: true
+
+post_label_filters: []

@@ -1,0 +1,12 @@
+# E1 bull — experiment 20260530_tpc_deep_pullback (Pass1 tau_prefilter_depth=0.55)
+rules:
+  - feature: tpc_pullback_depth
+    operator: <=
+    value: 0.849993
+    rationale: TPC 语义：大级别趋势内较深回调也允许，只要不破结构
+    locked: true
+    lock_reason: TPC 大趋势锚点 3/3：回调深度受控（略放宽，避免过浅带误杀实回调）
+  - feature: tpc_pullback_depth
+    operator: '>='
+    value: 0.55
+    rationale: 深回踩下界（Pass1 bull H1；config/experiments/20260530_tpc_deep_pullback）

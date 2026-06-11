@@ -1,0 +1,15 @@
+# fast_scalp entry tree — score sign = direction, |score| vs τ = timing.
+# Promote thresholds from holdout regime_threshold_calibrate plateau (Phase 2).
+
+description: "fast_scalp entry tree — score sign = direction, |score| vs τ = timing"
+
+source:
+  model: model.yaml
+  score_column: score
+
+thresholds:
+  long_entry: 0.55
+  long_exit: 0.50
+  short_entry: 0.45
+  short_exit: 0.50
+  dead_zone: true

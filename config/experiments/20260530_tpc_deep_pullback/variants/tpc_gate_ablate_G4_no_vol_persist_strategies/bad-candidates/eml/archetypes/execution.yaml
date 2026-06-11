@@ -1,0 +1,47 @@
+# EML 执行：3×ATR 初始止损 + 浮盈 1R/2R/3R 加仓（与 research atr3_add_be 同构）+ EMA1200 结构出场
+
+add_position:
+  add_size_multipliers:
+    - 1
+    - 2
+    - 3
+  inherit_parent_stop: true
+  max_add_times: 3
+  min_current_r_by_add:
+    - 1
+    - 2
+    - 3
+  min_current_r_unit: atr
+  sizing_mode: fixed_multiplier
+  trigger:
+    type: float_r_ladder_only
+
+execution_constraints:
+  allow_add_on: true
+  min_order_interval_minutes: 15
+
+holding:
+  max_holding_bars: 480
+  time_stop_bars: 0
+
+stop_loss:
+  breakeven:
+    enabled: true
+    trigger_r: 1.0
+    lock_level_r: 0.0
+    measure: atr
+  guardrails:
+    max_stop_pct: 0.12
+    min_stop_pct: 0.01
+  initial_r: 3.0
+  structural_exit: ema1200
+  trailing:
+    activation_r: 6.0
+    enabled: false
+    trail_r: 4.0
+  type: fixed
+
+take_profit:
+  enabled: false
+
+version: 1

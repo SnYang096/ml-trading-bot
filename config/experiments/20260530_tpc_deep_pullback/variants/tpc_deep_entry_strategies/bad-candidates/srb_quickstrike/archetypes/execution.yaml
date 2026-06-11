@@ -1,0 +1,241 @@
+# SRB QuickStrike execution — 真突破后的短打推进，不做长趋势肥尾骑乘。
+#
+# 语义参考 FBF 稳定短打 run（20260413/20260416/20260417）：
+# 1R 初始风险、2R 固定目标、36 根 2H time stop、默认不加仓。
+
+
+
+# L3 大级别 SR：统一由特征 `wide_sr_swing_f`（config/feature_dependencies.yaml）提供，
+# 默认 wide_window=240 bar（≈1 个月）+ anchor_shift=12（≈1 日前），同时 FBF / SRB 共用。
+# 字段：wide_sr_upper_px / wide_sr_lower_px（锚点价格）+ wide_sr_dist_atr / side / range_width_atr。
+# 若想调整大级别窗口，改 feature_dependencies.yaml 中该特征的 compute_params（全仓库生效）。
+
+# true_sr_level 锚点选择：
+#   - 默认用 L1 窄窗 swing SR（方向侧的结构参考位：LONG=support, SHORT=resistance）。
+#   - 若窄窗 SR 距入场 < wide_fallback_atr × ATR，回退到 L3 大级别锚点
+#     （LONG 用 wide_sr_lower_px，SHORT 用 wide_sr_upper_px）。
+# 用途：SRB state machine 判破确认 + 结构化 SL 对面锚点。
+true_sr_level:
+  wide_fallback_atr: 2.0
+
+# L3 大级别 SR 入场屏蔽：距反向 L3 边界 < min_distance_atr × ATR 时拒绝新开仓。
+#   LONG：wide_sr_upper_px 在价格上方且过近 → 拒
+#   SHORT：wide_sr_lower_px 在价格下方且过近 → 拒
+# 与 live decide / event_backtest 同源，读同一字段。
+sr_wide_entry_guard:
+  enabled: true
+  # 2.0 时常在「贴近月度下沿的做空 / 跌破初期」误杀 SHORT；略放宽以换分布/破位空
+  min_distance_atr: 1.15
+  apply_to_new_only: true
+add_position:
+  add_size_multipliers: []
+  inherit_parent_stop: true
+  max_add_times: 0
+  min_current_r_by_add: []
+  min_current_r_unit: atr
+  sizing_mode: fixed_multiplier
+  trigger:
+    type: disabled
+
+execution_constraints:
+  allow_add_on: false
+  min_order_interval_minutes: 15
+
+holding:
+  max_holding_bars: null
+  time_stop_bars: 36
+
+stop_loss:
+  # ------------------------------------------------------------------
+  # 统一 breakeven lock（2026-04-22 重构：原 `mother_breakeven` 并入此块）
+  # ------------------------------------------------------------------
+  # 语义：当"本仓 MFE" ≥ trigger_r × R 时，SL 抬到 entry + lock_level_r × R。
+  #   - R 的单位由 `measure` 指定：
+  #       * `initial_risk`（推荐）：R = 开仓时 |SL - entry|，与 structural_sl 天然兼容。
+  #       * `atr`：R = 当前 bar ATR（BPC 历史口径）。
+  #   - `lock_level_r`：
+  #       * 0.0 = 纯保本（SL → entry）
+  #       * >0 = 锁进 N R 利润（SL → entry + N × R）
+  #   - tighten-only：始终只向入场有利方向抬；若 trailing 已抬得更高则不回退。
+  #   - 子仓（加仓）通过 add_position.inherit_parent_stop 从母仓继承 SL；
+  #     adds 的自触发 breakeven 会被 PositionTracker._sync_child_stop_from_parent 覆盖掉，
+  #     实际效果等价于"仅母仓触发"。
+  #
+  # 2026-04-22 rolling_sim 终审：SRB 在 trigger_r=3.0 / measure=initial_risk / lock_level_r=0.0 下
+  # 对 XRP 2024-06/08/11 反转月份有 +55R 收益；保留启用。
+  # ------------------------------------------------------------------
+  breakeven:
+    enabled: false
+    trigger_r: 2.0
+    lock_level_r: 0.0
+    measure: initial_risk
+  guardrails:
+    max_stop_pct: 0.1
+    min_stop_pct: 0.01
+  initial_r: 1.0
+  trailing:
+    enabled: false
+    # trailing 带宽 = trail_r × max(入场 ATR, 当前主周期 ATR)
+    # 数据依据：baseline trailing_sl 交易里，出场 bar 的 ATR 中位数 = 入场 ATR 的 1.51×，
+    # 53.8% trailing_sl 出场后沿原方向继续走 ≥ 2 ATR（"洗盘"） —— 见 docs/z实验_005_统一研究/SRB_ablation_results_20260418.md
+    expand_with_primary_atr: false
+    # 2026-04-22 最终决定（见 SRB_l3_dynamic_trailing_20260422.md 结尾"rolling_sim 终审"节）：
+    # - activation_r 保留 6.0：simulator 扫参预测 +33R 被 rolling_sim 证伪（实跑 -72R vs baseline）
+    #   激进激活会连带砍掉后续 add leg 的生存率（2023-11 -78R / 2024-03 -36R）。
+    # 2026-04-26：更高 activation + 更宽 trail_far — 前段少收紧，利于单边肥尾；反转时愿付止损
+    activation_r: 3.0
+    trail_r: 1.5
+    trail_r_far: 1.5
+    trail_r_near: 1.5
+    l3_near_threshold_atr: 2.0
+  type: fixed
+  # ------------------------------------------------------------------
+  # SRB 结构化 SL：SL 锚定"对面 SR"（LONG 用 support，SHORT 用 resistance）
+  # 语义：SRB 突破 resistance 做 LONG，真正的失效位是下方 support —— 不是 6×ATR 的模糊量。
+  # 行为：
+  #   - 有对面 SR 且距 entry ≥ min_distance_atr × ATR → SL = 对面 SR ± buffer × ATR
+  #   - 否则（SR 紧贴/缺失）→ 兜底到 initial_r × ATR（ATR-based）
+  # 不做上限 clip：结构化 SL 很宽时 sizing 公式会自动降低仓位（risk / stop_pct）。
+  # 加仓共享母仓 SL，母仓 SL 变到对面 SR 后，加仓本地 R 也自然变小 —— 不需要加仓 R gate。
+  structural_sl:
+    enabled: false
+    opposite_sr_buffer_atr: 0.9
+    min_distance_atr: 2.0
+take_profit:
+  enabled: true
+  target_r: 2.0
+
+# ---------------------------------------------------------------------------
+# SRB 加仓门控：仅当 regime_execution 未开时，用下列阈值算 bucket（与上表独立）
+# ---------------------------------------------------------------------------
+srb_add_position_policy:
+  enabled: false
+  allow_regime_buckets:
+    - high_adx_low_er
+    - high_adx_high_er
+  max_volume_compression_pct: 0.55
+  volume_compression_feature: bpc_volume_compression_pct
+  regime_adx_period: 14
+  regime_er_window_bars: 20
+  regime_thresholds:
+    adx_high: 40.0
+    er_high: 0.36
+  # ------------------------------------------------------------------
+  # 2026-04-22 Phase D 新增：加仓时 "事后形态门"。
+  # 语义：float_r_ladder_only 绕过 validate_add_position_trigger 的 feature gate，
+  # 但"母仓已进入盈利+加仓时形态已反转/震荡"是常见错加仓来源（XRP 2024-01 灾难）。
+  # 这里用 simulator 扫参后按贡献独立 enable。
+  #   A retrace_guard      : 加仓时 current_r 必须距 MFE ≥ min_captured_pct
+  #   B recent_momentum    : 最近 lookback_bars 根同向净位移 ≥ min_net_move_atr
+  #   C trend_r2_gate      : 加仓时 trend_r2_20 ≥ min_r2
+  #   D wide_sr_expansion  : 自母仓入场以来 wide_sr_dist_atr 增加 ≥ min_expansion_atr
+  # 全部默认 off，由 scripts/simulate_srb_l3_trailing.py 的 add leg sweep 决定。
+  # ------------------------------------------------------------------
+  post_hoc_shape_gate:
+    retrace_guard:
+      enabled: false
+      min_captured_pct: 0.7
+    recent_momentum:
+      # 扫参 +2.87R / rolling_sim 实跑 0 次触发 → 默认关闭。
+      # 历史结论见 reports/srb_add_shape_gate_sweep.json：任何"加仓形态不像就不加"的门
+      # (retrace/r2/wide_expansion) 都显著负贡献；momentum 即使扫参正，在实盘触发率为 0。
+      # 保留配置项以便后续实验，默认 off。
+      enabled: false
+      lookback_bars: 6
+      min_net_move_atr: 1.5
+    trend_r2_gate:
+      enabled: false
+      min_r2: 0.4
+    wide_sr_expansion:
+      enabled: false
+      min_expansion_atr: 1.0
+    # 2026-04-23 E4：加仓 "母仓趋势健康度" 门
+    # 语义：只在母仓已真正赚到钱 + 入场距今未过久 的情况下才允许加仓。
+    #   - min_mother_mfe_r：母仓累计 MFE ≥ 该阈值（避免 "母仓 0 盈利还一路补仓"）
+    #   - max_bars_since_mother_entry：母仓入场后超过 N bar 仍未爆发 → 禁加仓（拦僵尸补刀）
+    #
+    # 2026-04-23 AB v1 结论（reports/srb_fast_ab_e1_e2_e4_v1）：
+    #   min_mother_mfe_r=1.0 太严：与 float_r_ladder_only[0.5] 不同步 → 误杀 2024-02/2024-11 的大赢加仓（-55R）。
+    #   保留配置项，默认只启 staleness（设 min_mfe=0.0 实质关闭 MFE 子项），后续扫参再调。
+    trend_health_gate:
+      # 2026-04-26：长跑趋势里仍允许加仓（放宽 stale + 略降 MFE 门槛）
+      enabled: true
+      min_mother_mfe_r: 0.35
+      max_bars_since_mother_entry: 360
+
+# ---------------------------------------------------------------------------
+# 假突破反手 —— 已从 SRB 中移除（见 docs/design/srb_fake_break_reverse.md）。
+# 假破语义归 FBF。Hub Rebound / RMR 已废弃，不再作为 SRB 扩展方向。
+# SRB：纯「突破 → 顺势延续」；止损后不自动反手/再入。
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# SRB 实验扩展（默认全关；事件回测在 primary TF 上注入 srb_regime_* / srb_sr_*）
+# ---------------------------------------------------------------------------
+sr_structural_exit:
+  enabled: false
+  lookback_bars: 20
+  buffer_atr: 0.25
+
+# 2026-04-23 E2：L3 大级别结构化退出
+# 语义：SRB 的突破一旦被 L3（wide_sr_swing_f）完全反向击穿，即 "大级别 SR 失守"，立即退出。
+#   - LONG：price_close < wide_sr_lower_px - buffer_atr × ATR → 结构破坏
+#   - SHORT：price_close > wide_sr_upper_px + buffer_atr × ATR → 结构破坏
+# 与 breakeven / trailing 并行（优先级同其它 structural_exit，在 enforce_position block 3f）。
+# 动机：XRP 2024-03/07 长空震荡期，价格几次反向穿破 L3 未触发 SL，time_stop 又未开 —— 靠 L3 兜底。
+l3_structural_exit:
+  enabled: false
+  buffer_atr: 0.45
+
+regime_execution:
+  enabled: false
+  adx_period: 14
+  er_window_bars: 20
+  thresholds:
+    adx_high: 40.0
+    er_high: 0.36
+  # 2026-04-22 同步主 trailing：activation_r 回退到 6.0（扫参预测被 rolling_sim 证伪）
+  buckets:
+    default: {}
+    high_adx_low_er:
+      initial_r: 6.0
+      activation_r: 6.0
+      trail_r: 5.0
+      size_multiplier: 1.0
+    high_adx_high_er:
+      initial_r: 4.5
+      activation_r: 6.0
+      trail_r: 4.5
+      size_multiplier: 0.85
+    low_adx_low_er:
+      initial_r: 5.0
+      activation_r: 6.0
+      trail_r: 5.0
+      size_multiplier: 1.0
+    low_adx_high_er:
+      initial_r: 5.0
+      activation_r: 6.0
+      trail_r: 5.0
+      size_multiplier: 1.0
+    unknown: {}
+
+# ---------------------------------------------------------------------------
+# 2026-04-24：两段式首仓（cross 2a + EMA1200 2b）→ arm 窗口内才允许 PCM 开 SRB 母仓
+# 语义与 scripts/experiment_srb_staged_entry_2a2b.py 对齐；默认关闭。
+# 仅事件回测接线（event_backtest）；live 未接。
+# ---------------------------------------------------------------------------
+srb_staged_entry_2b:
+  # 2a/2b 已下沉为普通特征：srb_l3_breakout_age_decay + srb_l3_breakout_2b_score。
+  # 避免 runtime arm 状态机与 prefilter/gate 重复拦截。
+  enabled: false
+  cross:
+    confirm_k: 2
+    fake_lookahead: 10
+    cooldown_bars: 10
+  post_2a_max_bars: 32
+  ema_slope_bars: 3
+  ema_pos_min: 0.008
+  ema_slope_min: 0.004
+  arm_pcm_bars: 12
+
+version: 3

@@ -13,21 +13,21 @@ symbols:
 runs:
   - variant: s50_solo_1x
     strategy: tpc
-    strategies_root: config_experiments/tpc_semantic_depth_gt50_strategies
+    strategies_root: config/experiments/20260607_tpc_s50_pcm_leverage/variants/tpc_semantic_depth_gt50_strategies
     start_date: "2022-01-01"
     end_date: "2026-04-01"
     output_dir: results/tpc/experiments/s50_leverage_20260607/s50_solo_1x
 
   - variant: s50_solo_3x
     strategy: tpc
-    strategies_root: config_experiments/tpc_semantic_depth_gt50_3x_strategies
+    strategies_root: config/experiments/20260607_tpc_s50_pcm_leverage/variants/tpc_semantic_depth_gt50_3x_strategies
     start_date: "2022-01-01"
     end_date: "2026-04-01"
     output_dir: results/tpc/experiments/s50_leverage_20260607/s50_solo_3x
 
   - variant: pcm_s50_3x_tpc_heavy
     strategy: bpc,tpc
-    strategies_root: config_experiments/tpc_s50_bpc_pcm_3x_strategies
+    strategies_root: config/experiments/20260607_tpc_s50_pcm_leverage/variants/tpc_s50_bpc_pcm_3x_strategies
     constitution_yaml: config/experiments/20260607_tpc_s50_pcm_leverage/constitution/pcm_tpc_heavy.yaml
     start_date: "2022-01-01"
     end_date: "2026-04-01"

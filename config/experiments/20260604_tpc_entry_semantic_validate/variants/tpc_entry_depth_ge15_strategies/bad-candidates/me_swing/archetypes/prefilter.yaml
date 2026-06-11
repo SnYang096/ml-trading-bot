@@ -1,0 +1,17 @@
+rules:
+  - any_of:
+      - feature: ema_1200_position
+        operator: "<="
+        value: -0.03
+      - feature: ema_1200_position
+        operator: ">="
+        value: 0.03
+  - feature: atr_percentile
+    operator: ">="
+    value: 0.25
+  - feature: me_accel_persistence
+    operator: ">="
+    value: 0.4
+  - feature: me_multi_tf_alignment
+    operator: ">="
+    value: 0.5

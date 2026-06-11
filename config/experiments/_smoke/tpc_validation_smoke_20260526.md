@@ -11,11 +11,11 @@
 |---|---|---|
 | **H_recent_smoke** | `config/strategies` | _(fill)_ |
 | **A_baseline_bull_2024** | `config/strategies` | _(fill)_ |
-| **B_bull_2024** | `config_experiments/B_gate_only_chop_strategies` | _(fill)_ |
-| **H_bull_2024** | `config_experiments/H_bull_conditional_vol_strategies` | _(fill)_ |
-| **B_gate_only_chop** | `config_experiments/B_gate_only_chop_strategies` | _(fill)_ |
-| **H_recent** | `config_experiments/H_bull_conditional_vol_strategies` | _(fill)_ |
-| **BE_combo** | `config_experiments/BE_combo_strategies` | _(fill)_ |
+| **B_bull_2024** | `config/experiments/_smoke/variants/B_gate_only_chop_strategies` | _(fill)_ |
+| **H_bull_2024** | `config/experiments/_smoke/variants/H_bull_conditional_vol_strategies` | _(fill)_ |
+| **B_gate_only_chop** | `config/experiments/_smoke/variants/B_gate_only_chop_strategies` | _(fill)_ |
+| **H_recent** | `config/experiments/_smoke/variants/H_bull_conditional_vol_strategies` | _(fill)_ |
+| **BE_combo** | `config/experiments/_smoke/variants/BE_combo_strategies` | _(fill)_ |
 | **C_chop_plus_evt** | `config/strategies` | _(fill)_ |
 | **D_regime_strict** | `config/strategies` | _(fill)_ |
 | **E_entry_v2** | `config/strategies` | _(fill)_ |

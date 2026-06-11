@@ -12,7 +12,8 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[2]
 SRC = REPO / "config" / "strategies"
-S50_TREE = REPO / "config_experiments" / "tpc_semantic_depth_gt50_strategies"
+VARIANTS = REPO / "config/experiments/20260607_tpc_s50_pcm_leverage/variants"
+S50_TREE = VARIANTS / "tpc_semantic_depth_gt50_strategies"
 EXP_DIR = REPO / "config" / "experiments" / "20260607_tpc_s50_pcm_leverage"
 BASE_CONST = REPO / "config" / "constitution" / "constitution.yaml"
 
@@ -48,7 +49,7 @@ def _dump_yaml(path: Path, data: dict) -> None:
 
 
 def _copy_tree(name: str, *, src: Path | None = None) -> Path:
-    dst = REPO / "config_experiments" / name
+    dst = VARIANTS / name
     if dst.exists():
         shutil.rmtree(dst)
     shutil.copytree(src or SRC, dst)

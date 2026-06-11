@@ -1,6 +1,6 @@
 # BPC lookback 120/240 + box-retest 反追高（2026-06-11）
 #
-# 变体树：config_experiments/bpc_lb*_strategies/（静态 feature_dependencies + prefilter）
+# 变体树：variants/bpc_lb*_strategies/（静态 feature_dependencies + prefilter）
 #
 # 跑法：
 #   PYTHONPATH=src:scripts python -m scripts.event_backtest \
@@ -31,17 +31,17 @@ segment_matrix:
       output_dir: results/bpc/experiments/lookback_retest_20260611/B0_prod
 
     - suffix: B0_retest
-      strategies_root: config_experiments/bpc_lb20_retest_strategies
+      strategies_root: config/experiments/20260611_bpc_lookback_retest_validate/variants/bpc_lb20_retest_strategies
       output_dir: results/bpc/experiments/lookback_retest_20260611/B0_retest
 
     - suffix: B_L120
-      strategies_root: config_experiments/bpc_lb120_strategies
+      strategies_root: config/experiments/20260611_bpc_lookback_retest_validate/variants/bpc_lb120_strategies
       output_dir: results/bpc/experiments/lookback_retest_20260611/B_L120
 
     - suffix: B_L240
-      strategies_root: config_experiments/bpc_lb240_strategies
+      strategies_root: config/experiments/20260611_bpc_lookback_retest_validate/variants/bpc_lb240_strategies
       output_dir: results/bpc/experiments/lookback_retest_20260611/B_L240
 
     - suffix: B_L120_retest
-      strategies_root: config_experiments/bpc_lb120_retest_strategies
+      strategies_root: config/experiments/20260611_bpc_lookback_retest_validate/variants/bpc_lb120_retest_strategies
       output_dir: results/bpc/experiments/lookback_retest_20260611/B_L120_retest

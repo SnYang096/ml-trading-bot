@@ -1,0 +1,27 @@
+name: cdr_prefilter
+description: |
+  CDR Prefilter 候选池：趋势末端结构、参与度衰竭、压缩、CVD/OI 背离。
+
+feature_pipeline:
+  requested_features:
+    - atr_f
+    - wide_sr_swing_f
+    - box_structure_f
+    - fer_failure_signals_f
+    - trend_r2_20_f
+    - path_efficiency_pct_f
+    - price_dir_consistency_pct_f
+    - cvd_divergence_v2_f
+    - price_momentum_divergence_f
+    - terminal_risk_score_f
+    - atr_percentile_f
+    - bb_width_normalized_pct_f
+    - vpin_features_f
+    - funding_scene_semantic_scores_f
+    - oi_features_f
+    - oi_scene_semantic_scores_f
+    - vpin_scene_semantic_scores_f
+    - dual_exhaustion_f
+    - ema_1200_position_f
+    - ema_1200_slope_f
+    - market_cap_normalized_orderflow_f

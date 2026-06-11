@@ -1,0 +1,32 @@
+# MSR RR Extreme 子标签（复用 FBF failure_rr_extreme，horizon 放宽到 60 bar 以覆盖 L3 时间尺度）
+
+name: msr_short_rr_extreme
+target_column: success_no_rr_extreme
+
+label_generator:
+  module: src.time_series_model.strategies.labels.failure_first_label
+  function: compute_bpc_failure_rr_extreme_label
+  params:
+    direction: short
+    horizon: 60
+    invert: true
+    direction_aware: false
+
+filters:
+  - column: success_no_rr_extreme
+    notna: true
+
+kpi_definition:
+  veto_ability:
+    description: "Gate 是否能有效降低 L3 失败反转单的 failure_rr_extreme 发生率"
+    metrics:
+      - name: lift_at_70pct
+        description: "Top 70% 覆盖时的 Lift"
+        target: "<= 0.90x"
+        critical: true
+      - name: lift_at_50pct
+        description: "Top 50% 覆盖时的 Lift"
+        target: "<= 0.85x"
+        critical: true
+
+post_label_filters: []

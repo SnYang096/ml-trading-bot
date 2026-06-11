@@ -1,0 +1,11 @@
+name: eml_prefilter
+description: |
+  Prefilter 特征白名单：只保留 EMA1200 大结构。
+
+feature_pipeline:
+  forbidden_prefilter_meta_columns:
+    - "eml_score_*"
+  requested_features:
+    - atr_f
+    - ema_1200_position_f
+    - ema_1200_slope_f

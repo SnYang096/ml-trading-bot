@@ -1,0 +1,35 @@
+# RMR Execution: 小止损、小止盈（目标是中轴距离，天然有限）、不加仓、时间止损偏短
+#
+# 设计理由：
+#   • 区间内回归的 RR 天然不如突破 / 趋势，initial_r 偏小（0.8）让仓位可更大。
+#   • target_r = 1.5 —— 朝中轴走到 0.5 位置附近就止盈，不贪尾部。
+#   • 不做 trailing：均值回归结束点就是中轴，追涨杀跌反而抹掉收益。
+#   • time_stop 24 根（2h × 24 = 48h）—— 若区间没在这段时间走到中轴，说明结构已变。
+#   • allow_add_on: false —— 均值回归语义下，加仓 = 押注「更远离中轴」，与语义矛盾。
+
+execution_constraints:
+  allow_add_on: false
+  min_order_interval_minutes: 15
+
+holding:
+  max_holding_bars: null
+  time_stop_bars: 24
+
+stop_loss:
+  type: fixed
+  initial_r: 0.8
+  trailing:
+    enabled: false
+    activation_r: 2.0
+    step_r: 0.5
+    trail_r: 1.0
+
+take_profit:
+  enabled: true
+  target_r: 1.5
+
+breakeven:
+  enabled: false
+  trigger_r: 1.5
+
+version: 1

@@ -1,0 +1,44 @@
+# MSR 实验：Pure Trailing（取消固定 TP；L3 大级别 swing 尾部完全交给 trail）
+#
+# 动机：见 docs/z实验_005_统一研究/FBF_vs_MSR_verdict_20260422.md
+#   MSR baseline 9 笔 TP 赢单精确卡在 2.46~2.48R（=target_r 3.0 / initial_r 1.2），
+#   TP/SL 时间比 2.3x —— L3 反转走势持续性比 FBF 更强，尾部红利更明显。
+#   取消固定 TP，让 trail 吃到 3R~5R+。
+#
+# 参数：
+#   initial_r: 1.2（保留 L3 的宽 SL）
+#   activation_r: 2.0 (在 2 ATR 处激活 trail，约合 1.67R)
+#   trail_r: 1.0（比 FBF 0.8 宽，匹配 L3 波动幅度）
+#   time_stop 60 bars（保持 L3 尺度）
+#
+# 对比基线：config/strategies/msr/archetypes/execution.yaml（target_r=3.0 / 无 trail）
+
+execution_constraints:
+  allow_add_on: false
+  min_order_interval_minutes: 30
+
+holding:
+  max_holding_bars: null
+  time_stop_bars: 60
+
+stop_loss:
+  type: fixed
+  initial_r: 1.2
+  trailing:
+    enabled: true
+    activation_r: 2.0
+    step_r: 0.5
+    trail_r: 1.0
+    expand_with_primary_atr: false
+
+take_profit:
+  enabled: false
+  target_r: 3.0
+
+breakeven:
+  enabled: true
+  trigger_r: 1.5
+  lock_level_r: 0.0
+  measure: atr
+
+version: 2

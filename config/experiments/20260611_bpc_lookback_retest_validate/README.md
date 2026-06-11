@@ -32,7 +32,7 @@ mlbot train final --no-docker --prepare-only \
 
 # 0b) lookback L=120/240：各实验树再 prepare（改 binding 无单列可扫）
 mlbot train final --no-docker --prepare-only \
-  -c config_experiments/bpc_lb120_strategies/bpc -t 240T \
+  -c config/experiments/20260611_bpc_lookback_retest_validate/variants/bpc_lb120_strategies/bpc -t 240T \
   --symbol BTCUSDT,ETHUSDT,SOLUSDT --start-date 2022-01-01 --end-date 2026-04-01 \
   --output-root results/train_final/bpc/bpc_lb120_${RUN_ID}
 # 同理 bpc_lb240_strategies → 更新 rd_loop yaml 里 parquet 路径

@@ -1,0 +1,50 @@
+# FBF Strict Prefilter V2: 边界外侧候选 + 失败突破语义锚点
+#
+# === V1 → V2 变化（2026-04-23）===
+# V1 用 `fer_ols_pos ≥ 0.90 / ≤ 0.10` 的极端贴边，rolling_sim 16 个月只 36 笔且亏钱
+# （total_r = -1.43, win 39%）。诊断（reports/fbf_strict_entry_diag.csv）发现
+# 31/36 笔 fer_ols_pos 已 clip 到 0.00/1.00 饱和 → close 实际已在通道**外**很远，
+# 是真突破还没完成，不是"失败突破回拉"。而这 36 笔里 5 笔"缓冲带"（ols_pos ∈
+# 0.10–0.22）全部 trailing_sl 正收益（mean_r +1.78, win 100%）。
+#
+# 漏斗诊断（reports 脚本 diag_fbf_strict_gate_funnel.py）：
+#   OLS ∈ [0,0.10] ∪ [0.90,1]  (V1 strict)  →  58.85% / 19364 bars
+#   OLS ∈ [0,0.25] ∪ [0.75,1]  (V2)         → ~70%   / ~23000 bars
+# 其他 prefilter gate 未改（FBS/sr_strength/ols_width/trend_r2 都不是瓶颈）。
+#
+# 详见 docs/z实验_005_统一研究/FBF_strict_boundary_exhaustion_20260423.md (V2 追加章节)
+
+rules:
+  - any_of:
+      - feature: fer_ols_pos
+        operator: ">="
+        value: 0.75
+      - feature: fer_ols_pos
+        operator: "<="
+        value: 0.25
+    locked: true
+    lock_reason: "close 必须靠近 OLS(96) 上/下轨（边界外侧候选，V2 放宽至 0.75/0.25 缓冲带）"
+
+  - feature: fer_sr_failed_breakout_score
+    operator: ">="
+    value: 0.38
+    locked: true
+    lock_reason: 提高失败突破强度门槛，减少弱信号与噪声开仓（这是真正判定事件的 gate）
+
+  - feature: sr_strength_max
+    operator: ">="
+    value: 0.52
+    locked: true
+    lock_reason: 关键位强度更高时才参与边界反转
+
+  - feature: fer_ols_width_norm
+    operator: ">="
+    value: 0.22
+    locked: true
+    lock_reason: 区间要有足够「盒子」宽度，偏波动区而非极窄噪声
+
+  - feature: trend_r2_20
+    operator: "<="
+    value: 0.50
+    locked: true
+    lock_reason: 制度闸略收紧：更少在偏趋势环境出手

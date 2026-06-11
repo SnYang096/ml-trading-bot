@@ -1,0 +1,21 @@
+# CRF 评估配置 — 给 slow pipeline 使用
+# 只列核心 KPI 阈值；具体权重由全局 constitution.yaml 覆盖。
+
+evaluation:
+  target_metrics:
+    - sharpe_r
+    - total_r
+    - win_rate
+    - n_trades
+  kpi_gates:
+    prefilter:
+      target_trades_min: 30
+      target_trades_max: 300
+    entry_filter:
+      target_trades_min: 30
+      target_trades_max: 300
+
+  expectations:
+    n_trades_per_year_per_symbol: [15, 40]
+    win_rate: [0.55, 0.85]
+    expected_R_per_trade: [0.3, 1.2]

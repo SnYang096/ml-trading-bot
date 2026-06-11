@@ -1,0 +1,13 @@
+name: msr_prefilter
+description: |
+  MSR Prefilter 特征候选池：L3 swing SR 锚点 + 失败突破语义。
+  注意：刻意不包含 sr_strength_max / fer_ols_width_norm（那是 L2 FBF 的结构要求，
+  在 L3 场景会系统性把候选过掉——详见 FBF_RMR_HubRebound_verdict_20260420.md）。
+
+feature_pipeline:
+  requested_features:
+    - atr_f
+    - wide_sr_swing_f
+    - fer_failure_signals_f
+    - bars_since_extreme_f
+    - market_cap_normalized_orderflow_f

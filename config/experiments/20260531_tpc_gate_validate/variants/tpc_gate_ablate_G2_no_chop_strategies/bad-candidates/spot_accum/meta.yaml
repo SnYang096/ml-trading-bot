@@ -1,0 +1,16 @@
+strategy:
+  name: spot-accum-120T
+  description: |
+    Spot macro accumulator (research/backtest only).
+    Build inventory in weak/bear regime and exit on weekly macro-cycle break.
+  owner: quant_team
+  archetype: SpotAccumLong
+  timeframe: "120T"
+  symbol_include:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+  symbol_exclude: []
+  macro_tp_vwap_anchor:
+    enabled: false
+    symbol: BTCUSDT

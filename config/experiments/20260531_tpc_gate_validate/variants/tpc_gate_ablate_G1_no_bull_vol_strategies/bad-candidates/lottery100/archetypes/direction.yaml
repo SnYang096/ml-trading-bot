@@ -1,0 +1,6 @@
+# Lottery100 — 方向（仅做多彩票层；与 meta / gate_draft.filters.sides_allowed 对齐）
+description: >-
+  L3 高杠杆容量研究侧默认 long；不把「方向模型」混入 NN 管线。
+  若将来需要空侧，改为 direction_filter 或增加 direction_rules。
+
+fixed_direction: long

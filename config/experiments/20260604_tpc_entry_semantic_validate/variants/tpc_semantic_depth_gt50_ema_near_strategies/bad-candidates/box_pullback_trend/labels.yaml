@@ -1,0 +1,27 @@
+name: box_pullback_trend_failure_first
+target_column: success_label
+
+label_generator:
+  module: src.time_series_model.strategies.labels.failure_first_label
+  function: compute_bpc_failure_label
+  params:
+    direction: long
+    horizon: 50
+    expected_stop_atr: 1.5
+    expected_target_atr: 1.2
+    invert: true
+
+label_meta:
+  label_type: binary
+  semantic: |
+    Generic failure-first research label required by the strategy loader.
+    The actual BPT trade direction is supplied by bpt_macro_box_direction.
+  horizon: 50 bars
+  expected_stop: 1.5 ATR
+  expected_target: 1.2 ATR
+
+filters:
+  - column: success_label
+    notna: true
+
+post_label_filters: []

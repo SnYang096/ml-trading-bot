@@ -1,0 +1,22 @@
+description: "ME 方向 — VWAP 带通级联为主；极强 accel 或三连 VWAP 侧绕行"
+
+direction_rules:
+  - id: me_accel_cvd_macd_vwap1200_align
+    method: signal_match_position_band
+    description: "me_accel_5k → me_cvd_alignment → macd_atr；须落在 VWAP 多/空带通内"
+    signal_rules:
+      - feature: me_accel_5k
+        transform: sign
+      - feature: me_cvd_alignment
+        transform: center_sign
+      - feature: macd_atr
+        transform: sign
+    position_band:
+      feature: macro_tp_vwap_1200_position
+      inner_abs: 0
+      outer_abs: 1.001
+
+  - id: me_vwap_bypass_accel_or_3bar_pierce
+    feature: me_vwap_structure_bypass_direction
+    transform: raw
+    description: "极强 accel 或三连 K 在 VWAP 同侧时绕过带通（依赖 me_vwap_structure_bypass_f）"

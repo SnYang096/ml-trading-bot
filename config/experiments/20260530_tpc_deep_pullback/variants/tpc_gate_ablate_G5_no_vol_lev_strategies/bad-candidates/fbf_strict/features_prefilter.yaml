@@ -1,0 +1,14 @@
+name: fbf_prefilter
+description: |
+  FBF Prefilter 特征候选池：优先 SR 失败突破与结构定位语义。
+
+feature_pipeline:
+  requested_features:
+    - fer_failure_signals_f
+    - sr_strength_max_f
+    - sqs_hal_low_f
+    - sqs_hal_low_pct_f
+    - poc_hal_features_close_f
+    - volume_profile_volatility_features_f
+    - bars_since_extreme_f
+    - market_cap_normalized_orderflow_f

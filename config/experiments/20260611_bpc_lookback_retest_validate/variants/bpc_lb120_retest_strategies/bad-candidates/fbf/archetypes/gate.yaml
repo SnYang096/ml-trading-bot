@@ -1,0 +1,27 @@
+# FBF Gate: restore the stable short-cycle run guard from 20260416_223806.
+# This keeps the old FBF shape intact for fast-vs-slow pipeline validation.
+schema:
+  phases:
+    - system_safety
+    - hard_gate
+    - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+
+hard_gates:
+  - id: gate_cvd_change_5_normalized
+    tag: HARD_CVD_CHANGE_5_NORMALIZED
+    phase: hard_gate
+    priority: 10
+    reason: "stable-run FBF CVD guard from 20260416_223806"
+    when:
+      cvd_change_5_normalized:
+        value_lt: -0.0183
+    then:
+      action: deny
+    comment: "restored from 20260416_223806 representative calibrated config"
+guardrails: []
+system_safety: []

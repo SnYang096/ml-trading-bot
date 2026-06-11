@@ -1,0 +1,17 @@
+# CDR 策略标签配置：方向性 RR 标签，时间尺度覆盖结构转换后的 3-6 天反向移动。
+
+name: cdr
+target_column: rr_label
+
+label_generator:
+  module: src.time_series_model.strategies.labels.failure_first_label
+  function: compute_bpc_label
+  params:
+    direction: long
+    horizon: 72
+
+filters:
+  - column: rr_label
+    notna: true
+
+post_label_filters: []

@@ -1,0 +1,158 @@
+# ROUTINE_R&D_DEPRECATED — 日常 R&D 勿作入口。见 docs/strategy/R&D工具矩阵_CN.md §2。
+# =============================================================================
+# ME · slow（slow_realistic）— 目的与节奏
+# -----------------------------------------------------------------------------
+# 目的
+#   - 结构快照 + 慢滚；entry meta + SHAP + 各层阈值 optimize（与 BPC slow 骨架一致）。
+# 建议节奏
+#   - 约每 1–3 个月（cadence_months: 3、retrain_triggers.schedule_days: 90）。
+# 术语说明
+#   - turbo = fixed features + rolling calibration：固定生产特征/结构，只做月度阈值与执行层标定。
+#   - slow = structural refresh / feature search + rolling calibration：定期刷新结构与特征搜索，再接月度标定。
+# 与 turbo / non_rolling 的分工
+#   - turbo：固定特征、偏阈值微调。
+#   - slow：特征+阈值联合体检；漂移大时 → non_rolling。
+#   - SHAP 开启（shap_feature_selection.enabled: true）。
+# -----------------------------------------------------------------------------
+# 下列仅慢管线相对 turbo 的差量。
+
+extends: calibrate_roll.default.yaml
+
+dates:
+  calibration_months: 6
+
+training:
+  seeds:
+    - 42
+  seed_selection: best_sharpe
+
+strategy_scope:
+  direction: all
+
+rolling:
+  mode: slow_realistic
+  windows:
+    # full_history：慢快照 struct_start = dates.start_date（跨牛熊更长样本）；rolling_window 时仍用下方 lookback 月数。
+    structure_train_window: full_history
+    structure_lookback_months: 24
+  slow_realistic:
+    cadence_months: 3
+    triggered_retrain_enabled: true
+    # adoption_gate：键顺序 ≡ 运行时优先级（P1 契约 → P2 prefilter 漂移 → P3 业绩分参数 → P4 new 硬否决 → P5 adopt 门槛）。
+    adoption_gate:
+      enabled: true
+      validation_months: 1
+      semantic_guard:
+        enabled: true
+        on_prefilter_locked_missing: repair_and_continue
+        on_gate_locked_violation: red_no_adopt
+      prefilter_drift_guard:
+        enabled: true
+        on_red_drift: previous_accepted
+        warn_relative_change: 0.20
+        max_relative_change: 0.35
+      score_weights:
+        sharpe_r: 1.0
+        max_drawdown_r: 0.15
+        near_stop_rate: 0.5
+      undertrade:
+        target_trades_soft: 10
+        penalty: 0.15
+      cash_score_when_no_trades: 0.0
+      hard_reject:
+        sharpe_floor: -0.5
+      adopt_ratio: 1.0
+      min_improvement: 0.0
+
+threshold_calibration:
+  # slow 要跑完整特征寻找链：允许 prefilter/gate 树模型训练、SHAP/分裂点打分，再叠加阈值调整。
+  enable_model_training: true
+  prefilter:
+    optimize: true
+  gate:
+    optimize: true
+  entry_filter:
+    optimize: true
+  execution_opt:
+    enabled: true
+  direction_tuning:
+    enabled: true
+  # execution_opt / pcm_eval / direction_tuning 与 extends 的 turbo 一致，不写则继承。
+
+
+strategies:
+  me:
+    kpi_gates:
+      prefilter:
+        locked_threshold_tuning:
+          enabled: true
+        scoring_method_fallbacks:
+          - distribution_ks
+          - mean_effect
+          - tail_bad_rate_ratio
+          - upside_positive_rate_ratio
+      entry_filter:
+        meta_algorithm: true
+        scoring_method_fallbacks:
+          - distribution_ks
+          - mean_effect
+          - tail_bad_rate_ratio
+          - upside_positive_rate_ratio
+      gate:
+        # archetypes/gate.yaml：hard 规则条数与 max_hard_gates 对齐，避免 optimize 截断
+        max_hard_gates: 4
+    simple_execution:
+      sl_r: 4.0
+      tp_r: 8.0
+      timeout_bars: 500
+
+shap_feature_selection:
+  enabled: true
+  audit_only: true
+  promote_to_features_yaml: false
+  n_folds: 8
+  top_k: 20
+  stability_threshold: 0.8
+  min_stable_features: 1
+  # protected_nodes：SHAP/稳定性筛选时强制保留的依赖图节点，避免误删跨品种可比尺度等基础列。
+  # 三趋势策略对齐为仅 atr_f；确需钉死更多节点时在对应策略 slow 中覆写。
+  protected_nodes:
+    - atr_f
+  apply_to:
+    - features.yaml
+
+retrain_triggers:
+  schedule_days: 90
+  sharpe_decay_ratio: 0.5
+  consecutive_losses: 8
+  max_data_age_days: 120
+  leading_indicator_decay: 0.5
+
+data_flow:
+  model_predictions: predictions.parquet
+  gated_logs: logs_gated.parquet
+  step_inputs:
+    prefilter: predictions.parquet
+    gate_train: predictions.parquet
+    gate_apply: predictions.parquet
+    execution: logs_gated.parquet
+    backtest: logs_gated.parquet
+
+event_backtest:
+  enabled: true
+  promote: true
+  no_kill_switch: false
+  map_extra_months: 4
+  sym_r_default: "1.0:1:6.0"
+  sym_r_by_family:
+    me: "2.0:1:6.0"
+  exec_objective_default: sharpe
+  exec_objective_params:
+    near_stop_threshold_r: -0.9
+    near_stop_penalty: 0.0
+    max_dd_penalty: 0.0
+    min_trades_soft: 0
+    undertrade_penalty: 0.0
+
+output:
+  history_dir: results/me/research_roll.features_on

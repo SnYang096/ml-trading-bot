@@ -1,0 +1,22 @@
+# ME / CompressionBreakout direction — v6_ema_only
+#
+# 假设：macd_atr 和 me_cvd_alignment 都是 noise（IC 微弱或反向），单纯
+# "me_accel 同 EMA1200 同侧 + slope 同向" 已能挑出可交易方向。
+# 去掉 direction_filter，让 long/short 都出。
+
+description: "CompressionBreakout 方向 — v6: 只 me_accel + EMA1200 带（去 macd/cvd 噪声）"
+
+direction_rules:
+  - id: me_v6_accel_ema_only
+    method: signal_match_position_band
+    description: "me_accel.sign 同 EMA1200_position 同侧（|p|>inner），且 slope 同向"
+    signal_rules:
+      - feature: me_accel_5k
+        transform: sign
+    position_band:
+      feature: ema_1200_position
+      inner_abs: 0.03
+      outer_abs: 1
+    require_sign_agreement:
+      feature: ema_1200_slope_10
+      deadband: 0.0

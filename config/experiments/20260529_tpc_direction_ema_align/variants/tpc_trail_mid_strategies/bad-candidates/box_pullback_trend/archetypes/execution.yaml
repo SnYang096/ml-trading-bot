@@ -1,0 +1,25 @@
+# Research default from the first diagnostic pass.
+holding:
+  max_holding_bars: 60
+  time_stop_bars: 60
+
+stop_loss:
+  type: fixed
+  initial_r: 1.5
+  guardrails:
+    min_stop_pct: 0.01
+    max_stop_pct: 0.10
+  trailing:
+    enabled: false
+  breakeven:
+    enabled: false
+
+take_profit:
+  enabled: true
+  target_r: 1.2
+
+execution_constraints:
+  allow_add_on: false
+  min_order_interval_minutes: 120
+
+version: 1

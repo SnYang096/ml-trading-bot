@@ -1,0 +1,24 @@
+schema:
+  phases:
+    - system_safety
+    - hard_gate
+    - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+
+hard_gates: []
+guardrails: []
+system_safety:
+  - id: gate_bpt_macro_signal_nonzero
+    tag: BPT_REQUIRE_MACRO_BOX_SIGNAL
+    phase: system_safety
+    priority: 1
+    reason: "Research-only: no trade unless synthetic macro-aligned box signal is available."
+    when:
+      all_of:
+        - bpt_macro_box_direction:
+            value_gt: -0.5
+        - bpt_macro_box_direction:
+            value_lt: 0.5
+    then:
+      action: deny
+    locked: false

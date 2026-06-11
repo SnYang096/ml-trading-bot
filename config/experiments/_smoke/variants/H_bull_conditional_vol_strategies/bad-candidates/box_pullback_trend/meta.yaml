@@ -1,0 +1,11 @@
+strategy:
+  name: box-pullback-trend-120T
+  description: |
+    Trend-following pullback strategy inside validated box/chop windows. Macro
+    direction comes from BTC EMA1200 state; box position only selects the
+    pullback entry window.
+  owner: quant_team
+  archetype: BoxPullbackTrend
+  timeframe: "120T"
+  bidirectional: true
+  symbol_exclude: []

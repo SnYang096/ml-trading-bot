@@ -1,0 +1,46 @@
+# BPC Regime — 实验 F'：chop + EMA1200 位置 + 斜率非平
+# 对照：config/strategies（生产）仅 chop+EMA；box 遗留见 bpc_regime_box_legacy_strategies。
+
+allowed_regimes:
+  - bull
+  - bear
+  - neutral
+
+allowed_sides:
+  - long
+  - short
+
+rules:
+  - feature: tpc_semantic_chop
+    operator: "<="
+    value: 0.40
+    locked: true
+    lock_reason: Regime 慢变量 — 高 chop 不交易
+
+  - any_of:
+      - feature: ema_1200_position
+        operator: ">="
+        value: 0.10
+      - feature: ema_1200_position
+        operator: "<="
+        value: -0.10
+    rationale: 离开 EMA1200 中轴死区
+    locked: true
+    lock_reason: EMA1200 宏观带（与生产一致）
+
+  - any_of:
+      - feature: ema_1200_slope_10
+        operator: ">="
+        value: 0.002
+      - feature: ema_1200_slope_10
+        operator: "<="
+        value: -0.002
+    rationale: 要求 EMA1200 斜率非平 — 排除宏观横盘（TPC F' 同款阈值）
+    locked: false
+    lock_reason: 实验；待 event_backtest 双段验证后再决定是否并入生产
+
+last_calibration:
+  timestamp: null
+  data_source: null
+  plateau_overlap: null
+  notes: bpc_ema_plus_slope 实验树；promote 前须对比 bpc_regime_box_legacy 与生产 ema-only。

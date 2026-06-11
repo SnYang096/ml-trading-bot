@@ -1,7 +1,7 @@
 # BPC 入场语义探索 — 突破 / 回撤 / 延续 vs 反追高
 
 > **用途**：记录 Phase 1 扫描 + 设计讨论结论，供 Phase 3 grid 与 Phase 4 trading map 对照验收。  
-> 扫描数据见 [`PHASE1_REPORT.md`](PHASE1_REPORT.md)；定参见 [`DECISION.md`](DECISION.md)；实现见 [`config_experiments/bpc_lb120_retest_strategies/bpc/archetypes/prefilter.yaml`](../../../config_experiments/bpc_lb120_retest_strategies/bpc/archetypes/prefilter.yaml)。
+> 扫描数据见 [`PHASE1_REPORT.md`](PHASE1_REPORT.md)；定参见 [`DECISION.md`](DECISION.md)；实现见 [`config/experiments/20260611_bpc_lookback_retest_validate/variants/bpc_lb120_retest_strategies/bpc/archetypes/prefilter.yaml`](../../../config/experiments/20260611_bpc_lookback_retest_validate/variants/bpc_lb120_retest_strategies/bpc/archetypes/prefilter.yaml)。
 
 ## 1. 问题背景
 
@@ -102,7 +102,7 @@ Phase 1 **否定** 的不是「要有突破语义」，而是 **在同一根 bar
 当前 retest 树 = **prod 三锚点** + **扫描支持的 depth/box 约束**：
 
 ```yaml
-# config_experiments/bpc_lb120_retest_strategies/bpc/archetypes/prefilter.yaml（摘要）
+# config/experiments/20260611_bpc_lookback_retest_validate/variants/bpc_lb120_retest_strategies/bpc/archetypes/prefilter.yaml（摘要）
 bpc_volume_compression_pct >= 0.9295
 bpc_recent_breakout_strength >= 0.40    # 锚点 1：Breakout 成立
 bpc_pullback_depth <= 0.55              # 锚点 2：Pullback 受控

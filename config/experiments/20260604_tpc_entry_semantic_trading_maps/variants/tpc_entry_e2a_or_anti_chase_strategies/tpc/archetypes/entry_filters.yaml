@@ -1,0 +1,39 @@
+filters:
+- id: tpc_deep_pullback_vol_confirm
+  enabled: true
+  description: 缩量回踩确认（量能维度）
+  conditions:
+  - feature: tpc_vol_pullback_confirm
+    operator: '>='
+    value: 0.45
+  tier: EXPERIMENT
+  notes: Pass1 snotio 0.45
+- id: tpc_deep_pullback_delta_absorb
+  enabled: true
+  description: 回踩段 delta 吸收（订单流维度）
+  conditions:
+  - feature: bpc_pullback_delta_absorption
+    operator: '>='
+    value: 0.15
+  tier: EXPERIMENT
+  notes: Pass1 delta 0.15
+- id: tpc_anti_chase_not_at_high
+  enabled: true
+  direction: long
+  description: 做多：距局部高点足够远，避免贴顶追
+  conditions:
+  - feature: bars_since_local_high
+    operator: '>='
+    value: 0.1
+- id: tpc_anti_chase_not_at_low
+  enabled: true
+  direction: short
+  description: 做空：距局部低点足够远，避免贴底追
+  conditions:
+  - feature: bars_since_local_low
+    operator: '>='
+    value: 0.1
+combination_mode: or
+or_bundle_ids:
+- tpc_deep_pullback_vol_confirm
+- tpc_deep_pullback_delta_absorb

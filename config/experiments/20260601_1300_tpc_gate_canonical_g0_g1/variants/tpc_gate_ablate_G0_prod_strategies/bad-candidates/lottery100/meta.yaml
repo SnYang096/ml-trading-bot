@@ -1,0 +1,23 @@
+# Lottery100 — 加密 L3「高杠杆容量 / 彩票」研究与仿真（无 NN）
+
+strategy:
+  name: lottery100
+  archetype: Lottery100
+  owner: quant_team
+
+  description: |
+    非 ME/BPC 类监督学习策略：以 **杠杆容量统计**（MAE/MFE→lmax）、**宏观牛门**（YAML）、
+    **可选特征门**（gate_draft）与 **B+ 持有 H 根平仓** 仿真为核心。
+    不包含 direction 模型与 gate 神经网络；浅层决策树仅作离线排序参考。
+
+  timeframe: "120T"
+
+  # 研究与 B+ 默认标的（分析报告可扩到 ETH）
+  symbols_default:
+    - BTCUSDT
+
+  # 配置源（单一策略目录内）
+  config_bundle:
+    regime: leverage_capacity_v4.yaml
+    feature_gates_memo: gate_draft.yaml
+    backtest_bplus: backtest_bplus.yaml

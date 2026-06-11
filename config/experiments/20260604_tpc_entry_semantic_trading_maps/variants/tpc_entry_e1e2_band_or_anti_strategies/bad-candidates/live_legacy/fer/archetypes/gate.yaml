@@ -1,0 +1,61 @@
+# FER Gate — live/highcap 实验版 (与 prefilter / direction 2026-04 对齐)
+# 来源: /home/yin/trading/ml_trading_bot/results/research_history/fer/20260308_204733/strategies/fer/gate_draft.yaml
+# 变更: 去掉 dist_to_nearest_sr mirror；增加 fer_impulse_failure_score 与 prefilter 一致的硬门
+
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+hard_gates:
+- id: prefilter_fer_impulse_failure_min
+  tag: PREFILTER_FER_IMPULSE_FAILURE_MIN
+  phase: hard_gate
+  priority: 1
+  reason: "prefilter: fer_impulse_failure_score < 0.20（与 archetypes/prefilter.yaml 对齐）"
+  when:
+    fer_impulse_failure_score:
+      value_lt: 0.20
+  then:
+    action: deny
+  frozen: true
+  comment: 训练-推理一致性；阈值与 prefilter fer_impulse_failure_score 同步
+- id: gate_cvd_change_5_normalized
+  # direction 已移除 CVD 兜底；本规则保持 disabled 供审计
+  disabled: true
+  tag: HARD_CVD_CHANGE_5_NORMALIZED
+  phase: hard_gate
+  priority: 10
+  reason: 统计验证规则 (lift=1.55)
+  when:
+    cvd_change_5_normalized:
+      value_lt: -0.0176
+  then:
+    action: deny
+  comment: 'optimizer: no_stable_plateau, threshold=-0.0176, lift=0.784'
+- id: bell_or_pass_prefilter_vp_poc_deviation_prefilter_oi_exhaustion_score_gate_fer_volume_price_divergence_fer_volume_price_divergence
+  tag: BELL_OR_PASS_2
+  phase: hard_gate
+  priority: 1
+  reason: 'Bell Partition OR-pass: prefilter_vp_poc_deviation ∨ prefilter_oi_exhaustion_score ∨ gate_fer_volume_price_divergence_fer_volume_price_divergence'
+  when:
+    all_of:
+    - vp_poc_deviation:
+        value_gt: 0.6718
+    - oi_exhaustion_score:
+        value_lt: 0.002
+    - fer_volume_price_divergence:
+        value_gt: 0.425
+    - fer_volume_price_divergence:
+        value_lt: 0.675
+  then:
+    action: deny
+  comment: 'OR-pass: deny only when ALL of [prefilter_vp_poc_deviation, prefilter_oi_exhaustion_score, gate_fer_volume_price_divergence_fer_volume_price_divergence]
+    deny simultaneously'
+  frozen: true
+guardrails: []

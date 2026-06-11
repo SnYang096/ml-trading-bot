@@ -1,0 +1,23 @@
+# CRF (Consolidation Range Fade) 策略元信息
+
+strategy:
+  name: crf-120T
+  description: |
+    Consolidation Range Fade: 在已确认的盘整盒子里做双向均值回归。
+    与 SRB/BPC/ME（趋势跟随）互补：当市场处于盘整阶段、其他策略沉默时，
+    CRF 在盒子底部做多、顶部做空，吃"盒子里来回扫"的钱。
+
+  owner: quant_team
+  archetype: ConsolidationRangeFade
+
+  timeframe: "120T"  # 2 hours
+
+  # CRF 的 "long" 和 "short" 共用同一套 box prefilter + 入场器；
+  # 方向由 box_pos_120 决定，无需单独的 long-only / short-only 变体。
+  bidirectional: true
+
+  # 先不设 symbol_exclude；在 slow pipeline 里按币种滚评估。
+  symbol_exclude: []
+
+  macro_tp_vwap_anchor:
+    enabled: false

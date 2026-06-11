@@ -1,0 +1,9 @@
+allowed_regimes:
+- bull
+- bear
+- neutral
+allowed_sides:
+- long
+- short
+rules: []
+description: Regime OFF ablation — no EMA1200 dead-zone rules

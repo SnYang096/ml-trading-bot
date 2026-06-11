@@ -1,0 +1,41 @@
+# ROUTINE_R&D_DEPRECATED — 日常 R&D 勿作入口。见 docs/strategy/R&D工具矩阵_CN.md §2。
+# =============================================================================
+# ME · non_rolling — 目的与节奏
+# -----------------------------------------------------------------------------
+# 目的
+#   - 非滚动、静态 holdout；整段样本上一次全周期研究（典型 ``--stage full``）。
+# 建议节奏
+#   - 按需，常见 1–3 个月或慢管线/漂移触发。
+# 执行注意
+#   - extends slow：与 slow 相同 entry meta、阈值 optimize、SHAP；仅 rolling / output 独立。
+# -----------------------------------------------------------------------------
+# 覆写 dates / rolling / output；其余与同目录 research_roll.features_on.yaml 一致。
+# 全周期 run 的 report.json 含 comparison / deploy_gate。
+
+extends: research_roll.features_on.yaml
+
+dates:
+  # 全量 train + 单尾窗；test_months=0 时不二切 OOS，阈值与主回测同窗（见 BPC validate_static.full_study 注释）。
+  nonrolling_validation_months: 12
+  nonrolling_test_months: 0
+
+rolling:
+  mode: non_rolling
+  time_split_policy: static_holdout
+
+# 单次全周期结束后的 compare_runs vs 上期 history（rolling 快照不在此语义下使用）。
+comparison:
+  min_trades: 0
+  sharpe_adopt_ratio: 0.7
+  sharpe_reject_floor: 0.0
+
+deploy_gate:
+  trigger_sharpe_improve: 0.05
+  trigger_drift_level: HIGH
+  min_sharpe_change: 0.03
+  require_adopt: true
+  min_trades: 0
+  require_human_confirm: true
+
+output:
+  history_dir: results/me/validate_static.full_study

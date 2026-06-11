@@ -1,0 +1,19 @@
+description: fast_scalp_majors — BTC/ETH dedicated model score + τ
+source:
+  model: model.yaml
+  score_column: score
+thresholds:
+  long_entry: 0.3536
+  long_exit: 0.28
+  short_entry: 0.0672
+  short_exit: 0.1
+  dead_zone: true
+  entry_mode: cross
+per_symbol_thresholds:
+  BTCUSDT:
+    long_entry: 0.3452
+    short_entry: 0.0608
+  ETHUSDT:
+    long_entry: 0.3612
+    short_entry: 0.0752
+direction_filter: short

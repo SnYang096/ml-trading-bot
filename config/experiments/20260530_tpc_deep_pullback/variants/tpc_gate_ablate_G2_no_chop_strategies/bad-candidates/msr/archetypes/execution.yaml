@@ -1,0 +1,37 @@
+# MSR execution：L3 尺度专属参数（比 FBF 宽，比 SRB 短）
+#
+# 设计依据（docs/z实验_005_统一研究/FBF_RMR_HubRebound_verdict_20260420.md）：
+#   - L3 事件的典型反转移动幅度 ~2-5 ATR（swing range width 的 30-50%）
+#   - 止损需要容忍 L3 边界处的"刺破噪声" → initial_r 比 FBF 宽 20%
+#   - 目标 RR ~2.5（3.0 ATR / 1.2 ATR）足以 meanR > 1.0（对标诊断里 +20× 基线）
+#   - L3 时间尺度 ≈ 1 个月 swing → time_stop 60 bar (≈ 5 天, 2h 周期) 是保守上限
+#   - 不允许加仓：MSR 是稀疏高置信策略（~1-2 单/币/月），单发即止
+
+execution_constraints:
+  allow_add_on: false
+  min_order_interval_minutes: 30
+
+holding:
+  max_holding_bars: null
+  time_stop_bars: 60
+
+stop_loss:
+  type: fixed
+  initial_r: 1.2
+  trailing:
+    enabled: false
+    activation_r: 3.0
+    step_r: 0.5
+    trail_r: 1.5
+
+take_profit:
+  enabled: true
+  target_r: 3.0
+
+breakeven:
+  enabled: true
+  trigger_r: 1.5
+  lock_level_r: 0.0
+  measure: atr
+
+version: 1

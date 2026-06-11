@@ -1,0 +1,24 @@
+# FBF Prefilter: SR 失败突破语义锚点 + 制度闸（稀疏 / 高置信）
+# 强趋势少做；只在结构清晰、失败突破更「像样」、区间有足够宽度时放行
+
+rules:
+  - feature: fer_sr_failed_breakout_score
+    operator: ">="
+    value: 0.38
+    locked: true
+    lock_reason: 提高失败突破强度门槛，减少弱信号与噪声开仓
+  - feature: sr_strength_max
+    operator: ">="
+    value: 0.52
+    locked: true
+    lock_reason: 关键位强度更高时才参与边界反转
+  - feature: fer_ols_width_norm
+    operator: ">="
+    value: 0.22
+    locked: true
+    lock_reason: 区间要有足够「盒子」宽度，偏波动区而非极窄噪声
+  - feature: trend_r2_20
+    operator: "<="
+    value: 0.50
+    locked: true
+    lock_reason: 制度闸略收紧：更少在偏趋势环境出手

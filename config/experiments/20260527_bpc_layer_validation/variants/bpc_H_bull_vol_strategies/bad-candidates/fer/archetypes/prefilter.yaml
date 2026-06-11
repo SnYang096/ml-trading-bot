@@ -1,0 +1,57 @@
+# Prefilter 阈值依据（研究池）:
+#   results/train_final_20260410_135209_rr_extreme/fer/features_labeled.parquet, n=16198
+#   旧版 imp>=0.18 ∧ abs>=0.52 ∧ ols_w>=0.35 ∧ sr>=0.35 → 通过约 4.12% bars
+#   现版 imp>=0.12 ∧ abs>=0.38 ∧ ols_w>=0.22 ∧ sr>=0.35 → 通过约 15.9% bars（恢复漏斗宽度，仍要求失败+吸收+通道宽度）
+#
+# FER 研究语义（偏离均值 → 上攻无力 → 抓反转；非 locked 段可随实验调阈值）:
+#   - sma_200_position：相对 SMA200 显著偏离（长期均值锚）
+#   - fer_momentum_efficiency_decay：价量推进效率衰减 [0,1]，越高越「没力气顺畅上涨」
+#   - fer_efficiency_flip：推进效率符号翻转（反转动力学；强依赖 CVD 活跃段）
+#   - 下方 locked：impulse failure / 吸收 / OLS 宽 / SR（数据校准的 FER 原子底）
+rules:
+  # 相对 SMA200 显著偏离（双侧）
+  - any_of:
+      - feature: sma_200_position
+        operator: ">="
+        value: 0.028
+        rationale: "高于长期均线足够远（拉伸后更易出现衰竭反转）"
+      - feature: sma_200_position
+        operator: "<="
+        value: -0.028
+        rationale: "低于长期均线足够远"
+  # 纯价量：推进变钝，「没有力气继续顺畅推价」
+  - feature: fer_momentum_efficiency_decay
+    operator: ">="
+    value: 0.10
+    rationale: "动量推进效率衰减（价/量效率相对过去窗口走弱）"
+    locked: false
+  # 近期效率符号翻转（与 CVD 活跃掩码一致；无 CVD 时≈0，漏斗会变严）
+  - feature: fer_efficiency_flip
+    operator: ">="
+    value: 0.04
+    rationale: "推进效率翻转 → 反转过程已启动，与 failure 语义共振"
+    locked: false
+  - feature: fer_impulse_failure_score
+    operator: ">="
+    value: 0.12
+    rationale: "数据: 旧阈值 0.18 单条约 23.4% 通过，与吸收/宽度交乘后总通过率过低；0.12 在保持失败语义前提下放宽强度底"
+    locked: true
+    lock_reason: FER 语义锚点：failure 强度（数据校准）
+  - feature: fer_aggressor_absorption
+    operator: ">="
+    value: 0.38
+    rationale: "数据: 旧 0.52 单条约 22.4% 通过；0.38 约为全样本 40th 分位附近，与 imp/ols 组合后 prefilter ~16%"
+    locked: true
+    lock_reason: FER 语义锚点：absorption（数据校准）
+  - feature: fer_ols_width_norm
+    operator: ">="
+    value: 0.22
+    rationale: "数据: 旧 0.35 约 66.5% 通过；0.22 约 25th 分位，仍排除最窄通道噪声尾"
+    locked: true
+    lock_reason: 结构锚点：通道宽度（数据校准）
+  - feature: sr_strength_max
+    operator: ">="
+    value: 0.35
+    rationale: "软 SR 质量底线（该池 sr_strength_max min=0.5，此条仍 100% 通过，保留语义占位）"
+    locked: true
+    lock_reason: 结构锚点：SR 质量

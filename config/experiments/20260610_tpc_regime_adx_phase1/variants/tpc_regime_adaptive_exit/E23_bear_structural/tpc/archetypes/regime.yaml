@@ -1,0 +1,33 @@
+# E22: ADX(50)-based labeled regime classification
+# 使用 adx_50 列（feature_dependencies.yaml 中 adx50_f 的输出）
+allowed_regimes:
+  bear:
+    description: 弱势/下跌 — ADX50≤20 或 EMA1200下方
+    match: any
+    rules:
+    - feature: adx_50
+      operator: <=
+      value: 20
+    - feature: ema_1200_position
+      operator: <=
+      value: -0.1
+  bull:
+    description: 强趋势市 — ADX50>25 且 EMA1200>0.1
+    match: all
+    rules:
+    - feature: adx_50
+      operator: '>='
+      value: 25
+    - feature: ema_1200_position
+      operator: '>='
+      value: 0.1
+  neutral:
+    description: 震荡/无方向 — 默认回退
+    match: any
+    rules:
+    - feature: adx_50
+      operator: <=
+      value: 25
+allowed_sides:
+- long
+- short

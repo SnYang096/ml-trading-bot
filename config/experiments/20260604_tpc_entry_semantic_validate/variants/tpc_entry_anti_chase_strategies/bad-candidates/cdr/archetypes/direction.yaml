@@ -1,0 +1,29 @@
+# CDR Direction Determination
+#
+# 1) 若存在明确 failed-breakout 方向，优先使用 FER 反向方向。
+# 2) 若没有 FER 事件，则用 EMA1200 位置做 late-trend fade：
+#    - 长期上涨后期（ema_1200_position 高）→ 做空
+#    - 长期下跌后期（ema_1200_position 低）→ 做多
+
+version: 1.0
+
+direction_rules:
+  - id: cdr_fer_failed_breakout_direction
+    method: feature_sign
+    feature: fer_sr_failed_breakout_direction_signed
+    description: "失败突破后的反向交易方向"
+    transform: raw
+    locked: true
+
+  - id: cdr_ema1200_late_trend_fade
+    method: threshold_compare
+    description: "非 FER 分支：EMA1200 上方过热做空，下方超跌做多"
+    feature: ema_1200_position
+    thresholds:
+      long_if_below: -0.035
+      short_if_above: 0.035
+    locked: true
+
+validation:
+  require_nonzero: true
+  allowed_values: [-1, 1]

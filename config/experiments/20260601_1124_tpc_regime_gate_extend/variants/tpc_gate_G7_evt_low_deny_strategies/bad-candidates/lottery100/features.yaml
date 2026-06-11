@@ -1,0 +1,15 @@
+name: lottery100
+description: |
+  Lottery100 最小特征清单（与标准策略目录结构保持一致）。
+  当前主流程使用 event_backtest 分支，本文件用于保持配置同构与后续扩展。
+
+feature_pipeline:
+  exclude_columns:
+    - atr
+  requested_features:
+    - atr_f
+    - ema_1200_position_f
+    - macro_tp_vwap_1200_position_f
+    - funding_rate_zscore_50_f
+    - me_atr_pct_quantile_f
+    - cvd_roll60_f

@@ -1,0 +1,29 @@
+# CDR (Conversion Divergence Reversal) — 结构转换 / 背离反转
+# 独立于 BPC/TPC/ME/SRB 的趋势延续语义；只在大级别结构失败与背离共振时尝试反向。
+
+strategy:
+  name: cdr-120T
+  description: |
+    ConversionDivergenceReversal：大级别结构转换反转策略。
+      入场语义：L3 swing SR / box 边界附近发生失败突破，且 CVD / 动量 / OI / funding
+      出现不确认或衰竭，反向交易被困一侧的清算。
+
+    与其它策略的边界：
+      BPC/TPC/ME/SRB：吃确认后的趋势主段；CDR 只处理趋势末端 / 结构转换起点。
+      CRF/RMR：盒内均值回归；CDR 必须有失败突破或结构破坏证据，不做普通震荡来回扫。
+
+  owner: quant_team
+  archetype: ConversionDivergenceReversal
+
+  timeframe: "120T"
+
+  decision_alignment:
+    enabled: true
+    mode: prefilter_recent_window
+    window_bars: 3
+    layers_allow_recent_window: [prefilter]
+    layers_required_same_bar: [direction, gate, entry_filter]
+
+  macro_tp_vwap_anchor:
+    enabled: false
+    symbol: BTCUSDT

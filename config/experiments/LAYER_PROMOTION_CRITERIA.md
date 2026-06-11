@@ -81,7 +81,7 @@ IC、label scan（feature-plateau / condition-set / quick_layer_scan）、单特
 ## 操作落地（推荐 checklist）
 
 1. 任何新规则先在 **Phase 1** 用 **`mlbot research scan`**（或 `rd_loop_*.yaml` 批量）生成假设；**不要**新写 `scan_*.py` 除非符合上文「例外」。
-2. **Phase 2**：在 `DECISION.md` 记录从扫描选定的 τ / lookback；再建 `config_experiments/*_strategies/` 静态树。
+2. **Phase 2**：在 `DECISION.md` 记录从扫描选定的 τ / lookback；再建本实验 `variants/*_strategies/` 静态树。
 3. **Phase 3**：必须用 **segment_matrix + market_segment.yaml** 里定义的 canonical segments 做完整 variant-grid 事件回测（G0 基线 vs 新变体）。
 4. 在对应 `config/experiments/<date>_<topic>/DECISION.md` 里用表格呈现每个 segment 的 Total R、maxDD、CAGR、胜率、tail contrib 等。
 5. **Phase 4**：segment 胜出者跑 trading map，核对入场语义（尤其 prefilter 周期错配）。
@@ -89,7 +89,7 @@ IC、label scan（feature-plateau / condition-set / quick_layer_scan）、单特
    - 写入 `config/strategies/<family>/archetypes/*.yaml`（+ live/highcap 同步）
    - 打 `locked: true` + `promote_never_disable: true`
    - 删除所有对应的 disabled 历史痕迹
-7. 原则上每个 layer 最终只保留“当前已验证最好”的那套规则，历史实验留在 `config_experiments/` 快照里即可。
+7. 原则上每个 layer 最终只保留“当前已验证最好”的那套规则，历史实验留在对应 `config/experiments/<dir>/variants/` 快照里即可。
 8. **Promote 后更新「平台基线」并 `git push`**（远程 drift 只读 git；**不要**上传 `train_final` parquet）。见下文 §4 与 [`docs/strategy/漂移监控_mlbot_monitor_CN.md`](../../docs/strategy/漂移监控_mlbot_monitor_CN.md) §10。
 
 ---

@@ -18,6 +18,6 @@ segment_matrix:
     - recent_range_to_bear
   variants:
     - suffix: G1_no_bull_vol
-      strategies_root: config_experiments/tpc_gate_ablate_G1_no_bull_vol_strategies
+      strategies_root: config/experiments/20260601_1126_tpc_gate_monotonic_validate/variants/tpc_gate_ablate_G1_no_bull_vol_strategies
       output_dir: results/tpc/experiments/gate_monotonic_phase2/G1
     # 待建: G8_vla_lt_003_bull — vla<0.03 + ema>0.10 deny only

@@ -13,14 +13,14 @@ segment_matrix:
   variants:
     - suffix: g3_short_regimeoff_baseline
       strategy: fast_scalp
-      strategies_root: config_experiments/fast_scalp_alpha_G3_short_regime_off_strategies
+      strategies_root: config/experiments/20260602_fast_scalp_tree_validate/variants/fast_scalp_alpha_G3_short_regime_off_strategies
       symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
       inject_scores: results/rd_loop/fast_scalp_tree_validate/track_a/scores/h3_baseline_full_history.parquet
       output_dir: results/rd_loop/fast_scalp_tree_validate/segment/track_a/g3_baseline
 
     - suffix: g7_dual_head
       strategy: fast_scalp
-      strategies_root: config_experiments/fast_scalp_alpha_G7_dual_head_strategies
+      strategies_root: config/experiments/20260602_fast_scalp_tree_validate/variants/fast_scalp_alpha_G7_dual_head_strategies
       symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
       inject_scores: results/rd_loop/fast_scalp_tree_validate/track_a/dual_head/dual_head_event_scores.parquet
       output_dir: results/rd_loop/fast_scalp_tree_validate/segment/track_a/g7_dual_head

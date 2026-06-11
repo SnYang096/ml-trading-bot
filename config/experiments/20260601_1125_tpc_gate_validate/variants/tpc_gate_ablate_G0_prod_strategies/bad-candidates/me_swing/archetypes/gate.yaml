@@ -1,0 +1,68 @@
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+hard_gates:
+- id: gate_me_semantic_chop_high
+  tag: HARD_ME_SEMANTIC_CHOP
+  phase: hard_gate
+  priority: 6
+  reason: ME 专用：同品种 semantic_chop_ts_q 过高 → 拒开仓
+  when:
+    me_semantic_chop_ts_q:
+      value_gte: 0.4
+  then:
+    action: deny
+  locked: true
+  frozen: true
+  promote_never_disable: true
+- id: gate_me_vpin_ma20_high
+  tag: HARD_ME_VPIN_MA20
+  phase: hard_gate
+  priority: 11
+  reason: VPIN 知情交易活跃度过高时不追动量
+  when:
+    vpin_quantile_rank_20:
+      value_gt: 0.8
+  then:
+    action: deny
+  locked: true
+  promote_never_disable: true
+guardrails: []
+system_safety:
+- id: gate_me_evt_var_99_mid_high
+  tag: HARD_ME_EVT_VAR_99
+  phase: system_safety
+  priority: 12
+  reason: 中高 EVT 左尾风险窄带拒绝
+  when:
+    all_of:
+    - evt_var_99:
+        value_gt: 0.6706
+    - evt_var_99:
+        value_lt: 0.7976
+  then:
+    action: deny
+  locked: true
+  promote_never_disable: true
+- id: gate_me_vol_persistence_mid
+  tag: HARD_ME_VOL_PERSISTENCE
+  phase: system_safety
+  priority: 20
+  reason: 低波噪声切换/拖泥带水期不做动量扩张
+  when:
+    all_of:
+    - vol_persistence:
+        value_gt: 0.0029
+    - vol_persistence:
+        value_lt: 0.0616
+  then:
+    action: deny
+  locked: true
+  promote_never_disable: true

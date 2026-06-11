@@ -36,7 +36,7 @@
 | depth 上界 | 0.55 | **保留 prod 0.55** |
 | box 规则 | breakout≥0.5 | **改为 box_pos_120≤0.85**（反追高） |
 
-已更新 [`config_experiments/bpc_lb120_retest_strategies/bpc/archetypes/prefilter.yaml`](../../../config_experiments/bpc_lb120_retest_strategies/bpc/archetypes/prefilter.yaml)。
+已更新 [`config/experiments/20260611_bpc_lookback_retest_validate/variants/bpc_lb120_retest_strategies/bpc/archetypes/prefilter.yaml`](../../../config/experiments/20260611_bpc_lookback_retest_validate/variants/bpc_lb120_retest_strategies/bpc/archetypes/prefilter.yaml)。
 
 ## Phase 3
 

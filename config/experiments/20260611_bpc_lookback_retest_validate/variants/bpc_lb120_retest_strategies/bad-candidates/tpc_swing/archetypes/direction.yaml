@@ -1,0 +1,13 @@
+description: "TPC 方向 — MACD sign 与 EMA1200 相对位置同号（signal_match_position_band）"
+
+direction_rules:
+  - id: tpc_macd_ema1200_align
+    method: signal_match_position_band
+    description: "MACD sign 作为方向信号；须落在 EMA1200 多/空带通内"
+    signal_rules:
+      - feature: macd_atr
+        transform: sign
+    position_band:
+      feature: ema_1200_position
+      inner_abs: 0
+      outer_abs: 1

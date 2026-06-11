@@ -1,0 +1,17 @@
+# FBF 策略标签配置
+
+name: fbf
+target_column: rr_label
+
+label_generator:
+  module: src.time_series_model.strategies.labels.failure_first_label
+  function: compute_bpc_label
+  params:
+    direction: long
+    horizon: 50
+
+filters:
+  - column: rr_label
+    notna: true
+
+post_label_filters: []

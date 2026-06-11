@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Materialize fast_scalp alpha-rebuild variant trees under config_experiments/ (TPC-style).
+"""Materialize fast_scalp alpha-rebuild variant trees under experiment variants/ (TPC-style).
 
 Each snapshot is a frozen copy of deploy ``tree_strategies/fast_scalp`` only.
 Symbol cohort (alts_4 / majors_2 / pooled_6) is chosen at event/score-export time,
@@ -26,7 +26,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.config.strategy_layout import copy_strategy_package  # noqa: E402
 
 DEPLOY_ROOT = PROJECT_ROOT / "config/strategies/tree_strategies"
-EXP_ROOT = PROJECT_ROOT / "config_experiments"
+EXP_ROOT = PROJECT_ROOT / "config/experiments/20260530_fast_scalp_alts_majors/variants"
 EXP_OVERRIDES = (
     PROJECT_ROOT / "config/experiments/20260602_fast_scalp_tree_validate/overrides"
 )
@@ -463,7 +463,7 @@ def main() -> int:
         except FileNotFoundError as exc:
             print(f"Skip {name}: {exc}")
     built = len(SNAPSHOTS) if not only else len(only)
-    print(f"Done: snapshots under config_experiments/")
+    print(f"Done: snapshots under {EXP_ROOT.relative_to(PROJECT_ROOT)}/")
     return 0
 
 

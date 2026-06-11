@@ -18,8 +18,8 @@ segment_matrix:
     - recent_range_to_bear
   variants:
     - suffix: G0
-      strategies_root: config_experiments/tpc_gate_ablate_G0_prod_strategies
+      strategies_root: config/experiments/20260601_1125_tpc_gate_validate/variants/tpc_gate_ablate_G0_prod_strategies
       output_dir: results/tpc/experiments/gate_by_segment/G0
     - suffix: G1
-      strategies_root: config_experiments/tpc_gate_ablate_G1_no_bull_vol_strategies
+      strategies_root: config/experiments/20260601_1125_tpc_gate_validate/variants/tpc_gate_ablate_G1_no_bull_vol_strategies
       output_dir: results/tpc/experiments/gate_by_segment/G1

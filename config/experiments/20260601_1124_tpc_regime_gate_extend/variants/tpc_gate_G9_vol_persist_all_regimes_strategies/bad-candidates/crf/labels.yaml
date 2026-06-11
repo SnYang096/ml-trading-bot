@@ -1,0 +1,35 @@
+# CRF label 配置 —— 使用通用 RR-extreme failure-first 模板。
+# 因为 CRF 双向，labeler 需要 direction-aware（按 entry_direction 取 long/short）。
+
+name: crf_failure_first
+target_column: success_label
+
+label_generator:
+  module: src.time_series_model.strategies.labels.failure_first_label
+  function: compute_bpc_failure_label
+  params:
+    direction: "auto"          # 由 direction_signal 决定（若 labeler 不支持 auto，
+                                # pipeline 会自动复制 long/short 两份 labels）
+    horizon: 50
+    expected_stop_atr: 1.0
+    expected_target_atr: 1.5   # CRF 目标是对边 edge，实际 R 通常 1-2，用 1.5 作为期望
+    invert: true
+
+label_meta:
+  label_type: binary
+  semantic: |
+    success_label = 1 - failure_label
+    1 = 好 CRF 机会（50 bar 内没严重反向突破）
+    0 = fade 失败（价格直接破盒走反向）
+  failure_definition: |
+    failure = (forward_rr < -0.8) OR (mae > 1.2*stop AND mfe < 0.3*target)
+  horizon: 50 bars
+  expected_stop: 1.0 ATR
+  expected_target: 1.5 ATR
+  audit_mode: true
+
+filters:
+  - column: success_label
+    notna: true
+
+post_label_filters: []

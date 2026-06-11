@@ -1,0 +1,16 @@
+description: G21 independent long_win/short_win trees — dual_head holdout τ (level)
+thresholds:
+  entry_mode: level
+  dead_zone: false
+dual_head:
+  enabled: true
+  long:
+    score_column: score_long
+    entry_threshold: 0.5352138732999803
+    exit_threshold: 0.45
+  short:
+    score_column: score_short
+    entry_threshold: 0.4822293128504932
+    exit_threshold: 0.45
+  reject_if_both_high: true
+  reject_if_contradiction: true

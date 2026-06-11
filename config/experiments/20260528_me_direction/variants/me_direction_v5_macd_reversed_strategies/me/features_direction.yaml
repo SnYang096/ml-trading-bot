@@ -1,0 +1,65 @@
+# ME 方向特征候选声明
+# 职责: 声明待验证的方向候选特征 (--compare-features 的输入)
+# 对应配置: config/strategies/me/archetypes/direction.yaml
+#
+# 用法:
+#   # 默认模式: 只对比本文件 candidates 中的特征
+#   python scripts/direction_strict_validation.py \
+#       --logs results/train_final_xxx/me/features_labeled.parquet \
+#       --strategy me --compare-features
+#
+#   # 发现模式: 扫描全部数值特征 (169+), 用于发现新候选
+#   python scripts/direction_strict_validation.py \
+#       --logs results/train_final_xxx/me/features_labeled.parquet \
+#       --strategy me --compare-features --all-features
+#
+#   # 加 --temporal 查看时间稳定性
+#   ... --compare-features --temporal
+
+description: "ME 方向特征候选 — 动能方向 (跟钱走)"
+
+# ════════════════════════════════════════════════════════════════
+# 候选特征 (输入) — 脚本从这里读取待评估的特征列表
+# ════════════════════════════════════════════════════════════════
+# 每个条目: feature (必须), transform (可选, 自动检测)
+# transform: sign (有正负的特征) | center_sign (百分位数 [0,1])
+#
+# 语义约束:
+#   ME = Momentum Expansion, 方向 = "跟钱走"
+#   禁止: SR 方向、HTF MA、结构 break (属 BPC 语义)
+
+candidates:
+  # ── ME 核心三因子 (Participation + Acceleration) ──
+  - feature: me_delta_net_flow # 资金净流向 [-1,1]
+  - feature: me_cvd_alignment # CVD 对齐 [0,1]
+  - feature: me_cvd_strength # CVD 强度 [0,1]
+  - feature: me_volume_accel # 成交量加速 [0,1]
+  - feature: me_accel_2k # 2k 加速度 [-3,3]
+  - feature: me_multi_tf_alignment # 多时间框架对齐 [0,1]
+  - feature: me_vwap_structure_bypass_direction # VWAP 绕行合成方向 {-1,0,1}
+    transform: raw
+
+  # ── 动量指标 ──
+  - feature: macd_atr # MACD/ATR (有正负)
+  - feature: macd_signal_atr # MACD signal/ATR
+  - feature: roc_20 # 20 期 ROC
+  - feature: price_velocity_pct # 价格速度百分位 [0,1]
+    transform: center_sign
+  - feature: price_accel_pct # 价格加速度百分位 [0,1]
+    transform: center_sign
+  - feature: price_position # 价格位置 [0,1]
+    transform: center_sign
+  - feature: sma_200_position # SMA200 相对位置
+
+  # ── 资金流 / 订单流 ──
+  - feature: oi_delta_price_sign # OI 变化 × 价格方向
+  - feature: vpin_signed_imbalance_max # VPIN 签名不平衡
+  - feature: fp_volume_skew # Footprint 成交量偏斜
+
+  # ── 宏观位置 ──
+  - feature: ema_1200_position # EMA1200 相对位置 (替代 VWAP1200, 与 BPC 对齐)
+  - feature: macro_tp_vwap_1200_position # VWAP1200 相对位置 (基线对比)
+
+  # ── 趋势一致性 ──
+  - feature: price_dir_consistency_pct # 价格方向一致性 [0,1]
+    transform: center_sign

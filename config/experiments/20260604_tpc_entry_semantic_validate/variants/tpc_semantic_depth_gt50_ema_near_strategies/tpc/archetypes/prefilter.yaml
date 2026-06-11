@@ -1,0 +1,15 @@
+rules:
+- feature: tpc_pullback_depth
+  operator: <=
+  value: 0.849993
+  rationale: TPC 语义：大级别趋势内较深回调也允许，只要不破结构
+  locked: true
+  lock_reason: TPC 大趋势锚点 3/3：回调深度受控（略放宽，避免过浅带误杀实回调）
+- feature: tpc_pullback_depth
+  operator: '>'
+  value: 0.5
+  rationale: 高语义深回踩：仅 depth>0.5（实验 S51）
+- feature: ema_1200_position
+  operator: '>='
+  value: -0.1
+  rationale: 允许价格略低于 EMA1200（不低于 -10%），配合深回踩

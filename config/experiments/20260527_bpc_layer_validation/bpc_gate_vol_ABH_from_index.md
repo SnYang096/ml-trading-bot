@@ -9,13 +9,13 @@
 | ID | strategies_root | 说明 |
 |---|---|---|
 | **A_bull_2024** | `config/strategies` | _(fill)_ |
-| **B_bull_2024** | `config_experiments/bpc_B_vol_off_strategies` | _(fill)_ |
-| **H_bull_2024** | `config_experiments/bpc_H_bull_vol_strategies` | _(fill)_ |
-| **no_breakout_bull_2024** | `config_experiments/bpc_no_breakout_strategies` | _(fill)_ |
+| **B_bull_2024** | `config/experiments/20260527_bpc_layer_validation/variants/bpc_B_vol_off_strategies` | _(fill)_ |
+| **H_bull_2024** | `config/experiments/20260527_bpc_layer_validation/variants/bpc_H_bull_vol_strategies` | _(fill)_ |
+| **no_breakout_bull_2024** | `config/experiments/20260527_bpc_layer_validation/variants/bpc_no_breakout_strategies` | _(fill)_ |
 | **A_recent** | `config/strategies` | _(fill)_ |
-| **B_recent** | `config_experiments/bpc_B_vol_off_strategies` | _(fill)_ |
-| **H_recent** | `config_experiments/bpc_H_bull_vol_strategies` | _(fill)_ |
-| **no_breakout_recent** | `config_experiments/bpc_no_breakout_strategies` | _(fill)_ |
+| **B_recent** | `config/experiments/20260527_bpc_layer_validation/variants/bpc_B_vol_off_strategies` | _(fill)_ |
+| **H_recent** | `config/experiments/20260527_bpc_layer_validation/variants/bpc_H_bull_vol_strategies` | _(fill)_ |
+| **no_breakout_recent** | `config/experiments/20260527_bpc_layer_validation/variants/bpc_no_breakout_strategies` | _(fill)_ |
 
 ## 2. 双段回测结果
 

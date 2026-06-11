@@ -28,22 +28,22 @@ segment_matrix:
   variants:
     # 基线（当前 prod）
     - suffix: G0_prod
-      strategies_root: config_experiments/tpc_gate_ablate_G0_prod_strategies
+      strategies_root: config/experiments/20260601_1130_tpc_gate_final_lock/variants/tpc_gate_ablate_G0_prod_strategies
       output_dir: results/tpc/experiments/gate_final_lock/G0
 
     # 当前已验证最好的方案（两条 bull vol 中间带 disabled）
     - suffix: G1_best_so_far
-      strategies_root: config_experiments/tpc_gate_ablate_G1_no_bull_vol_strategies
+      strategies_root: config/experiments/20260601_1130_tpc_gate_final_lock/variants/tpc_gate_ablate_G1_no_bull_vol_strategies
       output_dir: results/tpc/experiments/gate_final_lock/G1
 
     # 唯一还剩一点 label 支持的单边单调候选（极低尾）
     # 如需创建策略树，可执行：
-    #   cp -a config_experiments/tpc_gate_ablate_G1_no_bull_vol_strategies \
-    #        config_experiments/tpc_gate_G10_vla_lt003_bull_strategies
+    #   cp -a config/experiments/20260601_1130_tpc_gate_final_lock/variants/tpc_gate_ablate_G1_no_bull_vol_strategies \
+    #        config/experiments/20260601_1130_tpc_gate_final_lock/variants/tpc_gate_G10_vla_lt003_bull_strategies
     # 然后把 gate.yaml 里 vol_leverage 规则改成：
     #   value_lt: 0.03 + ema_1200_position > 0.10
     - suffix: G1_plus_vla_lt003_bull
-      strategies_root: config_experiments/tpc_gate_G10_vla_lt003_bull_strategies
+      strategies_root: config/experiments/20260601_1130_tpc_gate_final_lock/variants/tpc_gate_G10_vla_lt003_bull_strategies
       output_dir: results/tpc/experiments/gate_final_lock/G1_vla_lt003
 
 # 说明：

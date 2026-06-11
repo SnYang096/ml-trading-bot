@@ -21,19 +21,19 @@ trading_map: true
 
 runs:
   - variant: E1_bull_or_smoke
-    strategies_root: config_experiments/tpc_deep_prefilter_bull_or_entry_strategies
+    strategies_root: config/experiments/20260530_tpc_deep_pullback/variants/tpc_deep_prefilter_bull_or_entry_strategies
     start_date: "2023-01-01"
     end_date: "2025-01-01"
     output_dir: results/tpc/experiments/deep_pullback_ablation/E1_bull_or_smoke
 
   - variant: E1_bear_or_smoke
-    strategies_root: config_experiments/tpc_deep_prefilter_bear_or_entry_strategies
+    strategies_root: config/experiments/20260530_tpc_deep_pullback/variants/tpc_deep_prefilter_bear_or_entry_strategies
     start_date: "2023-01-01"
     end_date: "2025-01-01"
     output_dir: results/tpc/experiments/deep_pullback_ablation/E1_bear_or_smoke
 
   - variant: E3_or_smoke
-    strategies_root: config_experiments/tpc_deep_gate_pe_or_entry_strategies
+    strategies_root: config/experiments/20260530_tpc_deep_pullback/variants/tpc_deep_gate_pe_or_entry_strategies
     start_date: "2023-01-01"
     end_date: "2025-01-01"
     output_dir: results/tpc/experiments/deep_pullback_ablation/E3_or_smoke

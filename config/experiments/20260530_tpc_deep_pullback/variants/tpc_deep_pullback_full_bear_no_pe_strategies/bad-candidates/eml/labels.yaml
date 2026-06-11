@@ -1,0 +1,25 @@
+# Failure-first（多头视角），与 TPC/BPC 训练栈兼容
+
+name: bpc_failure_first
+target_column: success_label
+
+label_generator:
+  module: src.time_series_model.strategies.labels.failure_first_label
+  function: compute_bpc_failure_label
+  params:
+    direction: long
+    horizon: 50
+    expected_stop_atr: 1.0
+    expected_target_atr: 2.0
+    invert: true
+
+label_meta:
+  label_type: binary
+  semantic: |
+    success_label = 1 - failure_label（1=相对好机会）
+
+filters:
+  - column: success_label
+    notna: true
+
+post_label_filters: []

@@ -29,8 +29,8 @@
 
 - Grid: `tpc_gate_g0_vs_g1_canonical.yaml`
 - 策略树（已冻结快照）:
-  - G0: `config_experiments/tpc_gate_ablate_G0_prod_strategies`
-  - G1: `config_experiments/tpc_gate_ablate_G1_no_bull_vol_strategies`
+  - G0: `config/experiments/20260601_1300_tpc_gate_canonical_g0_g1/variants/tpc_gate_ablate_G0_prod_strategies`
+  - G1: `config/experiments/20260601_1300_tpc_gate_canonical_g0_g1/variants/tpc_gate_ablate_G1_no_bull_vol_strategies`
 - 市场阶段定义: `config/market_segment.yaml`（bear_2022 / bull_2023_2024 / recent_range_to_bear）
 - 决策准则: `../LAYER_PROMOTION_CRITERIA.md`
 

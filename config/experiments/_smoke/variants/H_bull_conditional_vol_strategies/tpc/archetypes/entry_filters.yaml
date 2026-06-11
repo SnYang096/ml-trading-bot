@@ -1,0 +1,43 @@
+# TPC Entry Filter Archetype
+# Auto-promoted by optimize_entry_filter_plateau.py
+# Date: 2026-05-11 23:53
+# Promoted: 2 filters (1 plateau + 0 snotio-only)
+# Locked pool kept: 2 (missing -> disabled)
+# Baseline snotio: 0.2899, σ=1.485
+# Significance: z-test one-sided p<0.1, min_trades=4
+#
+# 职责: "现在该入场吗?" → 硬二值控制入场时机
+# 多个 filter 之间是 OR 关系
+# Tier A = plateau + 显著, Tier B = snotio + 显著 (no plateau)
+
+filters:
+- id: tpc_long_absorption_follow_trend
+  enabled: true
+  description: 做多：大级别偏多 + 回调吸收成立后顺势入场
+  conditions:
+  - feature: tpc_cvd_absorption
+    operator: '>='
+    value: 0.629
+  - feature: tpc_recovery_strength
+    operator: '>='
+    value: 0.039
+  tier: A_PLATEAU
+  notes: 'plateau: tpc_cvd_absorption=0.629(conf=LOW), tpc_recovery_strength=0.039(conf=LOW), z=1.73 p=0.0419'
+  promote_never_disable: true
+  locked: true
+- id: tpc_short_absorption_follow_trend
+  enabled: true
+  description: 做空：大级别偏空 + 回调吸收成立后顺势入场
+  conditions:
+  - feature: tpc_cvd_absorption
+    operator: '>='
+    value: 0.629
+  - feature: tpc_recovery_strength
+    operator: '>='
+    value: 0.039
+  tier: A_PLATEAU
+  notes: 'plateau: tpc_cvd_absorption=0.629(conf=LOW), tpc_recovery_strength=0.039(conf=LOW), z=1.73 p=0.0419, promote_never_disable:
+    本轮未扫描，保持启用'
+  promote_never_disable: true
+  locked: true
+combination_mode: or

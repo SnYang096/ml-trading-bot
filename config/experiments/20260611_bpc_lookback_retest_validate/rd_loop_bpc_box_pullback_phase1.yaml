@@ -14,11 +14,11 @@
 #
 #   # lookback L（binding 参数）：各 L 再 prepare 一次（实验树已改 lookback_breakout）
 #   mlbot train final --no-docker --prepare-only \
-#     -c config_experiments/bpc_lb120_strategies/bpc -t 240T \
+#     -c config/experiments/20260611_bpc_lookback_retest_validate/variants/bpc_lb120_strategies/bpc -t 240T \
 #     --symbol BTCUSDT,ETHUSDT,SOLUSDT --start-date 2022-01-01 --end-date 2026-04-01 \
 #     --output-root results/train_final/bpc/bpc_lb120_${RUN_ID}
 #   mlbot train final --no-docker --prepare-only \
-#     -c config_experiments/bpc_lb240_strategies/bpc -t 240T \
+#     -c config/experiments/20260611_bpc_lookback_retest_validate/variants/bpc_lb240_strategies/bpc -t 240T \
 #     --symbol BTCUSDT,ETHUSDT,SOLUSDT --start-date 2022-01-01 --end-date 2026-04-01 \
 #     --output-root results/train_final/bpc/bpc_lb240_${RUN_ID}
 #   # 更新 *parquet_l120 / *parquet_l240

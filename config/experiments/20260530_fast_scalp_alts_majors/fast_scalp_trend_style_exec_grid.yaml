@@ -17,7 +17,7 @@ data_path: data/parquet_data
 runs:
   - variant: alts_g5_tight_baseline
     strategy: fast_scalp
-    strategies_root: config_experiments/fast_scalp_alpha_G5_short_regimeoff_tight_exec_strategies
+    strategies_root: config/experiments/20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G5_short_regimeoff_tight_exec_strategies
     symbols: [SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
     start_date: "2025-10-01"
     end_date: "2026-03-31"
@@ -26,7 +26,7 @@ runs:
 
   - variant: alts_g9_wide_tight_regimeon
     strategy: fast_scalp
-    strategies_root: config_experiments/fast_scalp_alpha_G9_short_wide_tight_regimeon_strategies
+    strategies_root: config/experiments/20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G9_short_wide_tight_regimeon_strategies
     symbols: [SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
     start_date: "2025-10-01"
     end_date: "2026-03-31"
@@ -35,7 +35,7 @@ runs:
 
   - variant: alts_g10_wide_tight_regimeoff
     strategy: fast_scalp
-    strategies_root: config_experiments/fast_scalp_alpha_G10_short_wide_tight_regimeoff_strategies
+    strategies_root: config/experiments/20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G10_short_wide_tight_regimeoff_strategies
     symbols: [SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
     start_date: "2025-10-01"
     end_date: "2026-03-31"

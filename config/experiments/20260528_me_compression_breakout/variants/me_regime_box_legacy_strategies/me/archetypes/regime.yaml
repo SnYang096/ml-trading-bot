@@ -1,0 +1,41 @@
+# ME Regime — box_legacy 对照树（仅用于 event_backtest variant box_legacy_*）
+# 生产 config/strategies/me 已去掉 box；本文件保留 20260527 前的 box 边缘/突破规则。
+
+allowed_regimes:
+  - bull
+  - bear
+  - neutral
+
+allowed_sides:
+  - long
+  - short
+
+rules:
+  - feature: tpc_semantic_chop
+    operator: "<="
+    value: 0.40
+    locked: true
+    lock_reason: Regime 慢变量 — 高 chop
+
+  - any_of:
+      - feature: box_pos_120
+        operator: "<="
+        value: 0.15
+      - feature: box_pos_120
+        operator: ">="
+        value: 0.85
+      - feature: box_breakout_up
+        operator: ">="
+        value: 0.5
+      - feature: box_breakout_down
+        operator: ">="
+        value: 0.5
+    rationale: box_legacy — 仅边缘或已突破
+    locked: true
+    lock_reason: 对照实验 — 历史 box regime
+
+last_calibration:
+  timestamp: null
+  data_source: box_legacy_experiment
+  plateau_overlap: null
+  notes: "Do not promote; compare vs config/strategies (no box)."

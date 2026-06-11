@@ -1,0 +1,44 @@
+# FER Entry Filter Archetype
+# Auto-promoted by optimize_entry_filter_plateau.py (evidence bins + OR)
+# Date: 2026-03-08 20:50
+# Promoted: 3 filters (evidence Spearman bins)
+# Significance: forward_rr t-test p<0.05 required
+#
+# 职责: "现在该入场吗?" → 硬二值控制
+# 多个 filter 之间是 OR 关系
+
+filters:
+# DISABLED: bpc_garch_compression depends on garch_features_f (370s/cycle)
+# - id: ev_bpc_garch_compression
+#   enabled: true
+#   description: 'Evidence bin: bpc_garch_compression <= 0.91'
+#   conditions:
+#   - feature: bpc_garch_compression
+#     operator: <=
+#     value: 0.91
+#   notes: Δrr=+1.9489, t=6.48, p=0.0000, pass=70.3%
+- id: ev_fer_trapped_shorts_score
+  enabled: true
+  description: 'Evidence bin: fer_trapped_shorts_score >= 0.065147'
+  conditions:
+  - feature: fer_trapped_shorts_score
+    operator: '>='
+    value: 0.065147
+  notes: Δrr=+1.7982, t=4.92, p=0.0000, pass=80.0%
+- id: ev_vol_mom_10
+  enabled: true
+  description: 'Evidence bin: vol_mom_10 >= -0.176468'
+  conditions:
+  - feature: vol_mom_10
+    operator: '>='
+    value: -0.176468
+  notes: Δrr=+1.7265, t=5.08, p=0.0000, pass=80.0%
+- id: ev_fer_sr_failed_breakout_score_pct
+  enabled: true
+  description: 'FER-SR 子语义: fer_sr_failed_breakout_score_pct >= 0.70'
+  conditions:
+  - feature: fer_sr_failed_breakout_score_pct
+    operator: '>='
+    value: 0.7
+  notes: 'heuristic: 允许 SR 失败突破高置信样本通过 entry OR 分支'
+combination_mode: or

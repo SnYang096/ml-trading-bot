@@ -1,0 +1,56 @@
+# RMR Gate 训练子标签：success_no_rr_extreme（不踩大坑）
+#
+# 职责：Gate 模型专用，识别「这次区间回归会不会踩 < -0.8R 的大坑」。
+# 与 labels.yaml 的区别：
+#   - labels.yaml 看完整 failure（MAE 过大 + MFE 过小）→ success_label，用于策略模型训练
+#   - labels_rr_extreme.yaml 只看 rr_extreme（forward_rr < -0.8R）→ success_no_rr_extreme，
+#     用于 Gate 模型学「哪些环境下回归会被直接打穿止损」
+#
+# direction_aware=true：用 RMR direction.yaml 的 per-bar 方向（MVP = negate_sign(macd_atr)）
+# 翻转 forward_rr，保证 long/short 样本都按「该方向的 rr」评估踩坑。
+
+name: rmr_rr_extreme
+target_column: success_no_rr_extreme
+
+label_generator:
+  module: src.time_series_model.strategies.labels.failure_first_label
+  function: compute_bpc_failure_rr_extreme_label
+  params:
+    direction: long
+    horizon: 30
+    expected_stop_atr: 0.8
+    expected_target_atr: 1.5
+    invert: true
+    direction_aware: true
+    strategy: rmr
+
+label_meta:
+  label_type: binary
+  failure_subtype: rr_extreme
+  semantic: |
+    success_no_rr_extreme = 1 - failure_rr_extreme
+    1 = 不会踩大坑（forward_rr >= -0.8R，朝中轴方向走）
+    0 = 踩大坑（forward_rr < -0.8R，区间被打穿）
+  horizon: 30 bars
+  description: |
+    RMR Gate 子标签训练：只学习「区间回归会不会被直接打穿」。
+    高预测值 = 当前环境做均值回归不会踩大坑。
+
+filters:
+  - column: success_no_rr_extreme
+    notna: true
+
+kpi_definition:
+  veto_ability:
+    description: "Gate 是否能有效降低 rr_extreme 踩坑率"
+    metrics:
+      - name: lift_at_70pct
+        description: "Top 70% 覆盖时的 Lift (failure rate reduction)"
+        target: "<= 0.90x"
+        critical: true
+      - name: lift_at_50pct
+        description: "Top 50% 覆盖时的 Lift"
+        target: "<= 0.85x"
+        critical: true
+
+post_label_filters: []

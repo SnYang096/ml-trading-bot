@@ -14,7 +14,7 @@ data_path: data/parquet_data
 runs:
   - variant: alts_baseline
     strategy: fast_scalp
-    strategies_root: config_experiments/fast_scalp_alpha_G0_baseline_strategies
+    strategies_root: config/experiments/20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G0_baseline_strategies
     symbols: [SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
     start_date: "2025-10-01"
     end_date: "2026-03-31"
@@ -23,7 +23,7 @@ runs:
 
   - variant: alts_short_only
     strategy: fast_scalp
-    strategies_root: config_experiments/fast_scalp_alpha_G1_short_only_strategies
+    strategies_root: config/experiments/20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G1_short_only_strategies
     symbols: [SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
     start_date: "2025-10-01"
     end_date: "2026-03-31"
@@ -32,7 +32,7 @@ runs:
 
   - variant: alts_regime_off
     strategy: fast_scalp
-    strategies_root: config_experiments/fast_scalp_alpha_G2_regime_off_strategies
+    strategies_root: config/experiments/20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G2_regime_off_strategies
     symbols: [SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
     start_date: "2025-10-01"
     end_date: "2026-03-31"
@@ -41,7 +41,7 @@ runs:
 
   - variant: alts_short_regime_off
     strategy: fast_scalp
-    strategies_root: config_experiments/fast_scalp_alpha_G3_short_regime_off_strategies
+    strategies_root: config/experiments/20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G3_short_regime_off_strategies
     symbols: [SOLUSDT, BNBUSDT, XRPUSDT, ADAUSDT]
     start_date: "2025-10-01"
     end_date: "2026-03-31"
@@ -50,7 +50,7 @@ runs:
 
   - variant: majors_baseline
     strategy: fast_scalp
-    strategies_root: config_experiments/fast_scalp_alpha_G0_baseline_strategies
+    strategies_root: config/experiments/20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G0_baseline_strategies
     symbols: [BTCUSDT, ETHUSDT]
     start_date: "2025-10-01"
     end_date: "2026-03-31"
@@ -59,7 +59,7 @@ runs:
 
   - variant: majors_short_only
     strategy: fast_scalp
-    strategies_root: config_experiments/fast_scalp_alpha_G1_short_only_strategies
+    strategies_root: config/experiments/20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G1_short_only_strategies
     symbols: [BTCUSDT, ETHUSDT]
     start_date: "2025-10-01"
     end_date: "2026-03-31"
@@ -68,7 +68,7 @@ runs:
 
   - variant: majors_regime_off
     strategy: fast_scalp
-    strategies_root: config_experiments/fast_scalp_alpha_G2_regime_off_strategies
+    strategies_root: config/experiments/20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G2_regime_off_strategies
     symbols: [BTCUSDT, ETHUSDT]
     start_date: "2025-10-01"
     end_date: "2026-03-31"
@@ -77,7 +77,7 @@ runs:
 
   - variant: majors_short_regime_off
     strategy: fast_scalp
-    strategies_root: config_experiments/fast_scalp_alpha_G3_short_regime_off_strategies
+    strategies_root: config/experiments/20260530_fast_scalp_alts_majors/variants/fast_scalp_alpha_G3_short_regime_off_strategies
     symbols: [BTCUSDT, ETHUSDT]
     start_date: "2025-10-01"
     end_date: "2026-03-31"

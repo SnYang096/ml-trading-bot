@@ -1,0 +1,82 @@
+# A/B: variant B — same as entry_filters.yaml + strong CVD divergence percentile on each OR branch.
+# Offline lift showed positive mean forward_rr lift for cvd_divergence_score_pct in [0.4, 0.5] on semantic_core baseline.
+# Swap to archetypes/entry_filters.yaml for production; use this file only for ablation copies.
+
+filters:
+  - id: fbf_short_upper_fail
+    enabled: true
+    locked: true
+    promote_never_disable: true
+    notes: "AB-B: v2 + cvd_divergence_score_pct>=0.45"
+    description: "做空: v2 + CVD 分歧百分位确认"
+    conditions:
+      - feature: fer_sr_failed_breakout_direction_signed
+        operator: "<="
+        value: -1
+      - feature: fer_range_pos_20
+        operator: ">="
+        value: 0.56
+      - feature: bars_since_local_high
+        operator: "<="
+        value: 0.30
+      - feature: fer_sr_failed_breakout_score
+        operator: ">="
+        value: 0.38
+      - feature: fer_ols_pos
+        operator: ">="
+        value: 0.55
+      - feature: fer_ols_pos
+        operator: "<="
+        value: 0.90
+      - feature: dist_to_nearest_sr
+        operator: "<="
+        value: 0.45
+      - feature: dist_to_nearest_sr
+        operator: ">="
+        value: -0.45
+      - feature: rsi
+        operator: ">="
+        value: 55
+      - feature: cvd_divergence_score_pct
+        operator: ">="
+        value: 0.45
+
+  - id: fbf_long_lower_fail
+    enabled: true
+    locked: true
+    promote_never_disable: true
+    notes: "AB-B: v2 + cvd_divergence_score_pct>=0.45"
+    description: "做多: v2 + CVD 分歧百分位确认"
+    conditions:
+      - feature: fer_sr_failed_breakout_direction_signed
+        operator: ">="
+        value: 1
+      - feature: fer_range_pos_20
+        operator: "<="
+        value: 0.44
+      - feature: bars_since_local_low
+        operator: "<="
+        value: 0.30
+      - feature: fer_sr_failed_breakout_score
+        operator: ">="
+        value: 0.38
+      - feature: fer_ols_pos
+        operator: "<="
+        value: 0.45
+      - feature: fer_ols_pos
+        operator: ">="
+        value: 0.10
+      - feature: dist_to_nearest_sr
+        operator: "<="
+        value: 0.45
+      - feature: dist_to_nearest_sr
+        operator: ">="
+        value: -0.45
+      - feature: rsi
+        operator: "<="
+        value: 45
+      - feature: cvd_divergence_score_pct
+        operator: ">="
+        value: 0.45
+
+combination_mode: or

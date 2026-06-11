@@ -1,0 +1,92 @@
+# FER Entry：先保留 2 条主分支恢复成交密度（OR），VWAP 分支暂关，便于逐步加严。
+# 数据（同上 parquet，且仅统计「放宽后 prefilter 通过」子集 n≈2572）:
+#   short-signed: fer_range_pos_20 中位 ~0.53，bars_since_local_high 中位 0.18、p75 0.32
+#   long-signed:  fer_range_pos_20 中位 ~0.57，bars_since_local_low  中位 0.22、p75 0.30
+# 阈值取中位~分位之间：上沿空 range>=0.55、bars_since_high<=0.28；下沿多 range<=0.48、bars_since_low<=0.28
+# fer_impulse_failure_score 分支内 >=0.14（低于 prefilter 0.12 无意义，此处略高于底以保证事件强度）
+# combination_mode: or
+
+filters:
+  - id: short_upper_extreme_fail
+    enabled: true
+    locked: true
+    description: "做空: 上沿失败 + 放宽高位/极值距离 + 量价背离确认"
+    conditions:
+      - feature: fer_impulse_failure_direction_signed
+        operator: "<="
+        value: -1
+      - feature: fer_range_pos_20
+        operator: ">="
+        value: 0.55
+      - feature: bars_since_local_high
+        operator: "<="
+        value: 0.28
+      - feature: fer_impulse_failure_score
+        operator: ">="
+        value: 0.14
+      - feature: fer_volume_price_divergence
+        operator: ">="
+        value: 0.42
+    notes: "density-fix v1: short branch (data-calibrated)"
+
+  - id: long_lower_extreme_fail
+    enabled: true
+    locked: true
+    description: "做多: 下沿失败 + 放宽低位/极值距离 + trapped-shorts 确认"
+    conditions:
+      - feature: fer_impulse_failure_direction_signed
+        operator: ">="
+        value: 1
+      - feature: fer_range_pos_20
+        operator: "<="
+        value: 0.48
+      - feature: bars_since_local_low
+        operator: "<="
+        value: 0.28
+      - feature: fer_impulse_failure_score
+        operator: ">="
+        value: 0.14
+      - feature: fer_trapped_shorts_score
+        operator: ">="
+        value: 0.05
+    notes: "density-fix v1: long branch (data-calibrated)"
+
+  - id: short_vwap_reject
+    enabled: false
+    locked: true
+    description: "（暂关）做空: VWAP 上方拒绝 + 通道上沿 + 吸收 — 第二步再加回"
+    conditions:
+      - feature: fer_impulse_failure_direction_signed
+        operator: "<="
+        value: -1
+      - feature: vwap_position
+        operator: ">="
+        value: 0.20
+      - feature: fer_ols_pos
+        operator: ">="
+        value: 0.70
+      - feature: fer_aggressor_absorption
+        operator: ">="
+        value: 0.55
+    notes: "disabled for density recovery; re-enable after short/long branch stable"
+
+  - id: long_vwap_reclaim
+    enabled: false
+    locked: true
+    description: "（暂关）做多: VWAP 下方回收 + 通道下沿 + 吸收 — 第二步再加回"
+    conditions:
+      - feature: fer_impulse_failure_direction_signed
+        operator: ">="
+        value: 1
+      - feature: vwap_position
+        operator: "<="
+        value: -0.20
+      - feature: fer_ols_pos
+        operator: "<="
+        value: 0.30
+      - feature: fer_aggressor_absorption
+        operator: ">="
+        value: 0.55
+    notes: "disabled for density recovery; re-enable after short/long branch stable"
+
+combination_mode: or

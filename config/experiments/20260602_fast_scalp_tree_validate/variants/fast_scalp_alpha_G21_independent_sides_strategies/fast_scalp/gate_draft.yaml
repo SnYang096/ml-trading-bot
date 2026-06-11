@@ -1,0 +1,19 @@
+# FAST_SCALP Gate Draft (auto-generated)
+# 来源: results/train_final/fast_scalp/train_short_win_h3/fast_scalp
+# ⚠️ 无 predictions 数据，无法自动确定方向，规则可能为空
+# 已是 archetype 兼容格式，可直接用于:
+#   mlbot gate apply-archetype --strategy fast_scalp
+#   python scripts/optimize_gate_unified.py --strategy fast_scalp --promote
+
+schema:
+  phases:
+  - system_safety
+  - hard_gate
+  - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+hard_gates: []
+guardrails: []

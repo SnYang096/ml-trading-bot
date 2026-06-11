@@ -1,0 +1,32 @@
+# 与 prod turbo 其它策略同构的 gate 子标签占位（方向为 short 的 rr_extreme 定义）
+
+name: bpc_short_rr_extreme
+target_column: success_no_rr_extreme
+
+label_generator:
+  module: src.time_series_model.strategies.labels.failure_first_label
+  function: compute_bpc_failure_rr_extreme_label
+  params:
+    direction: short
+    horizon: 50
+    invert: true
+    direction_aware: false
+
+label_meta:
+  label_type: binary
+  failure_subtype: rr_extreme
+
+filters:
+  - column: success_no_rr_extreme
+    notna: true
+
+kpi_definition:
+  veto_ability:
+    description: "Gate veto placeholder"
+    metrics:
+      - name: lift_at_70pct
+        description: "Top 70% lift"
+        target: "<= 0.90x"
+        critical: true
+
+post_label_filters: []

@@ -1,0 +1,20 @@
+# RMR Gate 初版：保持空白，首轮验证不注入任何统计 deny，避免语义污染
+# 说明：
+#   - FBF 的 gate_draft 里有 vol_leverage_asymmetry / cvd_change_5_normalized 等规则，
+#     那些是 FBF 训练数据（假破事件样本）统计出的，**不可直接挪用**到 RMR。
+#   - RMR 首轮跑完 rolling 后，再由 optimize_gate_unified 在 RMR 自己的样本上生成。
+
+schema:
+  phases:
+    - system_safety
+    - hard_gate
+    - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+
+hard_gates: []
+guardrails: []
+system_safety: []

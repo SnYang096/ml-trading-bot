@@ -1,0 +1,17 @@
+# FBF Gate 初版：保持空白，不引入非 FBF 语义 deny
+# 说明：FER 中的 fer_volume_price_divergence 等 gate 规则偏 AER 语义，
+#      在 FBF 首轮验证中先移除，避免语义污染。
+schema:
+  phases:
+    - system_safety
+    - hard_gate
+    - guardrail
+  evaluation_order: system_safety -> hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+
+hard_gates: []
+guardrails: []
+system_safety: []
