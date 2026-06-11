@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { BundleData, Candle, MainOverlaySpec, TradeLink, TradeMarker } from '@/api/types.ts';
-import type { FeatureOverlays } from '@/lib/tradeMap/types.ts';
+import type { FeatureOverlays, LogicalRange } from '@/lib/tradeMap/types.ts';
 
 export const POLL_MS = 10_000;
 export const LAYOUT_KEY = 'mlbot_trade_map_layout_v2';
@@ -44,6 +44,8 @@ interface TradeMapState {
   statusText: string;
   loading: boolean;
   chartFitPending: boolean;
+  /** Set by history prepend; applied in main chart after setData, then cleared. */
+  historyScrollAdjust: LogicalRange | null;
   mainEma1200: boolean;
   mainWeeklyEma200: boolean;
   setSymbol: (s: string) => void;
@@ -103,6 +105,7 @@ export const useTradeMapStore = create<TradeMapState>((set) => ({
   statusText: '',
   loading: false,
   chartFitPending: true,
+  historyScrollAdjust: null,
   mainEma1200: true,
   mainWeeklyEma200: true,
   setSymbol: (symbol) => set({ symbol }),
@@ -159,6 +162,7 @@ export function resetHistoryState(): void {
     loading: false,
     historyExhausted: false,
     chartFitPending: true,
+    historyScrollAdjust: null,
   });
 }
 

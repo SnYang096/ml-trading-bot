@@ -9,6 +9,8 @@ import {
 import {
   barSpacingForCount,
   defaultVisibleBarCount,
+  isValidLogicalRange,
+  logicalRangeAfterHistoryPrepend,
   sanitizeCandlesForLwc,
 } from '@/lib/tradeMap/candles.ts';
 import {
@@ -71,6 +73,17 @@ describe('tradeMap ohlcv', () => {
 
   it('defaultVisibleBarCount caps bars', () => {
     expect(defaultVisibleBarCount(5000)).toBeLessThan(5000);
+  });
+
+  it('logicalRangeAfterHistoryPrepend rejects range before setData length', () => {
+    const snap = { from: 10, to: 50 };
+    expect(logicalRangeAfterHistoryPrepend(snap, 360, 100)).toBeNull();
+    expect(logicalRangeAfterHistoryPrepend(snap, 360, 460)).toEqual({ from: 370, to: 410 });
+  });
+
+  it('isValidLogicalRange guards out-of-bounds viewport', () => {
+    expect(isValidLogicalRange({ from: 370, to: 410 }, 100)).toBe(false);
+    expect(isValidLogicalRange({ from: 370, to: 410 }, 460)).toBe(true);
   });
 });
 

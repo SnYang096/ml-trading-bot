@@ -19,6 +19,30 @@ export function visibleLogicalRange(
   return { from: Math.max(0, n - vis), to: n - 1 };
 }
 
+/** Shift visible logical range after prepending `added` bars (apply only after setData). */
+export function logicalRangeAfterHistoryPrepend(
+  snap: LogicalRange | null | undefined,
+  added: number,
+  barCount: number,
+): LogicalRange | null {
+  if (!snap || added <= 0 || barCount <= 0) return null;
+  const from = Number(snap.from) + added;
+  const to = Number(snap.to) + added;
+  if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return null;
+  if (to >= barCount) return null;
+  return { from: Math.max(0, from), to };
+}
+
+export function isValidLogicalRange(
+  range: LogicalRange | null | undefined,
+  barCount: number,
+): range is LogicalRange {
+  if (!range || barCount <= 0) return false;
+  const from = Number(range.from);
+  const to = Number(range.to);
+  return Number.isFinite(from) && Number.isFinite(to) && from >= 0 && to > from && to < barCount;
+}
+
 export function clampCandleOhlc(
   open: number,
   high: number,

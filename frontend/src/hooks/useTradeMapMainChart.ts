@@ -41,7 +41,7 @@ import {
   priceRangeForChartAutoscale,
   sanitizeCandlesForLwc,
 } from '@/lib/tradeMap';
-import { visibleLogicalRange } from '@/lib/tradeMap/candles.ts';
+import { isValidLogicalRange, visibleLogicalRange } from '@/lib/tradeMap/candles.ts';
 import type { FeatureOverlays } from '@/lib/tradeMap/types.ts';
 import type { LayerState } from '@/stores/tradeMapStore.ts';
 import { useTradeMapStore } from '@/stores/tradeMapStore.ts';
@@ -358,8 +358,16 @@ export function useTradeMapMainChart(params: MainChartParams) {
     if (!series || !chart) return;
     const p = paramsRef.current;
     const clean = sanitizeCandlesForLwc(p.candles) as CandlestickData<Time>[];
+    if (!clean.length) return;
     series.setData(clean);
-    if (clean.length && p.chartFitPending) {
+
+    const scrollAdjust = useTradeMapStore.getState().historyScrollAdjust;
+    if (scrollAdjust) {
+      if (isValidLogicalRange(scrollAdjust, clean.length)) {
+        chart.timeScale().setVisibleLogicalRange(scrollAdjust);
+      }
+      useTradeMapStore.setState({ historyScrollAdjust: null });
+    } else if (p.chartFitPending) {
       const lr = visibleLogicalRange(clean.length);
       if (lr) {
         chart.timeScale().setVisibleLogicalRange(lr);

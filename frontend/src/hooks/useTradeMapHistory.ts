@@ -14,6 +14,7 @@ import {
   stageRegionsQueryParam,
   tradeMapHistoryChunkDays,
 } from '@/lib/tradeMap';
+import { logicalRangeAfterHistoryPrepend } from '@/lib/tradeMap/candles.ts';
 import { buildMarkersOnlyQuery, bundleFeatureColumns } from '@/lib/tradeMap/bundleQuery.ts';
 import {
   resetHistoryState,
@@ -87,8 +88,7 @@ export function useTradeMapHistory(mainChart: IChartApi | null) {
         return;
       }
 
-      const chart = mainChart;
-      const snap = chart?.timeScale().getVisibleLogicalRange() || null;
+      const snap = mainChart?.timeScale().getVisibleLogicalRange() || null;
       const prevLen = state.lastCandles.length;
       const merged = mergeCandlesByTime(more, state.lastCandles) as Candle[];
 
@@ -103,10 +103,29 @@ export function useTradeMapHistory(mainChart: IChartApi | null) {
         nextMainOverlays = { ...state.lastMainOverlays, ...data.main_overlays };
       }
 
-      let nextOverlays = state.lastOverlays;
-      let nextChop = state.lastChopMapData;
-      let nextRegime = state.chopRegimeRegions;
-      let nextStages = state.strategyStageRegions;
+      let markerFrom = state.markerQueryFromIso;
+      if (
+        markerFrom == null ||
+        new Date(newFromIso).getTime() < new Date(markerFrom).getTime()
+      ) {
+        markerFrom = newFromIso;
+      }
+
+      const scrollAdjust = logicalRangeAfterHistoryPrepend(snap, added, merged.length);
+
+      useTradeMapStore.setState({
+        lastCandles: merged,
+        lastMainOverlays: nextMainOverlays,
+        ohlcvLoadedFrom: isoFromUnixSec(merged[0].time),
+        markerQueryFromIso: markerFrom,
+        chartFitPending: false,
+        historyScrollAdjust: scrollAdjust,
+        statusText: `${merged.length} bars (+${added} history)`,
+      });
+
+      if (meta?.range_start) {
+        useTradeMapStore.setState({ ohlcvLoadedFrom: String(meta.range_start) });
+      }
 
       if (needFeatures || needChop || needStages) {
         const featQ = apiQuery({
@@ -127,45 +146,29 @@ export function useTradeMapHistory(mainChart: IChartApi | null) {
           strategy: state.featureStrategyFocus.trim() || undefined,
         });
         const { data: featData } = await fetchBundle(featQ);
+        const overlayPatch: {
+          lastOverlays?: typeof state.lastOverlays;
+          lastChopMapData?: typeof state.lastChopMapData;
+          chopRegimeRegions?: typeof state.chopRegimeRegions;
+          strategyStageRegions?: typeof state.strategyStageRegions;
+        } = {};
         if (featData.overlays && Object.keys(featData.overlays).length) {
-          nextOverlays = mergeFeatureOverlays(state.lastOverlays, featData.overlays, merged);
+          overlayPatch.lastOverlays = mergeFeatureOverlays(
+            useTradeMapStore.getState().lastOverlays,
+            featData.overlays,
+            merged,
+          );
         }
-        if (featData.chop_grid_overlay) nextChop = featData.chop_grid_overlay;
-        if (featData.chop_regime_regions?.length) nextRegime = featData.chop_regime_regions;
-        if (featData.strategy_stage_regions) nextStages = featData.strategy_stage_regions;
-      }
-
-      let markerFrom = state.markerQueryFromIso;
-      if (
-        markerFrom == null ||
-        new Date(newFromIso).getTime() < new Date(markerFrom).getTime()
-      ) {
-        markerFrom = newFromIso;
-      }
-
-      useTradeMapStore.setState({
-        lastCandles: merged,
-        lastMainOverlays: nextMainOverlays,
-        lastOverlays: nextOverlays,
-        lastChopMapData: nextChop,
-        chopRegimeRegions: nextRegime,
-        strategyStageRegions: nextStages,
-        ohlcvLoadedFrom: isoFromUnixSec(merged[0].time),
-        markerQueryFromIso: markerFrom,
-        chartFitPending: false,
-        statusText: `${merged.length} bars (+${added} history)`,
-      });
-
-      if (chart && snap && added > 0) {
-        const from = Number(snap.from) + added;
-        const to = Number(snap.to) + added;
-        if (Number.isFinite(from) && Number.isFinite(to)) {
-          chart.timeScale().setVisibleLogicalRange({ from, to });
+        if (featData.chop_grid_overlay) overlayPatch.lastChopMapData = featData.chop_grid_overlay;
+        if (featData.chop_regime_regions?.length) {
+          overlayPatch.chopRegimeRegions = featData.chop_regime_regions;
         }
-      }
-
-      if (meta?.range_start) {
-        useTradeMapStore.setState({ ohlcvLoadedFrom: String(meta.range_start) });
+        if (featData.strategy_stage_regions) {
+          overlayPatch.strategyStageRegions = featData.strategy_stage_regions;
+        }
+        if (Object.keys(overlayPatch).length) {
+          useTradeMapStore.setState(overlayPatch);
+        }
       }
 
       await refreshMarkersOnly();
