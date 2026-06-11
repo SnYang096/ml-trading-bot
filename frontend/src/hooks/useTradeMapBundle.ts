@@ -126,6 +126,14 @@ export function useTradeMapBundle() {
     }
   }, [store]);
 
+  const refreshMainOverlays = useCallback(async () => {
+    const state = useTradeMapStore.getState();
+    const { data: shellData } = await fetchBundle(buildFullShellQuery(state));
+    useTradeMapStore.setState({
+      lastMainOverlays: shellData.main_overlays || {},
+    });
+  }, []);
+
   const initFromLayout = useCallback(() => {
     const layout = loadLayout();
     if (!layout) return;
@@ -150,6 +158,7 @@ export function useTradeMapBundle() {
     refreshFull,
     refreshPoll,
     refreshMarkersOnly,
+    refreshMainOverlays,
     initFromLayout,
     resetHistory: resetHistoryState,
   };

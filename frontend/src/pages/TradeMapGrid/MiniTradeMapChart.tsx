@@ -5,6 +5,9 @@ import {
   LineSeries,
   createChart,
   createSeriesMarkers,
+  type IChartApi,
+  type ISeriesApi,
+  type ISeriesMarkersPluginApi,
   type CandlestickData,
   type LineData,
   type SeriesMarker,
@@ -66,8 +69,14 @@ export const MiniTradeMapChart = memo(function MiniTradeMapChart({
   error,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  const linkSeriesRef = useRef<ISeriesApi<'Line'>[]>([]);
+  const fittedRef = useRef(false);
 
   useEffect(() => {
+    fittedRef.current = false;
     const el = hostRef.current;
     if (!el) return;
 
@@ -85,6 +94,10 @@ export const MiniTradeMapChart = memo(function MiniTradeMapChart({
     });
     const markerPlugin = createSeriesMarkers(series);
 
+    chartRef.current = chart;
+    seriesRef.current = series;
+    markersRef.current = markerPlugin;
+
     const ro = new ResizeObserver(() => {
       if (hostRef.current) {
         chart.applyOptions({
@@ -95,13 +108,46 @@ export const MiniTradeMapChart = memo(function MiniTradeMapChart({
     });
     ro.observe(el);
 
+    return () => {
+      ro.disconnect();
+      chart.remove();
+      chartRef.current = null;
+      seriesRef.current = null;
+      markersRef.current = null;
+      linkSeriesRef.current = [];
+    };
+  }, [symbol]);
+
+  useEffect(() => {
+    const series = seriesRef.current;
+    const chart = chartRef.current;
+    if (!series || !chart) return;
     const clean = sanitizeCandlesForLwc(candles) as CandlestickData<Time>[];
     series.setData(clean);
-    if (clean.length) chart.timeScale().fitContent();
+    if (clean.length && !fittedRef.current) {
+      chart.timeScale().fitContent();
+      fittedRef.current = true;
+    }
+  }, [candles]);
 
+  useEffect(() => {
+    const plugin = markersRef.current;
+    if (!plugin) return;
     const display = markersForChartDisplay(markers, '', null);
-    markerPlugin.setMarkers(markersToLwc(display, null) as SeriesMarker<Time>[]);
+    plugin.setMarkers(markersToLwc(display, null) as SeriesMarker<Time>[]);
+  }, [markers, layers.trend, layers.spot, layers.multiLeg, layers.pending]);
 
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    for (const s of linkSeriesRef.current) {
+      try {
+        chart.removeSeries(s);
+      } catch {
+        /* */
+      }
+    }
+    linkSeriesRef.current = [];
     const lines = buildTradeLinkLines(tradeLinks, candles, layers, '', timeframe);
     for (const line of lines) {
       const ls = chart.addSeries(
@@ -115,13 +161,9 @@ export const MiniTradeMapChart = memo(function MiniTradeMapChart({
         }),
       );
       ls.setData(line.points as LineData<Time>[]);
+      linkSeriesRef.current.push(ls);
     }
-
-    return () => {
-      ro.disconnect();
-      chart.remove();
-    };
-  }, [symbol, candles, markers, tradeLinks, layers, timeframe]);
+  }, [tradeLinks, candles, layers, timeframe]);
 
   const recentCount = markers.filter((m) => {
     const last = candles[candles.length - 1]?.time;

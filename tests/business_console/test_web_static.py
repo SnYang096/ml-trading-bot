@@ -88,7 +88,70 @@ def test_trade_map_grid_page_in_source() -> None:
     grid = _read("pages/TradeMapGrid/TradeMapGridPage.tsx")
     assert "GRID_SYMBOLS" in grid
     assert "MiniTradeMapChart" in grid
+    assert "useStaggeredGridQueries" in grid
     assert "trade-map-grid" in _read("routes.tsx")
+
+
+def test_routes_lazy_load_pages() -> None:
+    routes = _read("routes.tsx")
+    assert "React.lazy" in routes or "lazy(" in routes
+    assert "Suspense" in routes
+    assert "PageFallback" in routes
+
+
+def test_page_visibility_polling() -> None:
+    hook = _read("hooks/usePageVisible.ts")
+    assert "usePageVisible" in hook
+    assert "visibleRefetchInterval" in hook
+    assert "usePageVisible" in _read("pages/Orders/OrdersPage.tsx")
+    assert "usePageVisible" in _read("pages/TradeMap/TradeMapPage.tsx")
+
+
+def test_trade_map_ema_overlay_refresh() -> None:
+    bundle = _read("hooks/useTradeMapBundle.ts")
+    page = _read("pages/TradeMap/TradeMapPage.tsx")
+    assert "refreshMainOverlays" in bundle
+    assert "refreshMainOverlays" in page
+    assert "mainEma1200" in page
+    full_m = re.search(
+        r"refreshFull\(\)\.catch\(\(\) => \{\}\);\s*\n\s*\}, \[([^\]]+)\]",
+        page,
+    )
+    assert full_m, "refreshFull effect deps not found"
+    full_deps = full_m.group(1)
+    assert "mainEma1200" not in full_deps
+    assert "mainWeeklyEma200" not in full_deps
+    ema_m = re.search(
+        r"refreshMainOverlays\(\)\.catch\(\(\) => \{\}\);\s*\n\s*\}, \[([^\]]+)\]",
+        page,
+    )
+    assert ema_m, "refreshMainOverlays effect deps not found"
+    ema_deps = ema_m.group(1)
+    assert "mainEma1200" in ema_deps
+    assert "mainWeeklyEma200" in ema_deps
+
+
+def test_orders_client_pagination() -> None:
+    orders = _read("pages/Orders/OrdersPage.tsx")
+    assert "PAGE_SIZE" in orders
+    assert "上一页" in orders
+    assert "下一页" in orders
+
+
+def test_account_recon_lazy_load() -> None:
+    account = _read("pages/Account/AccountPage.tsx")
+    assert "reconOpen" in account
+    assert "展开对账" in account
+    assert "enabled: reconOpen" in account
+
+
+def test_grid_tail_poll_query() -> None:
+    query = _read("lib/tradeMap/bundleQuery.ts")
+    stagger = _read("hooks/useStaggeredGridQueries.ts")
+    assert "buildGridPollQuery" in query
+    assert "include_ohlcv: 'tail'" in query
+    assert "buildGridPollQuery" in stagger
+    assert "STAGGER_MS" in stagger
 
 
 def test_trade_map_poll_uses_tail_bundle() -> None:

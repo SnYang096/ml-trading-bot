@@ -29,6 +29,18 @@ export function isAllSymbols(sym: string): boolean {
   return !s || s === SYMBOL_ALL || s.toUpperCase() === 'ALL';
 }
 
+/** Show filled size; treat 0 as missing so quantity fallback still works. */
+export function displayOrderQty(row: {
+  filled_quantity?: number | null;
+  quantity?: number | null;
+}): string {
+  for (const key of ['filled_quantity', 'quantity'] as const) {
+    const n = Number(row[key]);
+    if (Number.isFinite(n) && n > 0) return String(n);
+  }
+  return '—';
+}
+
 export function setSymbol(sym: string): void {
   if (sym && !isAllSymbols(sym)) localStorage.setItem(SYMBOL_KEY, sym);
 }

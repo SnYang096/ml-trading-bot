@@ -174,3 +174,30 @@ export function buildMiniGridQuery(
     include_chop: 'false',
   });
 }
+
+export function buildGridPollQuery(
+  symbol: string,
+  timeframe: string,
+  layers: LayerState,
+  range: { from: string; to: string },
+  candles: Array<{ time: number }>,
+  lastMarkerPollSince: string | null,
+): string {
+  const tailAnchor = candles.length ? candles[Math.max(0, candles.length - 5)] : null;
+  return apiQuery({
+    symbol,
+    timeframe,
+    scopes: scopesFromLayers(layers),
+    include_pending: String(layers.pending),
+    from: range.from,
+    to: range.to,
+    since: lastMarkerPollSince || undefined,
+    include_ohlcv: 'tail',
+    ohlcv_from: tailAnchor ? isoFromUnixSec(Number(tailAnchor.time)) : undefined,
+    include_features: 'false',
+    include_markers: 'true',
+    include_trade_links: 'true',
+    include_chop: 'false',
+    full_range: 'false',
+  });
+}

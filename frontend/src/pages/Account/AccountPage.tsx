@@ -15,6 +15,7 @@ export function AccountPage() {
   const [searchParams] = useSearchParams();
   const [symbol, setSym] = useState(searchParams.get('symbol') || getSymbol() || 'ETHUSDT');
   const [lookback, setLookback] = useState('0');
+  const [reconOpen, setReconOpen] = useState(false);
 
   const symbolsQuery = useQuery({
     queryKey: ['symbols'],
@@ -34,6 +35,7 @@ export function AccountPage() {
   const reconQuery = useQuery({
     queryKey: ['account-recon', symbol],
     queryFn: () => apiGet<unknown>('/api/account/reconciliation', { symbol }),
+    enabled: reconOpen,
   });
 
   const totals = summaryQuery.data?.data?.totals || {};
@@ -105,9 +107,18 @@ export function AccountPage() {
       ) : null}
       <section className="panel">
         <h3>对账</h3>
-        <pre style={{ fontSize: '0.75rem', overflow: 'auto' }}>
-          {JSON.stringify(reconQuery.data?.data ?? {}, null, 2)}
-        </pre>
+        {!reconOpen ? (
+          <button type="button" onClick={() => setReconOpen(true)}>
+            展开对账
+          </button>
+        ) : (
+          <>
+            {reconQuery.isFetching ? <p className="muted">加载对账…</p> : null}
+            <pre style={{ fontSize: '0.75rem', overflow: 'auto' }}>
+              {JSON.stringify(reconQuery.data?.data ?? {}, null, 2)}
+            </pre>
+          </>
+        )}
       </section>
       <p className="status-line">
         {summaryQuery.isFetching ? '加载中…' : `${symbol} · ${lookback}d lookback`}

@@ -19,17 +19,17 @@ export const SUBCHART_COLORS = [
 
 /** Lightweight Charts theme (hacker / terminal). */
 export const CHART_THEME = {
-  bg: '#000000',
-  text: '#1faa1f',
-  grid: '#0a2a0a',
-  border: '#1a4d1a',
+  bg: '#020402',
+  text: '#7ae87a',
+  grid: '#143814',
+  border: '#2a7a2a',
   candleUp: '#00ff41',
-  candleDown: '#ff0040',
-  emaPrimary: '#00ffff',
-  emaSecondary: '#ffb000',
-  volume: '#1a5c1a',
-  linkFallback: '#1faa1f',
-  accentPurple: '#bf00ff',
+  candleDown: '#ff3366',
+  emaPrimary: '#5cffff',
+  emaSecondary: '#ffcc44',
+  volume: '#2a7a2a',
+  linkFallback: '#7ae87a',
+  accentPurple: '#d966ff',
 } as const;
 
 export const DEFAULT_VISIBLE_BARS = 320;

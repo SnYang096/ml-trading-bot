@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { apiGet } from '@/api/client.ts';
+import { usePageVisible, visibleRefetchInterval } from '@/hooks/usePageVisible.ts';
 import type { OrderRow } from '@/api/types.ts';
 import { SCOPE_LABELS } from '@/lib/shell.ts';
 import { scopesFromLayers, type LayerState } from '@/stores/tradeMapStore.ts';
@@ -12,6 +13,7 @@ interface Props {
 }
 
 export function OrdersDock({ symbol, layers }: Props) {
+  const pageVisible = usePageVisible();
   const ordersQuery = useQuery({
     queryKey: ['trade-map-orders-dock', symbol, layers],
     queryFn: () =>
@@ -20,7 +22,7 @@ export function OrdersDock({ symbol, layers }: Props) {
         scopes: scopesFromLayers(layers),
         limit: 80,
       }),
-    refetchInterval: 15_000,
+    refetchInterval: visibleRefetchInterval(pageVisible, 15_000),
   });
 
   const rows = ordersQuery.data?.data || [];

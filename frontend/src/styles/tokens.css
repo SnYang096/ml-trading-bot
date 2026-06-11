@@ -1,30 +1,32 @@
 :root {
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Courier New', ui-monospace, monospace;
 
-  --bg: #000000;
-  --bg-elevated: #050a05;
-  --surface: #0a120a;
-  --surface-hover: #0f1a0f;
-  --border: #1a4d1a;
-  --border-bright: rgba(0, 255, 65, 0.35);
+  --bg: #020402;
+  --bg-elevated: #0a120a;
+  --surface: #101a10;
+  --surface-hover: #162216;
+  --border: #2a7a2a;
+  --border-bright: rgba(0, 255, 65, 0.55);
 
-  --text: #39ff39;
-  --text-muted: #1faa1f;
-  --text-dim: #0d660d;
+  --text: #d4ffd4;
+  --text-muted: #7ae87a;
+  --text-dim: #4db84d;
 
   --accent: #00ff41;
-  --accent-cyan: #00ffff;
-  --accent-amber: #ffb000;
-  --accent-purple: #bf00ff;
+  --accent-bright: #5cff82;
+  --accent-cyan: #5cffff;
+  --accent-amber: #ffcc44;
+  --accent-purple: #d966ff;
 
   --positive: #00ff88;
-  --negative: #ff0040;
-  --warning: #ffff00;
+  --negative: #ff3366;
+  --warning: #ffff66;
 
-  --nav-active: rgba(0, 255, 65, 0.14);
+  --nav-active: rgba(0, 255, 65, 0.2);
   --nav-active-border: #00ff41;
 
-  --glow: 0 0 8px rgba(0, 255, 65, 0.4);
-  --glow-strong: 0 0 14px rgba(0, 255, 65, 0.65);
+  --glow: 0 0 10px rgba(0, 255, 65, 0.55);
+  --glow-strong: 0 0 18px rgba(0, 255, 65, 0.75);
+  --glow-cyan: 0 0 10px rgba(92, 255, 255, 0.45);
   --radius: 0;
 }

@@ -23,6 +23,7 @@ def test_trend_orders_list(trend_db):
     exit_row = next(r for r in position_rows if r["order_type"] == "position_exit")
     assert exit_row["side"] == "sell"
     assert exit_row["strategy"] == "tpc"
+    assert float(exit_row["filled_quantity"]) == pytest.approx(2.5)
     assert exit_row["marker_id"] == "trend:positions:p1:exit"
 
 
@@ -46,6 +47,28 @@ def test_trend_orders_include_position_operations_with_strategy(trend_db):
     assert op_row["order_type"] == "position_add"
     assert op_row["strategy"] == "tpc"
     assert op_row["marker_id"] == "trend:position_operations:op_add_orders"
+
+
+def test_trend_orders_filled_qty_falls_back_to_quantity(trend_db):
+    import sqlite3
+
+    conn = sqlite3.connect(trend_db)
+    conn.execute(
+        """
+        INSERT INTO orders VALUES (
+            'ord_zero_filled', 'ETHUSDT', 'SELL', 'filled', 'limit',
+            0.42, 105.0, NULL,
+            '2024-01-01T15:00:00+00:00', '2024-01-01T14:30:00+00:00',
+            '2024-01-01T15:00:00+00:00', 105.0, 0.0, NULL
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    rows = trend_orders(trend_db, "ETHUSDT", limit=50)
+    row = next(r for r in rows if r["order_id"] == "ord_zero_filled")
+    assert float(row["filled_quantity"]) == pytest.approx(0.42)
 
 
 def test_trend_orders_all_symbols(trend_db):
@@ -275,6 +298,76 @@ def test_multileg_orders_list_hydrates_qty_from_raw_json(multi_leg_db) -> None:
     assert float(row["quantity"]) == pytest.approx(0.126)
 
 
+def test_multileg_filled_filter_not_starved_by_expired(multi_leg_db) -> None:
+    import sqlite3
+
+    conn = sqlite3.connect(multi_leg_db)
+    for i in range(40):
+        conn.execute(
+            """
+            INSERT INTO multi_leg_orders (
+                local_order_id, strategy, symbol, side, status, order_type, purpose,
+                quantity, price, filled_quantity, average_price, created_at, filled_at
+            ) VALUES (?, 'chop_grid', 'ETHUSDT', 'BUY', 'expired', 'limit', 'entry',
+                      0.01, 2000.0, 0.0, NULL, '2024-01-02T10:00:00+00:00', NULL)
+            """,
+            (f"ml_exp_{i}",),
+        )
+    conn.execute(
+        """
+        INSERT INTO multi_leg_orders (
+            local_order_id, strategy, symbol, side, status, order_type, purpose,
+            quantity, price, filled_quantity, average_price, created_at, filled_at
+        ) VALUES (
+            'ml_fill_recent', 'chop_grid', 'ETHUSDT', 'BUY', 'filled', 'limit', 'entry',
+            0.02, 2100.0, 0.02, 2100.0, '2024-01-03T10:00:00+00:00', '2024-01-03T10:01:00+00:00'
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    rows = multi_leg_orders_list(
+        multi_leg_db,
+        "ETHUSDT",
+        status="filled",
+        exclude_statuses=["expired", "canceled", "rejected"],
+        limit=20,
+    )
+    ids = {r["order_id"] for r in rows}
+    assert "ml_fill_recent" in ids
+    assert "ml_eth_entry" in ids
+    assert all(r["status"] in {"filled", "closed"} for r in rows)
+
+
+def test_collect_orders_strategy_filter(trend_db, spot_db, multi_leg_db) -> None:
+    rows = collect_orders(
+        trend_db=trend_db,
+        spot_db=spot_db,
+        multi_leg_db=multi_leg_db,
+        symbol="ETHUSDT",
+        scopes=["multi_leg"],
+        strategy="chop_grid",
+        exclude_statuses=["expired", "canceled", "rejected"],
+        limit=50,
+    )
+    assert rows
+    assert all(r["scope"] == "multi_leg" for r in rows)
+    assert all(str(r.get("strategy") or "").lower() == "chop_grid" for r in rows)
+
+    tpc_rows = collect_orders(
+        trend_db=trend_db,
+        spot_db=spot_db,
+        multi_leg_db=multi_leg_db,
+        symbol="ETHUSDT",
+        scopes=["trend"],
+        strategy="tpc",
+        limit=50,
+    )
+    assert tpc_rows
+    assert all(str(r.get("strategy") or "").lower() == "tpc" for r in tpc_rows)
+
+
 def test_collect_orders_multileg_history_survives_exclude_filter(
     trend_db, spot_db, multi_leg_db
 ):
@@ -441,6 +534,77 @@ def test_collect_orders_trend_stop_loss_pnl_when_realized_null(
     assert exit_row["pnl_hint"] == "已实现"
     pos_exit = next(r for r in rows if r["order_id"] == "p_sl:exit")
     assert pos_exit["pnl_usdt"] == pytest.approx(-200.0)
+
+
+def test_spot_orders_closed_matches_filled_filter(tmp_path):
+    import sqlite3
+
+    from mlbot_console.services.orders_list import spot_orders_list
+
+    path = tmp_path / "spot_closed.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE spot_orders (
+            order_id TEXT PRIMARY KEY,
+            created_at TEXT,
+            updated_at TEXT,
+            symbol TEXT,
+            side TEXT,
+            order_type TEXT,
+            quantity REAL,
+            price REAL,
+            status TEXT,
+            filled_quantity REAL,
+            filled_quote_usdt REAL
+        );
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO spot_orders VALUES (
+            'spot_closed', '2024-01-02T08:00:00+00:00', '2024-01-02T08:05:00+00:00',
+            'BTCUSDT', 'buy', 'market', 0.01, 42000.0, 'closed', 0.01, 420.0
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    rows = spot_orders_list(path, "*", status="filled", limit=10)
+    assert len(rows) == 1
+    assert rows[0]["order_id"] == "spot_closed"
+    assert rows[0]["scope"] == "spot"
+
+
+def test_collect_orders_spot_only_closed_status(
+    trend_db, spot_db, multi_leg_db, tmp_path
+):
+    import sqlite3
+
+    conn = sqlite3.connect(spot_db)
+    conn.execute(
+        """
+        INSERT INTO spot_orders VALUES (
+            's_closed', '2024-01-03T08:00:00+00:00', '2024-01-03T08:05:00+00:00',
+            'ETHUSDT', 'sell', 'market', 0.05, 2100.0, 'closed', 0.05, 105.0
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    rows = collect_orders(
+        trend_db=trend_db,
+        spot_db=spot_db,
+        multi_leg_db=multi_leg_db,
+        symbol="*",
+        scopes=["spot"],
+        status="filled",
+        limit=50,
+    )
+    assert any(r["order_id"] == "s_closed" for r in rows)
+    assert all(r["scope"] == "spot" for r in rows)
 
 
 def test_spot_orders_legacy_schema_without_filled_columns(tmp_path):

@@ -88,8 +88,9 @@
 .chip,
 .chipActive {
   font-family: var(--font-mono);
-  font-size: 0.72rem;
-  padding: 2px 8px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  padding: 3px 9px;
   border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--surface);
@@ -104,7 +105,7 @@
 
 .chipActive {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-bright);
   box-shadow: var(--glow);
 }
 
@@ -131,7 +132,8 @@
 
 .status {
   margin-left: auto;
-  font-size: 0.78rem;
+  font-size: 0.82rem;
+  font-weight: 600;
   color: var(--text-muted);
   align-self: center;
 }
@@ -182,8 +184,9 @@
 
 .markerBtn {
   font-family: var(--font-mono);
-  font-size: 0.72rem;
-  padding: 2px 8px;
+  font-size: 0.76rem;
+  font-weight: 500;
+  padding: 3px 9px;
   border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--surface);

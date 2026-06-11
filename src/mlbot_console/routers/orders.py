@@ -28,8 +28,12 @@ def orders_list(
     symbol: str = Query("*"),
     scopes: str = Query("trend,spot"),
     status: Optional[str] = Query(None),
+    strategy: Optional[str] = Query(
+        None,
+        description="Filter by strategy id, e.g. chop_grid or tpc",
+    ),
     exclude_status: str = Query(
-        "",
+        "expired,canceled,rejected",
         description="Comma-separated statuses to omit (e.g. expired,canceled)",
     ),
     limit: int = Query(100, ge=1, le=500),
@@ -48,6 +52,7 @@ def orders_list(
         limit=limit,
         feature_bus_root=SETTINGS.feature_bus_root,
         engine_data_root=SETTINGS.engine_data_root,
+        strategy=strategy,
     )
     sym_meta = "ALL" if str(symbol).strip().upper() in {"", "*", "ALL", "__ALL__"} else symbol.upper()
     return ok(rows, meta={"count": len(rows), "symbol": sym_meta})

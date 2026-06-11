@@ -1,15 +1,10 @@
-import { useQueries } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
-import { apiGet } from '@/api/client.ts';
-import type { BundleData } from '@/api/types.ts';
-import { buildMiniGridQuery } from '@/lib/tradeMap/bundleQuery.ts';
-import { GRID_SYMBOLS, gridOhlcvQueryRange } from '@/lib/tradeMap/grid.ts';
 import { SCOPE_LABELS } from '@/lib/shell.ts';
-import { scopesFromLayers, type LayerState } from '@/stores/tradeMapStore.ts';
+import { type LayerState } from '@/stores/tradeMapStore.ts';
+import { useStaggeredGridQueries } from '@/hooks/useStaggeredGridQueries.ts';
+import { GRID_SYMBOLS } from '@/lib/tradeMap/grid.ts';
 import { MiniTradeMapChart } from './MiniTradeMapChart.tsx';
 import styles from './TradeMapGridPage.module.css';
-
-const GRID_POLL_MS = 30_000;
 
 const defaultLayers: LayerState = {
   trend: true,
@@ -21,30 +16,11 @@ const defaultLayers: LayerState = {
   gate: false,
 };
 
-async function fetchGridCell(
-  symbol: string,
-  timeframe: string,
-  layers: LayerState,
-): Promise<BundleData> {
-  const range = gridOhlcvQueryRange(timeframe);
-  const q = buildMiniGridQuery(symbol, timeframe, layers, range);
-  const { data } = await apiGet<BundleData>(`/api/trade-map/bundle?${q}`);
-  return data;
-}
-
 export function TradeMapGridPage() {
   const [timeframe, setTimeframe] = useState('2h');
   const [layers, setLayers] = useState<LayerState>(defaultLayers);
-  const scopeKey = scopesFromLayers(layers);
 
-  const queries = useQueries({
-    queries: GRID_SYMBOLS.map((symbol) => ({
-      queryKey: ['trade-map-grid', symbol, timeframe, scopeKey, layers.pending],
-      queryFn: () => fetchGridCell(symbol, timeframe, layers),
-      refetchInterval: GRID_POLL_MS,
-      staleTime: GRID_POLL_MS / 2,
-    })),
-  });
+  const queries = useStaggeredGridQueries(timeframe, layers);
 
   const statusText = useMemo(() => {
     const ok = queries.filter((q) => q.isSuccess).length;

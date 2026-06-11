@@ -2,8 +2,10 @@ import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { IChartApi } from 'lightweight-charts';
+import { useShallow } from 'zustand/react/shallow';
 import { apiGet } from '@/api/client.ts';
 import type { SymbolRow, TradeMarker } from '@/api/types.ts';
+import { usePageVisible } from '@/hooks/usePageVisible.ts';
 import { useTradeMapFeatureCatalog } from '@/hooks/useTradeMapFeatureCatalog.ts';
 import { useTradeMapHistory } from '@/hooks/useTradeMapHistory.ts';
 import { useTradeMapMainChart } from '@/hooks/useTradeMapMainChart.ts';
@@ -25,30 +27,33 @@ import styles from './TradeMapPage.module.css';
 export function TradeMapPage() {
   const [searchParams] = useSearchParams();
   const [mainChart, setMainChart] = useState<IChartApi | null>(null);
-  const store = useTradeMapStore();
+  const pageVisible = usePageVisible();
+
+  const symbol = useTradeMapStore((s) => s.symbol);
+  const timeframe = useTradeMapStore((s) => s.timeframe);
+  const layers = useTradeMapStore((s) => s.layers);
+  const markers = useTradeMapStore((s) => s.markers);
+  const lastCandles = useTradeMapStore((s) => s.lastCandles);
+  const lastOverlays = useTradeMapStore((s) => s.lastOverlays);
+  const lastMainOverlays = useTradeMapStore((s) => s.lastMainOverlays);
+  const lastChopMapData = useTradeMapStore((s) => s.lastChopMapData);
+  const lastTradeLinks = useTradeMapStore((s) => s.lastTradeLinks);
+  const chopRegimeRegions = useTradeMapStore((s) => s.chopRegimeRegions);
+  const strategyStageRegions = useTradeMapStore((s) => s.strategyStageRegions);
+  const selectedMarkerId = useTradeMapStore((s) => s.selectedMarkerId);
+  const featureStrategyFocus = useTradeMapStore((s) => s.featureStrategyFocus);
+  const selectedFeatureColumns = useTradeMapStore((s) => s.selectedFeatureColumns);
+  const statusText = useTradeMapStore((s) => s.statusText);
+  const loading = useTradeMapStore((s) => s.loading);
+  const mainEma1200 = useTradeMapStore((s) => s.mainEma1200);
+  const mainWeeklyEma200 = useTradeMapStore((s) => s.mainWeeklyEma200);
+  const featureDrawerOpen = useTradeMapStore((s) => s.featureDrawerOpen);
+  const paneVolume = useTradeMapStore((s) => s.paneVolume);
+  const ordersDockOpen = useTradeMapStore((s) => s.ordersDockOpen);
+  const chartFitPending = useTradeMapStore((s) => s.chartFitPending);
+  const hasCandles = useTradeMapStore((s) => s.lastCandles.length > 0);
+
   const {
-    symbol,
-    timeframe,
-    layers,
-    markers,
-    lastCandles,
-    lastOverlays,
-    lastMainOverlays,
-    lastChopMapData,
-    lastTradeLinks,
-    chopRegimeRegions,
-    strategyStageRegions,
-    selectedMarkerId,
-    featureStrategyFocus,
-    selectedFeatureColumns,
-    statusText,
-    loading,
-    mainEma1200,
-    mainWeeklyEma200,
-    featureDrawerOpen,
-    paneVolume,
-    ordersDockOpen,
-    chartFitPending,
     setSymbol: setStoreSymbol,
     setTimeframe,
     setLayers,
@@ -58,11 +63,25 @@ export function TradeMapPage() {
     setFeatureDrawerOpen,
     setPaneVolume,
     setOrdersDockOpen,
-  } = store;
+  } = useTradeMapStore(
+    useShallow((s) => ({
+      setSymbol: s.setSymbol,
+      setTimeframe: s.setTimeframe,
+      setLayers: s.setLayers,
+      setSelectedMarkerId: s.setSelectedMarkerId,
+      setBundlePhase: s.setBundlePhase,
+      setHighlightBarTime: s.setHighlightBarTime,
+      setFeatureDrawerOpen: s.setFeatureDrawerOpen,
+      setPaneVolume: s.setPaneVolume,
+      setOrdersDockOpen: s.setOrdersDockOpen,
+    })),
+  );
 
-  const { refreshFull, refreshPoll, refreshMarkersOnly, initFromLayout, resetHistory } =
+  const { refreshFull, refreshPoll, refreshMarkersOnly, refreshMainOverlays, initFromLayout, resetHistory } =
     useTradeMapBundle();
-  const { applyStrategyFocus, applyLayerDefaults } = useTradeMapFeatureCatalog();
+  const { applyStrategyFocus, applyLayerDefaults } = useTradeMapFeatureCatalog({
+    catalogEnabled: featureDrawerOpen || selectedFeatureColumns.length > 0,
+  });
   useTradeMapHistory(mainChart);
 
   const { containerRef, chartRef, candleSeriesRef, labelSpecs } = useTradeMapMainChart({
@@ -109,26 +128,22 @@ export function TradeMapPage() {
 
   useEffect(() => {
     refreshFull().catch(() => {});
-  }, [
-    refreshFull,
-    symbol,
-    timeframe,
-    mainEma1200,
-    mainWeeklyEma200,
-    selectedFeatureColumns,
-    featureStrategyFocus,
-  ]);
+  }, [refreshFull, symbol, timeframe, selectedFeatureColumns, featureStrategyFocus]);
 
   useEffect(() => {
-    if (!lastCandles.length) return;
+    refreshMainOverlays().catch(() => {});
+  }, [refreshMainOverlays, mainEma1200, mainWeeklyEma200]);
+
+  useEffect(() => {
+    if (!useTradeMapStore.getState().lastCandles.length) return;
     refreshMarkersOnly().catch(() => {});
   }, [refreshMarkersOnly, layers.trend, layers.spot, layers.multiLeg, layers.pending]);
 
   useEffect(() => {
-    if (!lastCandles.length) return;
+    if (!pageVisible || !hasCandles) return;
     const t = window.setInterval(() => refreshPoll().catch(() => {}), POLL_MS);
     return () => window.clearInterval(t);
-  }, [refreshPoll, lastCandles.length]);
+  }, [refreshPoll, pageVisible, hasCandles]);
 
   const scrollChartToBarTime = useCallback(
     (barTime: number) => {
@@ -164,12 +179,12 @@ export function TradeMapPage() {
             Symbol
             <select
               value={symbol}
-            onChange={(e) => {
-              resetHistory();
-              setStoreSymbol(e.target.value);
-              setSymbol(e.target.value);
-              setBundlePhase({ chartFitPending: true, ohlcvLoadedFrom: null });
-            }}
+              onChange={(e) => {
+                resetHistory();
+                setStoreSymbol(e.target.value);
+                setSymbol(e.target.value);
+                setBundlePhase({ chartFitPending: true, ohlcvLoadedFrom: null });
+              }}
             >
               {symbolOptions.map((row) => (
                 <option key={row.symbol} value={row.symbol}>
@@ -182,11 +197,11 @@ export function TradeMapPage() {
             周期
             <select
               value={timeframe}
-            onChange={(e) => {
-              resetHistory();
-              setTimeframe(e.target.value);
-              setBundlePhase({ chartFitPending: true, ohlcvLoadedFrom: null });
-            }}
+              onChange={(e) => {
+                resetHistory();
+                setTimeframe(e.target.value);
+                setBundlePhase({ chartFitPending: true, ohlcvLoadedFrom: null });
+              }}
             >
               <option value="15min">15min</option>
               <option value="2h">2h</option>

@@ -69,6 +69,93 @@ def _first_positive_price(*values: Any) -> Optional[float]:
     return None
 
 
+def _resolve_filled_quantity(row: Dict[str, Any], status: str) -> float:
+    """Prefer filled_quantity; for closed rows fall back to order quantity."""
+    filled = float(row.get("filled_quantity") or 0)
+    if filled > 0:
+        return filled
+    qty_raw = row.get("quantity")
+    if qty_raw is None:
+        return filled
+    try:
+        qty = float(qty_raw)
+    except (TypeError, ValueError):
+        return filled
+    if qty > 0 and status in {"filled", "closed"}:
+        return qty
+    return filled
+
+
+def _trend_entry_qty_by_position(db_path: Path, symbol: Optional[str]) -> Dict[str, float]:
+    """Entry size per position_id from filled trend orders (for closed positions)."""
+    if not db_path.is_file():
+        return {}
+    sym_clause = " AND o.symbol = ?" if symbol else ""
+    params: tuple[Any, ...] = (symbol,) if symbol else ()
+    out: Dict[str, float] = {}
+    for row in query_rows(
+        db_path,
+        f"""
+        SELECT o.position_id, o.side, o.filled_quantity, o.quantity, p.side AS pos_side
+        FROM orders o
+        INNER JOIN positions p ON p.position_id = o.position_id
+        WHERE lower(o.status) = 'filled'{sym_clause}
+        ORDER BY COALESCE(o.filled_at, o.created_at) ASC
+        """,
+        params,
+    ):
+        pid = str(row.get("position_id") or "")
+        if not pid or pid in out:
+            continue
+        pos_side = str(row.get("pos_side") or "long").lower()
+        o_side = str(row.get("side") or "").lower()
+        is_entry = (
+            o_side in {"buy", "long"}
+            if pos_side == "long"
+            else o_side in {"sell", "short"}
+        )
+        if not is_entry:
+            continue
+        qty = _resolve_filled_quantity(row, "filled")
+        if qty > 0:
+            out[pid] = qty
+    return out
+
+
+def _positions_select_from(db_path: Path) -> str:
+    cols = table_columns(db_path, "positions")
+    extra = [c for c in ("current_size", "initial_size") if c in cols]
+    base = (
+        "SELECT position_id, symbol, side, entry_time, exit_time, "
+        "entry_price, exit_price, realized_pnl, status, strategy_id, "
+        "stop_loss_price, take_profit_price"
+    )
+    if extra:
+        base += ", " + ", ".join(extra)
+    return base + "\n        FROM positions"
+
+
+def _position_display_qty(
+    row: Dict[str, Any], entry_qty_by_pid: Dict[str, float]
+) -> Optional[float]:
+    for key in ("current_size", "initial_size"):
+        val = row.get(key)
+        if val is None:
+            continue
+        try:
+            num = float(val)
+        except (TypeError, ValueError):
+            continue
+        if num > 0:
+            return num
+    pid = str(row.get("position_id") or "")
+    if pid:
+        cached = float(entry_qty_by_pid.get(pid) or 0)
+        if cached > 0:
+            return cached
+    return None
+
+
 def _stop_loss_hint(row: Dict[str, Any]) -> str:
     order_type = str(row.get("order_type") or "").lower()
     status = str(row.get("status") or "").lower()
@@ -93,7 +180,7 @@ def _normalize(
     sym = str(row.get("symbol") or "").upper()
     status = str(row.get("status") or "").lower()
     side = str(row.get("side") or "")
-    filled_qty = float(row.get("filled_quantity") or 0)
+    filled_qty = _resolve_filled_quantity(row, status)
     t = _row_time(row)
     source = str(row.get("_marker_source") or "").strip() or {
         "trend": "orders",
@@ -180,13 +267,19 @@ def _position_action_side(position_side: str, event: str) -> str:
     return "buy" if side == "long" else "sell"
 
 
-def _trend_position_event_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _trend_position_event_rows(
+    rows: List[Dict[str, Any]],
+    *,
+    entry_qty_by_pid: Optional[Dict[str, float]] = None,
+) -> List[Dict[str, Any]]:
+    qty_map = entry_qty_by_pid or {}
     out: List[Dict[str, Any]] = []
     for row in rows:
         pid = str(row.get("position_id") or "")
         sym = str(row.get("symbol") or "").upper()
         pos_side = str(row.get("side") or "long").lower()
         strat = row.get("strategy_id")
+        pos_qty = _position_display_qty(row, qty_map)
         entry_ts = _parse_ts(row.get("entry_time"))
         if entry_ts is not None:
             out.append(
@@ -198,10 +291,10 @@ def _trend_position_event_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any
                         "side": _position_action_side(pos_side, "entry"),
                         "status": "filled",
                         "order_type": "position_entry",
-                        "quantity": None,
+                        "quantity": pos_qty,
                         "price": row.get("entry_price"),
                         "average_price": row.get("entry_price"),
-                        "filled_quantity": None,
+                        "filled_quantity": pos_qty,
                         "created_at": row.get("entry_time"),
                         "strategy_id": strat,
                         "stop_loss_price": row.get("stop_loss_price"),
@@ -221,10 +314,10 @@ def _trend_position_event_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any
                         "side": _position_action_side(pos_side, "exit"),
                         "status": "closed",
                         "order_type": "position_exit",
-                        "quantity": None,
+                        "quantity": pos_qty,
                         "price": row.get("exit_price"),
                         "average_price": row.get("exit_price"),
-                        "filled_quantity": None,
+                        "filled_quantity": pos_qty,
                         "created_at": row.get("exit_time"),
                         "strategy_id": strat,
                         "realized_pnl": row.get("realized_pnl"),
@@ -542,6 +635,47 @@ def _sql_excluded_status_clause(
     return f" AND lower({alias}.status) NOT IN ({placeholders})", tuple(blocked)
 
 
+def _statuses_for_user_filter(status_filter: str) -> Optional[List[str]]:
+    """Map UI status filter to DB status values (spot/ccxt uses ``closed`` for fills)."""
+    sf = str(status_filter or "").strip().lower()
+    if not sf or sf == "all":
+        return None
+    if sf == "filled":
+        return ["filled", "closed"]
+    if sf == "open":
+        return ["open", "new", "submitted", "partially_filled"]
+    if sf == "pending":
+        return ["pending"]
+    return [sf]
+
+
+def _row_matches_status_filter(row_status: str, status_filter: str) -> bool:
+    allowed = _statuses_for_user_filter(status_filter)
+    if allowed is None:
+        return True
+    return str(row_status or "").lower() in allowed
+
+
+def _row_matches_strategy(row: Dict[str, Any], strategy: Optional[str]) -> bool:
+    want = str(strategy or "").strip().lower()
+    if not want:
+        return True
+    got = str(row.get("strategy") or row.get("strategy_id") or "").strip().lower()
+    return got == want
+
+
+def _sql_included_status_clause(
+    status_filter: str, *, alias: str
+) -> tuple[str, tuple[Any, ...]]:
+    allowed = _statuses_for_user_filter(status_filter)
+    if not allowed:
+        return "", ()
+    if len(allowed) == 1:
+        return f" AND lower({alias}.status) = ?", (allowed[0],)
+    placeholders = ",".join("?" for _ in allowed)
+    return f" AND lower({alias}.status) IN ({placeholders})", tuple(allowed)
+
+
 def trend_orders(
     db_path: Path,
     symbol: str,
@@ -584,25 +718,22 @@ def trend_orders(
             LIMIT ?
         """
         rows = query_rows(db_path, sql, (sym, *status_params, int(limit)))
-    pos_sql = """
-        SELECT position_id, symbol, side, entry_time, exit_time,
-               entry_price, exit_price, realized_pnl, status, strategy_id,
-               stop_loss_price, take_profit_price
-        FROM positions
-    """
+    pos_sql = _positions_select_from(db_path)
     pos_params: tuple[Any, ...] = ()
     if not _is_all_symbols(symbol):
         pos_sql += " WHERE symbol = ?"
         pos_params = (symbol.upper(),)
     pos_sql += " ORDER BY COALESCE(exit_time, entry_time) DESC LIMIT ?"
     pos_rows = query_rows(db_path, pos_sql, (*pos_params, int(limit)))
+    entry_qty_by_pid = _trend_entry_qty_by_position(
+        db_path, None if _is_all_symbols(symbol) else symbol.upper()
+    )
     out = [_normalize("trend", r) for r in rows]
     _enrich_trend_sl_tp(out, pos_rows)
-    out.extend(_trend_position_event_rows(pos_rows))
+    out.extend(_trend_position_event_rows(pos_rows, entry_qty_by_pid=entry_qty_by_pid))
     out.extend(_trend_operation_rows(db_path, symbol, int(limit)))
     if status:
-        st = status.lower()
-        out = [r for r in out if r["status"] == st]
+        out = [r for r in out if _row_matches_status_filter(r["status"], status)]
     out.sort(key=lambda r: r.get("time") or 0, reverse=True)
     out = out[: int(limit)]
     return out
@@ -656,11 +787,9 @@ def spot_orders_list(
     status_clause, status_params = _sql_excluded_status_clause(
         excluded, alias="spot_orders"
     )
-    status_match = ""
-    match_params: tuple[Any, ...] = ()
-    if status_filter:
-        status_match = " AND lower(spot_orders.status) = ?"
-        match_params = (status_filter,)
+    status_match, match_params = _sql_included_status_clause(
+        status_filter, alias="spot_orders"
+    )
     if _is_all_symbols(symbol):
         sql = f"""
             SELECT {select}
@@ -729,21 +858,40 @@ def multi_leg_orders_list(
     exclude_statuses: Optional[List[str]] = None,
     limit: int = 100,
     engine_data_root: Optional[Path] = None,
+    strategy: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
+    status_filter = str(status or "").strip().lower()
+    excluded = list(exclude_statuses or [])
+    if status_filter:
+        allowed = _statuses_for_user_filter(status_filter) or []
+        excluded = [s for s in excluded if s.lower() not in allowed]
     status_clause, status_params = _sql_excluded_status_clause(
-        exclude_statuses, alias="multi_leg_orders"
+        excluded, alias="multi_leg_orders"
     )
+    status_match, match_params = _sql_included_status_clause(
+        status_filter, alias="multi_leg_orders"
+    )
+    strategy_clause = ""
+    strategy_params: tuple[Any, ...] = ()
+    strat = str(strategy or "").strip().lower()
+    if strat:
+        strategy_clause = " AND lower(multi_leg_orders.strategy) = ?"
+        strategy_params = (strat,)
     if _is_all_symbols(symbol):
         sql = f"""
             SELECT local_order_id AS order_id, symbol, side, status, order_type, purpose,
                    quantity, price, stop_price, filled_quantity, average_price, created_at,
                    filled_at, strategy, leg_id, client_order_id, raw_json
             FROM multi_leg_orders
-            WHERE 1=1{status_clause}
+            WHERE 1=1{status_clause}{status_match}{strategy_clause}
             ORDER BY COALESCE(filled_at, created_at) DESC
             LIMIT ?
         """
-        rows = query_rows(db_path, sql, (*status_params, int(limit)))
+        rows = query_rows(
+            db_path,
+            sql,
+            (*status_params, *match_params, *strategy_params, int(limit)),
+        )
     else:
         sym = symbol.upper()
         sql = f"""
@@ -751,11 +899,15 @@ def multi_leg_orders_list(
                    quantity, price, stop_price, filled_quantity, average_price, created_at,
                    filled_at, strategy, leg_id, client_order_id, raw_json
             FROM multi_leg_orders
-            WHERE symbol = ?{status_clause}
+            WHERE symbol = ?{status_clause}{status_match}{strategy_clause}
             ORDER BY COALESCE(filled_at, created_at) DESC
             LIMIT ?
         """
-        rows = query_rows(db_path, sql, (sym, *status_params, int(limit)))
+        rows = query_rows(
+            db_path,
+            sql,
+            (sym, *status_params, *match_params, *strategy_params, int(limit)),
+        )
     _supplement_multileg_inventory_entries(
         db_path, symbol, rows, engine_data_root=engine_data_root
     )
@@ -774,8 +926,9 @@ def multi_leg_orders_list(
             item["order_type"] = r.get("purpose")
         out.append(item)
     if status:
-        st = status.lower()
-        out = [r for r in out if r["status"] == st]
+        out = [r for r in out if _row_matches_status_filter(r["status"], status)]
+    if strategy:
+        out = [r for r in out if _row_matches_strategy(r, strategy)]
     return out
 
 
@@ -869,6 +1022,7 @@ def collect_orders(
     limit: int = 100,
     feature_bus_root: Optional[Path] = None,
     engine_data_root: Optional[Path] = None,
+    strategy: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     merged: List[Dict[str, Any]] = []
     scope_set = {s.strip().lower() for s in scopes if s.strip()}
@@ -902,13 +1056,17 @@ def collect_orders(
                 exclude_statuses=exclude_statuses,
                 limit=per_scope,
                 engine_data_root=engine_data_root,
+                strategy=strategy,
             )
         )
     merged = _sort_orders_for_display(merged)
     merged = _exclude_statuses(merged, exclude_statuses)
-    
+
     # 隐藏非法的 _supp 单
     merged = [r for r in merged if not str(r.get("order_id") or "").endswith("_supp")]
+
+    if strategy:
+        merged = [r for r in merged if _row_matches_strategy(r, strategy)]
     
     merged = merged[: int(limit)]
     enrich_orders_pnl(

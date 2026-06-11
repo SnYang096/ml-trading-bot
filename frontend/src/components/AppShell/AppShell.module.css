@@ -1,3 +1,11 @@
+.root {
+  min-height: 100vh;
+  background:
+    linear-gradient(rgba(0, 255, 65, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 255, 65, 0.03) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
 .toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -6,22 +14,24 @@
   padding: 10px 16px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-elevated);
-  box-shadow: 0 1px 0 var(--border-bright), inset 0 -1px 0 rgba(0, 255, 65, 0.05);
+  box-shadow:
+    0 1px 0 var(--border-bright),
+    inset 0 -1px 0 rgba(0, 255, 65, 0.08);
 }
 
 .title {
   font-family: var(--font-mono);
-  font-size: 0.95rem;
-  font-weight: 600;
+  font-size: 0.98rem;
+  font-weight: 700;
   margin: 0 8px 0 0;
   flex-shrink: 0;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.03em;
   white-space: nowrap;
 }
 
 .prompt {
   color: var(--accent-cyan);
-  text-shadow: 0 0 8px rgba(0, 255, 255, 0.35);
+  text-shadow: var(--glow-cyan);
 }
 
 .path {
@@ -30,6 +40,7 @@
 
 .cursor {
   color: var(--accent);
+  text-shadow: var(--glow-strong);
   animation: blink 1.05s step-end infinite;
 }
 
@@ -46,22 +57,24 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg);
+  box-shadow: inset 0 0 12px rgba(0, 255, 65, 0.06);
 }
 
 .navLink {
   color: var(--text-muted);
   text-decoration: none;
   font-family: var(--font-mono);
-  font-size: 0.78rem;
-  padding: 4px 10px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 5px 11px;
   border-radius: var(--radius);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.07em;
   border: 1px solid transparent;
 }
 
 .navLink:hover {
-  color: var(--accent);
+  color: var(--accent-bright);
   border-color: var(--border);
   background: var(--surface);
   text-shadow: var(--glow);
@@ -72,6 +85,7 @@
   background: var(--nav-active);
   border-color: var(--nav-active-border);
   box-shadow: var(--glow);
+  text-shadow: var(--glow);
 }
 
 .extLinks {
@@ -83,15 +97,18 @@
 }
 
 .extLinks a {
-  font-size: 0.75rem;
+  font-size: 0.78rem;
+  font-weight: 600;
   font-family: var(--font-mono);
   color: var(--text-muted);
   border-bottom: 1px dashed var(--border);
+  text-shadow: none;
 }
 
 .extLinks a:hover {
   color: var(--accent-cyan);
   border-bottom-color: var(--accent-cyan);
+  text-shadow: var(--glow-cyan);
 }
 
 .main {

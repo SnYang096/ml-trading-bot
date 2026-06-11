@@ -29,6 +29,7 @@ export function RegimePage() {
   const { data, isLoading, error, refetch, dataUpdatedAt } = useQuery({
     queryKey: ['regime-ops'],
     queryFn: () => apiGet<RegimeOpsRow[]>('/api/trend/regime-ops'),
+    staleTime: 60_000,
   });
 
   const rows = data?.data || [];

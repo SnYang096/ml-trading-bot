@@ -61,6 +61,7 @@ export function MonitoringPage() {
   const { data, isLoading, error, refetch, dataUpdatedAt } = useQuery({
     queryKey: ['monitoring-dashboard'],
     queryFn: () => apiGet<MonitoringDashboard>('/api/monitoring/dashboard'),
+    staleTime: 60_000,
   });
 
   const dashboard = data?.data;

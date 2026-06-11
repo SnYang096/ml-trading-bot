@@ -16,14 +16,18 @@ interface FeatureColumnsResponse {
   taxonomy?: unknown;
 }
 
-export function useTradeMapFeatureCatalog() {
+export function useTradeMapFeatureCatalog(opts?: { catalogEnabled?: boolean }) {
   const symbol = useTradeMapStore((s) => s.symbol);
   const timeframe = useTradeMapStore((s) => s.timeframe);
   const layers = useTradeMapStore((s) => s.layers);
   const selected = useTradeMapStore((s) => s.selectedFeatureColumns);
+  const featureDrawerOpen = useTradeMapStore((s) => s.featureDrawerOpen);
   const setAvailable = useTradeMapStore((s) => s.setAvailableFeatureColumns);
   const setSelected = useTradeMapStore((s) => s.setSelectedFeatureColumns);
   const setFocus = useTradeMapStore((s) => s.setFeatureStrategyFocus);
+
+  const catalogEnabled =
+    opts?.catalogEnabled ?? (featureDrawerOpen || selected.length > 0);
 
   const query = useQuery({
     queryKey: ['feature-columns', symbol, timeframe],
@@ -31,6 +35,7 @@ export function useTradeMapFeatureCatalog() {
       apiGet<FeatureColumnsResponse>(
         `/api/bus/features/columns?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`,
       ),
+    enabled: catalogEnabled,
   });
 
   useEffect(() => {

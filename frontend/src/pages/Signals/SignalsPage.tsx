@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { useMemo, useState } from 'react';
 import { apiGet } from '@/api/client.ts';
+import { usePageVisible, visibleRefetchInterval } from '@/hooks/usePageVisible.ts';
 import type { SignalRow } from '@/api/types.ts';
 
 function fmtBarTime(meta: { timestamp?: string } | undefined): string {
@@ -54,6 +55,7 @@ function LastStrategyLines({ block }: { block?: StrategyBlock }) {
 }
 
 export function SignalsPage() {
+  const pageVisible = usePageVisible();
   const [timeframe, setTimeframe] = useState('2h');
   const [lookback, setLookback] = useState('7');
 
@@ -64,7 +66,7 @@ export function SignalsPage() {
         timeframe,
         lookback_days: lookback,
       }),
-    refetchInterval: 20_000,
+    refetchInterval: visibleRefetchInterval(pageVisible, 20_000),
   });
 
   const rows = data?.data || [];

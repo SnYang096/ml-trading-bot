@@ -14,12 +14,13 @@ html {
 body {
   margin: 0;
   font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: 1.45;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.5;
   background: var(--bg);
   color: var(--text);
-  min-height: 100%;
-  text-shadow: 0 0 1px rgba(0, 255, 65, 0.25);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 body::before {
@@ -32,10 +33,10 @@ body::before {
     0deg,
     transparent,
     transparent 2px,
-    rgba(0, 0, 0, 0.14) 2px,
-    rgba(0, 0, 0, 0.14) 4px
+    rgba(0, 0, 0, 0.08) 2px,
+    rgba(0, 0, 0, 0.08) 4px
   );
-  opacity: 0.35;
+  opacity: 0.22;
 }
 
 body::after {
@@ -44,22 +45,29 @@ body::after {
   position: fixed;
   inset: 0;
   z-index: 9998;
-  background: radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.55) 100%);
+  background: radial-gradient(ellipse at center, transparent 62%, rgba(0, 0, 0, 0.38) 100%);
+}
+
+#root {
+  min-height: 100vh;
+  position: relative;
+  z-index: 1;
 }
 
 ::selection {
-  background: rgba(0, 255, 65, 0.25);
-  color: var(--accent);
+  background: rgba(0, 255, 65, 0.35);
+  color: var(--accent-bright);
 }
 
 a {
   color: var(--accent-cyan);
   text-decoration: none;
+  text-shadow: var(--glow-cyan);
 }
 
 a:hover {
-  color: var(--accent);
-  text-shadow: var(--glow);
+  color: var(--accent-bright);
+  text-shadow: var(--glow-strong);
 }
 
 .muted {
@@ -68,36 +76,50 @@ a:hover {
 
 .pnl-pos {
   color: var(--positive);
-  text-shadow: 0 0 6px rgba(0, 255, 136, 0.45);
+  font-weight: 600;
+  text-shadow: 0 0 8px rgba(0, 255, 136, 0.6);
 }
 
 .pnl-neg {
   color: var(--negative);
-  text-shadow: 0 0 6px rgba(255, 0, 64, 0.45);
+  font-weight: 600;
+  text-shadow: 0 0 8px rgba(255, 51, 102, 0.55);
 }
 
 .page {
-  padding: 16px;
+  padding: 16px 18px;
 }
 
 .page h2 {
-  margin: 0 0 12px;
-  font-size: 1.1rem;
+  margin: 0 0 14px;
+  font-size: 1.15rem;
+  font-weight: 700;
   color: var(--accent);
   text-transform: uppercase;
+  letter-spacing: 0.1em;
+  text-shadow: var(--glow);
+}
+
+.page h3 {
+  margin: 0 0 10px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--accent-cyan);
+  text-transform: uppercase;
   letter-spacing: 0.08em;
+  text-shadow: var(--glow-cyan);
 }
 
 .data-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.85rem;
+  font-size: 0.88rem;
 }
 
 .data-table th,
 .data-table td {
   border: 1px solid var(--border);
-  padding: 6px 10px;
+  padding: 7px 11px;
   text-align: left;
   vertical-align: top;
 }
@@ -105,14 +127,29 @@ a:hover {
 .data-table th {
   background: var(--surface);
   color: var(--accent-cyan);
-  font-weight: 600;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-size: 0.75rem;
+  letter-spacing: 0.07em;
+  font-size: 0.78rem;
+  text-shadow: var(--glow-cyan);
+}
+
+.data-table td {
+  color: var(--text);
 }
 
 .data-table tr:hover td {
   background: var(--surface-hover);
+}
+
+.data-table tr.selected td {
+  background: rgba(0, 255, 65, 0.14);
+  box-shadow: inset 0 0 0 1px var(--border-bright);
+}
+
+.data-table strong {
+  color: var(--accent-bright);
+  font-weight: 700;
 }
 
 .toolbar-row {
@@ -120,18 +157,24 @@ a:hover {
   flex-wrap: wrap;
   gap: 8px 12px;
   align-items: center;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  box-shadow: inset 0 0 20px rgba(0, 255, 65, 0.04);
 }
 
 .toolbar-row select,
 .toolbar-row button,
 .toolbar-row input {
   font-family: var(--font-mono);
+  font-size: 0.88rem;
+  font-weight: 500;
   background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 4px 8px;
+  padding: 5px 10px;
 }
 
 .toolbar-row select:focus,
@@ -143,27 +186,96 @@ a:hover {
 
 .toolbar-row button {
   cursor: pointer;
+  color: var(--accent-bright);
 }
 
-.toolbar-row button:hover {
+.toolbar-row button:hover:not(:disabled) {
   border-color: var(--accent);
   color: var(--accent);
   box-shadow: var(--glow);
 }
 
-.status-line {
-  font-size: 0.8rem;
+.toolbar-row button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.toolbar-row label {
   color: var(--text-muted);
-  margin-top: 8px;
+  font-size: 0.85rem;
+}
+
+.chk-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.chk-pill:hover {
+  border-color: var(--accent);
+  box-shadow: var(--glow);
+}
+
+.strategy-line {
+  margin-bottom: 2px;
+  color: var(--text);
+}
+
+.strategy-line strong {
+  color: var(--accent-cyan);
+}
+
+.status-line {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-top: 10px;
 }
 
 .panel {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-elevated);
-  padding: 12px;
+  padding: 14px 16px;
   margin-bottom: 16px;
-  box-shadow: inset 0 0 24px rgba(0, 255, 65, 0.03);
+  box-shadow:
+    inset 0 0 28px rgba(0, 255, 65, 0.05),
+    0 0 12px rgba(0, 255, 65, 0.06);
+}
+
+.panel > div:not(.muted) {
+  color: var(--text);
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.panel pre {
+  color: var(--accent-bright);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 10px 12px;
+  margin: 8px 0 0;
+}
+
+.panel dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 16px;
+  margin: 0;
+}
+
+.panel dt {
+  color: var(--accent-cyan);
+  font-weight: 600;
+}
+
+.panel dd {
+  margin: 0;
+  color: var(--text);
 }
 
 .hidden {
