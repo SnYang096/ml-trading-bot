@@ -472,11 +472,12 @@ def trade_map_bundle(
             map_timeframe=tf,
             **mk,
         )
-        if ohlcv_mode == "full" and ohlcv.get("candles"):
+        if chart_candles and ohlcv_mode != "tail":
             candle_times = [
-                int(c["time"]) for c in ohlcv["candles"] if c.get("time") is not None
+                int(c["time"]) for c in chart_candles if c.get("time") is not None
             ]
-            markers = align_markers_to_candles(markers, candle_times)
+            if candle_times:
+                markers = align_markers_to_candles(markers, candle_times)
     marker_counts = marker_scope_counts(markers)
 
     current_time = None

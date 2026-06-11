@@ -773,30 +773,39 @@ def align_markers_to_candles(
     markers: List[Dict[str, Any]],
     candle_times: List[int],
 ) -> List[Dict[str, Any]]:
-    """Pin markers onto visible bars (LWC drops markers outside series times)."""
+    """Pin markers onto chart bar times (LWC only renders markers on series times)."""
     if not candle_times:
         return markers
     times = sorted(int(t) for t in candle_times)
+    times_set = set(times)
     first_t, last_t = times[0], times[-1]
     out: List[Dict[str, Any]] = []
     for m in markers:
         item = dict(m)
         t = int(item["time"])
-        if first_t <= t <= last_t:
-            out.append(item)
-            continue
-        detail = dict(item.get("detail") or {})
-        detail["order_time"] = t
-        item["detail"] = detail
         pending = str(item.get("status") or "filled").lower() == "pending"
         if pending:
-            item["time"] = last_t if t > last_t else first_t
+            if t < first_t:
+                snapped = first_t
+            elif t > last_t:
+                snapped = last_t
+            else:
+                snapped = _nearest_candle_time(times, t)
+            item["time"] = snapped
+            out.append(item)
+            continue
+        if t < first_t:
+            snapped = first_t
+        elif t > last_t:
+            snapped = last_t
         else:
-            item["time"] = _nearest_candle_time(times, t)
-            if item["time"] < first_t:
-                item["time"] = first_t
-            elif item["time"] > last_t:
-                item["time"] = last_t
+            snapped = _nearest_candle_time(times, t)
+        if snapped != t or t not in times_set:
+            detail = dict(item.get("detail") or {})
+            if "order_time" not in detail:
+                detail["order_time"] = t
+            item["detail"] = detail
+        item["time"] = snapped
         out.append(item)
     return out
 

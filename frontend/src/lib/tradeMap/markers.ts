@@ -447,6 +447,52 @@ export function markersToLwc(
   });
 }
 
+function nearestCandleTime(times: number[], t: number): number {
+  let best = times[0];
+  let bestDist = Math.abs(best - t);
+  for (let i = 1; i < times.length; i++) {
+    const dist = Math.abs(times[i] - t);
+    if (dist < bestDist) {
+      best = times[i];
+      bestDist = dist;
+    }
+  }
+  return best;
+}
+
+/** LWC requires marker time to match a candle time exactly (unix sec). */
+export function snapMarkersToCandleTimes(
+  markers: TradeMarker[],
+  candles: Candle[],
+): TradeMarker[] {
+  const times = [...new Set(candles.map((c) => Number(c.time)).filter(Number.isFinite))].sort(
+    (a, b) => a - b,
+  );
+  if (!times.length) return markers;
+  const timeSet = new Set(times);
+  const first = times[0];
+  const last = times[times.length - 1];
+  return markers.map((m) => {
+    const t = Number(m.time);
+    if (!Number.isFinite(t)) return m;
+    const pending = (m.status || 'filled').toLowerCase() === 'pending';
+    let snapped: number;
+    if (pending) {
+      if (t < first) snapped = first;
+      else if (t > last) snapped = last;
+      else snapped = nearestCandleTime(times, t);
+    } else if (t < first) snapped = first;
+    else if (t > last) snapped = last;
+    else snapped = nearestCandleTime(times, t);
+    if (snapped === t && timeSet.has(t)) return m;
+    const detail = { ...(m.detail || {}) };
+    if (snapped !== t && detail.order_time == null) {
+      detail.order_time = t;
+    }
+    return { ...m, time: snapped, detail };
+  });
+}
+
 export function prepareChartMarkers(
   raw: TradeMarker[] | null | undefined,
   candles: Candle[],
@@ -471,6 +517,9 @@ export function prepareChartMarkers(
     if (layers.spot) scopes.add('spot');
     if (layers.multiLeg) scopes.add('multi_leg');
     incoming = incoming.filter((m) => scopes.has(String(m.scope || '').toLowerCase()));
+  }
+  if (candles.length) {
+    incoming = snapMarkersToCandleTimes(incoming, candles);
   }
   return incoming;
 }

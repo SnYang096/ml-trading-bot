@@ -20,6 +20,14 @@ def test_align_markers_snaps_filled_to_nearest_bar():
     assert out[1]["time"] == 400
 
 
+def test_align_markers_snaps_in_range_off_bar_time():
+    """Filled orders between bar opens must pin to nearest candle (LWC requirement)."""
+    markers = [{"time": 250, "status": "filled", "scope": "trend", "event": "entry"}]
+    out = align_markers_to_candles(markers, [200, 300, 400])
+    assert out[0]["time"] in (200, 300)
+    assert out[0]["detail"]["order_time"] == 250
+
+
 def test_marker_scope_counts():
     markers = [
         {"scope": "trend"},

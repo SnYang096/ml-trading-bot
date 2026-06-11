@@ -19,6 +19,8 @@ import {
   isFeatureBusRegimeExitMarker,
   markersForChartDisplay,
   markersToLwc,
+  prepareChartMarkers,
+  snapMarkersToCandleTimes,
 } from '@/lib/tradeMap/markers.ts';
 import { mergeTradeLinks, tradeLinksForDisplay, buildTradeLinkLines, resolveTradeLinkEndpoints } from '@/lib/tradeMap/tradeLinks.ts';
 import { visibleCandleIndexRange } from '@/lib/tradeMap/chartOverlay.ts';
@@ -87,6 +89,28 @@ describe('tradeMap markers', () => {
   it('markersForChartDisplay keeps selected id', () => {
     const scoped = markersForChartDisplay(sampleMarkers, 'tpc', 'multi_leg:orders:6');
     expect(scoped.some((m) => m.id === 'multi_leg:orders:6')).toBe(true);
+  });
+
+  it('snapMarkersToCandleTimes pins off-bar order times to nearest bar', () => {
+    const candles = [
+      { time: 200, open: 1, high: 2, low: 1, close: 1.5 },
+      { time: 300, open: 1.5, high: 2, low: 1.4, close: 1.8 },
+    ];
+    const markers = [
+      {
+        id: 'trend:positions:p1:entry',
+        time: 250,
+        scope: 'trend',
+        strategy: 'tpc',
+        event: 'entry',
+        side: 'long',
+      },
+    ] as TradeMarker[];
+    const snapped = snapMarkersToCandleTimes(markers, candles);
+    expect(snapped[0].time).toBe(200);
+    expect(snapped[0].detail?.order_time).toBe(250);
+    const prepared = prepareChartMarkers(markers, candles, {}, { trend: true, spot: false, multiLeg: false }, 'tpc');
+    expect(prepared[0].time).toBe(200);
   });
 
   it('isFeatureBusRegimeExitMarker detects feature_bus hysteresis exits', () => {
