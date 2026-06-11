@@ -70,3 +70,12 @@ def test_fetch_ohlcv_window_limit(bus_root):
             end=pd.Timestamp("2024-06-01", tz="UTC"),
             max_days=7,
         )
+
+
+def test_fetch_ohlcv_in_process_cache(bus_root):
+    start = pd.Timestamp("2024-01-01", tz="UTC")
+    end = pd.Timestamp("2024-01-01 23:59", tz="UTC")
+    first = fetch_ohlcv(bus_root, "ETHUSDT", "2h", start=start, end=end, max_days=90)
+    second = fetch_ohlcv(bus_root, "ETHUSDT", "2h", start=start, end=end, max_days=90)
+    assert first["candles"] == second["candles"]
+    assert first["row_count"] == second["row_count"]

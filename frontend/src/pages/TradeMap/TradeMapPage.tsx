@@ -152,9 +152,6 @@ export function TradeMapPage() {
     refreshFull().catch(() => {});
   }, [refreshFull, symbol, timeframe, selectedFeatureColumns, featureStrategyFocus]);
 
-  useEffect(() => {
-    refreshMainOverlays().catch(() => {});
-  }, [refreshMainOverlays, mainEma1200, mainWeeklyEma200]);
 
   useEffect(() => {
     if (!useTradeMapStore.getState().lastCandles.length) return;
@@ -238,7 +235,10 @@ export function TradeMapPage() {
             <input
               type="checkbox"
               checked={mainEma1200}
-              onChange={(e) => setBundlePhase({ mainEma1200: e.target.checked })}
+              onChange={(e) => {
+                setBundlePhase({ mainEma1200: e.target.checked });
+                refreshMainOverlays().catch(() => {});
+              }}
             />
             EMA1200
           </label>
@@ -246,7 +246,10 @@ export function TradeMapPage() {
             <input
               type="checkbox"
               checked={mainWeeklyEma200}
-              onChange={(e) => setBundlePhase({ mainWeeklyEma200: e.target.checked })}
+              onChange={(e) => {
+                setBundlePhase({ mainWeeklyEma200: e.target.checked });
+                refreshMainOverlays().catch(() => {});
+              }}
             />
             W-EMA200
           </label>

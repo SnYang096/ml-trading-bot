@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import copy
 import json
+import os
+import time
 from datetime import date
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
+
+# In-process cache: Trade Map issues several bundle calls per interaction (shell,
+# features, EMA warmup). Keyed by window + bars_1min mtime; short TTL for live tail.
+_OHLCV_RESULT_CACHE: Dict[Tuple[Any, ...], Tuple[float, float, Dict[str, Any]]] = {}
+_OHLCV_CACHE_TTL_SEC = float(os.getenv("MLBOT_CONSOLE_OHLCV_CACHE_TTL", "45"))
 
 from mlbot_console.services.live_storage_bars import load_live_storage_bars_1min
 from mlbot_console.services.macro_spot_daily import MacroSpotDailyLoader
@@ -176,6 +184,18 @@ def bars_1min_bounds(path: Path) -> Tuple[Optional[pd.Timestamp], Optional[pd.Ti
     return _utc_ts(ts.min()), _utc_ts(ts.max()), int(len(df))
 
 
+def _parquet_time_filters(
+    start: Optional[pd.Timestamp],
+    end: Optional[pd.Timestamp],
+) -> Optional[List[Tuple[str, str, Any]]]:
+    filters: List[Tuple[str, str, Any]] = []
+    if start is not None:
+        filters.append(("timestamp", ">=", _utc_ts(start).to_pydatetime()))
+    if end is not None:
+        filters.append(("timestamp", "<=", _utc_ts(end).to_pydatetime()))
+    return filters or None
+
+
 def load_bars_1min(
     feature_bus_root: Path,
     symbol: str,
@@ -187,10 +207,14 @@ def load_bars_1min(
     if not path.is_file():
         return pd.DataFrame()
     cols = ["timestamp", "open", "high", "low", "close", "volume"]
+    filters = _parquet_time_filters(start, end)
     try:
-        df = pd.read_parquet(path, columns=cols)
+        df = pd.read_parquet(path, columns=cols, filters=filters)
     except (OSError, ValueError, KeyError):
-        df = pd.read_parquet(path)
+        try:
+            df = pd.read_parquet(path, columns=cols)
+        except (OSError, ValueError, KeyError):
+            df = pd.read_parquet(path)
     if df.empty or "timestamp" not in df.columns:
         return pd.DataFrame()
     df = df.copy()
@@ -584,6 +608,38 @@ def _resolve_window(
     return start_ts, end_ts, clipped, row_count
 
 
+def _ohlcv_cache_key(
+    feature_bus_root: Path,
+    symbol: str,
+    timeframe: str,
+    *,
+    start: Optional[pd.Timestamp],
+    end: Optional[pd.Timestamp],
+    max_days: int,
+    full_range: bool,
+    stitch_live_storage: bool,
+) -> Tuple[Any, ...]:
+    start_key = _utc_ts(start).isoformat() if start is not None else None
+    end_key = _utc_ts(end).isoformat() if end is not None else None
+    return (
+        str(feature_bus_root.resolve()),
+        symbol.upper(),
+        str(timeframe).strip(),
+        start_key,
+        end_key,
+        int(max_days),
+        bool(full_range),
+        bool(stitch_live_storage),
+    )
+
+
+def _bars_1min_mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime if path.is_file() else 0.0
+    except OSError:
+        return 0.0
+
+
 def fetch_ohlcv(
     feature_bus_root: Path,
     symbol: str,
@@ -638,6 +694,26 @@ def fetch_ohlcv(
     do_stitch = bool(
         stitch_live_storage and bars_root is not None and bars_root.is_dir()
     )
+    cache_key = _ohlcv_cache_key(
+        feature_bus_root,
+        symbol,
+        tf,
+        start=start,
+        end=end,
+        max_days=max_days,
+        full_range=full_range,
+        stitch_live_storage=do_stitch,
+    )
+    bars_mtime = _bars_1min_mtime(path)
+    now = time.monotonic()
+    cached = _OHLCV_RESULT_CACHE.get(cache_key)
+    if cached is not None:
+        cached_mtime, cached_at, payload = cached
+        if (
+            cached_mtime == bars_mtime
+            and now - cached_at < _OHLCV_CACHE_TTL_SEC
+        ):
+            return copy.deepcopy(payload)
     use_full = full_range and start is None and end is None
     start_ts, end_ts, clipped, bars_1min_rows = _resolve_window(
         path,
@@ -672,7 +748,7 @@ def fetch_ohlcv(
         actual_start = _utc_ts(resampled["timestamp"].min())
         actual_end = _utc_ts(resampled["timestamp"].max())
         last_candle_time = int(actual_end.timestamp())
-    return {
+    payload = {
         "symbol": symbol.upper(),
         "timeframe": timeframe,
         "candles": ohlcv_to_candles(resampled),
@@ -690,3 +766,8 @@ def fetch_ohlcv(
         "expected_bars": expected_bars,
         "data_sparse": data_sparse,
     }
+    _OHLCV_RESULT_CACHE[cache_key] = (bars_mtime, now, copy.deepcopy(payload))
+    if len(_OHLCV_RESULT_CACHE) > 64:
+        oldest_key = min(_OHLCV_RESULT_CACHE, key=lambda k: _OHLCV_RESULT_CACHE[k][1])
+        _OHLCV_RESULT_CACHE.pop(oldest_key, None)
+    return payload

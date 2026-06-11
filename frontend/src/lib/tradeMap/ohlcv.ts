@@ -38,7 +38,7 @@ export function ohlcvInitialQueryRange(timeframe: string | null | undefined): Oh
   return {
     from: start.toISOString(),
     to: end.toISOString(),
-    full_range: 'true',
+    full_range: 'false',
   };
 }
 

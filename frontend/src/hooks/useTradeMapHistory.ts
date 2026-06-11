@@ -22,7 +22,7 @@ import {
 } from '@/stores/tradeMapStore.ts';
 
 const PREFETCH_THRESHOLD = 25;
-const PREFETCH_DELAY_MS = 350;
+const PREFETCH_DELAY_MS = 600;
 
 async function fetchBundle(query: string) {
   return apiGet<BundleData>(`/api/trade-map/bundle?${query}`);
@@ -58,8 +58,13 @@ export function useTradeMapHistory(mainChart: IChartApi | null) {
     inFlightRef.current = true;
     useTradeMapStore.setState({ statusText: '加载更早历史…' });
 
+    const cols = bundleFeatureColumns(state);
+    const needFeatures = cols.length > 0;
+    const needChop = state.layers.chopGrid;
+    const needStages = Boolean(stageRg);
+
     try {
-      const q = apiQuery({
+      const ohlcvQ = apiQuery({
         symbol: state.symbol,
         timeframe: state.timeframe,
         scopes: scopesFromLayers(state.layers),
@@ -67,18 +72,15 @@ export function useTradeMapHistory(mainChart: IChartApi | null) {
         from: newFromIso,
         to: isoFromUnixSec(Number(oldest)),
         include_ohlcv: 'full',
-        include_features: bundleFeatureColumns(state).length > 0 ? 'true' : 'false',
+        include_features: 'false',
         include_markers: 'false',
         include_trade_links: 'false',
-        include_chop: state.layers.chopGrid ? 'true' : 'false',
+        include_chop: 'false',
         full_range: 'false',
-        feature_columns: featParam || undefined,
         main_overlays: mainOl || undefined,
-        stage_regions: stageRg || undefined,
-        strategy: state.featureStrategyFocus.trim() || undefined,
       });
 
-      const { data, meta } = await fetchBundle(q);
+      const { data, meta } = await fetchBundle(ohlcvQ);
       const more = sanitizeCandlesForLwc(data.ohlcv?.candles || []);
       if (!more.length) {
         useTradeMapStore.setState({ historyExhausted: true });
@@ -102,15 +104,36 @@ export function useTradeMapHistory(mainChart: IChartApi | null) {
       }
 
       let nextOverlays = state.lastOverlays;
-      if (data.overlays && Object.keys(data.overlays).length) {
-        nextOverlays = mergeFeatureOverlays(state.lastOverlays, data.overlays, merged);
-      }
+      let nextChop = state.lastChopMapData;
+      let nextRegime = state.chopRegimeRegions;
+      let nextStages = state.strategyStageRegions;
 
-      const nextChop = data.chop_grid_overlay || state.lastChopMapData;
-      const nextRegime = data.chop_regime_regions?.length
-        ? data.chop_regime_regions
-        : state.chopRegimeRegions;
-      const nextStages = data.strategy_stage_regions || state.strategyStageRegions;
+      if (needFeatures || needChop || needStages) {
+        const featQ = apiQuery({
+          symbol: state.symbol,
+          timeframe: state.timeframe,
+          scopes: scopesFromLayers(state.layers),
+          include_pending: String(state.layers.pending),
+          from: newFromIso,
+          to: isoFromUnixSec(Number(oldest)),
+          include_ohlcv: 'none',
+          include_features: needFeatures ? 'true' : 'false',
+          include_markers: 'false',
+          include_trade_links: 'false',
+          include_chop: needChop ? 'true' : 'false',
+          full_range: 'false',
+          feature_columns: featParam || undefined,
+          stage_regions: stageRg || undefined,
+          strategy: state.featureStrategyFocus.trim() || undefined,
+        });
+        const { data: featData } = await fetchBundle(featQ);
+        if (featData.overlays && Object.keys(featData.overlays).length) {
+          nextOverlays = mergeFeatureOverlays(state.lastOverlays, featData.overlays, merged);
+        }
+        if (featData.chop_grid_overlay) nextChop = featData.chop_grid_overlay;
+        if (featData.chop_regime_regions?.length) nextRegime = featData.chop_regime_regions;
+        if (featData.strategy_stage_regions) nextStages = featData.strategy_stage_regions;
+      }
 
       let markerFrom = state.markerQueryFromIso;
       if (

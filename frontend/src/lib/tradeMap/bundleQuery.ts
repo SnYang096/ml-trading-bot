@@ -186,7 +186,8 @@ export function buildFullFeaturesQuery(
     from: range.from || markerFrom || ohlcv.from || init.from,
     to: range.to || ohlcv.to || init.to,
     full_range: ohlcv.full_range,
-    include_ohlcv: 'full',
+    // OHLCV already loaded by shell; backend uses internal candles for overlay align.
+    include_ohlcv: 'none',
     include_features: cols.length ? 'true' : 'false',
     include_markers: 'false',
     include_trade_links: 'false',
