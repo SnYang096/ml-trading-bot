@@ -453,13 +453,16 @@ def run_watchdog(args: argparse.Namespace) -> int:
     if factor_health:
         lines.append("  [factor_health]")
         for it in factor_health.get("items") or []:
+            if it.get("skipped"):
+                lines.append(f"      skip ({it.get('kind', '?')}): {it['skipped']}")
+                continue
             if it.get("kind") == "ic_drift":
                 lines.append(
-                    f"      IC {it['feature']}: {it['current_ic']:+.4f} "
+                    f"      IC {it.get('feature', '?')}: {it['current_ic']:+.4f} "
                     f"(base {it['baseline_ic']:+.4f}, flip={it.get('sign_flip')})"
                 )
             elif it.get("kind") == "psi" and it.get("psi") is not None:
-                lines.append(f"      PSI {it['feature']}: {it['psi']:.3f}")
+                lines.append(f"      PSI {it.get('feature', '?')}: {it['psi']:.3f}")
         for a in factor_health.get("alerts") or []:
             lines.append(f"      ALERT: {a}")
     print("\n".join(lines))
