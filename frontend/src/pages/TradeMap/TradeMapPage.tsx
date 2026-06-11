@@ -14,7 +14,7 @@ import {
   scrollIndexForTime,
 } from '@/lib/tradeMap';
 import { getSymbol, setSymbol, SCOPE_LABELS } from '@/lib/shell.ts';
-import { scopesFromLayers, useTradeMapStore } from '@/stores/tradeMapStore.ts';
+import { scopesFromLayers, useTradeMapStore, POLL_MS } from '@/stores/tradeMapStore.ts';
 import { ChopGridLabelLayer } from './components/ChopGridLabelLayer.tsx';
 import { FeatureDrawer } from './components/FeatureDrawer.tsx';
 import { MarkerDetailDrawer } from './components/MarkerDetailDrawer.tsx';
@@ -60,7 +60,8 @@ export function TradeMapPage() {
     setOrdersDockOpen,
   } = store;
 
-  const { refreshFull, initFromLayout, resetHistory } = useTradeMapBundle();
+  const { refreshFull, refreshPoll, refreshMarkersOnly, initFromLayout, resetHistory } =
+    useTradeMapBundle();
   const { applyStrategyFocus, applyLayerDefaults } = useTradeMapFeatureCatalog();
   useTradeMapHistory(mainChart);
 
@@ -108,18 +109,26 @@ export function TradeMapPage() {
 
   useEffect(() => {
     refreshFull().catch(() => {});
-    const t = window.setInterval(() => refreshFull().catch(() => {}), 10_000);
-    return () => window.clearInterval(t);
   }, [
     refreshFull,
     symbol,
     timeframe,
-    layers,
     mainEma1200,
     mainWeeklyEma200,
     selectedFeatureColumns,
     featureStrategyFocus,
   ]);
+
+  useEffect(() => {
+    if (!lastCandles.length) return;
+    refreshMarkersOnly().catch(() => {});
+  }, [refreshMarkersOnly, layers.trend, layers.spot, layers.multiLeg, layers.pending]);
+
+  useEffect(() => {
+    if (!lastCandles.length) return;
+    const t = window.setInterval(() => refreshPoll().catch(() => {}), POLL_MS);
+    return () => window.clearInterval(t);
+  }, [refreshPoll, lastCandles.length]);
 
   const scrollChartToBarTime = useCallback(
     (barTime: number) => {

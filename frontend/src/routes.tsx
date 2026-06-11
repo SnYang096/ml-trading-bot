@@ -5,6 +5,7 @@ import { MonitoringPage } from '@/pages/Monitoring/MonitoringPage.tsx';
 import { OrdersPage } from '@/pages/Orders/OrdersPage.tsx';
 import { RegimePage } from '@/pages/Regime/RegimePage.tsx';
 import { SignalsPage } from '@/pages/Signals/SignalsPage.tsx';
+import { TradeMapGridPage } from '@/pages/TradeMapGrid/TradeMapGridPage.tsx';
 import { TradeMapPage } from '@/pages/TradeMap/TradeMapPage.tsx';
 
 export function AppRoutes() {
@@ -13,6 +14,7 @@ export function AppRoutes() {
       <Route element={<AppShell />}>
         <Route index element={<Navigate to="/trade-map" replace />} />
         <Route path="/trade-map" element={<TradeMapPage />} />
+        <Route path="/trade-map-grid" element={<TradeMapGridPage />} />
         <Route path="/orders" element={<OrdersPage />} />
         <Route path="/signals" element={<SignalsPage />} />
         <Route path="/account" element={<AccountPage />} />

@@ -1,45 +1,27 @@
-import { useCallback } from 'react';
-import { apiGet, apiQuery } from '@/api/client.ts';
-import type { BundleData, TradeLink } from '@/api/types.ts';
+import { useCallback, useRef } from 'react';
+import { apiGet } from '@/api/client.ts';
+import type { BundleData, Candle, TradeLink } from '@/api/types.ts';
+import { ohlcvInitialQueryRange } from '@/lib/tradeMap';
 import {
-  featureColumnsParam,
-  mainOverlaysQueryParam,
-  ohlcvInitialQueryRange,
-  stageRegionsQueryParam,
+  buildFullFeaturesQuery,
+  buildFullMarkersQuery,
+  buildFullShellQuery,
+  buildMarkersOnlyQuery,
+  buildPollQuery,
+} from '@/lib/tradeMap/bundleQuery.ts';
+import {
+  mergeCandlesByTime,
+  mergeMarkersById,
+  mergeTradeLinks,
+  sanitizeCandlesForLwc,
 } from '@/lib/tradeMap';
 import { setSymbol } from '@/lib/shell.ts';
 import {
   loadLayout,
   resetHistoryState,
   saveLayout,
-  scopesFromLayers,
   useTradeMapStore,
 } from '@/stores/tradeMapStore.ts';
-
-function markerRangeParams(state: ReturnType<typeof useTradeMapStore.getState>) {
-  const out: Record<string, string> = {};
-  if (state.ohlcvLoadedFrom) out.from = state.ohlcvLoadedFrom;
-  if (state.ohlcvLoadedTo) out.to = state.ohlcvLoadedTo;
-  return out;
-}
-
-function buildBaseParams(state: ReturnType<typeof useTradeMapStore.getState>) {
-  const featParam = featureColumnsParam(state.selectedFeatureColumns);
-  const mainOl = mainOverlaysQueryParam(state.mainEma1200, state.mainWeeklyEma200);
-  const stageRg = stageRegionsQueryParam(state.layers.prefilter, state.layers.gate);
-  const stratFocus = state.featureStrategyFocus.trim();
-  return {
-    symbol: state.symbol,
-    timeframe: state.timeframe,
-    scopes: scopesFromLayers(state.layers),
-    include_pending: String(state.layers.pending),
-    ...markerRangeParams(state),
-    featParam,
-    mainOl,
-    stageRg,
-    stratFocus,
-  };
-}
 
 async function fetchBundle(query: string): Promise<{ data: BundleData; meta?: Record<string, unknown> }> {
   return apiGet<BundleData>(`/api/trade-map/bundle?${query}`);
@@ -47,32 +29,57 @@ async function fetchBundle(query: string): Promise<{ data: BundleData; meta?: Re
 
 export function useTradeMapBundle() {
   const store = useTradeMapStore();
+  const pollInFlightRef = useRef(false);
+
+  const refreshMarkersOnly = useCallback(async () => {
+    const state = useTradeMapStore.getState();
+    const { data } = await fetchBundle(buildMarkersOnlyQuery(state));
+    const mergedMarkers = mergeMarkersById(state.markers, data.markers || []);
+    const mergedLinks = mergeTradeLinks(state.lastTradeLinks, data.trade_links || []);
+    useTradeMapStore.setState({
+      markers: mergedMarkers,
+      lastTradeLinks: mergedLinks,
+    });
+  }, []);
+
+  const refreshPoll = useCallback(async () => {
+    const state = useTradeMapStore.getState();
+    if (state.loading || pollInFlightRef.current) return;
+    if (!state.lastCandles.length) {
+      return;
+    }
+    pollInFlightRef.current = true;
+    try {
+      const { data } = await fetchBundle(buildPollQuery(state));
+      const tail = sanitizeCandlesForLwc(data.ohlcv?.candles || []);
+      const mergedCandles = tail.length
+        ? (mergeCandlesByTime(tail, state.lastCandles) as Candle[])
+        : state.lastCandles;
+      const mergedMarkers = mergeMarkersById(state.markers, data.markers || []);
+      const mergedLinks = mergeTradeLinks(state.lastTradeLinks, data.trade_links || []);
+      const markerCount = mergedMarkers.length;
+      const linkCount = mergedLinks.length;
+      useTradeMapStore.setState({
+        lastCandles: mergedCandles,
+        markers: mergedMarkers,
+        lastTradeLinks: mergedLinks,
+        lastMarkerPollSince: new Date().toISOString(),
+        statusText: `${mergedCandles.length} bars · ${markerCount} markers · ${linkCount} links · ${state.selectedFeatureColumns.length} features`,
+      });
+    } finally {
+      pollInFlightRef.current = false;
+    }
+  }, []);
 
   const refreshFull = useCallback(async () => {
     const state = useTradeMapStore.getState();
     state.setLoading(true);
     setSymbol(state.symbol);
     try {
-      const base = buildBaseParams(state);
       const init = ohlcvInitialQueryRange(state.timeframe);
       const markerFrom = state.markerQueryFromIso || init.from;
-      const shellQ = apiQuery({
-        symbol: base.symbol,
-        timeframe: base.timeframe,
-        scopes: base.scopes,
-        include_pending: base.include_pending,
-        include_ohlcv: 'full',
-        include_features: 'false',
-        include_markers: 'false',
-        include_trade_links: 'false',
-        include_chop: 'false',
-        from: state.ohlcvLoadedFrom || init.from,
-        to: state.ohlcvLoadedTo || init.to,
-        full_range: state.ohlcvLoadedFrom ? 'false' : init.full_range || 'false',
-        main_overlays: base.mainOl || undefined,
-      });
 
-      const { data: shellData, meta: shellMeta } = await fetchBundle(shellQ);
+      const { data: shellData, meta: shellMeta } = await fetchBundle(buildFullShellQuery(state));
       const candles = shellData.ohlcv?.candles || [];
       store.setLastCandles(candles);
       if (shellMeta?.range_start && !state.ohlcvLoadedFrom) {
@@ -82,39 +89,9 @@ export function useTradeMapBundle() {
         });
       }
 
-      const range = markerRangeParams(useTradeMapStore.getState());
-      const shared = {
-        symbol: base.symbol,
-        timeframe: base.timeframe,
-        scopes: base.scopes,
-        include_pending: base.include_pending,
-        from: range.from || markerFrom || state.ohlcvLoadedFrom || undefined,
-        to: range.to || state.ohlcvLoadedTo || new Date().toISOString(),
-      };
-
-      const markersQ = apiQuery({
-        ...shared,
-        include_ohlcv: 'none',
-        include_features: 'false',
-        include_markers: 'true',
-        include_trade_links: 'true',
-        include_chop: 'false',
-      });
-      const featuresQ = apiQuery({
-        ...shared,
-        include_ohlcv: 'none',
-        include_features: 'true',
-        include_markers: 'false',
-        include_trade_links: 'false',
-        include_chop: 'true',
-        feature_columns: base.featParam || undefined,
-        stage_regions: base.stageRg || undefined,
-        strategy: base.stratFocus || undefined,
-      });
-
       const [markersResp, featuresResp] = await Promise.all([
-        fetchBundle(markersQ),
-        fetchBundle(featuresQ),
+        fetchBundle(buildFullMarkersQuery(useTradeMapStore.getState(), markerFrom)),
+        fetchBundle(buildFullFeaturesQuery(useTradeMapStore.getState(), markerFrom)),
       ]);
 
       store.setBundlePhase({
@@ -126,6 +103,7 @@ export function useTradeMapBundle() {
         chopRegimeRegions: featuresResp.data.chop_regime_regions || [],
         strategyStageRegions: featuresResp.data.strategy_stage_regions || {},
         markerQueryFromIso: markerFrom || null,
+        lastMarkerPollSince: new Date().toISOString(),
         historyExhausted: false,
         loading: false,
         chartFitPending: false,
@@ -168,5 +146,11 @@ export function useTradeMapBundle() {
     if (typeof layout.ordersDockOpen === 'boolean') store.setOrdersDockOpen(layout.ordersDockOpen);
   }, [store]);
 
-  return { refreshFull, initFromLayout, resetHistory: resetHistoryState };
+  return {
+    refreshFull,
+    refreshPoll,
+    refreshMarkersOnly,
+    initFromLayout,
+    resetHistory: resetHistoryState,
+  };
 }

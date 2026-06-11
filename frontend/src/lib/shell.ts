@@ -13,6 +13,7 @@ export const SCOPE_LABELS: Record<string, string> = {
 export const PAGES = [
   { id: 'signals', href: '/signals', label: '策略信号' },
   { id: 'trade-map', href: '/trade-map', label: '交易地图' },
+  { id: 'trade-map-grid', href: '/trade-map-grid', label: '多品种地图' },
   { id: 'orders', href: '/orders', label: '订单' },
   { id: 'regime', href: '/regime', label: 'Regime' },
   { id: 'monitoring', href: '/monitoring', label: '漂移监控' },

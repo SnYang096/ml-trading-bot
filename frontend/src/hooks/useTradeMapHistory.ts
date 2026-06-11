@@ -10,11 +10,11 @@ import {
   mergeFeatureOverlays,
   mergeMarkersById,
   mergeTradeLinks,
-  ohlcvInitialQueryRange,
   sanitizeCandlesForLwc,
   stageRegionsQueryParam,
   tradeMapHistoryChunkDays,
 } from '@/lib/tradeMap';
+import { buildMarkersOnlyQuery } from '@/lib/tradeMap/bundleQuery.ts';
 import {
   resetHistoryState,
   scopesFromLayers,
@@ -34,23 +34,7 @@ export function useTradeMapHistory(mainChart: IChartApi | null) {
 
   const refreshMarkersOnly = useCallback(async () => {
     const state = useTradeMapStore.getState();
-    const init = ohlcvInitialQueryRange(state.timeframe);
-    const from = state.markerQueryFromIso || state.ohlcvLoadedFrom || init.from;
-    const q = apiQuery({
-      symbol: state.symbol,
-      timeframe: state.timeframe,
-      scopes: scopesFromLayers(state.layers),
-      include_pending: String(state.layers.pending),
-      include_ohlcv: 'none',
-      include_features: 'false',
-      include_markers: 'true',
-      include_trade_links: 'true',
-      include_chop: 'false',
-      from,
-      to: new Date().toISOString(),
-      full_range: 'false',
-    });
-    const { data } = await fetchBundle(q);
+    const { data } = await fetchBundle(buildMarkersOnlyQuery(state));
     const mergedMarkers = mergeMarkersById(state.markers, data.markers || []);
     const mergedLinks = mergeTradeLinks(state.lastTradeLinks, data.trade_links || []);
     useTradeMapStore.setState({

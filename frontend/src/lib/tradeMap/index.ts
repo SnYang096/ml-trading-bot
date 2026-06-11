@@ -8,3 +8,5 @@ export * from './features.ts';
 export * from './chartOverlay.ts';
 export * from './tradeLinks.ts';
 export * from './history.ts';
+export * from './grid.ts';
+export * from './bundleQuery.ts';

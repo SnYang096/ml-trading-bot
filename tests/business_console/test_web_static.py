@@ -13,6 +13,7 @@ DIST_ROOT = REPO_ROOT / "src" / "mlbot_console" / "static" / "dist"
 
 SPA_ROUTES = (
     "/trade-map",
+    "/trade-map-grid",
     "/orders",
     "/signals",
     "/account",
@@ -62,11 +63,14 @@ def test_app_shell_nav_in_source() -> None:
 
 def test_trade_map_two_phase_bundle_in_source() -> None:
     bundle = _read("hooks/useTradeMapBundle.ts")
-    assert "include_markers: 'true'" in bundle
-    assert "include_features: 'true'" in bundle
+    query = _read("lib/tradeMap/bundleQuery.ts")
     assert "Promise.all" in bundle
-    assert "include_ohlcv: 'none'" in bundle
-    assert "include_trade_links: 'true'" in bundle
+    assert "buildFullShellQuery" in query
+    assert "buildFullMarkersQuery" in query
+    assert "buildFullFeaturesQuery" in query
+    assert "include_markers: 'true'" in query
+    assert "include_features: 'true'" in query
+    assert "include_ohlcv: 'none'" in query
     assert "lastTradeLinks" in bundle
 
 
@@ -80,7 +84,17 @@ def test_trade_map_history_pan_in_source() -> None:
     assert "mergeFeatureOverlays" in history
 
 
-def test_trade_map_trade_links_in_source() -> None:
+def test_trade_map_grid_page_in_source() -> None:
+    grid = _read("pages/TradeMapGrid/TradeMapGridPage.tsx")
+    assert "GRID_SYMBOLS" in grid
+    assert "MiniTradeMapChart" in grid
+    assert "trade-map-grid" in _read("routes.tsx")
+
+
+def test_trade_map_poll_uses_tail_bundle() -> None:
+    bundle = _read("hooks/useTradeMapBundle.ts")
+    assert "refreshPoll" in bundle
+    assert "include_ohlcv: 'tail'" in _read("lib/tradeMap/bundleQuery.ts")
     links = _read("lib/tradeMap/tradeLinks.ts")
     main = _read("hooks/useTradeMapMainChart.ts")
     assert "buildTradeLinkLines" in links
@@ -96,9 +110,9 @@ def test_trade_map_layer_toggle_does_not_reset_history() -> None:
     sym_idx = page.index("setStoreSymbol(e.target.value)")
     sym_block = page[sym_idx : sym_idx + 220]
     assert "ohlcvLoadedFrom: null" in sym_block
-    layer_idx = page.index("layers.trend")
-    layer_block = page[max(0, layer_idx - 120) : layer_idx + 120]
-    assert "setLayers" in layer_block
+    layer_idx = page.index("layers.trend, layers.spot")
+    layer_block = page[max(0, layer_idx - 80) : layer_idx + 80]
+    assert "refreshMarkersOnly" in layer_block
     assert "ohlcvLoadedFrom" not in layer_block
 
 
