@@ -284,10 +284,12 @@ def _pick_primary_archetype(
 
 
 def build_feature_bus_manager(
-    args: Namespace, writer: FeatureBusWriter
+    args: Namespace, writer: FeatureBusWriter, symbols: List[str]
 ) -> MultiSymbolManager:
     """Constitution-driven feature stack for ``run_market_feature_publisher``."""
-    symbols = [s.strip().upper() for s in str(args.symbols).split(",") if s.strip()]
+    if not symbols:
+        raise ValueError("symbols must not be empty")
+    symbols = [s.strip().upper() for s in symbols if s.strip()]
     strategies_root = str(args.strategies_root)
     co_override = getattr(args, "constitution_yaml", None)
     if isinstance(co_override, str) and not co_override.strip():

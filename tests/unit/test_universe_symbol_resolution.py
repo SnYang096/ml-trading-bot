@@ -47,6 +47,85 @@ def test_publisher_resolve_symbols(monkeypatch):
     assert "HYPEUSDT" in syms
 
 
+def test_feature_bus_manager_must_not_parse_str_none():
+    """Regression: args.symbols=None must not become listener key 'NONE'."""
+    ns = argparse.Namespace(symbols=None)
+    bogus = [s.strip().upper() for s in str(ns.symbols).split(",") if s.strip()]
+    assert bogus == ["NONE"]
+
+    import scripts.run_market_feature_publisher as pub
+
+    resolved = pub._resolve_symbols(
+        argparse.Namespace(symbols=None, universe="highcap")
+    )
+    assert "BTCUSDT" in resolved
+    assert "NONE" not in resolved
+
+
+def test_build_feature_bus_manager_receives_universe_symbols(monkeypatch):
+    import scripts.run_market_feature_publisher as pub
+    from src.live_data_stream.feature_publisher_stack import build_feature_bus_manager
+
+    captured: dict = {}
+
+    class _FakeManager:
+        def __init__(self, symbols, **kwargs):
+            captured["symbols"] = list(symbols)
+            self.listeners = {s: type("L", (), {})() for s in symbols}
+
+    monkeypatch.setattr(
+        "src.live_data_stream.feature_publisher_stack.MultiSymbolManager",
+        _FakeManager,
+    )
+    monkeypatch.setattr(
+        "src.live_data_stream.feature_publisher_stack._pick_primary_archetype",
+        lambda *a, **k: "tpc",
+    )
+    monkeypatch.setattr(
+        "src.live_data_stream.feature_publisher_stack._disk_package",
+        lambda *a, **k: "tpc",
+    )
+    monkeypatch.setattr(
+        "src.live_data_stream.feature_publisher_stack.resolve_strategy_package_under_root",
+        lambda *a, **k: pub.PROJECT_ROOT / "config/strategies/tpc",
+    )
+    monkeypatch.setattr(
+        "src.live_data_stream.feature_publisher_stack.resolve_constitution_yaml",
+        lambda *a, **k: pub.PROJECT_ROOT / "config/constitution.yaml",
+    )
+    monkeypatch.setattr(
+        "src.live_data_stream.feature_publisher_stack.load_constitution_dict",
+        lambda *a, **k: {"resource_allocation": {"enabled_archetypes": ["tpc"]}},
+    )
+    monkeypatch.setattr(
+        "src.live_data_stream.feature_publisher_stack._extract_plan",
+        lambda *a, **k: (set(), []),
+    )
+    monkeypatch.setattr(
+        "src.live_data_stream.feature_publisher_stack.IncrementalFeatureComputer",
+        lambda *a, **k: type(
+            "FC", (), {"live_feature_set": set(), "live_feature_nodes": []}
+        )(),
+    )
+
+    ns = argparse.Namespace(
+        symbols=None,
+        universe="highcap",
+        strategies_root=str(pub.PROJECT_ROOT / "config/strategies"),
+        constitution_yaml=None,
+        live_storage_base="data/live",
+        memory_window_hours=24,
+        feature_compute_interval_minutes=15,
+        orderflow_window_minutes=60,
+        feature_4h_interval_hours=4,
+    )
+    resolved = pub._resolve_symbols(ns)
+    writer = type("W", (), {"write": lambda *a, **k: None})()
+    build_feature_bus_manager(ns, writer, resolved)
+    assert captured["symbols"] == resolved
+    assert "BTCUSDT" in captured["symbols"]
+
+
 def test_resolve_raises_when_all_missing(tmp_path):
     with pytest.raises(ValueError, match="no symbols"):
         resolve_symbols_csv(

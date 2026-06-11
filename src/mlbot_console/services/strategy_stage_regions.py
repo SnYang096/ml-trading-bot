@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import pandas as pd
 import yaml
+
+logger = logging.getLogger(__name__)
 
 from mlbot_console.services.chop_grid_overlay import _parse_ts
 from mlbot_console.services.feature_overlay import _resolve_feature_path
@@ -164,6 +167,16 @@ def _hysteresis_active(
     return out
 
 
+def _parquet_has_any_column(names: Set[str], columns: Set[str]) -> bool:
+    for col in columns:
+        if col in names or f"{col}_f" in names:
+            return True
+        for alias in _MULTILEG_RUNTIME_ALIASES.get(col, []):
+            if alias in names:
+                return True
+    return False
+
+
 def _load_feature_frame(
     feature_bus_root: Path,
     symbol: str,
@@ -181,6 +194,17 @@ def _load_feature_frame(
         import pyarrow.parquet as pq
 
         names = set(pq.read_schema(path).names)
+        if columns and not _parquet_has_any_column(names, columns):
+            logger.info(
+                "feature bus %s %s: none of %d requested stage columns in parquet "
+                "(file=%s cols=%d); skip stage evaluation",
+                symbol.upper(),
+                timeframe,
+                len(columns),
+                path.name,
+                len(names),
+            )
+            return pd.DataFrame()
         for c in columns:
             if c in names:
                 read_cols.append(c)

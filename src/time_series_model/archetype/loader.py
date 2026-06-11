@@ -495,12 +495,18 @@ class PrefilterConfig:
         if fv is None:
             import logging as _logging
 
-            _logging.getLogger(__name__).warning(
-                "Prefilter feature '%s' is missing from features dict "
-                "(available: %d keys). Rule treated as FAIL (no trade).",
-                feat,
-                len(features),
-            )
+            warned = getattr(PrefilterConfig, "_warned_missing_features", None)
+            if warned is None:
+                warned = set()
+                PrefilterConfig._warned_missing_features = warned
+            if feat not in warned:
+                warned.add(str(feat))
+                _logging.getLogger(__name__).warning(
+                    "Prefilter feature '%s' is missing from features dict "
+                    "(available: %d keys). Rule treated as FAIL (no trade).",
+                    feat,
+                    len(features),
+                )
             return False  # 特征缺失 → prefilter 不通过 (保守: 不交易)
         try:
             fv_f = float(fv)

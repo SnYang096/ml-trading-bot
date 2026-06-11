@@ -139,3 +139,28 @@ def test_bundle_stage_regions_multi_leg_scope(bus_root) -> None:
         include_gate=False,
     )
     assert "chop_grid" in out or out == {}
+
+
+def test_trend_prefilter_skips_timestamp_only_parquet(bus_root, caplog) -> None:
+    """Timestamp-only bus parquet must not evaluate prefilter per row (log spam)."""
+    sym = "XRPUSDT"
+    path = bus_root / "features" / "120T" / f"{sym}.parquet"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"timestamp": [pd.Timestamp("2024-01-01", tz="UTC")]}).to_parquet(
+        path, index=False
+    )
+
+    with caplog.at_level("INFO"):
+        regions = load_bundle_stage_regions(
+            bus_root,
+            STRATEGIES_ROOT,
+            sym,
+            "2h",
+            scopes=["trend"],
+            include_prefilter=True,
+            include_gate=False,
+        )
+
+    assert regions.get("tpc", {}).get("prefilter") is None
+    assert "Prefilter feature" not in caplog.text
+    assert "skip stage evaluation" in caplog.text

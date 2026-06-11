@@ -571,7 +571,7 @@ async def async_main() -> None:
         args.max_rows,
         args.warmup_days,
     )
-    manager = build_feature_bus_manager(args, writer)
+    manager = build_feature_bus_manager(args, writer, symbols)
     from src.live_data_stream.feature_storage import sanitize_dated_parquet_for_symbols
 
     sanitize_lookback = int(os.getenv("MLBOT_PARQUET_SANITIZE_LOOKBACK_DAYS", "3"))
