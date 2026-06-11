@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { IChartApi } from 'lightweight-charts';
 import { useShallow } from 'zustand/react/shallow';
 import { apiGet } from '@/api/client.ts';
@@ -51,6 +51,7 @@ export function TradeMapPage() {
   const statusText = useTradeMapStore((s) => s.statusText);
   const loading = useTradeMapStore((s) => s.loading);
   const historyLoading = useTradeMapStore((s) => s.historyLoading);
+  const featuresLoading = useTradeMapStore((s) => s.featuresLoading);
   const chartBusy = loading || historyLoading;
   const busyMode = loading ? 'full' : 'history';
   const mainEma1200 = useTradeMapStore((s) => s.mainEma1200);
@@ -86,8 +87,16 @@ export function TradeMapPage() {
     })),
   );
 
-  const { refreshFull, refreshPoll, refreshMarkersOnly, refreshMainOverlays, initFromLayout, resetHistory } =
-    useTradeMapBundle();
+  const {
+    refreshFull,
+    refreshFeaturesOnly,
+    refreshPoll,
+    refreshMarkersOnly,
+    refreshMainOverlays,
+    initFromLayout,
+    resetHistory,
+  } = useTradeMapBundle();
+  const featureFetchKeyRef = useRef<string | null>(null);
   const { applyStrategyFocus, applyLayerDefaults } = useTradeMapFeatureCatalog({
     catalogEnabled: true,
   });
@@ -153,8 +162,25 @@ export function TradeMapPage() {
   }, [initFromLayout, searchParams, setStoreSymbol, setSelectedMarkerId]);
 
   useEffect(() => {
+    featureFetchKeyRef.current = null;
     refreshFull().catch(() => {});
-  }, [refreshFull, symbol, timeframe, selectedFeatureColumns, featureStrategyFocus]);
+  }, [refreshFull, symbol, timeframe]);
+
+  const featureFetchKey = useMemo(
+    () => JSON.stringify({ cols: selectedFeatureColumns, focus: featureStrategyFocus }),
+    [selectedFeatureColumns, featureStrategyFocus],
+  );
+
+  useEffect(() => {
+    if (!hasCandles) return;
+    if (featureFetchKeyRef.current === null) {
+      featureFetchKeyRef.current = featureFetchKey;
+      return;
+    }
+    if (featureFetchKeyRef.current === featureFetchKey) return;
+    featureFetchKeyRef.current = featureFetchKey;
+    refreshFeaturesOnly().catch(() => {});
+  }, [featureFetchKey, hasCandles, refreshFeaturesOnly]);
 
 
   useEffect(() => {
@@ -383,6 +409,8 @@ export function TradeMapPage() {
         <span className={styles.status}>
           {chartBusy ? (
             <TradeMapBusyStatus mode={busyMode} />
+          ) : featuresLoading ? (
+            <span className={styles.statusBusyFeatures}>加载特征附图…</span>
           ) : (
             statusText || scopesFromLayers(layers)
           )}

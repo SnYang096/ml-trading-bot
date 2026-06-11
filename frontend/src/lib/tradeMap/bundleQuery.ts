@@ -198,17 +198,19 @@ export function buildFullFeaturesQuery(
   });
 }
 
+/** Grid always fetches all account layers; visibility toggles are client-side only. */
+export const GRID_MARKER_SCOPES = 'trend,spot,multi_leg';
+
 export function buildMiniGridQuery(
   symbol: string,
   timeframe: string,
-  layers: LayerState,
   range: { from: string; to: string; full_range: string },
 ): string {
   return apiQuery({
     symbol,
     timeframe,
-    scopes: scopesFromLayers(layers),
-    include_pending: String(layers.pending),
+    scopes: GRID_MARKER_SCOPES,
+    include_pending: 'true',
     from: range.from,
     to: range.to,
     full_range: range.full_range,
@@ -223,7 +225,6 @@ export function buildMiniGridQuery(
 export function buildGridPollQuery(
   symbol: string,
   timeframe: string,
-  layers: LayerState,
   range: { from: string; to: string },
   candles: Array<{ time: number }>,
   lastMarkerPollSince: string | null,
@@ -232,8 +233,8 @@ export function buildGridPollQuery(
   return apiQuery({
     symbol,
     timeframe,
-    scopes: scopesFromLayers(layers),
-    include_pending: String(layers.pending),
+    scopes: GRID_MARKER_SCOPES,
+    include_pending: 'true',
     from: range.from,
     to: range.to,
     since: lastMarkerPollSince || undefined,

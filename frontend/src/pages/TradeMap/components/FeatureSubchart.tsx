@@ -15,6 +15,7 @@ import {
   subchartColor,
 } from '@/lib/tradeMap';
 import { mainChartOverlaySeriesOptions, subchartBaseOptions } from '@/lib/tradeMap/chartOverlay.ts';
+import { syncSubchartToMain } from '@/lib/tradeMap/chartSync.ts';
 import type { FeatureOverlay } from '@/lib/tradeMap/types.ts';
 import styles from './SubchartStack.module.css';
 
@@ -77,33 +78,24 @@ export function VolumePane({ candles, mainChart }: VolumePaneProps) {
       .filter((x) => x.volume != null && Number.isFinite(Number(x.volume)))
       .map((x) => ({ time: x.time as Time, value: Number(x.volume), color: CHART_THEME.volume }));
     series.setData(data);
-    if (!fittedRef.current) {
-      chart.timeScale().fitContent();
+    if (mainChart && !fittedRef.current) {
+      syncSubchartToMain(mainChart, chart, candles.length);
       fittedRef.current = true;
     }
-  }, [candles]);
+  }, [candles, mainChart]);
 
   useEffect(() => {
     const main = mainChart;
     const sub = chartRef.current;
-    if (!main || !sub) return;
-    const sync = () => {
-      const range = main.timeScale().getVisibleRange?.();
-      if (range?.from != null && range?.to != null) {
-        try {
-          sub.timeScale().setVisibleRange(range);
-        } catch {
-          /* */
-        }
-      }
-    };
+    if (!main || !sub || !candles.length) return;
+    const sync = () => syncSubchartToMain(main, sub, candles.length);
     const raf = requestAnimationFrame(sync);
     main.timeScale().subscribeVisibleLogicalRangeChange(sync);
     return () => {
       cancelAnimationFrame(raf);
       main.timeScale().unsubscribeVisibleLogicalRangeChange(sync);
     };
-  }, [mainChart]);
+  }, [mainChart, candles.length]);
 
   return (
     <div className={styles.pane}>
@@ -130,7 +122,7 @@ export function FeaturePane({ column, overlay, candles, colorIndex, mainChart }:
   const hasData = seriesData.length > 0;
 
   useEffect(() => {
-    if (!hostRef.current || !hasData) return;
+    if (!hostRef.current) return;
     fittedRef.current = false;
     const chart = createChart(hostRef.current, {
       ...subchartBaseOptions,
@@ -144,7 +136,6 @@ export function FeaturePane({ column, overlay, candles, colorIndex, mainChart }:
     );
     chartRef.current = chart;
     seriesRef.current = series;
-    series.setData(seriesData);
 
     const ro = new ResizeObserver(() => {
       if (hostRef.current) {
@@ -162,49 +153,37 @@ export function FeaturePane({ column, overlay, candles, colorIndex, mainChart }:
       seriesRef.current = null;
       fittedRef.current = false;
     };
-  }, [column, colorIndex, hasData]);
+  }, [column, colorIndex]);
 
   useEffect(() => {
     const series = seriesRef.current;
     const chart = chartRef.current;
-    if (!series || !chart || !hasData) return;
-    series.setData(seriesData);
-    if (!fittedRef.current) {
-      chart.timeScale().fitContent();
+    if (!series || !chart) return;
+    series.setData(hasData ? seriesData : []);
+    if (hasData && mainChart && !fittedRef.current) {
+      syncSubchartToMain(mainChart, chart, candles.length);
       fittedRef.current = true;
     }
-  }, [seriesData, hasData]);
+  }, [seriesData, hasData, candles.length, mainChart]);
 
   useEffect(() => {
     const main = mainChart;
     const sub = chartRef.current;
-    if (!main || !sub) return;
-    const sync = () => {
-      const range = main.timeScale().getVisibleRange?.();
-      if (range?.from != null && range?.to != null) {
-        try {
-          sub.timeScale().setVisibleRange(range);
-        } catch {
-          /* */
-        }
-      }
-    };
+    if (!main || !sub || !candles.length) return;
+    const sync = () => syncSubchartToMain(main, sub, candles.length);
     const raf = requestAnimationFrame(sync);
     main.timeScale().subscribeVisibleLogicalRangeChange(sync);
     return () => {
       cancelAnimationFrame(raf);
       main.timeScale().unsubscribeVisibleLogicalRangeChange(sync);
     };
-  }, [mainChart]);
+  }, [mainChart, candles.length, column, colorIndex]);
 
   return (
     <div className={styles.pane}>
       <span className={styles.label}>{column}</span>
-      {hasData ? (
-        <div ref={hostRef} className={styles.inner} />
-      ) : (
-        <div className={styles.emptyPane}>特征数据对齐中…</div>
-      )}
+      <div ref={hostRef} className={styles.inner} />
+      {!hasData ? <div className={styles.emptyOverlay}>特征数据对齐中…</div> : null}
     </div>
   );
 }

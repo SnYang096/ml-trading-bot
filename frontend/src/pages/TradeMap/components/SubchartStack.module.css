@@ -50,3 +50,18 @@
   color: var(--text-dim);
   letter-spacing: 0.04em;
 }
+
+.emptyOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
+  pointer-events: none;
+  background: rgba(0, 0, 0, 0.35);
+}

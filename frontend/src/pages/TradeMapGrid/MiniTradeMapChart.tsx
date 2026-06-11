@@ -137,7 +137,7 @@ export const MiniTradeMapChart = memo(function MiniTradeMapChart({
     const scoped = prepareChartMarkers(markers, candles, null, layers, '');
     const display = markersForChartDisplay(scoped, '', null);
     plugin.setMarkers(
-      markersToLwc(display, null, { showText: false }) as SeriesMarker<Time>[],
+      markersToLwc(display, null, { showText: 'compact' }) as SeriesMarker<Time>[],
     );
   }, [markers, candles, layers.trend, layers.spot, layers.multiLeg, layers.pending]);
 

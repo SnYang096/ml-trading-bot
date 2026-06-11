@@ -121,6 +121,7 @@ export function useTradeMapBundle() {
         lastMarkerPollSince: new Date().toISOString(),
         historyExhausted: false,
         loading: false,
+        featuresLoading: false,
         statusText: `${candles.length} bars · ${(markersResp.data.markers || []).length} markers · ${(markersResp.data.trade_links || []).length} links · ${bundleFeatureColumns(latest).length} features`,
       });
       saveLayout({
@@ -151,6 +152,45 @@ export function useTradeMapBundle() {
     });
   }, []);
 
+  /** Feature column / strategy focus changes — do not block main OHLCV chart. */
+  const refreshFeaturesOnly = useCallback(async () => {
+    const state = useTradeMapStore.getState();
+    if (!state.lastCandles.length) {
+      await refreshFull();
+      return;
+    }
+    const cols = bundleFeatureColumns(state);
+    if (!cols.length) {
+      useTradeMapStore.setState({
+        lastOverlays: {},
+        lastChopMapData: null,
+        chopRegimeRegions: [],
+        strategyStageRegions: {},
+        featuresLoading: false,
+        statusText: `${state.lastCandles.length} bars · 0 features`,
+      });
+      return;
+    }
+    useTradeMapStore.setState({ featuresLoading: true, statusText: '加载特征附图…' });
+    try {
+      const init = ohlcvInitialQueryRange(state.timeframe);
+      const markerFrom = state.markerQueryFromIso || init.from;
+      const { data } = await fetchBundle(buildFullFeaturesQuery(state, markerFrom));
+      const latest = useTradeMapStore.getState();
+      latest.setBundlePhase({
+        lastOverlays: (data.overlays || {}) as import('@/lib/tradeMap/types.ts').FeatureOverlays,
+        lastChopMapData: data.chop_grid_overlay,
+        chopRegimeRegions: data.chop_regime_regions || [],
+        strategyStageRegions: data.strategy_stage_regions || {},
+        featuresLoading: false,
+        statusText: `${latest.lastCandles.length} bars · ${latest.markers.length} markers · ${cols.length} features`,
+      });
+    } catch (e) {
+      useTradeMapStore.setState({ featuresLoading: false, statusText: String(e) });
+      throw e;
+    }
+  }, [refreshFull]);
+
   const initFromLayout = useCallback(() => {
     const layout = loadLayout();
     if (!layout) return;
@@ -174,6 +214,7 @@ export function useTradeMapBundle() {
 
   return {
     refreshFull,
+    refreshFeaturesOnly,
     refreshPoll,
     refreshMarkersOnly,
     refreshMainOverlays,

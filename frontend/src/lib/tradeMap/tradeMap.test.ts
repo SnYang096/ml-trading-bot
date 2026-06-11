@@ -20,6 +20,7 @@ import {
   chopRegimeHysteresisOnAtTime,
   chopRegimeSeriesFromOverlay,
   isFeatureBusRegimeExitMarker,
+  compactMarkerLabel,
   dedupeMarkersForChart,
   markersForChartDisplay,
   markersToLwc,
@@ -194,6 +195,43 @@ describe('tradeMap trade links', () => {
       exit_price: 2,
     };
     expect(mergeTradeLinks([a], [a])).toHaveLength(1);
+  });
+
+  it('compactMarkerLabel uses strategy slug not account layer', () => {
+    expect(compactMarkerLabel({ strategy: 'tpc', scope: 'trend' } as TradeMarker)).toBe('tpc');
+    expect(compactMarkerLabel({ strategy: 'chop_grid', scope: 'multi_leg' } as TradeMarker)).toBe(
+      'chop',
+    );
+    expect(
+      compactMarkerLabel({ strategy: 'spot_accum_simple', scope: 'spot' } as TradeMarker),
+    ).toBe('spot');
+  });
+
+  it('prepareChartMarkers filters scopes and pending client-side', () => {
+    const raw = [
+      { id: '1', time: 100, scope: 'trend', strategy: 'tpc', status: 'filled' },
+      { id: '2', time: 200, scope: 'spot', strategy: 'spot_accum_simple', status: 'filled' },
+      { id: '3', time: 300, scope: 'multi_leg', strategy: 'chop_grid', status: 'pending' },
+    ] as TradeMarker[];
+    const candles = [
+      { time: 100, open: 1, high: 1, low: 1, close: 1 },
+      { time: 200, open: 1, high: 1, low: 1, close: 1 },
+      { time: 300, open: 1, high: 1, low: 1, close: 1 },
+    ];
+    const trendOnly = prepareChartMarkers(raw, candles, null, {
+      trend: true,
+      spot: false,
+      multiLeg: false,
+      pending: true,
+    }, '');
+    expect(trendOnly.map((m) => m.id)).toEqual(['1']);
+    const noPending = prepareChartMarkers(raw, candles, null, {
+      trend: true,
+      spot: true,
+      multiLeg: true,
+      pending: false,
+    }, '');
+    expect(noPending.map((m) => m.id)).toEqual(['1', '2']);
   });
 
   it('dedupeMarkersForChart keeps positions over orders on same bar', () => {

@@ -138,6 +138,14 @@
   align-self: center;
 }
 
+.statusBusyFeatures {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  color: var(--accent-cyan);
+  align-self: center;
+}
+
 .mainRow {
   display: flex;
   flex: 1;

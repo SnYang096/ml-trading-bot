@@ -377,8 +377,25 @@ export function chopSegmentedLinePoints(
 }
 
 export interface MarkersToLwcOptions {
-  /** Mini grid charts use shapes only; text labels overlap at low barSpacing. */
-  showText?: boolean;
+  /** false = no text; true = full label; 'compact' = strategy slug only (mini grid). */
+  showText?: boolean | 'compact';
+}
+
+/** Short strategy id for mini charts (tpc, chop, spot, …). */
+export function compactMarkerLabel(marker: TradeMarker): string {
+  const strat = String(marker.strategy || '').trim().toLowerCase();
+  const aliases: Record<string, string> = {
+    spot_accum_simple: 'spot',
+    chop_grid: 'chop',
+    trend_scalp: 'scalp',
+  };
+  if (aliases[strat]) return aliases[strat];
+  if (strat) return strat.split('_')[0].slice(0, 8);
+  const scope = String(marker.scope || '').toLowerCase();
+  if (scope === 'multi_leg') return 'ml';
+  if (scope === 'trend') return 'trend';
+  if (scope === 'spot') return 'spot';
+  return '';
 }
 
 export function markersToLwc(
@@ -386,7 +403,7 @@ export function markersToLwc(
   selectedId: string | null | undefined,
   options?: MarkersToLwcOptions,
 ): LwcSeriesMarker[] {
-  const showText = options?.showText !== false;
+  const textMode = options?.showText ?? true;
   return (markers || []).map((m) => {
     const role = markerRole(m);
     const pending = (m.status || 'filled').toLowerCase() === 'pending';
@@ -436,12 +453,15 @@ export function markersToLwc(
     const isTp = role === 'tp';
     const highlightSelected = selected && !isTp;
     const label = highlightSelected ? `★ ${baseText}` : baseText;
+    let text = '';
+    if (textMode === true) text = label;
+    else if (textMode === 'compact') text = compactMarkerLabel(m);
     return {
       time: m.time,
       position,
       color: highlightSelected ? '#ffff00' : markerColor(m),
       shape: markerShape(m),
-      text: showText ? label : '',
+      text,
       id: m.id,
     };
   });
@@ -524,10 +544,15 @@ export function prepareChartMarkers(
   raw: TradeMarker[] | null | undefined,
   candles: Candle[],
   overlays: FeatureOverlays | null | undefined,
-  layers: { trend: boolean; spot: boolean; multiLeg: boolean },
+  layers: { trend: boolean; spot: boolean; multiLeg: boolean; pending?: boolean },
   strategyFocus: string,
 ): TradeMarker[] {
   let incoming = (raw || []).filter((m) => !isFeatureBusRegimeExitMarker(m));
+  if (layers.pending === false) {
+    incoming = incoming.filter(
+      (m) => String(m.status || 'filled').toLowerCase() !== 'pending',
+    );
+  }
   const focus = String(strategyFocus || '')
     .trim()
     .toLowerCase();

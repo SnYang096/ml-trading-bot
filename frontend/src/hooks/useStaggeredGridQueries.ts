@@ -11,7 +11,6 @@ import {
   mergeTradeLinks,
   sanitizeCandlesForLwc,
 } from '@/lib/tradeMap';
-import { scopesFromLayers, type LayerState } from '@/stores/tradeMapStore.ts';
 
 const GRID_POLL_MS = 30_000;
 const STAGGER_MS = 300;
@@ -38,13 +37,9 @@ function mergeGridBundle(prev: GridCellData | undefined, incoming: BundleData): 
   };
 }
 
-async function fetchGridFull(
-  symbol: string,
-  timeframe: string,
-  layers: LayerState,
-): Promise<GridCellData> {
+async function fetchGridFull(symbol: string, timeframe: string): Promise<GridCellData> {
   const range = gridOhlcvQueryRange(timeframe);
-  const q = buildMiniGridQuery(symbol, timeframe, layers, range);
+  const q = buildMiniGridQuery(symbol, timeframe, range);
   const { data } = await apiGet<BundleData>(`/api/trade-map/bundle?${q}`);
   return {
     ohlcv: data.ohlcv,
@@ -56,13 +51,12 @@ async function fetchGridFull(
 async function fetchGridPoll(
   symbol: string,
   timeframe: string,
-  layers: LayerState,
   prev: GridCellData | undefined,
   lastPollSince: string | null,
 ): Promise<{ data: GridCellData; pollSince: string }> {
   const range = gridOhlcvQueryRange(timeframe);
   const candles = prev?.ohlcv?.candles || [];
-  const q = buildGridPollQuery(symbol, timeframe, layers, range, candles, lastPollSince);
+  const q = buildGridPollQuery(symbol, timeframe, range, candles, lastPollSince);
   const { data } = await apiGet<BundleData>(`/api/trade-map/bundle?${q}`);
   return {
     data: mergeGridBundle(prev, data),
@@ -70,9 +64,9 @@ async function fetchGridPoll(
   };
 }
 
-export function useStaggeredGridQueries(timeframe: string, layers: LayerState) {
+/** OHLCV/markers fetched once per symbol+TF; B/A/C/pending toggles are client-side in MiniTradeMapChart. */
+export function useStaggeredGridQueries(timeframe: string) {
   const pageVisible = usePageVisible();
-  const scopeKey = scopesFromLayers(layers);
   const [enabledCount, setEnabledCount] = useState(1);
   const pollSinceRef = useRef<Record<string, string>>({});
   const dataRef = useRef<Record<string, GridCellData>>({});
@@ -85,23 +79,23 @@ export function useStaggeredGridQueries(timeframe: string, layers: LayerState) {
       window.setTimeout(() => setEnabledCount((c) => Math.max(c, i + 2)), STAGGER_MS * (i + 1)),
     );
     return () => timers.forEach((t) => window.clearTimeout(t));
-  }, [timeframe, scopeKey, layers.pending]);
+  }, [timeframe]);
 
   const pollInterval = visibleRefetchInterval(pageVisible, GRID_POLL_MS);
 
   return useQueries({
     queries: GRID_SYMBOLS.map((symbol, idx) => ({
-      queryKey: ['trade-map-grid', symbol, timeframe, scopeKey, layers.pending],
+      queryKey: ['trade-map-grid', symbol, timeframe],
       queryFn: async (): Promise<GridCellData> => {
         const prev = dataRef.current[symbol];
         const since = pollSinceRef.current[symbol] || null;
         if (prev && since) {
-          const { data, pollSince } = await fetchGridPoll(symbol, timeframe, layers, prev, since);
+          const { data, pollSince } = await fetchGridPoll(symbol, timeframe, prev, since);
           dataRef.current[symbol] = data;
           pollSinceRef.current[symbol] = pollSince;
           return data;
         }
-        const full = await fetchGridFull(symbol, timeframe, layers);
+        const full = await fetchGridFull(symbol, timeframe);
         dataRef.current[symbol] = full;
         pollSinceRef.current[symbol] = new Date().toISOString();
         return full;

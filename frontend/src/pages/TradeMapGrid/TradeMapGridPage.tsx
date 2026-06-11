@@ -3,6 +3,7 @@ import { SCOPE_LABELS } from '@/lib/shell.ts';
 import { type LayerState } from '@/stores/tradeMapStore.ts';
 import { useStaggeredGridQueries } from '@/hooks/useStaggeredGridQueries.ts';
 import { GRID_SYMBOLS } from '@/lib/tradeMap/grid.ts';
+import { MarkerLegendTips } from './MarkerLegendTips.tsx';
 import { MiniTradeMapChart } from './MiniTradeMapChart.tsx';
 import styles from './TradeMapGridPage.module.css';
 
@@ -20,7 +21,7 @@ export function TradeMapGridPage() {
   const [timeframe, setTimeframe] = useState('2h');
   const [layers, setLayers] = useState<LayerState>(defaultLayers);
 
-  const queries = useStaggeredGridQueries(timeframe, layers);
+  const queries = useStaggeredGridQueries(timeframe);
 
   const statusText = useMemo(() => {
     const ok = queries.filter((q) => q.isSuccess).length;
@@ -33,7 +34,7 @@ export function TradeMapGridPage() {
       <div className={styles.toolbar}>
         <div className={styles.module}>
           <span className={styles.moduleLabel}>多品种地图</span>
-          <span className={styles.hint}>21d · markers + links · 点击跳转单品种</span>
+          <span className={styles.hint}>21d · 点击品种名进入单品种交易地图</span>
         </div>
         <label>
           周期
@@ -77,6 +78,8 @@ export function TradeMapGridPage() {
         </label>
         <span className={styles.status}>{statusText}</span>
       </div>
+
+      <MarkerLegendTips />
 
       <div className={styles.grid}>
         {GRID_SYMBOLS.map((symbol, idx) => {

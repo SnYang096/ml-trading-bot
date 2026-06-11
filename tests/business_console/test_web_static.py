@@ -166,10 +166,17 @@ def test_account_tables_and_pnl_curve() -> None:
     assert "累计盈利曲线" in account
 
 
-def test_mini_grid_markers_hide_text() -> None:
+def test_mini_grid_markers_compact_strategy_labels() -> None:
     mini = _read("pages/TradeMapGrid/MiniTradeMapChart.tsx")
-    assert "showText: false" in mini
+    stagger = _read("hooks/useStaggeredGridQueries.ts")
+    grid = _read("pages/TradeMapGrid/TradeMapGridPage.tsx")
+    legend = _read("pages/TradeMapGrid/MarkerLegendTips.tsx")
+    assert "showText: 'compact'" in mini
     assert "prepareChartMarkers" in mini
+    assert "GRID_MARKER_SCOPES" in _read("lib/tradeMap/bundleQuery.ts")
+    assert "scopeKey" not in stagger
+    assert "MarkerLegendTips" in grid
+    assert "标记图例" in legend
 
 
 def test_grid_tail_poll_query() -> None:

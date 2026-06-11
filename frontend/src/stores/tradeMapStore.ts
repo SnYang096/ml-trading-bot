@@ -44,6 +44,7 @@ interface TradeMapState {
   statusText: string;
   loading: boolean;
   historyLoading: boolean;
+  featuresLoading: boolean;
   chartFitPending: boolean;
   /** Set by history prepend; applied in main chart after setData, then cleared. */
   historyScrollAdjust: LogicalRange | null;
@@ -106,6 +107,7 @@ export const useTradeMapStore = create<TradeMapState>((set) => ({
   statusText: '',
   loading: false,
   historyLoading: false,
+  featuresLoading: false,
   chartFitPending: true,
   historyScrollAdjust: null,
   mainEma1200: true,
