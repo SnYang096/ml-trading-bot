@@ -1,153 +1,109 @@
-"""HTTP-level web tests (no browser): HTML/JS assets and API from page context."""
+"""HTTP-level web tests: React SPA shell + static assets + bundle API."""
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 
-def test_trade_map_html_served(client):
-    r = client.get("/trade-map")
-    assert r.status_code == 200
-    body = r.text
-    assert "交易地图" in body or "trade-map" in body
-    assert "console-shell.js" in body
-    assert "trade-map/core/00-constants.js" in body
-    assert "trade-map/core/20-markers.js" in body
-    assert "trade-map/state.js" in body
-    assert "trade-map/bootstrap.js" in body
-    assert "chopGridLabelLayer" in body
-    assert "layerMultiLeg" in body
-    assert "appNav" in body
-    assert "featureColumnList" in body
-    assert "featurePanelBtn" in body
-    assert "featureDrawer" in body
-    assert "toolbar-chart" in body
-    assert "toolbar-global" in body
-    assert "featureSearch" in body
-    assert "subchartStack" in body
-    assert 'data-feature-action="preset-tpc"' in body
-    assert 'data-feature-action="preset-spot"' in body
-    assert "marker-detail-drawer" in body
-    assert "ordersDock" in body
-    assert "ordersDockToggle" in body
-    assert "statusGrid" in body
-    assert "statusClock" in body
-    assert "side-panels" not in body
-    assert "eligibilityPanel" not in body
-    assert 'id="layerMultiLeg" checked' in body
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+FRONTEND_SRC = REPO_ROOT / "frontend" / "src"
+DIST_ROOT = REPO_ROOT / "src" / "mlbot_console" / "static" / "dist"
+
+SPA_ROUTES = (
+    "/trade-map",
+    "/orders",
+    "/signals",
+    "/account",
+    "/regime",
+    "/monitoring",
+)
 
 
-def test_orders_html_served(client):
-    r = client.get("/orders")
-    assert r.status_code == 200
-    body = r.text
-    assert "订单" in body
-    assert "orders-page.js" in body
-    assert "ordersTable" in body
-    assert "ordersThSymbol" in body
-    assert "止损价" in body
-    assert "盈亏" in body
-    assert "order-detail-body" in body
-    assert "appNav" in body
+def _read(rel: str) -> str:
+    return (FRONTEND_SRC / rel).read_text(encoding="utf-8")
 
 
-def test_account_html_served(client):
-    r = client.get("/account")
-    assert r.status_code == 200
-    body = r.text
-    assert "账户总览" in body
-    assert "account-page.js" in body
-    assert "kpiRow" in body
-    assert "account-global-section" in body
-    assert "account-scoped-section" in body
-    assert "scopedKpiRow" in body
-    assert "appNav" in body
+def test_spa_routes_serve_index(client) -> None:
+    for path in SPA_ROUTES:
+        r = client.get(path)
+        assert r.status_code == 200, path
+        assert 'id="root"' in r.text, path
+        assert "/static/assets/" in r.text, path
 
 
-def test_signals_html_overview_first(client):
-    r = client.get("/signals")
-    assert r.status_code == 200
-    body = r.text
-    assert "signals-overview-panel" in body
-    assert "funnel-collapsed" in body
-    overview_pos = body.find("signals-overview-panel")
-    funnel_pos = body.find("funnel-collapsed")
-    assert overview_pos >= 0 and funnel_pos > overview_pos
-
-
-def test_console_shell_has_account_nav(client):
-    r = client.get("/static/console-shell.js")
-    assert r.status_code == 200
-    assert 'href: "/account"' in r.text
-    assert "formatPnl" in r.text
-    assert "mlbot_orders_filter_v3" in r.text
-    assert "hideExpired: true" in r.text
-    assert "loadOrdersFilter" in r.text
-
-
-def test_root_redirects_to_trade_map(client):
+def test_root_redirects_to_trade_map(client) -> None:
     r = client.get("/", follow_redirects=False)
+    assert r.status_code in (302, 307)
+    assert "/trade-map" in r.headers.get("location", "")
+
+
+def test_vite_bundle_asset_reachable(client) -> None:
+    index = DIST_ROOT / "index.html"
+    if not index.is_file():
+        pytest.skip("Run: make frontend-build")
+    html = index.read_text(encoding="utf-8")
+    match = re.search(r'src="(/static/assets/[^"]+\.js)"', html)
+    assert match, "missing Vite JS asset in index.html"
+    r = client.get(match.group(1))
     assert r.status_code == 200
-    assert "/trade-map" in r.text
+    assert len(r.content) > 1000
 
 
-def test_static_core_js(client):
-    r = client.get("/static/trade-map/core/20-markers.js")
-    assert r.status_code == 200
-    assert "markersToLwc" in r.text
-    r2 = client.get("/static/trade-map/core/40-features.js")
-    assert r2.status_code == 200
-    assert "resolveSubchartColumns" in r2.text
+def test_app_shell_nav_in_source() -> None:
+    shell = _read("components/AppShell/AppShell.tsx")
+    pages = _read("lib/shell.ts")
+    assert "MLBot Console" in shell
+    assert "/account" in pages
+    assert "/trade-map" in pages
+    assert "mlbot_orders_filter_v3" in pages
 
 
-def test_trade_map_js_layer_toggle_does_not_reset_history(client):
-    """Regression: EMA/layer changes must not call resetOhlcvLoadedRange."""
-    boot = client.get("/static/trade-map/bootstrap.js")
-    assert boot.status_code == 200
-    body = boot.text
-    assert "resetChartRangeIds" in body
-    bundle = client.get("/static/trade-map/bundle.js").text
-    assert "opts.resetMarkerRange" in bundle
-    assert '!S.ohlcvLoadedFrom || mode === "full"' not in bundle
-    assert "!S.ohlcvLoadedFrom || resetOhlcvRange" in bundle
-    assert 'resetChartRangeIds = new Set(["symbolSelect", "timeframeSelect"])' in body
-    assert '"layerChopGrid"' in body
-    assert '"mainEma1200"' in body
-    assert "main_overlays" in bundle
-    assert "lastMarkerPollSince" in bundle
-    assert 'mode === "poll"' in bundle
-    assert "mergeMarkersById" in client.get("/static/trade-map/markers.js").text
-    assert "featureDrawer" in client.get("/static/trade-map/features.js").text
-    subcharts = client.get("/static/trade-map/subcharts.js").text
-    assert "pane.chart" in subcharts
-    assert "pane.S.chart" not in subcharts
-    assert "scheduleMetricsTableViewportSync" in subcharts
-    assert "flushDeferredCrosshairWork" in subcharts
-    assert "pendingMetricsViewportSync" in subcharts
-    assert "regime滞回" in subcharts
-    assert "regime退出" in subcharts
-    ohlcv_js = client.get("/static/trade-map/core/10-ohlcv.js").text
-    assert "overlayAsOfAtCandleTimes" in ohlcv_js
-    chart_js = client.get("/static/trade-map/chart.js").text
-    assert "setVisibleLogicalRange(snap.logical)" in chart_js
-    assert "subscribeVisibleTimeRangeChange" not in chart_js
-    history_js = client.get("/static/trade-map/history.js").text
-    assert "scheduleMetricsTableViewportSync" in history_js
-    assert "subscribeVisibleTimeRangeChange" not in history_js
-    assert "chart-stack-primary" in client.get("/static/trade-map.html").text
-    markers_js = client.get("/static/trade-map/markers.js").text
-    assert "isFeatureBusRegimeExitMarker" in markers_js
-    assert "findMarkerOnBar" in client.get("/static/trade-map/core/20-markers.js").text
-    base_css = client.get("/static/css/base.css").text
-    assert "scrollbar-thumb" in base_css
-    assert "scrollbar-color" in base_css
-    assert "mergeChopMapPayload" in bundle
-    assert "stage_regions" in bundle
-    chop = client.get("/static/trade-map/chop.js").text
-    assert "S.candleSeries.priceToCoordinate" in chop
-    assert 'priceScale("right").priceToCoordinate' not in chop
-    assert "ps.priceToCoordinate" not in chop
+def test_trade_map_two_phase_bundle_in_source() -> None:
+    bundle = _read("hooks/useTradeMapBundle.ts")
+    assert "include_markers: 'true'" in bundle
+    assert "include_features: 'true'" in bundle
+    assert "Promise.all" in bundle
+    assert "include_ohlcv: 'none'" in bundle
 
 
-def test_bundle_json_shape_for_frontend(client):
+def test_trade_map_layer_toggle_does_not_reset_history() -> None:
+    page = _read("pages/TradeMap/TradeMapPage.tsx")
+    assert "ohlcvLoadedFrom: null" in page
+    sym_idx = page.index("setStoreSymbol(e.target.value)")
+    sym_block = page[sym_idx : sym_idx + 220]
+    assert "ohlcvLoadedFrom: null" in sym_block
+    layer_idx = page.index("layers.trend")
+    layer_block = page[max(0, layer_idx - 120) : layer_idx + 120]
+    assert "setLayers" in layer_block
+    assert "ohlcvLoadedFrom" not in layer_block
+
+
+def test_trade_map_core_ts_exports() -> None:
+    markers = _read("lib/tradeMap/markers.ts")
+    features = _read("lib/tradeMap/features.ts")
+    ohlcv = _read("lib/tradeMap/ohlcv.ts")
+    assert "markersToLwc" in markers
+    assert "isFeatureBusRegimeExitMarker" in markers
+    assert "chopRegimeExitBarTimes" in markers
+    assert "overlayAsOfAtCandleTimes" in ohlcv
+    assert "chopGridMetricsRowSpecs" in features
+
+
+def test_global_styles_use_tokens_not_bare_main() -> None:
+    css = _read("styles/global.css")
+    assert "scrollbar-color" in css
+    assert not re.search(r"(?m)^main\s*\{", css)
+
+
+def test_lwc_hook_avoids_click_scroll() -> None:
+    hook = _read("hooks/useLightweightChart.ts")
+    assert "scrollChartToBarTime" not in hook
+    assert "subscribeClick" not in hook
+
+
+def test_bundle_json_shape_for_frontend(client) -> None:
     r = client.get(
         "/api/trade-map/bundle",
         params={

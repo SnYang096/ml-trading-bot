@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from mlbot_console.auth import BasicAuthMiddleware
@@ -30,7 +30,7 @@ from mlbot_console.routers import (
 app = FastAPI(
     title="MLBot Business Console",
     description="Read-only business CMS: Trade Map, orders, feature bus OHLCV",
-    version="0.2.0",
+    version="0.3.0",
 )
 
 if SETTINGS.basic_auth_user and SETTINGS.basic_auth_password:
@@ -52,40 +52,60 @@ app.include_router(monitoring.router)
 app.include_router(links.router)
 
 _FRONTEND = Path(__file__).resolve().parent / "static"
-if _FRONTEND.is_dir():
-    app.mount("/static", StaticFiles(directory=str(_FRONTEND)), name="static")
+_DIST = _FRONTEND / "dist"
+_SPA_INDEX = _DIST / "index.html"
+
+if _DIST.is_dir():
+    app.mount("/static", StaticFiles(directory=str(_DIST)), name="static")
 
 
 @app.get("/")
-def index() -> FileResponse:
-    return FileResponse(_FRONTEND / "index.html")
+def index() -> RedirectResponse:
+    return RedirectResponse(url="/trade-map")
+
+
+def _spa_index() -> FileResponse:
+    if not _SPA_INDEX.is_file():
+        raise HTTPException(
+            status_code=503,
+            detail="Frontend not built. Run: make frontend-build",
+        )
+    return FileResponse(_SPA_INDEX)
 
 
 @app.get("/trade-map")
 def trade_map_page() -> FileResponse:
-    return FileResponse(_FRONTEND / "trade-map.html")
+    return _spa_index()
 
 
 @app.get("/orders")
 def orders_page() -> FileResponse:
-    return FileResponse(_FRONTEND / "orders.html")
+    return _spa_index()
 
 
 @app.get("/signals")
 def signals_page() -> FileResponse:
-    return FileResponse(_FRONTEND / "signals.html")
+    return _spa_index()
 
 
 @app.get("/account")
 def account_page() -> FileResponse:
-    return FileResponse(_FRONTEND / "account.html")
+    return _spa_index()
 
 
 @app.get("/regime")
 def regime_page() -> FileResponse:
-    return FileResponse(_FRONTEND / "regime.html")
+    return _spa_index()
 
 
 @app.get("/monitoring")
 def monitoring_page() -> FileResponse:
-    return FileResponse(_FRONTEND / "monitoring.html")
+    return _spa_index()
+
+
+@app.get("/{full_path:path}")
+def spa_fallback(full_path: str) -> FileResponse:
+    """Client-side routes (React Router) — must be registered after /api routers."""
+    if full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="Not Found")
+    return _spa_index()

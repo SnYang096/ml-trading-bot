@@ -279,6 +279,16 @@ format:
 lint:
 	PYTHONPATH=src $(PYTHON) -m flake8 src/time_series_model/ src/data_tools/ tests/ scripts/
 
+.PHONY: frontend-build frontend-dev frontend-test
+frontend-build:
+	cd frontend && npm ci && npm run build
+
+frontend-dev:
+	cd frontend && npm run dev
+
+frontend-test:
+	cd frontend && npm test
+
 # ---------------------------------------------------------------------------
 # Feature Registry commands
 # ---------------------------------------------------------------------------

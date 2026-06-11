@@ -76,6 +76,7 @@ on:
       - 'etc/systemd/mlbot-monitor-*.timer'
       - 'etc/systemd/mlbot-monitor-notify@.service'
       - 'src/mlbot_console/**'
+      - 'frontend/**'
       - 'src/time_series_model/live/**'
       - 'config/strategies/**'
       - 'live/highcap/universe.yaml'
@@ -739,6 +740,7 @@ jobs:
             etc/systemd/mlbot-monitor-yearly.timer \
             etc/systemd/mlbot-monitor-notify@.service \
             scripts/monitoring/monitor_telegram_notify.sh \
+            frontend \
             src/__init__.py \
             src/mlbot_console \
             src/live_data_stream \
@@ -774,6 +776,7 @@ jobs:
               etc/systemd/mlbot-monitor-yearly.timer \
               etc/systemd/mlbot-monitor-notify@.service \
               scripts/monitoring/monitor_telegram_notify.sh \
+              frontend \
               src/__init__.py \
               src/mlbot_console \
               src/live_data_stream \

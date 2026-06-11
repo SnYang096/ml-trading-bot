@@ -1,0 +1,76 @@
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.banner {
+  padding: 10px 14px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+}
+
+.bannerOk {
+  background: rgba(38, 166, 154, 0.12);
+}
+
+.bannerWarn {
+  background: rgba(239, 83, 80, 0.12);
+}
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--bg-elevated);
+}
+
+.card.ok {
+  border-left: 3px solid var(--positive);
+}
+
+.card.alert {
+  border-left: 3px solid var(--negative);
+}
+
+.card.missed {
+  border-left: 3px solid #ffa657;
+}
+
+.cardHead {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.cardTitle {
+  font-weight: 600;
+}
+
+.badge {
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: #21262d;
+}
+
+.cardBody {
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.meta {
+  margin-top: 6px;
+  font-size: 0.75rem;
+  word-break: break-all;
+}
+
+.missedText {
+  color: #ffa657;
+}
+
+.uncalText {
+  color: #d2a8ff;
+}

@@ -28,5 +28,15 @@ def test_trade_map_signals(client):
 def test_signals_page_served(client):
     r = client.get("/signals")
     assert r.status_code == 200
-    assert "策略信号" in r.text
-    assert "signals-page.js" in r.text
+    assert 'id="root"' in r.text
+    from pathlib import Path
+
+    tsx = (
+        Path(__file__).resolve().parents[2]
+        / "frontend"
+        / "src"
+        / "pages"
+        / "Signals"
+        / "SignalsPage.tsx"
+    ).read_text(encoding="utf-8")
+    assert "策略信号" in tsx

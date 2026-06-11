@@ -1,0 +1,167 @@
+/** API response envelope from mlbot_console.responses.ok() */
+export interface ApiEnvelope<T> {
+  ok: boolean;
+  data: T;
+  meta?: Record<string, unknown>;
+  error?: { message?: string };
+}
+
+export interface NavLink {
+  id: string;
+  label: string;
+  url: string;
+}
+
+export interface SymbolRow {
+  symbol: string;
+  latest?: Record<string, unknown>;
+}
+
+export interface TradeMarker {
+  id: string;
+  time: number;
+  symbol: string;
+  scope: string;
+  strategy: string;
+  event: string;
+  side: string;
+  price?: number | null;
+  qty?: number | null;
+  pnl_usdt?: number | null;
+  is_add?: boolean;
+  status?: string;
+  color?: string;
+  detail?: Record<string, unknown>;
+}
+
+export interface Candle {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume?: number;
+}
+
+export interface BundleData {
+  ohlcv: {
+    candles: Candle[];
+    source?: string;
+    range_start?: string;
+    range_end?: string;
+    last_candle_time?: number;
+    degraded_ohlc?: boolean;
+  };
+  markers: TradeMarker[];
+  trade_links: unknown[];
+  overlays: Record<string, FeatureOverlaySpec>;
+  main_overlays: Record<string, MainOverlaySpec>;
+  chop_grid_overlay: { batches?: unknown[]; error?: string };
+  chop_regime_regions: unknown[];
+  strategy_stage_regions: Record<string, unknown>;
+}
+
+export interface FeatureOverlaySpec {
+  available?: boolean;
+  points?: { time: number; value: number | null }[];
+  reference_lines?: { y?: number; value?: number; operator?: string }[];
+  error?: string;
+}
+
+export interface MainOverlaySpec {
+  available?: boolean;
+  key?: string;
+  source?: string;
+  points?: { time: number; value: number }[];
+  error?: string;
+}
+
+export interface OrderRow {
+  order_id: string;
+  symbol: string;
+  scope: string;
+  strategy?: string;
+  side?: string;
+  status?: string;
+  order_type?: string;
+  quantity?: number;
+  filled_quantity?: number;
+  price?: number;
+  average_price?: number;
+  time?: number | string;
+  created_at?: string;
+  filled_at?: string;
+  purpose?: string;
+  leg_label?: string;
+  grid_batch?: string;
+  marker_id?: string;
+  pnl_usdt?: number;
+  take_profit_price?: number;
+  stop_loss_price?: number;
+  [key: string]: unknown;
+}
+
+export interface SignalRow {
+  symbol: string;
+  map_href?: string;
+  bars_1min_rows?: number;
+  latest_bar?: { timestamp?: string };
+  strategies?: Record<
+    string,
+    {
+      summary?: string;
+      last_summary?: string;
+      by_strategy?: Record<
+        string,
+        { summary?: string; last_summary?: string; funnel_summary?: string; blockers?: string[] }
+      >;
+    }
+  >;
+}
+
+export interface MonitoringDashboard {
+  summary?: {
+    any_alert?: boolean;
+    any_missed?: boolean;
+    any_uncalibrated?: boolean;
+  };
+  index_updated_at?: string;
+  cards?: MonitoringCard[];
+  strategy_alerts?: Record<string, { source?: string; strategy?: string }[]>;
+}
+
+export interface MonitoringCard {
+  cadence: string;
+  display_status?: string;
+  run_ts?: string;
+  age_hours?: number | null;
+  max_age_hours?: number;
+  output_dir?: string;
+  watchdog_any_alert?: boolean | null;
+  drift_any_alert?: boolean | null;
+  drift_no_plateaus?: boolean;
+}
+
+export interface RegimeOpsRow {
+  account_layer?: string;
+  account_layer_title?: string;
+  strategy: string;
+  present?: boolean;
+  regime_source?: string;
+  regime_path?: string;
+  n_rules?: number;
+  allowed_sides?: string[];
+  last_calibration?: Record<string, unknown>;
+  drift_status?: string;
+  drift_detail?: string;
+  drift_checked_at?: string;
+  config_reference_at?: string;
+}
+
+export interface AccountSummary {
+  totals?: Record<string, number | null>;
+  recent_realized?: Record<string, unknown>;
+  ledger?: { totals?: Record<string, number | null> };
+  by_scope?: unknown[];
+  reconciliation?: unknown;
+}
