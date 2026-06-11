@@ -36,5 +36,15 @@ schedules:
     manifest: config/monitoring/yearly_drift.yaml
     description: Full bus drift archive (human review)
 
+# systemd OnCalendar (UTC) — CMS 卡片「下次计划」；与 etc/systemd/mlbot-monitor-*.timer 对齐
+timers:
+  daily: "*-*-* 06:30:00"
+  weekly: "Sun *-*-* 08:00:00"
+  weekly_c: "Sun *-*-* 08:30:00"
+  monthly: "*-*-01 09:00:00"
+  monthly_c: "*-*-01 09:30:00"
+  quarterly: "*-01,04,07,10-01 10:00:00"
+  yearly: "*-01-01 11:00:00"
+
 # Default SQLite index (override with MLBOT_RD_REGISTRY_DB)
 registry_db: results/rd_registry.sqlite

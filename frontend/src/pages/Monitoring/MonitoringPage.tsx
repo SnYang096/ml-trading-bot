@@ -9,18 +9,35 @@ import styles from './MonitoringPage.module.css';
 
 const CADENCE_LABELS: Record<string, string> = {
   daily: '日更',
-  weekly: '周更',
-  monthly: '月更',
+  weekly: '周更 (B)',
+  weekly_c: '周更 (C)',
+  monthly: '月更 (B)',
+  monthly_c: '月更 (C)',
   quarterly: '季更',
   yearly: '年更',
 };
 
-const CADENCE_ORDER = ['daily', 'weekly', 'monthly', 'quarterly', 'yearly'];
+const CADENCE_ORDER = [
+  'daily',
+  'weekly',
+  'weekly_c',
+  'monthly',
+  'monthly_c',
+  'quarterly',
+  'yearly',
+];
 
 function fmtAge(hours: number | null | undefined): string {
   if (hours == null || Number.isNaN(hours)) return '从未运行';
   if (hours < 48) return `${hours.toFixed(1)} 小时前`;
   return `${(hours / 24).toFixed(1)} 天前`;
+}
+
+function fmtUtc(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
 }
 
 function statusClass(st: string | undefined): string {
@@ -62,9 +79,14 @@ function CadenceCard({ card }: { card: MonitoringCard }) {
           最近运行：{card.run_ts || '—'}（{fmtAge(card.age_hours)}）
         </div>
         <div>
+          本次有效至：{fmtUtc(card.valid_until_at)}
+          {!card.run_ts ? <span className="muted">（未跑过，应尽快执行）</span> : null}
+        </div>
+        <div>下次计划：{fmtUtc(card.next_run_at)}</div>
+        <div>
           watchdog：{wd} · drift：{dr}
         </div>
-        <div className="muted">上限 {card.max_age_hours}h 内有效</div>
+        <div className="muted">staleness 上限 {card.max_age_hours}h</div>
         {(card.alert_details || []).length ? (
           <ul className={styles.detailList}>
             {(card.alert_details || []).map((line) => (

@@ -173,6 +173,10 @@ export interface MonitoringCard {
   cadence: string;
   display_status?: string;
   run_ts?: string;
+  last_run_at?: string | null;
+  valid_until_at?: string | null;
+  next_run_at?: string | null;
+  timer_calendar?: string;
   age_hours?: number | null;
   max_age_hours?: number;
   output_dir?: string;

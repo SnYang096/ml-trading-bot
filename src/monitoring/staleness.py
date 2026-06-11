@@ -8,7 +8,9 @@ from typing import Any, Dict, List, Optional, Tuple
 DEFAULT_STALENESS_HOURS: Dict[str, float] = {
     "daily": 36.0,
     "weekly": 8.0 * 24.0,
+    "weekly_c": 8.0 * 24.0,
     "monthly": 35.0 * 24.0,
+    "monthly_c": 35.0 * 24.0,
     "quarterly": 100.0 * 24.0,
     "yearly": 400.0 * 24.0,
 }
@@ -130,18 +132,19 @@ def build_cadence_cards(
     *,
     now: Optional[datetime] = None,
 ) -> List[Dict[str, Any]]:
+    from src.monitoring.cadence_schedule import attach_schedule_dates
+
     cadences = (schedules_cfg.get("schedules") or {}).keys()
     limits = resolve_staleness_hours(schedules_cfg)
     rows = index.get("cadences") or {}
     cards: List[Dict[str, Any]] = []
     for cadence in sorted(cadences):
         row = rows.get(cadence) if isinstance(rows, dict) else None
-        cards.append(
-            evaluate_cadence_health(
-                cadence,
-                row if isinstance(row, dict) else None,
-                max_age_hours=limits.get(cadence, 7 * 24),
-                now=now,
-            )
+        card = evaluate_cadence_health(
+            cadence,
+            row if isinstance(row, dict) else None,
+            max_age_hours=limits.get(cadence, 7 * 24),
+            now=now,
         )
+        cards.append(attach_schedule_dates(card, schedules_cfg=schedules_cfg, now=now))
     return cards
