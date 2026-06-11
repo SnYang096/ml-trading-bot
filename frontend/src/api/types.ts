@@ -43,6 +43,23 @@ export interface Candle {
   volume?: number;
 }
 
+export interface TradeLink {
+  strategy?: string;
+  scope?: string;
+  leg?: string;
+  status?: string;
+  exit_kind?: string;
+  entry_time: number;
+  entry_price: number;
+  exit_time: number;
+  exit_price: number;
+  entry_marker_id?: string;
+  exit_marker_id?: string;
+  side?: string;
+  pnl_usdt?: number | null;
+  color?: string;
+}
+
 export interface BundleData {
   ohlcv: {
     candles: Candle[];
@@ -53,7 +70,7 @@ export interface BundleData {
     degraded_ohlc?: boolean;
   };
   markers: TradeMarker[];
-  trade_links: unknown[];
+  trade_links: TradeLink[];
   overlays: Record<string, FeatureOverlaySpec>;
   main_overlays: Record<string, MainOverlaySpec>;
   chop_grid_overlay: { batches?: unknown[]; error?: string };

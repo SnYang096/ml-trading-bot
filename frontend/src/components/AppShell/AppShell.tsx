@@ -26,7 +26,11 @@ export function AppShell() {
   return (
     <div className={styles.root}>
       <header className={styles.toolbar}>
-        <h1 className={styles.title}>MLBot Console</h1>
+        <h1 className={styles.title}>
+          <span className={styles.prompt}>root@mlbot</span>
+          <span className={styles.path}>:~/console$ </span>
+          <span className={styles.cursor}>_</span>
+        </h1>
         <nav className={styles.nav}>
           {PAGES.map((p) => (
             <NavLink

@@ -1,47 +1,100 @@
 import { useQuery } from '@tanstack/react-query';
-import { Link, useSearchParams } from 'react-router-dom';
-import { useEffect, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { IChartApi } from 'lightweight-charts';
 import { apiGet } from '@/api/client.ts';
-import type { SymbolRow } from '@/api/types.ts';
-import { useLightweightChart } from '@/hooks/useLightweightChart.ts';
+import type { SymbolRow, TradeMarker } from '@/api/types.ts';
+import { useTradeMapFeatureCatalog } from '@/hooks/useTradeMapFeatureCatalog.ts';
+import { useTradeMapHistory } from '@/hooks/useTradeMapHistory.ts';
+import { useTradeMapMainChart } from '@/hooks/useTradeMapMainChart.ts';
 import { useTradeMapBundle } from '@/hooks/useTradeMapBundle.ts';
+import {
+  chopGridOverlayEnabled,
+  listStrategiesForLayers,
+  scrollIndexForTime,
+} from '@/lib/tradeMap';
 import { getSymbol, setSymbol, SCOPE_LABELS } from '@/lib/shell.ts';
 import { scopesFromLayers, useTradeMapStore } from '@/stores/tradeMapStore.ts';
+import { ChopGridLabelLayer } from './components/ChopGridLabelLayer.tsx';
+import { FeatureDrawer } from './components/FeatureDrawer.tsx';
+import { MarkerDetailDrawer } from './components/MarkerDetailDrawer.tsx';
+import { OrdersDock } from './components/OrdersDock.tsx';
+import { SubchartStack } from './components/SubchartStack.tsx';
 import styles from './TradeMapPage.module.css';
 
 export function TradeMapPage() {
   const [searchParams] = useSearchParams();
+  const [mainChart, setMainChart] = useState<IChartApi | null>(null);
+  const store = useTradeMapStore();
   const {
     symbol,
     timeframe,
     layers,
     markers,
     lastCandles,
+    lastOverlays,
+    lastMainOverlays,
+    lastChopMapData,
+    lastTradeLinks,
+    chopRegimeRegions,
+    strategyStageRegions,
     selectedMarkerId,
     featureStrategyFocus,
+    selectedFeatureColumns,
     statusText,
     loading,
     mainEma1200,
     mainWeeklyEma200,
+    featureDrawerOpen,
+    paneVolume,
+    ordersDockOpen,
+    chartFitPending,
     setSymbol: setStoreSymbol,
     setTimeframe,
     setLayers,
     setSelectedMarkerId,
     setBundlePhase,
-  } = useTradeMapStore();
+    setHighlightBarTime,
+    setFeatureDrawerOpen,
+    setPaneVolume,
+    setOrdersDockOpen,
+  } = store;
 
-  const { refreshFull, initFromLayout } = useTradeMapBundle();
-  const chartRef = useLightweightChart(
-    lastCandles,
+  const { refreshFull, initFromLayout, resetHistory } = useTradeMapBundle();
+  const { applyStrategyFocus, applyLayerDefaults } = useTradeMapFeatureCatalog();
+  useTradeMapHistory(mainChart);
+
+  const { containerRef, chartRef, candleSeriesRef, labelSpecs } = useTradeMapMainChart({
+    candles: lastCandles,
     markers,
+    tradeLinks: lastTradeLinks,
+    overlays: lastOverlays,
+    mainOverlays: lastMainOverlays,
+    chopMapData: {
+      chop_grid_overlay: (lastChopMapData || undefined) as import('@/lib/tradeMap/chartOverlay.ts').ChopMapPayload['chop_grid_overlay'],
+      chop_regime_regions: chopRegimeRegions as import('@/lib/tradeMap/chartOverlay.ts').TimeSpan[],
+      strategy_stage_regions: strategyStageRegions as import('@/lib/tradeMap/chartOverlay.ts').ChopMapPayload['strategy_stage_regions'],
+    },
+    layers,
+    strategyFocus: featureStrategyFocus,
+    timeframe,
     selectedMarkerId,
-    featureStrategyFocus,
-  );
+    chartFitPending,
+    onHighlightBarTime: setHighlightBarTime,
+    onChartReady: setMainChart,
+  });
 
   const symbolsQuery = useQuery({
     queryKey: ['symbols'],
     queryFn: () => apiGet<SymbolRow[]>('/api/trade-map/symbols'),
   });
+
+  const strategies = useMemo(() => listStrategiesForLayers(layers), [layers]);
+  const chopLabelsEnabled = chopGridOverlayEnabled(layers, featureStrategyFocus);
+  const selectedMarker = useMemo(
+    () => markers.find((m) => m.id === selectedMarkerId) || null,
+    [markers, selectedMarkerId],
+  );
 
   useEffect(() => {
     initFromLayout();
@@ -57,118 +110,271 @@ export function TradeMapPage() {
     refreshFull().catch(() => {});
     const t = window.setInterval(() => refreshFull().catch(() => {}), 10_000);
     return () => window.clearInterval(t);
-  }, [refreshFull, symbol, timeframe, layers, mainEma1200, mainWeeklyEma200]);
+  }, [
+    refreshFull,
+    symbol,
+    timeframe,
+    layers,
+    mainEma1200,
+    mainWeeklyEma200,
+    selectedFeatureColumns,
+    featureStrategyFocus,
+  ]);
+
+  const scrollChartToBarTime = useCallback(
+    (barTime: number) => {
+      const chart = chartRef.current;
+      if (!chart || !lastCandles.length) return;
+      const idx = scrollIndexForTime(lastCandles, barTime);
+      if (idx < 0) return;
+      const pad = 15;
+      chart.timeScale().setVisibleLogicalRange({
+        from: Math.max(0, idx - pad),
+        to: Math.min(lastCandles.length - 1, idx + pad),
+      });
+      setHighlightBarTime(barTime);
+    },
+    [chartRef, lastCandles, setHighlightBarTime],
+  );
+
+  const onMarkerClick = (m: TradeMarker) => {
+    setSelectedMarkerId(m.id);
+    scrollChartToBarTime(Number(m.time));
+  };
 
   const symbolOptions = symbolsQuery.data?.data?.length
     ? symbolsQuery.data.data
     : [{ symbol: 'ETHUSDT' }];
 
-  const scopeLabel = useMemo(() => scopesFromLayers(layers), [layers]);
-
   return (
     <div className={styles.page}>
       <div className={styles.toolbar}>
-        <label>
-          Symbol
-          <select
-            value={symbol}
+        <div className={styles.module}>
+          <span className={styles.moduleLabel}>数据</span>
+          <label>
+            Symbol
+            <select
+              value={symbol}
             onChange={(e) => {
+              resetHistory();
               setStoreSymbol(e.target.value);
               setSymbol(e.target.value);
               setBundlePhase({ chartFitPending: true, ohlcvLoadedFrom: null });
             }}
-          >
-            {symbolOptions.map((row) => (
-              <option key={row.symbol} value={row.symbol}>
-                {row.symbol}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          TF
-          <select
-            value={timeframe}
+            >
+              {symbolOptions.map((row) => (
+                <option key={row.symbol} value={row.symbol}>
+                  {row.symbol}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            周期
+            <select
+              value={timeframe}
             onChange={(e) => {
+              resetHistory();
               setTimeframe(e.target.value);
               setBundlePhase({ chartFitPending: true, ohlcvLoadedFrom: null });
             }}
+            >
+              <option value="15min">15min</option>
+              <option value="2h">2h</option>
+              <option value="1d">1d</option>
+              <option value="1w">1w</option>
+            </select>
+          </label>
+          <label className={styles.chk}>
+            <input
+              type="checkbox"
+              checked={mainEma1200}
+              onChange={(e) => setBundlePhase({ mainEma1200: e.target.checked })}
+            />
+            EMA1200
+          </label>
+          <label className={styles.chk}>
+            <input
+              type="checkbox"
+              checked={mainWeeklyEma200}
+              onChange={(e) => setBundlePhase({ mainWeeklyEma200: e.target.checked })}
+            />
+            W-EMA200
+          </label>
+        </div>
+
+        <div className={styles.module}>
+          <span className={styles.moduleLabel}>账户层</span>
+          <label className={styles.chk}>
+            <input
+              type="checkbox"
+              checked={layers.trend}
+              onChange={(e) => {
+                setLayers({ trend: e.target.checked });
+                applyLayerDefaults();
+              }}
+            />
+            {SCOPE_LABELS.trend}
+          </label>
+          <label className={styles.chk}>
+            <input
+              type="checkbox"
+              checked={layers.spot}
+              onChange={(e) => {
+                setLayers({ spot: e.target.checked });
+                applyLayerDefaults();
+              }}
+            />
+            {SCOPE_LABELS.spot}
+          </label>
+          <label className={styles.chk}>
+            <input
+              type="checkbox"
+              checked={layers.multiLeg}
+              onChange={(e) => {
+                setLayers({ multiLeg: e.target.checked });
+                applyLayerDefaults();
+              }}
+            />
+            {SCOPE_LABELS.multi_leg}
+          </label>
+          <label className={styles.chk}>
+            <input
+              type="checkbox"
+              checked={layers.pending}
+              onChange={(e) => setLayers({ pending: e.target.checked })}
+            />
+            含挂单
+          </label>
+          <label className={styles.chk}>
+            <input
+              type="checkbox"
+              checked={layers.chopGrid}
+              onChange={(e) => setLayers({ chopGrid: e.target.checked })}
+            />
+            网格线
+          </label>
+          <label className={styles.chk}>
+            <input
+              type="checkbox"
+              checked={layers.prefilter}
+              onChange={(e) => setLayers({ prefilter: e.target.checked })}
+            />
+            Prefilter区
+          </label>
+          <label className={styles.chk}>
+            <input
+              type="checkbox"
+              checked={layers.gate}
+              onChange={(e) => setLayers({ gate: e.target.checked })}
+            />
+            Gate区
+          </label>
+        </div>
+
+        <div className={styles.module}>
+          <span className={styles.moduleLabel}>策略</span>
+          <div className={styles.chips}>
+            <button
+              type="button"
+              className={!featureStrategyFocus ? styles.chipActive : styles.chip}
+              onClick={() => applyStrategyFocus('')}
+            >
+              全部
+            </button>
+            {strategies.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                className={featureStrategyFocus === s.id ? styles.chipActive : styles.chip}
+                onClick={() => applyStrategyFocus(s.id)}
+              >
+                {s.title || s.id}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className={styles.module}>
+          <span className={styles.moduleLabel}>附图</span>
+          <label className={styles.chk}>
+            <input
+              type="checkbox"
+              checked={paneVolume}
+              onChange={(e) => setPaneVolume(e.target.checked)}
+            />
+            成交量
+          </label>
+          <button
+            type="button"
+            className={styles.featureBtn}
+            onClick={() => setFeatureDrawerOpen(true)}
           >
-            <option value="15min">15min</option>
-            <option value="2h">2h</option>
-            <option value="1d">1d</option>
-            <option value="1w">1w</option>
-          </select>
-        </label>
-        <label className={styles.chk}>
-          <input
-            type="checkbox"
-            checked={layers.trend}
-            onChange={(e) => setLayers({ trend: e.target.checked })}
-          />
-          {SCOPE_LABELS.trend}
-        </label>
-        <label className={styles.chk}>
-          <input
-            type="checkbox"
-            checked={layers.spot}
-            onChange={(e) => setLayers({ spot: e.target.checked })}
-          />
-          {SCOPE_LABELS.spot}
-        </label>
-        <label className={styles.chk}>
-          <input
-            type="checkbox"
-            checked={layers.multiLeg}
-            onChange={(e) => setLayers({ multiLeg: e.target.checked })}
-          />
-          {SCOPE_LABELS.multi_leg}
-        </label>
-        <label className={styles.chk}>
-          <input
-            type="checkbox"
-            checked={layers.pending}
-            onChange={(e) => setLayers({ pending: e.target.checked })}
-          />
-          Pending
-        </label>
-        <label className={styles.chk}>
-          <input
-            type="checkbox"
-            checked={mainEma1200}
-            onChange={(e) => setBundlePhase({ mainEma1200: e.target.checked })}
-          />
-          EMA1200
-        </label>
-        <label className={styles.chk}>
-          <input
-            type="checkbox"
-            checked={mainWeeklyEma200}
-            onChange={(e) => setBundlePhase({ mainWeeklyEma200: e.target.checked })}
-          />
-          W-EMA200
-        </label>
+            特征 <span className={styles.badge}>{selectedFeatureColumns.length}</span>
+          </button>
+        </div>
+
+        <button
+          type="button"
+          className={ordersDockOpen ? `${styles.dockBtn} ${styles.dockBtnActive}` : styles.dockBtn}
+          onClick={() => setOrdersDockOpen(!ordersDockOpen)}
+        >
+          订单表
+        </button>
         <button type="button" onClick={() => refreshFull().catch(() => {})}>
           刷新
         </button>
-        <Link to={`/orders?symbol=${encodeURIComponent(symbol)}`}>订单</Link>
-        <span className={styles.status}>{loading ? '加载中…' : statusText || scopeLabel}</span>
+        <span className={styles.status}>{loading ? '加载中…' : statusText || scopesFromLayers(layers)}</span>
       </div>
-      <div ref={chartRef} className={styles.chart} />
-      <div className={styles.markerList}>
-        {markers.slice(0, 40).map((m) => (
-          <button
-            key={m.id}
-            type="button"
-            className={
-              m.id === selectedMarkerId ? `${styles.markerBtn} ${styles.markerSelected}` : styles.markerBtn
-            }
-            onClick={() => setSelectedMarkerId(m.id)}
-          >
-            {m.strategy}:{m.event} @{m.time}
-          </button>
-        ))}
+
+      <div className={styles.mainRow}>
+        <div className={styles.chartColumn}>
+          <div className={styles.chartStack}>
+            <div className={styles.chartPane}>
+              <div ref={containerRef} className={styles.chart} />
+              <ChopGridLabelLayer
+                chart={mainChart}
+                candleSeries={candleSeriesRef.current}
+                candles={lastCandles}
+                specs={labelSpecs}
+                enabled={chopLabelsEnabled}
+              />
+            </div>
+            <SubchartStack
+              mainChart={mainChart}
+              candles={lastCandles}
+              overlays={lastOverlays}
+              onBarClick={scrollChartToBarTime}
+            />
+          </div>
+          <div className={styles.markerList}>
+            {markers.slice(0, 60).map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                className={
+                  m.id === selectedMarkerId
+                    ? `${styles.markerBtn} ${styles.markerSelected}`
+                    : styles.markerBtn
+                }
+                onClick={() => onMarkerClick(m)}
+              >
+                {m.strategy}:{m.event} @{m.time}
+              </button>
+            ))}
+          </div>
+        </div>
+        {selectedMarkerId ? (
+          <MarkerDetailDrawer
+            markerId={selectedMarkerId}
+            marker={selectedMarker}
+            onClose={() => setSelectedMarkerId(null)}
+          />
+        ) : null}
+        {ordersDockOpen ? <OrdersDock symbol={symbol} layers={layers} /> : null}
       </div>
+
+      {featureDrawerOpen ? <FeatureDrawer onClose={() => setFeatureDrawerOpen(false)} /> : null}
     </div>
   );
 }

@@ -5,3 +5,6 @@ export * from './markers.ts';
 export * from './candles.ts';
 export * from './misc.ts';
 export * from './features.ts';
+export * from './chartOverlay.ts';
+export * from './tradeLinks.ts';
+export * from './history.ts';

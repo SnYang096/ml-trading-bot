@@ -1,11 +1,30 @@
 :root {
-  --bg: #0f1419;
-  --bg-elevated: #161b22;
-  --border: #30363d;
-  --text: #e6edf3;
-  --text-muted: #8b949e;
-  --accent: #58a6ff;
-  --positive: #26a69a;
-  --negative: #ef5350;
-  --nav-active: #238636;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Courier New', ui-monospace, monospace;
+
+  --bg: #000000;
+  --bg-elevated: #050a05;
+  --surface: #0a120a;
+  --surface-hover: #0f1a0f;
+  --border: #1a4d1a;
+  --border-bright: rgba(0, 255, 65, 0.35);
+
+  --text: #39ff39;
+  --text-muted: #1faa1f;
+  --text-dim: #0d660d;
+
+  --accent: #00ff41;
+  --accent-cyan: #00ffff;
+  --accent-amber: #ffb000;
+  --accent-purple: #bf00ff;
+
+  --positive: #00ff88;
+  --negative: #ff0040;
+  --warning: #ffff00;
+
+  --nav-active: rgba(0, 255, 65, 0.14);
+  --nav-active-border: #00ff41;
+
+  --glow: 0 0 8px rgba(0, 255, 65, 0.4);
+  --glow-strong: 0 0 14px rgba(0, 255, 65, 0.65);
+  --radius: 0;
 }

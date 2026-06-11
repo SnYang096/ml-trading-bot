@@ -1,0 +1,40 @@
+.stack {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.header {
+  padding: 4px 10px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--accent-cyan);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.pane {
+  position: relative;
+  height: 88px;
+  border-bottom: 1px solid var(--border);
+}
+
+.label {
+  position: absolute;
+  top: 4px;
+  left: 8px;
+  z-index: 2;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  pointer-events: none;
+}
+
+.inner {
+  position: absolute;
+  inset: 0;
+}

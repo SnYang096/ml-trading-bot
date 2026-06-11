@@ -6,39 +6,72 @@
   padding: 10px 16px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-elevated);
+  box-shadow: 0 1px 0 var(--border-bright), inset 0 -1px 0 rgba(0, 255, 65, 0.05);
 }
 
 .title {
-  font-size: 1.1rem;
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  font-weight: 600;
   margin: 0 8px 0 0;
   flex-shrink: 0;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.prompt {
+  color: var(--accent-cyan);
+  text-shadow: 0 0 8px rgba(0, 255, 255, 0.35);
+}
+
+.path {
+  color: var(--text-muted);
+}
+
+.cursor {
+  color: var(--accent);
+  animation: blink 1.05s step-end infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
 }
 
 .nav {
   display: flex;
-  gap: 4px;
+  gap: 2px;
   padding: 2px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--bg);
 }
 
 .navLink {
   color: var(--text-muted);
   text-decoration: none;
-  font-size: 0.85rem;
-  padding: 4px 12px;
-  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  padding: 4px 10px;
+  border-radius: var(--radius);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border: 1px solid transparent;
 }
 
 .navLink:hover {
-  color: var(--text);
-  background: #21262d;
+  color: var(--accent);
+  border-color: var(--border);
+  background: var(--surface);
+  text-shadow: var(--glow);
 }
 
 .navActive {
-  color: var(--text);
+  color: var(--accent);
   background: var(--nav-active);
+  border-color: var(--nav-active-border);
+  box-shadow: var(--glow);
 }
 
 .extLinks {
@@ -50,7 +83,15 @@
 }
 
 .extLinks a {
-  font-size: 0.8rem;
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  border-bottom: 1px dashed var(--border);
+}
+
+.extLinks a:hover {
+  color: var(--accent-cyan);
+  border-bottom-color: var(--accent-cyan);
 }
 
 .main {

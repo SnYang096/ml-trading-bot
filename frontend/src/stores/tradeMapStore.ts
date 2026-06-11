@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import type { BundleData, Candle, TradeMarker } from '@/api/types.ts';
+import type { BundleData, Candle, MainOverlaySpec, TradeLink, TradeMarker } from '@/api/types.ts';
+import type { FeatureOverlays } from '@/lib/tradeMap/types.ts';
 
 export const POLL_MS = 10_000;
 export const LAYOUT_KEY = 'mlbot_trade_map_layout_v2';
@@ -19,14 +20,24 @@ interface TradeMapState {
   timeframe: string;
   layers: LayerState;
   selectedFeatureColumns: string[];
+  availableFeatureColumns: string[];
   featureStrategyFocus: string;
+  featureSearchQuery: string;
+  featureDrawerOpen: boolean;
+  paneVolume: boolean;
+  ordersDockOpen: boolean;
   lastCandles: Candle[];
-  lastOverlays: Record<string, unknown>;
+  lastOverlays: FeatureOverlays;
+  lastMainOverlays: Record<string, MainOverlaySpec>;
   lastChopMapData: BundleData['chop_grid_overlay'] | null;
   chopRegimeRegions: unknown[];
   strategyStageRegions: Record<string, unknown>;
   markers: TradeMarker[];
+  lastTradeLinks: TradeLink[];
+  markerQueryFromIso: string | null;
+  historyExhausted: boolean;
   selectedMarkerId: string | null;
+  highlightBarTime: number | null;
   ohlcvLoadedFrom: string | null;
   ohlcvLoadedTo: string | null;
   lastMarkerPollSince: string | null;
@@ -39,10 +50,16 @@ interface TradeMapState {
   setTimeframe: (tf: string) => void;
   setLayers: (l: Partial<LayerState>) => void;
   setSelectedFeatureColumns: (cols: string[]) => void;
+  setAvailableFeatureColumns: (cols: string[]) => void;
   setFeatureStrategyFocus: (s: string) => void;
+  setFeatureSearchQuery: (s: string) => void;
+  setFeatureDrawerOpen: (v: boolean) => void;
+  setPaneVolume: (v: boolean) => void;
+  setOrdersDockOpen: (v: boolean) => void;
   setLastCandles: (c: Candle[]) => void;
   setBundlePhase: (payload: Partial<TradeMapState>) => void;
   setSelectedMarkerId: (id: string | null) => void;
+  setHighlightBarTime: (t: number | null) => void;
   setStatusText: (s: string) => void;
   setLoading: (v: boolean) => void;
 }
@@ -53,7 +70,7 @@ const defaultLayers: LayerState = {
   multiLeg: true,
   pending: false,
   chopGrid: true,
-  prefilter: false,
+  prefilter: true,
   gate: false,
 };
 
@@ -62,30 +79,46 @@ export const useTradeMapStore = create<TradeMapState>((set) => ({
   timeframe: '2h',
   layers: defaultLayers,
   selectedFeatureColumns: [],
+  availableFeatureColumns: [],
   featureStrategyFocus: '',
+  featureSearchQuery: '',
+  featureDrawerOpen: false,
+  paneVolume: false,
+  ordersDockOpen: false,
   lastCandles: [],
   lastOverlays: {},
+  lastMainOverlays: {},
   lastChopMapData: null,
   chopRegimeRegions: [],
   strategyStageRegions: {},
   markers: [],
+  lastTradeLinks: [],
+  markerQueryFromIso: null,
+  historyExhausted: false,
   selectedMarkerId: null,
+  highlightBarTime: null,
   ohlcvLoadedFrom: null,
   ohlcvLoadedTo: null,
   lastMarkerPollSince: null,
   statusText: '',
   loading: false,
   chartFitPending: true,
-  mainEma1200: false,
-  mainWeeklyEma200: false,
+  mainEma1200: true,
+  mainWeeklyEma200: true,
   setSymbol: (symbol) => set({ symbol }),
   setTimeframe: (timeframe) => set({ timeframe }),
   setLayers: (l) => set((s) => ({ layers: { ...s.layers, ...l } })),
   setSelectedFeatureColumns: (selectedFeatureColumns) => set({ selectedFeatureColumns }),
+  setAvailableFeatureColumns: (availableFeatureColumns) => set({ availableFeatureColumns }),
   setFeatureStrategyFocus: (featureStrategyFocus) => set({ featureStrategyFocus }),
+  setFeatureSearchQuery: (featureSearchQuery) => set({ featureSearchQuery }),
+  setFeatureDrawerOpen: (featureDrawerOpen) => set({ featureDrawerOpen }),
+  setPaneVolume: (paneVolume) => set({ paneVolume }),
+  setOrdersDockOpen: (ordersDockOpen) => set({ ordersDockOpen }),
   setLastCandles: (lastCandles) => set({ lastCandles }),
   setBundlePhase: (payload) => set(payload),
   setSelectedMarkerId: (selectedMarkerId) => set({ selectedMarkerId }),
+  setHighlightBarTime: (highlightBarTime) => set({ highlightBarTime }),
   setStatusText: (statusText) => set({ statusText }),
   setLoading: (loading) => set({ loading }),
 }));
@@ -106,12 +139,25 @@ export function loadLayout(): Record<string, unknown> | null {
   }
 }
 
+export function resetHistoryState(): void {
+  useTradeMapStore.setState({
+    ohlcvLoadedFrom: null,
+    ohlcvLoadedTo: null,
+    markerQueryFromIso: null,
+    lastMarkerPollSince: null,
+    lastTradeLinks: [],
+    historyExhausted: false,
+  });
+}
+
 export function saveLayout(state: {
   layers: LayerState;
   selectedFeatureColumns: string[];
   featureStrategyFocus: string;
   mainEma1200: boolean;
   mainWeeklyEma200: boolean;
+  paneVolume?: boolean;
+  ordersDockOpen?: boolean;
 }): void {
   localStorage.setItem(LAYOUT_KEY, JSON.stringify(state));
 }

@@ -1,0 +1,39 @@
+.dock {
+  width: min(420px, 42vw);
+  border-left: 1px solid var(--border);
+  background: var(--bg-elevated);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.head h3 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.scroll {
+  flex: 1;
+  overflow: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+
+.table th,
+.table td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  text-align: left;
+}

@@ -1,0 +1,90 @@
+.wrap {
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.caption {
+  padding: 4px 10px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--accent-cyan);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 1px solid var(--border);
+}
+
+.scroll {
+  overflow: auto;
+  max-height: 220px;
+}
+
+.table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+.table th,
+.table td {
+  border: 1px solid var(--border);
+  padding: 3px 6px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.rowLabel {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  text-align: left !important;
+  background: var(--surface);
+  color: var(--text-muted);
+  min-width: 120px;
+}
+
+.thresh {
+  font-size: 0.62rem;
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+.barCol {
+  cursor: pointer;
+  min-width: 52px;
+}
+
+.barCol:hover {
+  background: var(--surface-hover);
+}
+
+.active {
+  background: var(--surface-hover);
+  outline: 1px solid var(--warning);
+  color: var(--warning);
+}
+
+.enterOk {
+  color: var(--positive);
+}
+
+.enterFail {
+  color: var(--negative);
+}
+
+.regimeOn {
+  color: var(--accent);
+}
+
+.regimeExit {
+  color: var(--accent-amber);
+}
+
+.passOk {
+  color: var(--positive);
+}
+
+.passFail {
+  color: var(--negative);
+}

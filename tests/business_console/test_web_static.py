@@ -54,7 +54,7 @@ def test_vite_bundle_asset_reachable(client) -> None:
 def test_app_shell_nav_in_source() -> None:
     shell = _read("components/AppShell/AppShell.tsx")
     pages = _read("lib/shell.ts")
-    assert "MLBot Console" in shell
+    assert "root@mlbot" in shell
     assert "/account" in pages
     assert "/trade-map" in pages
     assert "mlbot_orders_filter_v3" in pages
@@ -66,6 +66,28 @@ def test_trade_map_two_phase_bundle_in_source() -> None:
     assert "include_features: 'true'" in bundle
     assert "Promise.all" in bundle
     assert "include_ohlcv: 'none'" in bundle
+    assert "include_trade_links: 'true'" in bundle
+    assert "lastTradeLinks" in bundle
+
+
+def test_trade_map_history_pan_in_source() -> None:
+    history = _read("hooks/useTradeMapHistory.ts")
+    assert "loadMoreHistory" in history
+    assert "subscribeVisibleLogicalRangeChange" in history
+    assert "unsubscribeVisibleLogicalRangeChange" in history
+    assert "mergeCandlesByTime" in history
+    assert "refreshMarkersOnly" in history
+    assert "mergeFeatureOverlays" in history
+
+
+def test_trade_map_trade_links_in_source() -> None:
+    links = _read("lib/tradeMap/tradeLinks.ts")
+    main = _read("hooks/useTradeMapMainChart.ts")
+    assert "buildTradeLinkLines" in links
+    assert "mergeTradeLinks" in links
+    assert "tradeLinksForDisplay" in links
+    assert "applyTradeLinks" in main
+    assert "buildTradeLinkLines" in main
 
 
 def test_trade_map_layer_toggle_does_not_reset_history() -> None:
@@ -98,7 +120,7 @@ def test_global_styles_use_tokens_not_bare_main() -> None:
 
 
 def test_lwc_hook_avoids_click_scroll() -> None:
-    hook = _read("hooks/useLightweightChart.ts")
+    hook = _read("hooks/useTradeMapMainChart.ts")
     assert "scrollChartToBarTime" not in hook
     assert "subscribeClick" not in hook
 

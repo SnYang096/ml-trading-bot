@@ -7,24 +7,31 @@
 
 .banner {
   padding: 10px 14px;
-  border-radius: 6px;
+  border-radius: var(--radius);
   margin-bottom: 16px;
   border: 1px solid var(--border);
+  font-family: var(--font-mono);
 }
 
 .bannerOk {
-  background: rgba(38, 166, 154, 0.12);
+  background: rgba(0, 255, 136, 0.08);
+  border-color: var(--positive);
+  box-shadow: inset 0 0 20px rgba(0, 255, 136, 0.05);
 }
 
 .bannerWarn {
-  background: rgba(239, 83, 80, 0.12);
+  background: rgba(255, 0, 64, 0.08);
+  border-color: var(--negative);
+  box-shadow: inset 0 0 20px rgba(255, 0, 64, 0.05);
 }
 
 .card {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 12px;
   background: var(--bg-elevated);
+  font-family: var(--font-mono);
+  box-shadow: inset 0 0 16px rgba(0, 255, 65, 0.03);
 }
 
 .card.ok {
@@ -36,7 +43,7 @@
 }
 
 .card.missed {
-  border-left: 3px solid #ffa657;
+  border-left: 3px solid var(--accent-amber);
 }
 
 .cardHead {
@@ -47,13 +54,15 @@
 
 .cardTitle {
   font-weight: 600;
+  color: var(--accent);
 }
 
 .badge {
   font-size: 0.75rem;
   padding: 2px 8px;
-  border-radius: 4px;
-  background: #21262d;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
 }
 
 .cardBody {
@@ -65,12 +74,13 @@
   margin-top: 6px;
   font-size: 0.75rem;
   word-break: break-all;
+  color: var(--text-muted);
 }
 
 .missedText {
-  color: #ffa657;
+  color: var(--accent-amber);
 }
 
 .uncalText {
-  color: #d2a8ff;
+  color: var(--accent-purple);
 }

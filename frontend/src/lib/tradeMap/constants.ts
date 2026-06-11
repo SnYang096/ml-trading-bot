@@ -6,17 +6,37 @@ export const ENTRY_SHAPES: Record<string, string> = {
 };
 export const EXIT_SHAPE = 'circle';
 /** Filled take-profit markers (chop_grid legs); pending TP stays gray circle. */
-export const TP_MARKER_COLOR = '#E8B923';
+export const TP_MARKER_COLOR = '#ffb000';
 export const TP_MARKER_SHAPE = 'square';
 export const SUBCHART_COLORS = [
-  '#ffeb3b',
-  '#58a6ff',
-  '#f78166',
-  '#7ee787',
-  '#d2a8ff',
-  '#ffa657',
+  '#00ff41',
+  '#00ffff',
+  '#ffb000',
+  '#ff0040',
+  '#bf00ff',
+  '#ffff00',
 ];
+
+/** Lightweight Charts theme (hacker / terminal). */
+export const CHART_THEME = {
+  bg: '#000000',
+  text: '#1faa1f',
+  grid: '#0a2a0a',
+  border: '#1a4d1a',
+  candleUp: '#00ff41',
+  candleDown: '#ff0040',
+  emaPrimary: '#00ffff',
+  emaSecondary: '#ffb000',
+  volume: '#1a5c1a',
+  linkFallback: '#1faa1f',
+  accentPurple: '#bf00ff',
+} as const;
+
 export const DEFAULT_VISIBLE_BARS = 320;
+export const MAX_FEATURE_SUBCHARTS = 8;
+export const CHOP_REGIME_FILL = 'rgba(0, 255, 65, 0.12)';
+export const PREFILTER_STAGE_FILL = 'rgba(255, 0, 64, 0.12)';
+export const GATE_STAGE_FILL = 'rgba(191, 0, 255, 0.1)';
 export const FEATURE_PRESETS: Record<string, string[]> = {
   default: ['weekly_ema_200_position', 'ema_1200_position'],
   trend: ['ema_1200_position', 'tpc_pullback_depth', 'tpc_semantic_chop', 'bpc_pullback_depth'],

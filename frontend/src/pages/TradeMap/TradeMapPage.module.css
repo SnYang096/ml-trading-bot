@@ -3,38 +3,70 @@
   flex-direction: column;
   height: calc(100vh - 52px);
   padding: 0;
+  overflow: hidden;
 }
 
 .toolbar {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 12px;
-  align-items: center;
-  padding: 10px 16px;
+  gap: 8px 14px;
+  align-items: flex-start;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-elevated);
+  box-shadow: inset 0 -1px 0 rgba(0, 255, 65, 0.06);
+}
+
+.module {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding-right: 12px;
+  border-right: 1px solid var(--border);
+}
+
+.moduleLabel {
+  font-size: 0.68rem;
+  color: var(--accent-cyan);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .toolbar label {
-  font-size: 0.85rem;
+  font-size: 0.82rem;
 }
 
 .toolbar select {
   margin-left: 4px;
-  background: #21262d;
+  font-family: var(--font-mono);
+  background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 4px 8px;
+  border-radius: var(--radius);
+  padding: 3px 8px;
+}
+
+.toolbar select:focus {
+  outline: 1px solid var(--accent);
+  box-shadow: var(--glow);
 }
 
 .toolbar button {
-  background: #21262d;
+  font-family: var(--font-mono);
+  background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius);
   padding: 4px 10px;
   cursor: pointer;
+  font-size: 0.82rem;
+}
+
+.toolbar button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: var(--glow);
 }
 
 .chk {
@@ -42,20 +74,98 @@
   align-items: center;
   gap: 4px;
   padding: 2px 8px;
-  border-radius: 12px;
-  background: #21262d;
+  border-radius: var(--radius);
+  background: var(--surface);
   border: 1px solid var(--border);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.chip,
+.chipActive {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  padding: 2px 8px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.chipActive {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: var(--glow);
+}
+
+.featureBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.badge {
+  font-size: 0.68rem;
+  padding: 0 6px;
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--accent-cyan);
+  border: 1px solid var(--border);
+}
+
+.dockBtnActive {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: var(--glow);
 }
 
 .status {
   margin-left: auto;
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   color: var(--text-muted);
+  align-self: center;
+}
+
+.mainRow {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.chartColumn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.chartStack {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.chartPane {
+  position: relative;
+  flex: 1;
+  min-height: 280px;
 }
 
 .chart {
-  flex: 1;
-  min-height: 360px;
+  position: absolute;
+  inset: 0;
 }
 
 .markerList {
@@ -64,21 +174,30 @@
   gap: 4px;
   padding: 8px 12px;
   border-top: 1px solid var(--border);
-  max-height: 120px;
+  max-height: 96px;
   overflow: auto;
+  flex-shrink: 0;
+  background: var(--bg-elevated);
 }
 
 .markerBtn {
+  font-family: var(--font-mono);
   font-size: 0.72rem;
   padding: 2px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
-  background: #21262d;
+  background: var(--surface);
   color: var(--text-muted);
   cursor: pointer;
 }
 
+.markerBtn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .markerSelected {
-  border-color: #ffeb3b;
-  color: var(--text);
+  border-color: var(--warning);
+  color: var(--warning);
+  box-shadow: 0 0 8px rgba(255, 255, 0, 0.35);
 }

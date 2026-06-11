@@ -44,12 +44,12 @@ export function markerShape(marker: TradeMarker): string {
 
 export function markerColor(marker: TradeMarker): string {
   const pending = (marker.status || 'filled').toLowerCase() === 'pending';
-  if (pending) return '#888888';
+  if (pending) return '#1faa1f';
   const role = markerRole(marker);
   const side = (marker.side || 'long').toLowerCase();
   const pnl = marker.pnl_usdt;
   if (role === 'exit' && pnl != null) {
-    return pnl >= 0 ? '#26a69a' : '#ef5350';
+    return pnl >= 0 ? '#00ff88' : '#ff0040';
   }
   if (role === 'tp') return TP_MARKER_COLOR;
   if (
@@ -57,13 +57,13 @@ export function markerColor(marker: TradeMarker): string {
     marker.detail &&
     String(marker.detail.exit_kind || '').toLowerCase() === 'regime_or_risk_exit'
   ) {
-    return marker.color || '#ff7043';
+    return marker.color || '#ffb000';
   }
-  if (role === 'grid') return marker.color || '#73BF69';
+  if (role === 'grid') return marker.color || '#00ff41';
   if (role === 'entry') {
-    return side === 'long' ? '#2e7d32' : '#c62828';
+    return side === 'long' ? '#00ff41' : '#ff0040';
   }
-  return marker.color || '#3274D9';
+  return marker.color || '#00ffff';
 }
 
 export function filterMarkersByStrategy(
@@ -245,7 +245,7 @@ export function synthesizeChopRegimeExitMarkers(
       event: 'exit',
       side: 'long',
       status: 'filled',
-      color: '#ff7043',
+      color: '#ffb000',
       detail: {
         exit_kind: 'regime_or_risk_exit',
         exit_reason: 'regime_or_risk_exit',
@@ -431,12 +431,40 @@ export function markersToLwc(
     return {
       time: m.time,
       position,
-      color: highlightSelected ? '#ffeb3b' : markerColor(m),
+      color: highlightSelected ? '#ffff00' : markerColor(m),
       shape: markerShape(m),
       text: highlightSelected ? `★ ${baseText}` : baseText,
       id: m.id,
     };
   });
+}
+
+export function prepareChartMarkers(
+  raw: TradeMarker[] | null | undefined,
+  candles: Candle[],
+  overlays: FeatureOverlays | null | undefined,
+  layers: { trend: boolean; spot: boolean; multiLeg: boolean },
+  strategyFocus: string,
+): TradeMarker[] {
+  let incoming = (raw || []).filter((m) => !isFeatureBusRegimeExitMarker(m));
+  const focus = String(strategyFocus || '')
+    .trim()
+    .toLowerCase();
+  const chopFocus = !focus || focus === 'chop_grid';
+  if (chopFocus && candles.length && overlays) {
+    incoming = mergeRegimeExitMarkers(
+      incoming,
+      synthesizeChopRegimeExitMarkers(candles, overlays),
+    );
+  }
+  if (!focus) {
+    const scopes = new Set<string>();
+    if (layers.trend) scopes.add('trend');
+    if (layers.spot) scopes.add('spot');
+    if (layers.multiLeg) scopes.add('multi_leg');
+    incoming = incoming.filter((m) => scopes.has(String(m.scope || '').toLowerCase()));
+  }
+  return incoming;
 }
 
 export function scrollIndexForTime(candles: Candle[], targetTime: number): number {

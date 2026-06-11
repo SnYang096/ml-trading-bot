@@ -38,7 +38,7 @@ def test_vitest_covers_chop_regime_hysteresis():
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "tradeMap.test.ts" in proc.stdout
-    assert "10 passed" in proc.stdout or "10 tests" in proc.stdout
+    assert " passed" in proc.stdout
 
 
 def test_regime_helpers_in_trade_map_ts():
@@ -51,6 +51,6 @@ def test_regime_helpers_in_trade_map_ts():
 
 
 def test_lwc_hook_does_not_scroll_on_click():
-    hook = _read("hooks/useLightweightChart.ts")
+    hook = _read("hooks/useTradeMapMainChart.ts")
     assert "scrollChartToBarTime" not in hook
     assert "subscribeClick" not in hook

@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { apiGet, apiQuery } from '@/api/client.ts';
-import type { BundleData } from '@/api/types.ts';
+import type { BundleData, TradeLink } from '@/api/types.ts';
 import {
   featureColumnsParam,
   mainOverlaysQueryParam,
@@ -10,6 +10,7 @@ import {
 import { setSymbol } from '@/lib/shell.ts';
 import {
   loadLayout,
+  resetHistoryState,
   saveLayout,
   scopesFromLayers,
   useTradeMapStore,
@@ -54,6 +55,7 @@ export function useTradeMapBundle() {
     try {
       const base = buildBaseParams(state);
       const init = ohlcvInitialQueryRange(state.timeframe);
+      const markerFrom = state.markerQueryFromIso || init.from;
       const shellQ = apiQuery({
         symbol: base.symbol,
         timeframe: base.timeframe,
@@ -86,7 +88,7 @@ export function useTradeMapBundle() {
         timeframe: base.timeframe,
         scopes: base.scopes,
         include_pending: base.include_pending,
-        from: range.from || state.ohlcvLoadedFrom || undefined,
+        from: range.from || markerFrom || state.ohlcvLoadedFrom || undefined,
         to: range.to || state.ohlcvLoadedTo || new Date().toISOString(),
       };
 
@@ -117,13 +119,17 @@ export function useTradeMapBundle() {
 
       store.setBundlePhase({
         markers: markersResp.data.markers || [],
-        lastOverlays: (featuresResp.data.overlays || {}) as Record<string, unknown>,
+        lastTradeLinks: (markersResp.data.trade_links || []) as TradeLink[],
+        lastOverlays: (featuresResp.data.overlays || {}) as import('@/lib/tradeMap/types.ts').FeatureOverlays,
+        lastMainOverlays: shellData.main_overlays || {},
         lastChopMapData: featuresResp.data.chop_grid_overlay,
         chopRegimeRegions: featuresResp.data.chop_regime_regions || [],
         strategyStageRegions: featuresResp.data.strategy_stage_regions || {},
+        markerQueryFromIso: markerFrom || null,
+        historyExhausted: false,
         loading: false,
         chartFitPending: false,
-        statusText: `${candles.length} bars · ${(markersResp.data.markers || []).length} markers`,
+        statusText: `${candles.length} bars · ${(markersResp.data.markers || []).length} markers · ${(markersResp.data.trade_links || []).length} links · ${state.selectedFeatureColumns.length} features`,
       });
       saveLayout({
         layers: state.layers,
@@ -131,6 +137,8 @@ export function useTradeMapBundle() {
         featureStrategyFocus: state.featureStrategyFocus,
         mainEma1200: state.mainEma1200,
         mainWeeklyEma200: state.mainWeeklyEma200,
+        paneVolume: state.paneVolume,
+        ordersDockOpen: state.ordersDockOpen,
       });
       return { shellData, shellMeta, markersResp, featuresResp, candles };
     } catch (e) {
@@ -156,7 +164,9 @@ export function useTradeMapBundle() {
     if (typeof layout.mainWeeklyEma200 === 'boolean') {
       store.setBundlePhase({ mainWeeklyEma200: layout.mainWeeklyEma200 });
     }
+    if (typeof layout.paneVolume === 'boolean') store.setPaneVolume(layout.paneVolume);
+    if (typeof layout.ordersDockOpen === 'boolean') store.setOrdersDockOpen(layout.ordersDockOpen);
   }, [store]);
 
-  return { refreshFull, initFromLayout };
+  return { refreshFull, initFromLayout, resetHistory: resetHistoryState };
 }

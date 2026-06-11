@@ -17,6 +17,7 @@ import {
   markersForChartDisplay,
   markersToLwc,
 } from '@/lib/tradeMap/markers.ts';
+import { mergeTradeLinks, tradeLinksForDisplay } from '@/lib/tradeMap/tradeLinks.ts';
 import { forwardFillOverlayToCandles, overlayAsOfAtCandleTimes } from '@/lib/tradeMap/ohlcv.ts';
 import {
   chopGridMetricsRowCell,
@@ -88,6 +89,53 @@ describe('tradeMap markers', () => {
         detail: { source: 'feature_bus_hysteresis' },
       } as TradeMarker),
     ).toBe(false);
+  });
+});
+
+describe('tradeMap trade links', () => {
+  it('tradeLinksForDisplay filters closed links by layer and focus', () => {
+    const links = [
+      {
+        strategy: 'chop_grid',
+        status: 'closed',
+        entry_time: 1,
+        entry_price: 100,
+        exit_time: 2,
+        exit_price: 101,
+        exit_marker_id: 'a',
+      },
+      {
+        strategy: 'tpc',
+        status: 'open',
+        entry_time: 1,
+        entry_price: 100,
+        exit_time: 2,
+        exit_price: 101,
+        exit_marker_id: 'b',
+      },
+    ];
+    const shown = tradeLinksForDisplay(links, {
+      trend: true,
+      spot: true,
+      multiLeg: true,
+      pending: false,
+      chopGrid: true,
+      prefilter: true,
+      gate: false,
+    }, 'chop_grid');
+    expect(shown).toHaveLength(1);
+    expect(shown[0].strategy).toBe('chop_grid');
+  });
+
+  it('mergeTradeLinks dedupes by key', () => {
+    const a = {
+      strategy: 'chop_grid',
+      entry_time: 1,
+      entry_price: 1,
+      exit_time: 2,
+      exit_price: 2,
+    };
+    expect(mergeTradeLinks([a], [a])).toHaveLength(1);
   });
 });
 
