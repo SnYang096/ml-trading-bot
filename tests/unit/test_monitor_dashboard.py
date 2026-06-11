@@ -100,14 +100,14 @@ def test_strategy_uncalibrated_filters_no_plateaus():
     assert out["weekly"][0]["strategy"] == "tpc"
 
 
-def test_sort_cadence_cards_weekly_first():
+def test_sort_cadence_cards_daily_first():
     cards = [
-        {"cadence": "daily"},
         {"cadence": "yearly"},
         {"cadence": "weekly"},
+        {"cadence": "daily"},
     ]
     ordered = [c["cadence"] for c in sort_cadence_cards(cards)]
-    assert ordered == ["weekly", "daily", "yearly"]
+    assert ordered == ["daily", "weekly", "yearly"]
 
 
 def test_messages_from_factor_health_detail():

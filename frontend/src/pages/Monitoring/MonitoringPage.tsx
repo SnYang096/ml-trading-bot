@@ -15,7 +15,7 @@ const CADENCE_LABELS: Record<string, string> = {
   yearly: '年更',
 };
 
-const CADENCE_ORDER = ['weekly', 'daily', 'monthly', 'quarterly', 'yearly'];
+const CADENCE_ORDER = ['daily', 'weekly', 'monthly', 'quarterly', 'yearly'];
 
 function fmtAge(hours: number | null | undefined): string {
   if (hours == null || Number.isNaN(hours)) return '从未运行';
