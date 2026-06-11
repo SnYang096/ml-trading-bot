@@ -12,11 +12,10 @@ segments:
 - id: recent_range_to_bear
   label: Bear
   start_date: '2025-01-01'
-  end_date: '2026-04-30'
-  purpose: High-range chop / pullback into bear (2025–2026)
+  end_date: '2026-05-31'
+  purpose: High-range chop / pullback into bear (2025–2026-05)
 - id: recent_6m_oos
   label: Recent6m
   start_date: '2025-12-01'
-  end_date: '2026-04-30'
-  purpose: Very recent 6-month OOS (2025-12 to 2026-04) — primary current-regime evaluation
-    window for promote decisions
+  end_date: '2026-05-31'
+  purpose: Very recent 6-month OOS (2025-12 to 2026-05) — primary current-regime evaluation

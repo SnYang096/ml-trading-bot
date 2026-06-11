@@ -4,7 +4,7 @@ Covers the bugs that caused v1/v2 = 47.57R (ADX never loaded, regime = neutral =
   1. Labeled regime ``classify()`` returns correct bull/bear/neutral
   2. ``ExecutionParamGenerator`` respects ``exit_by_regime`` + ``regime_label``
   3. ``extract_features_from_archetypes`` pulls ``adx_50`` from labeled regime
-  4. Feature extraction chain: yaml → feature columns → feature nodes
+  4. Tick timezone normalization: naive vs UTC-aware produce identical masks
 """
 
 from __future__ import annotations
@@ -12,6 +12,8 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
 import pytest
 
 from src.time_series_model.archetype.loader import RegimeConfig
@@ -88,8 +90,19 @@ class TestLabeledRegimeClassify:
 
     def test_classify_neutral_deadband(self):
         rc = _make_e22_regime()
-        # adx between 20-25, ema in middle → nothing matches → neutral
+        # adx=22 (<=25) matches neutral rule; bull/bear both fail → neutral
         assert rc.classify({"adx_50": 22, "ema_1200_position": 0.05}) == "neutral"
+
+    def test_classify_high_adx_low_ema_neutral(self):
+        """High ADX + low EMA → neutral (bull fails EMA, bear fails ADX).
+
+        This is a critical boundary for E22: ADX >= 25 but EMA < 0.1
+        means strong trend but price below EMA → should NOT be bull.
+        The E21→E22 improvement came from correctly NOT treating
+        high-ADX/low-EMA as bull."""
+        rc = _make_e22_regime()
+        # ADX=30 (strong trend), EMA=0.05 (below bull threshold 0.1)
+        assert rc.classify({"adx_50": 30, "ema_1200_position": 0.05}) == "neutral"
 
     def test_classify_missing_feature_falls_to_neutral(self):
         rc = _make_e22_regime()
@@ -107,6 +120,23 @@ class TestLabeledRegimeClassify:
             "Labeled regime with per-label rules must NOT be empty — "
             "this was the bug that caused live to skip classify()"
         )
+
+    def test_prod_yaml_matches_test_fixture(self):
+        """Anchor: _make_e22_regime() must match prod regime.yaml."""
+        prod = RegimeConfig.from_yaml(
+            Path("config/strategies/tpc/archetypes/regime.yaml")
+        )
+        fixture = _make_e22_regime()
+        # same classify results for key boundary cases
+        cases = [
+            ({"adx_50": 30, "ema_1200_position": 0.15}, "bull"),
+            ({"adx_50": 18, "ema_1200_position": 0.05}, "bear"),
+            ({"adx_50": 30, "ema_1200_position": 0.05}, "neutral"),
+            ({"adx_50": 22, "ema_1200_position": 0.05}, "neutral"),
+        ]
+        for feats, expected in cases:
+            assert prod.classify(feats) == expected, f"prod mismatch: {feats}"
+            assert fixture.classify(feats) == expected, f"fixture mismatch: {feats}"
 
     def test_is_empty_true_for_default(self):
         rc = RegimeConfig()
@@ -312,3 +342,84 @@ class TestLabeledRegimeFeatureExtraction:
         )
         cols, _ = extract_features_from_archetypes(str(strat / "archetypes"))
         assert "adx_50" not in cols
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 4. Tick timezone normalization: naive vs UTC-aware → same mask
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestTickTimezoneNormalization:
+    """Verify ``pd.to_datetime(..., utc=True).dt.tz_convert(None)`` produces
+    identical filtering results for naive and UTC-aware tick timestamps."""
+
+    @staticmethod
+    def _make_ticks_naive() -> pd.DataFrame:
+        ts = pd.date_range("2025-06-01", "2025-06-02", freq="1min", inclusive="left")
+        n = len(ts)
+        return pd.DataFrame(
+            {
+                "timestamp": ts,
+                "price": np.random.uniform(100, 200, n),
+                "volume": np.random.uniform(0.1, 10.0, n),
+                "side": np.random.choice([1, -1], n),
+            }
+        )
+
+    @staticmethod
+    def _make_ticks_utc() -> pd.DataFrame:
+        ts = pd.date_range(
+            "2025-06-01", "2025-06-02", freq="1min", inclusive="left", tz="UTC"
+        )
+        n = len(ts)
+        return pd.DataFrame(
+            {
+                "timestamp": ts,
+                "price": np.random.uniform(100, 200, n),
+                "volume": np.random.uniform(0.1, 10.0, n),
+                "side": np.random.choice([1, -1], n),
+            }
+        )
+
+    def test_normalize_naive_unchanged(self):
+        """tz-naive timestamps remain tz-naive after normalization."""
+        ticks = self._make_ticks_naive()
+        ts = pd.to_datetime(ticks["timestamp"], utc=True).dt.tz_convert(None)
+        assert ts.dt.tz is None
+        # should be equal to original (interpreted as UTC)
+        assert (ts == ticks["timestamp"]).all()
+
+    def test_normalize_utc_to_naive(self):
+        """tz-aware UTC timestamps become tz-naive with same wall-clock."""
+        ticks = self._make_ticks_utc()
+        ts = pd.to_datetime(ticks["timestamp"], utc=True).dt.tz_convert(None)
+        assert ts.dt.tz is None
+        # wall-clock values preserved
+        expected = ticks["timestamp"].dt.tz_convert(None)
+        assert (ts == expected).all()
+
+    def test_filter_same_result_naive_vs_utc(self):
+        """Naive and UTC-aware ticks yield identical mask after normalization."""
+        naive = self._make_ticks_naive()
+        utc = self._make_ticks_utc()
+
+        load_start = pd.Timestamp("2025-06-01 12:00:00")
+        load_end = pd.Timestamp("2025-06-01 18:00:00")
+
+        # Normalize both
+        ts_naive = pd.to_datetime(naive["timestamp"], utc=True).dt.tz_convert(None)
+        ts_utc = pd.to_datetime(utc["timestamp"], utc=True).dt.tz_convert(None)
+
+        mask_naive = (ts_naive >= load_start) & (ts_naive <= load_end)
+        mask_utc = (ts_utc >= load_start) & (ts_utc <= load_end)
+
+        assert mask_naive.sum() == mask_utc.sum()
+        assert (mask_naive == mask_utc).all()
+
+    def test_utc_without_normalize_raises(self):
+        """Without normalization, comparing tz-aware to tz-naive raises TypeError."""
+        utc = self._make_ticks_utc()
+        load_start = pd.Timestamp("2025-06-01 12:00:00")
+
+        with pytest.raises(TypeError, match="Invalid comparison.*datetime64"):
+            _ = utc["timestamp"] >= load_start

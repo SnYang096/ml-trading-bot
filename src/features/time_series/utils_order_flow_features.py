@@ -694,7 +694,12 @@ def extract_order_flow_features(
             try:
                 tick_df = pd.read_parquet(tick_file)
                 if "timestamp" in tick_df.columns:
-                    tick_df["timestamp"] = pd.to_datetime(tick_df["timestamp"])
+                    tick_df["timestamp"] = pd.to_datetime(tick_df["timestamp"], utc=True).dt.tz_convert(None)
+                    # 统一时区: 部分 tick 文件 (如新管线下载的 HYPE) timestamp
+                    # 为 datetime64[ns, UTC], 旧文件为 datetime64[ns]; 必须转为
+                    # tz-naive 才能与 load_start/load_end (也是 tz-naive) 正确比较.
+                    # 使用 utc=True + tz_convert(None) 与 load_tick_data() 保持一致,
+                    # 同时兼容 naive / UTC-aware 两种输入.
                     # 过滤时间范围
                     mask = (tick_df["timestamp"] >= load_start) & (tick_df["timestamp"] <= load_end)
                     tick_df = tick_df[mask]

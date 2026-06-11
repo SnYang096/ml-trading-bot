@@ -22,7 +22,10 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT"]
 
-# 与 config/market_segment.yaml 保持同步
+# 与 config/market_segment.yaml 保持同步.
+# 注意: 此处的 end 为 exclusive (代码使用 `df[entry_time < seg_end]`),
+# 而 YAML 的 end_date 为 inclusive, 因此 Python 的 end 需 = YAML end_date + 1day.
+# 例: YAML 2026-05-31 (inclusive) → Python 2026-06-01 (exclusive).
 SEGMENTS = {
     "bear_2022": ("2022-01-01", "2023-11-01"),
     "bull_2023_2024": ("2023-06-01", "2025-01-01"),
