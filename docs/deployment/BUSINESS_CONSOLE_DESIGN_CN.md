@@ -201,22 +201,30 @@ Spot  eligibility 已在 `decision_chain_debug` 打日志；CMS 可解析最近 
 | **spot** | `spot_orders`（filled）+ `state_kv.positions` 成本线 | buy→开多；sell→平仓 |
 | **hedge** | `multi_leg_orders` + `multi_leg_execution_reports` | 按 `purpose` / `side` 区分 entry vs exit |
 
-**时间对齐**：标记 `time` 取 **成交时间**（`filled_at` / `execution_reports.event_time`），若缺失则用订单 `created_at` 并对齐到当前 K 线周期的 bar open（避免标记落在两根 K 线之间难以辨认）。
+**时间对齐**：API 标记 `time` 取 **成交时间**（`filled_at` / `execution_reports.event_time`），若缺失则用订单 `created_at`。前端 `markers.ts` / `tradeLinks.ts` 在绘制前 **snap 到已加载 K 线的 bar open**，持仓连线端点价格锚在 entry low/high、exit close，避免标记与连线落在两根 K 线之间。
 
 **不推荐**仅用 Prometheus `mlbot_strategy_event_price` 作地图主数据源：该 Gauge 仅为「最后一次事件价」快照，无法还原完整开平对与加仓序列；可作为 **实时预览** 补充，与 DB 成交对账。
 
 **可选窄表（P2 推荐）**：各进程在成交回调写 `trade_map_events(symbol, ts, scope, strategy, event, side, price, qty, order_id)`，CMS 查询更快、与日志解耦。
 
-#### 4.2.5 前端交互（多页面 + 模块化）
+#### 4.2.5 前端交互（React SPA + 多页面）
 
-顶栏 **应用菜单** 切换页面（`console-shell.js`）；Symbol / 账户层勾选跨页同步（`localStorage`）。**无右侧固定侧栏**。
+顶栏 **应用菜单** 切换页面（`frontend/src/components/AppShell/AppShell.tsx`）；Symbol / 账户层勾选跨页同步（`localStorage`：`mlbot_console_symbol`、`mlbot_console_scopes`）。**无右侧固定侧栏**。
+
+**技术栈（2026-06 起）**：`frontend/` — **React 19 + TypeScript + Vite**；主图 [Lightweight Charts](https://github.com/tradingview/lightweight-charts)；状态与请求 **TanStack Query**。构建产物输出到 `src/mlbot_console/static/dist/`，由 FastAPI `StaticFiles` 挂载 `/static/`。
+
+**路由拆包**：核心页（信号 / 订单 / 账户 / Regime / 漂移监控）**同步打进主 bundle**，避免导航时动态 chunk 404；仅 **交易地图**、**多品种地图** 使用 `React.lazy` + `Suspense`（`PageFallback`），导航 hover 时 `prefetchPage` 预热 chunk。
 
 | 路由 | 页面 | 内容 |
 |------|------|------|
-| `/signals` | **策略信号** | 全 universe 表格：最新 bar、B/A/C 策略信号摘要、链到地图 |
-| `/trade-map` | **交易地图** | 全宽 K 线、账户层标记、附图；标记详情为底部抽屉 |
-| `/orders` | **订单** | 全屏订单表、状态筛选、订单/标记详情 |
-| `/` | 重定向 | → `/signals` |
+| `/signals` | **策略信号** | 全 universe 概览表 + **可展开「策略漏斗」**（15min `stats_15min` 明细，见 §4.3） |
+| `/trade-map` | **交易地图** | 全宽 K 线、账户层标记、持仓连线、附图；标记详情为底部抽屉 |
+| `/trade-map-grid` | **多品种地图** | 网格缩略 K 线，链到单品种地图 |
+| `/orders` | **订单** | 全屏订单表、状态筛选、客户端分页、订单/标记详情 |
+| `/account` | **账户总览** | 全局权益 + 策略盈亏 + **对账**（见 §4.7） |
+| `/regime` | **Regime 运维** | `regime.yaml` 与 drift 报告只读表 |
+| `/monitoring` | **漂移监控** | manifest / drift 卡片（链本地验证命令） |
+| `/` | 重定向 | → `/trade-map` |
 
 **交易地图** `/trade-map`：
 
@@ -251,10 +259,21 @@ Spot  eligibility 已在 `decision_chain_debug` 打日志；CMS 可解析最近 
 |------|------|--------|
 | 账户层标记 | 交易地图·主图 | 三库成交 |
 | 成交量 / 特征列 | 交易地图·附图 | bus Parquet |
-| Spot / Trend / Multi-leg 信号 | **策略信号页·表格** | `GET /api/trade-map/signals` |
+| Spot / Trend / Multi-leg 信号 | **策略信号页·概览表** | `GET /api/trade-map/signals`（`by_strategy` 含 `funnel_summary`） |
+| 策略漏斗明细 | **策略信号页·折叠面板** | `GET /api/trend/funnel`（regime/prefilter/direction/gate 分列） |
+| 账户 / 对账 / PnL | **账户总览** `/account` | `GET /api/account/summary`、`GET /api/account/reconciliation/all` |
 | 订单列表 | **Trade Map 底栏**（可折叠）+ **订单页** `/orders` | `/api/orders/list` |
 
-布局：`mlbot_trade_map_layout_v1`（附图）；`mlbot_console_symbol` / `mlbot_console_scopes`（跨页）。
+布局：`mlbot_trade_map_layout_v2`（附图）；`mlbot_console_symbol` / `mlbot_console_scopes`（跨页）。
+
+**前端构建与部署**（每次改 `frontend/` 后必做）：
+
+```bash
+make frontend-build    # npm ci && vite build → src/mlbot_console/static/dist/
+# 重启 business console 进程后，浏览器 Ctrl+Shift+R 强刷
+```
+
+SPA 的 `index.html` 响应带 `Cache-Control: no-cache`，避免 HTML 缓存指向已删除的旧 hash chunk（典型症状：`OrdersPage-*.js` 动态加载 404）。`main.py` 启动时会校验 `index.html` 引用的 JS 是否存在于 `dist/assets/`。
 
 **实时刷新**：
 
@@ -279,7 +298,7 @@ Spot  eligibility 已在 `decision_chain_debug` 打日志；CMS 可解析最近 
 
 | 页面 | 数据 | 核心能力 |
 |------|------|----------|
-| 漏斗时间线 | `stats_15min` | `GET /api/trend/funnel`；策略信号页 `/signals` 表格；`by_strategy` 含 `regime_passed` / `prefilter_denied` 等 |
+| 漏斗时间线 | `stats_15min` | `GET /api/trend/funnel`；**策略信号页 `/signals` 底部折叠面板**（非仅概览表内 `funnel_summary` 一行）；`by_strategy` 含 `regime_passed` / `prefilter_denied` / `direction` / `gate_passed` 等分列 |
 | Regime 运维 | `live/.../regime.yaml` + `results/regime_drift_monitor/` | `GET /api/trend/regime-ops`、页面 `/regime` |
 | 订单列表 | `orders` | 分页、状态筛选、链到 `positions` |
 | 持仓与 slot | `positions`, `slots_state` | 当前仓、PCM slot 占用 |
@@ -308,6 +327,22 @@ Spot  eligibility 已在 `decision_chain_debug` 打日志；CMS 可解析最近 
 
 - 只读 `results/` 下 rolling 产物索引（复用 `mlbot rolling-dashboard` 思路），**不**替代研究 CLI。
 
+### 4.7 账户总览与交易所对账（`/account`）
+
+对标迁移前静态页 `account.html` + `account-page.js`（React 迁移 `b72a5d5f` 曾功能缩水，2026-06-10 已恢复）。
+
+| 区块 | 内容 | API / 数据 |
+|------|------|------------|
+| **全局资产** | 币安全账户权益 / 钱包 / 可用 / 合约未实现 | `exchange_ledger`（不受 Symbol 筛选） |
+| **策略盈亏** | Symbol + 回看（0/7/14/30/90/365d）筛选下的 KPI、已实现速览 | `GET /api/account/summary` |
+| **账户层表** | A/B/C scopes：交易所列 + 本地已实现/浮盈/平仓数 | `summary.scopes[]` |
+| **策略表** | 各 `scope · strategy` 盈亏与持仓数 | `summary.strategies[]` |
+| **现货持仓** | 资产明细 + 市值占比条 | `scopes[spot].exchange.holdings` |
+| **已实现 PnL** | 按周柱图 + 周表 + **累计盈利曲线（SVG）** + 按日柱图 | `weekly_realized`、`cumulative_realized`、`daily_realized` |
+| **交易所对账** | 按 scope 分 panel；差异为 **HTML 表格**（类型 / 资产 / 交易所 / 本地 / 差额） | `GET /api/account/reconciliation/all`；页面打开即请求（非「展开才加载」） |
+
+对账 issue 类型示例：`qty_mismatch`、`position_mismatch`、`unrealized_pnl_mismatch`、`spot_holdings_value_mismatch`、`orphan_local_unrealized`、`strategy_orphan_unrealized` 等（见 `accountViews.tsx` `issueRow`）。
+
 ---
 
 ## 5. 技术架构建议
@@ -315,22 +350,19 @@ Spot  eligibility 已在 `decision_chain_debug` 打日志；CMS 可解析最近 
 ### 5.1 组件
 
 ```
-src/mlbot_console/          # FastAPI app + static UI（业务代码）
-deploy/business-console/    # Dockerfile、compose、run_console.sh
-  backend/                            # FastAPI 推荐（与仓库 Python 3.12 一致）
-    app/
-      main.py
-      routers/
-        trade_map.py | trend.py | multileg.py | spot.py | bus.py | health.py
-      services/                       # 只读 DAO，禁止写 SQL
-        ohlcv_reader.py               # Parquet / 重采样
-        trade_markers.py              # 三库成交 → TradeMarker DTO
-      config.py                       # 路径来自 env，与 deploy.yml 对齐
-  frontend/                           # 轻量 SPA：Vue3 或 React + ECharts / Lightweight Charts
+src/mlbot_console/              # FastAPI + 静态 dist（业务后端）
+  main.py                       # SPA 路由、/static 挂载、index no-cache
+  routers/                      # trade_map, orders, account, regime, monitoring, …
+  services/                     # ohlcv_reader, trade_markers, signal_overview, account_summary, …
+  static/dist/                  # make frontend-build 产出（勿手改）
+frontend/                       # React SPA 源码
+  src/pages/                    # TradeMap, Signals, Account, Orders, …
+  src/lib/tradeMap/             # 标记、连线、bundle 查询、附图分类
+deploy/business-console/        # Dockerfile、compose、systemd
 ```
 
 - **后端**：FastAPI + `sqlite3`（只读 URI `file:path?mode=ro`）+ `pyarrow`/`pandas` 读 Parquet；单进程即可，无需 Celery。
-- **前端**：静态资源由 FastAPI `StaticFiles` 或 nginx 反代；**Trade Map 主图**用 [TradingView Lightweight Charts](https://github.com/tradingview/lightweight-charts)（`candlestick` + `createSeriesMarkers` / 自定义 primitive）；表格用 AG Grid 或简单 table。
+- **前端**：**React + Vite + TypeScript**（`frontend/package.json`）；静态资源由 FastAPI `StaticFiles` 挂载 `static/dist`；**Trade Map 主图**用 Lightweight Charts；业务表为语义化 `<table>`（账户 / 信号 / 对账），非 AG Grid。
 - **部署**：挂载与 quant 容器相同的宿主目录（只读）：
   - `/opt/quant-engine/live/shared_feature_bus`
   - `/opt/quant-engine/live/highcap/data`
@@ -357,9 +389,14 @@ deploy/business-console/    # Dockerfile、compose、run_console.sh
 | GET | `/api/bus/features/columns` | `?symbol=&timeframe=` → Parquet 可附图数值列清单 + `defaults` |
 | GET | `/api/trade-map/symbols` | universe 列表 + 各 symbol 最新 bar 时间 |
 | GET | `/api/trade-map/bundle` | `?symbol=&timeframe=2h&from=&to=&scopes=&feature_columns=col1,col2` → OHLCV + markers + 多列 `overlays` |
-| GET | `/api/trade-map/signals` | `?timeframe=2h&lookback_days=7` → 全 symbol 策略信号表（地图页入口） |
+| GET | `/api/trade-map/signals` | `?timeframe=2h&lookback_days=7` → 全 symbol 策略信号概览（含 `strategies.{trend,spot,multi_leg}.by_strategy`） |
+| GET | `/api/trend/funnel` | `?symbol=&account_layer=&strategy=&limit=48` → 策略漏斗 15min 快照（信号页折叠表） |
 | GET | `/api/trade-map/markers` | `?symbol=&from=&to=&since=&scopes=` 仅成交标记（增量轮询） |
 | GET | `/api/orders/list` | `?symbol=&scopes=trend,spot,multi_leg&status=&limit=` **Trade Map 侧栏订单表**（已实现） |
+| GET | `/api/account/summary` | `?symbol=&lookback_days=0&scopes=trend,spot,multi_leg` → 盈亏、scopes、策略、周/日/累计 PnL |
+| GET | `/api/account/reconciliation/all` | `?symbol=&lookback_days=0` → 三 scope 引擎 + PnL 对账合并 |
+| GET | `/api/account/reconciliation` | 单 scope 成交对账 |
+| GET | `/api/account/reconciliation/pnl` | 单 scope PnL 对账 |
 | GET | `/api/trade-map/ohlcv` | 与 `/api/bus/ohlcv` 同实现，别名便于前端 |
 | GET | `/api/trade-map/stream` | **SSE**：`bar_update` / `marker_update`（可选 P2） |
 | GET | `/api/constitution/summary` | 解析 YAML 摘要（非完整编辑） |
@@ -441,7 +478,7 @@ deploy/business-console/    # Dockerfile、compose、run_console.sh
 
 1. **Spot eligibility 实时性**：轮询日志 tail vs 在 `run_spot_accum_live` 写窄表 `spot_eligibility_snapshots`（推荐后者，便于 CMS 查询）。
 2. **是否共库**：Trend `stats_15min` 与 `order_management` 物理分离已固定；CMS 仅聚合展示，不合并库。
-3. **前端技术栈**：团队更熟 Vue 还是 React；Trade Map 建议 React/Vue + Lightweight Charts（勿用 ECharts K 线做主图，标记与缩放体验较弱）。
+3. ~~**前端技术栈**~~：**已定为 React + Vite + TS + Lightweight Charts**（2026-06）；旧静态 `*-page.js` 已退役，功能 parity 以本文 §4 与 §11 修订记录为准。
 4. **部署形态**：独立 `quant-business-console` systemd 服务 vs 与 monitoring compose 同文件不同 profile。
 5. **日线数据源**：是否由 bus 正式落 `features/1d`，或 CMS 侧统一从 `bars_1min` 重采样（推荐先重采样，避免 publisher 改动的依赖）。
 6. **trade_map_events 窄表**：是否在 P1 就落库，还是 P1 仅 SQL 拼 `orders`/`spot_orders`（P1 可后者，P2 再加窄表降延迟）。
@@ -455,3 +492,69 @@ deploy/business-console/    # Dockerfile、compose、run_console.sh
 | 2026-05-20 | 初版：定位、数据源、IA、API 草案、分期、与 Grafana/sqlite-web 分工 |
 | 2026-05-20 | 增补 §4.2 全 symbol 互动 K 线 + 实盘交易地图（周期切换、标记规范、实时刷新、API） |
 | 2026-05-20 | Trade Map：full_range OHLCV、模块化附图/侧栏、`/api/bus/features/columns`、`/api/orders/list` |
+| 2026-06-10 | React SPA parity 收尾：§4.2.5 路由与构建、§4.7 账户对账、账户/漏斗 API；**§11.1** 迁移回归修复清单 |
+
+### 11.1 React 迁移后回归与修复清单（2026-05 → 2026-06-10）
+
+> 基线：`b72a5d5f` 将 CMS 从静态 `*-page.js` 迁到 `frontend/` React SPA。下列为迁移后用户可见问题及对应修复（按模块归类；commit 见 `git log -- frontend src/mlbot_console`）。
+
+#### 交易地图 `/trade-map`
+
+| 现象 | 根因 / 修复要点 | 相关 commit（示例） |
+|------|-----------------|---------------------|
+| 向左拖加载更早历史后 **主图黑屏** | `setVisibleLogicalRange` 在 `setData` 之前，视口超出序列长度；prepend 后用 `historyScrollAdjust` 在 setData 之后校正 | `0ccdffe4` |
+| **首屏黑屏**（有数据但画布空） | chart ready 与 bundle 写入竞态；`chartReadyTick` + `applyChartViewport` 兜底可见区间；`refreshFull` 在 shell OHLCV 返回后即解除 loading | `138e6043` |
+| 拖历史 / 刷新时 **无加载反馈** | 增加 `historyLoading`、终端风 HUD、`TradeMapBusyStatus`、图表区 progress 光标 | `c6d071a2` |
+| **持仓连线不对齐 K 线**（线落在两根 bar 之间或偏离 OHLC） | 连线端点 `snapLinkPointToCandle`：时间对齐 bar open，价格锚 entry low/high、exit close | `34e64fc5`、`bc7646b4` |
+| 同一笔交易 **3× entry/exit 标记** 叠在同一根 K 线 | `positions` / `orders` / `position_operations` 重复发射；`dedupeMarkersForChart` 优先级去重 | `34e64fc5` |
+| metrics 特征表点击与附图 **十字线不同步** | 表行 `data-time` 与 subchart 可见列对齐、scroll-into-view | `6f907cb3`、`17172722` |
+| Trade Map **底栏订单表** 与主图标记联动弱 | OrdersDock 深链、`marker_id` 选中高亮 | `6f907cb3` |
+| 附图 overlay 与主图 **时间轴错位** | bundle overlay 与 resample 窗口对齐；subchart `setData` 增量路径 | `e673ee64`、`17172722` |
+| 轮询 **重复拉全量 OHLCV**、切换 symbol 卡顿 | `buildGridPollQuery`、resample 缓存、两阶段 bundle；去重 OHLCV 工作 | `8d25f2f4`、`2dbc16fb` |
+| universe 新 symbol **bus 未注册** / prefilter 日志刷屏 | feature-bus symbol 注册与 Trade Map prefilter 降噪 | `968f75e6`、`3c28351d` |
+| pending 标记被 SQL 时间下推 **过滤掉** | `include_open_orders` 时跳过 SQL time pushdown | `ecc65548` |
+
+#### 策略信号 `/signals`
+
+| 现象 | 根因 / 修复要点 |
+|------|-----------------|
+| 比旧版 **少一整块数据** | React 首版仅保留概览表，**删掉**底部「策略漏斗（15min · stats_15min）」折叠表（`GET /api/trend/funnel`） |
+| 概览表 Spot 列信息不全 | 恢复 `by_strategy` 行内 `funnel_summary`；Spot 单元格 `title` 展示 `blockers` |
+| 表头与旧版不一致 | 列名改回 `B·Trend` / `A·Spot` / `C·Multi-leg`；补充页面说明与筛选文案 |
+
+**2026-06-10 修复**：`SignalsPage.tsx` + `SignalsPage.module.css` 恢复漏斗 `details` 面板（账户层 / Symbol / 策略筛选，最多 120 行）。
+
+#### 账户总览与对账 `/account`
+
+| 现象 | 根因 / 修复要点 |
+|------|-----------------|
+| 顶栏点 **账户总览** URL 变了但仍是交易地图 | 全站 `React.lazy` 导致 chunk 加载延迟且无 fallback；核心页改 **eager import**，`AppShell` 包一层 `Suspense` + `PageFallback` |
+| 对账 UI **比旧版差**：bullet 卡片列表 | React 首版用 `ReconciliationCards` 文本列表，丢失表格列（类型/资产/交易所/本地/差额） |
+| 缺失 **scopes / strategies / 现货持仓** 表 | 未移植 `account-page.js` 的 `renderScopesTable` 等 |
+| 缺失 **累计盈利曲线**（PnL 折线）与周/日柱图 | 未接 `cumulative_realized` / `weekly_realized` / `daily_realized` |
+| 对账需点「展开对账」才请求 | 懒加载 `enabled: reconOpen`；改回进入页面即 `reconciliation/all` |
+
+**2026-06-10 修复**：`AccountPage.tsx` + `accountViews.tsx` + `AccountPage.module.css` 对齐旧静态页布局。
+
+#### 订单 / 导航 / 部署
+
+| 现象 | 根因 / 修复要点 |
+|------|-----------------|
+| `/orders` 报 **OrdersPage-*.js 404**、提示静态资源版本不一致 | 浏览器缓存旧 lazy chunk，dist 已删该文件；Orders 改同步打包 + `index.html` `Cache-Control: no-cache` |
+| 多品种地图路由缺失 | 补 `/trade-map-grid` SPA 路由（`main.py`） |
+| Tab 不可见时仍 10s 轮询 | `usePageVisible` + `visibleRefetchInterval` 降后台页轮询 |
+
+#### 多品种地图 `/trade-map-grid`
+
+| 现象 | 修复要点 |
+|------|----------|
+| 网格内小图标记/连线与主图行为不一致 | `MiniTradeMapChart` 与主图共用 `prepareChartMarkers`、`buildTradeLinkLines`（snap + dedupe） |
+| 网格 tail 轮询过猛 | `buildGridPollQuery`、`useStaggeredGridQueries` 错峰加载 |
+
+#### 验收建议（每次发版 CMS 前端后）
+
+1. `make frontend-build` → 重启 console → **Ctrl+Shift+R**
+2. `/trade-map`：拖历史不黑屏；开平仓标记与连线贴 K 线；无重复三角
+3. `/signals`：展开漏斗表有 regime/prefilter 数字列
+4. `/account`：scopes 表 + 累计 PnL 曲线 + 对账 HTML 表
+5. 顶栏逐页点击：订单/账户/信号即时切换无 chunk 错误
