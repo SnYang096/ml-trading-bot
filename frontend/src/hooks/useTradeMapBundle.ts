@@ -8,6 +8,7 @@ import {
   buildFullShellQuery,
   buildMarkersOnlyQuery,
   buildPollQuery,
+  bundleFeatureColumns,
 } from '@/lib/tradeMap/bundleQuery.ts';
 import {
   mergeCandlesByTime,
@@ -109,7 +110,7 @@ export function useTradeMapBundle() {
         lastMarkerPollSince: new Date().toISOString(),
         historyExhausted: false,
         loading: false,
-        statusText: `${candles.length} bars · ${(markersResp.data.markers || []).length} markers · ${(markersResp.data.trade_links || []).length} links · ${latest.selectedFeatureColumns.length} features`,
+        statusText: `${candles.length} bars · ${(markersResp.data.markers || []).length} markers · ${(markersResp.data.trade_links || []).length} links · ${bundleFeatureColumns(latest).length} features`,
       });
       saveLayout({
         layers: latest.layers,

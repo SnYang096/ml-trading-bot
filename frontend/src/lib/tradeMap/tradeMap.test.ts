@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  forwardFillOverlayToCandles,
   mergeCandlesByTime,
+  overlayAsOfAtCandleTimes,
+  overlayValueAtCandle,
   scopesFromLayers,
 } from '@/lib/tradeMap/ohlcv.ts';
 import {
@@ -18,7 +21,6 @@ import {
   markersToLwc,
 } from '@/lib/tradeMap/markers.ts';
 import { mergeTradeLinks, tradeLinksForDisplay, buildTradeLinkLines, resolveTradeLinkEndpoints } from '@/lib/tradeMap/tradeLinks.ts';
-import { forwardFillOverlayToCandles, overlayAsOfAtCandleTimes } from '@/lib/tradeMap/ohlcv.ts';
 import { visibleCandleIndexRange } from '@/lib/tradeMap/chartOverlay.ts';
 import { barSecForTimeframe, orderOnBar, orderRowUnixSec } from '@/lib/tradeMap/orderTime.ts';
 import {
@@ -360,9 +362,11 @@ describe('metrics table columns', () => {
     setFeatureTaxonomy(null);
     const cols = resolveMetricsTableColumns('tpc', [], []);
     expect(cols).toEqual([
-      'ema_1200_position',
       'tpc_pullback_depth',
+      'ema_1200_position',
+      'macd_atr',
       'tpc_semantic_chop',
+      'tpc_vol_pullback_confirm',
     ]);
     const rows = strategyMetricsRowSpecs('tpc', [], {});
     expect(rows.map((r) => r.column)).toEqual(cols);
@@ -373,6 +377,19 @@ describe('metrics table columns', () => {
     const rows = chopGridMetricsRowSpecs([], {});
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.some((r) => r.column === 'bpc_semantic_chop')).toBe(true);
+  });
+});
+
+describe('overlayValueAtCandle', () => {
+  it('forward-fills sparse feature points onto chart bars', () => {
+    const candles = [
+      { time: 1000, open: 1, high: 1, low: 1, close: 1 },
+      { time: 2000, open: 1, high: 1, low: 1, close: 1 },
+      { time: 3000, open: 1, high: 1, low: 1, close: 1 },
+    ];
+    const points = [{ time: 1000, value: 0.42 }];
+    expect(overlayValueAtCandle(points, candles, 2000)).toBe(0.42);
+    expect(forwardFillOverlayToCandles(points, candles)).toHaveLength(3);
   });
 });
 

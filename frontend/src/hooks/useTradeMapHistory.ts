@@ -14,7 +14,7 @@ import {
   stageRegionsQueryParam,
   tradeMapHistoryChunkDays,
 } from '@/lib/tradeMap';
-import { buildMarkersOnlyQuery } from '@/lib/tradeMap/bundleQuery.ts';
+import { buildMarkersOnlyQuery, bundleFeatureColumns } from '@/lib/tradeMap/bundleQuery.ts';
 import {
   resetHistoryState,
   scopesFromLayers,
@@ -51,7 +51,7 @@ export function useTradeMapHistory(mainChart: IChartApi | null) {
     const chunkDays = tradeMapHistoryChunkDays(state.timeframe);
     const newFromMs = Number(oldest) * 1000 - chunkDays * 86400000;
     const newFromIso = new Date(newFromMs).toISOString();
-    const featParam = featureColumnsParam(state.selectedFeatureColumns);
+    const featParam = featureColumnsParam(bundleFeatureColumns(state));
     const mainOl = mainOverlaysQueryParam(state.mainEma1200, state.mainWeeklyEma200);
     const stageRg = stageRegionsQueryParam(state.layers.prefilter, state.layers.gate);
 
@@ -67,7 +67,7 @@ export function useTradeMapHistory(mainChart: IChartApi | null) {
         from: newFromIso,
         to: isoFromUnixSec(Number(oldest)),
         include_ohlcv: 'full',
-        include_features: state.selectedFeatureColumns.length > 0 ? 'true' : 'false',
+        include_features: bundleFeatureColumns(state).length > 0 ? 'true' : 'false',
         include_markers: 'false',
         include_trade_links: 'false',
         include_chop: state.layers.chopGrid ? 'true' : 'false',

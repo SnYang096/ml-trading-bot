@@ -5,7 +5,7 @@ import {
   STAGE_ORDER,
   STRATEGY_METRICS_FALLBACK,
 } from './constants.ts';
-import { overlayAsOfAtCandleTimes } from './ohlcv.ts';
+import { overlayAsOfAtCandleTimes, overlayValueAtCandle } from './ohlcv.ts';
 import type {
   Candle,
   FeatureGroupTuple,
@@ -538,18 +538,22 @@ export function buildThresholdMetricRows(
   columns: string[] | null | undefined,
   overlays: FeatureOverlays | null | undefined,
   timeSec: number | null | undefined,
+  candles?: Candle[] | null,
 ): ThresholdMetricRow[] {
   const colSet = new Set(columns || []);
   const rows: ThresholdMetricRow[] = [];
   const pickVal = (col: string) => {
     const o = overlays?.[col];
     if (!o?.available) return { value: null as number | null, overlay: o };
-    const at =
-      timeSec != null
-        ? overlayValueAtTime(o, timeSec)
-        : o.latest != null
-          ? Number(o.latest)
-          : null;
+    let at: number | null = null;
+    if (timeSec != null) {
+      at =
+        candles?.length
+          ? overlayValueAtCandle(o.points, candles, timeSec)
+          : overlayValueAtTime(o, timeSec);
+    } else if (o.latest != null) {
+      at = Number(o.latest);
+    }
     return { value: at, overlay: o };
   };
 
@@ -903,9 +907,10 @@ export function strategyMetricsRowCell(
       },
       overlays,
       timeSec,
+      candles,
     );
   }
-  const built = buildThresholdMetricRows(row.regimeCols, overlays, timeSec);
+  const built = buildThresholdMetricRows(row.regimeCols, overlays, timeSec, candles);
   const hit =
     built.find((r) => r.yaml === row.yaml) ||
     built.find((r) => r.label === row.label);
@@ -917,10 +922,14 @@ function strategyMetricsCell(
   spec: MetricsColumnSpec,
   overlays: FeatureOverlays | null | undefined,
   timeSec: number | null | undefined,
+  candles?: Candle[] | null,
 ): MetricsCell {
   if (spec.kind === 'scalar') {
     const o = overlays?.[spec.column || ''];
-    const v = overlayValueAtTime(o, timeSec);
+    const v =
+      candles?.length && timeSec != null
+        ? overlayValueAtCandle(o?.points, candles, timeSec)
+        : overlayValueAtTime(o, timeSec);
     if (v == null || !Number.isFinite(v)) return { value: '—', pass: null };
     const refs = o?.reference_lines || [];
     let pass: boolean | null = null;
@@ -1029,7 +1038,7 @@ export function strategyBarGateEvaluator(
   let anyFail = false;
   let anyPass = false;
   for (const row of rows) {
-    const cell = strategyMetricsRowCell(sid, row, overlays, timeSec);
+    const cell = strategyMetricsRowCell(sid, row, overlays, timeSec, candles);
     if (cell.pass === false) anyFail = true;
     if (cell.pass === true) anyPass = true;
   }

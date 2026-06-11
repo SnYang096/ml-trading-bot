@@ -1,5 +1,7 @@
 import { apiQuery } from '@/api/client.ts';
 import type { LayerState } from '@/stores/tradeMapStore.ts';
+import { MAX_FEATURE_SUBCHARTS } from './constants.ts';
+import { resolveMetricsTableColumns } from './features.ts';
 import { isoFromUnixSec, ohlcvInitialQueryRange } from './ohlcv.ts';
 import {
   featureColumnsParam,
@@ -16,10 +18,49 @@ export interface BundleQueryState {
   markerQueryFromIso: string | null;
   lastMarkerPollSince: string | null;
   selectedFeatureColumns: string[];
+  availableFeatureColumns?: string[];
   mainEma1200: boolean;
   mainWeeklyEma200: boolean;
   featureStrategyFocus: string;
   lastCandles: Array<{ time: number }>;
+}
+
+export function bundleOhlcvRange(state: BundleQueryState): {
+  from: string;
+  to: string;
+  full_range: string;
+} {
+  const init = ohlcvInitialQueryRange(state.timeframe);
+  return {
+    from: state.ohlcvLoadedFrom || init.from || new Date().toISOString(),
+    to: state.ohlcvLoadedTo || init.to || new Date().toISOString(),
+    full_range: state.ohlcvLoadedFrom ? 'false' : init.full_range || 'false',
+  };
+}
+
+/** Columns to fetch: user selection ∪ metrics-table rows for focused strategy. */
+export function bundleFeatureColumns(state: BundleQueryState): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const add = (col: string) => {
+    const c = String(col || '').trim();
+    if (!c || seen.has(c)) return;
+    seen.add(c);
+    out.push(c);
+  };
+  for (const c of state.selectedFeatureColumns || []) add(c);
+  const focus = state.featureStrategyFocus?.trim() || '';
+  if (focus) {
+    for (const c of resolveMetricsTableColumns(
+      focus,
+      state.selectedFeatureColumns,
+      state.availableFeatureColumns,
+      MAX_FEATURE_SUBCHARTS,
+    )) {
+      add(c);
+    }
+  }
+  return out;
 }
 
 export function markerRangeFrom(state: BundleQueryState): {
@@ -86,7 +127,7 @@ export function buildPollQuery(state: BundleQueryState): string {
 }
 
 export function buildFullShellQuery(state: BundleQueryState): string {
-  const init = ohlcvInitialQueryRange(state.timeframe);
+  const range = bundleOhlcvRange(state);
   const mainOl = mainOverlaysQueryParam(state.mainEma1200, state.mainWeeklyEma200);
   return apiQuery({
     symbol: state.symbol,
@@ -98,9 +139,9 @@ export function buildFullShellQuery(state: BundleQueryState): string {
     include_markers: 'false',
     include_trade_links: 'false',
     include_chop: 'false',
-    from: state.ohlcvLoadedFrom || init.from,
-    to: state.ohlcvLoadedTo || init.to,
-    full_range: state.ohlcvLoadedFrom ? 'false' : init.full_range || 'false',
+    from: range.from,
+    to: range.to,
+    full_range: range.full_range,
     main_overlays: mainOl || undefined,
   });
 }
@@ -132,7 +173,9 @@ export function buildFullFeaturesQuery(
 ): string {
   const range = markerRangeFrom(state);
   const init = ohlcvInitialQueryRange(state.timeframe);
-  const featParam = featureColumnsParam(state.selectedFeatureColumns);
+  const ohlcv = bundleOhlcvRange(state);
+  const cols = bundleFeatureColumns(state);
+  const featParam = featureColumnsParam(cols);
   const stageRg = stageRegionsQueryParam(state.layers.prefilter, state.layers.gate);
   const stratFocus = state.featureStrategyFocus.trim();
   return apiQuery({
@@ -140,10 +183,11 @@ export function buildFullFeaturesQuery(
     timeframe: state.timeframe,
     scopes: scopesFromLayers(state.layers),
     include_pending: String(state.layers.pending),
-    from: range.from || markerFrom || state.ohlcvLoadedFrom || init.from,
-    to: range.to || state.ohlcvLoadedTo || new Date().toISOString(),
-    include_ohlcv: 'none',
-    include_features: 'true',
+    from: range.from || markerFrom || ohlcv.from || init.from,
+    to: range.to || ohlcv.to || init.to,
+    full_range: ohlcv.full_range,
+    include_ohlcv: 'full',
+    include_features: cols.length ? 'true' : 'false',
     include_markers: 'false',
     include_trade_links: 'false',
     include_chop: 'true',

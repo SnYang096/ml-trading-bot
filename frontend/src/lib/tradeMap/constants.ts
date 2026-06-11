@@ -48,7 +48,13 @@ export const FEATURE_PRESETS: Record<string, string[]> = {
 
 /** Metrics-table row columns when taxonomy / bus catalog is not yet loaded. */
 export const STRATEGY_METRICS_FALLBACK: Record<string, string[]> = {
-  tpc: ['ema_1200_position', 'tpc_pullback_depth', 'tpc_semantic_chop'],
+  tpc: [
+    'tpc_pullback_depth',
+    'ema_1200_position',
+    'macd_atr',
+    'tpc_semantic_chop',
+    'tpc_vol_pullback_confirm',
+  ],
   bpc: ['ema_1200_position', 'bpc_pullback_depth', 'bpc_semantic_chop'],
   me: ['ema_1200_position'],
   srb: ['ema_1200_position'],

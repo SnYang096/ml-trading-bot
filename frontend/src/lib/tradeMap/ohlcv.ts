@@ -191,6 +191,21 @@ export function forwardFillOverlayToCandles(
   return out;
 }
 
+/** Scalar feature at a chart bar (forward-fill aligned, same as subchart panes). */
+export function overlayValueAtCandle(
+  points: OverlayPoint[] | null | undefined,
+  candles: Candle[],
+  timeSec: number | null | undefined,
+): number | null {
+  if (timeSec == null || !Number.isFinite(Number(timeSec))) return null;
+  if (!candles?.length) return null;
+  const t = Number(timeSec);
+  const filled = forwardFillOverlayToCandles(points, candles);
+  const hit = filled.find((p) => Number(p.time) === t);
+  if (hit?.value == null || !Number.isFinite(Number(hit.value))) return null;
+  return Number(hit.value);
+}
+
 /** One timeline entry per OHLCV bar (whitespace where feature is missing). */
 export function alignSeriesToCandleTimes(
   points: OverlayPoint[] | null | undefined,
