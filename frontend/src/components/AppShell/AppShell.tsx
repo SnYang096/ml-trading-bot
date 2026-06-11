@@ -1,8 +1,10 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { apiGet } from '@/api/client.ts';
 import type { NavLink as NavLinkRow } from '@/api/types.ts';
+import { PageFallback } from '@/components/PageFallback.tsx';
+import { prefetchPage } from '@/lib/pagePrefetch.ts';
 import { PAGES, resolveLinkUrl } from '@/lib/shell.ts';
 import styles from './AppShell.module.css';
 
@@ -39,6 +41,8 @@ export function AppShell() {
               className={({ isActive }) =>
                 isActive ? `${styles.navLink} ${styles.navActive}` : styles.navLink
               }
+              onMouseEnter={() => prefetchPage(p.id)}
+              onFocus={() => prefetchPage(p.id)}
             >
               {p.label}
             </NavLink>
@@ -58,7 +62,9 @@ export function AppShell() {
         </div>
       </header>
       <main className={styles.main}>
-        <Outlet />
+        <Suspense fallback={<PageFallback />}>
+          <Outlet />
+        </Suspense>
       </main>
     </div>
   );

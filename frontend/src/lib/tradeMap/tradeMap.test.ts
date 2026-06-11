@@ -20,6 +20,7 @@ import {
   chopRegimeHysteresisOnAtTime,
   chopRegimeSeriesFromOverlay,
   isFeatureBusRegimeExitMarker,
+  dedupeMarkersForChart,
   markersForChartDisplay,
   markersToLwc,
   prepareChartMarkers,
@@ -195,7 +196,39 @@ describe('tradeMap trade links', () => {
     expect(mergeTradeLinks([a], [a])).toHaveLength(1);
   });
 
-  it('buildTradeLinkLines uses marker times instead of snapped candle times', () => {
+  it('dedupeMarkersForChart keeps positions over orders on same bar', () => {
+    const markers = [
+      {
+        id: 'trend:positions:p1:entry',
+        time: 1000,
+        strategy: 'tpc',
+        event: 'entry',
+        side: 'long',
+        scope: 'trend',
+      },
+      {
+        id: 'trend:orders:o1',
+        time: 1000,
+        strategy: 'tpc',
+        event: 'entry',
+        side: 'long',
+        scope: 'trend',
+      },
+      {
+        id: 'trend:orders:o2',
+        time: 1000,
+        strategy: 'tpc',
+        event: 'entry',
+        side: 'long',
+        scope: 'trend',
+      },
+    ] as TradeMarker[];
+    const deduped = dedupeMarkersForChart(markers);
+    expect(deduped).toHaveLength(1);
+    expect(deduped[0].id).toBe('trend:positions:p1:entry');
+  });
+
+  it('buildTradeLinkLines snaps endpoints onto loaded candle bars', () => {
     const candles = [
       { time: 1000, open: 1, high: 1, low: 1, close: 1 },
       { time: 8200, open: 1, high: 1, low: 1, close: 1 },
@@ -244,13 +277,15 @@ describe('tradeMap trade links', () => {
       gate: false,
     };
     const resolved = resolveTradeLinkEndpoints(links[0], markers, candles, '2h');
-    expect(resolved?.entry.time).toBe(1500);
-    expect(resolved?.exit.time).toBe(7800);
+    expect(resolved?.entry.time).toBe(1000);
+    expect(resolved?.exit.time).toBe(8200);
+    expect(resolved?.entry.value).toBe(1);
+    expect(resolved?.exit.value).toBe(1);
     const lines = buildTradeLinkLines(links, candles, layers, 'tpc', '2h', markers);
     expect(lines).toHaveLength(1);
     expect(lines[0].points).toEqual([
-      { time: 1500, value: 1.54 },
-      { time: 7800, value: 1.42 },
+      { time: 1000, value: 1 },
+      { time: 8200, value: 1 },
     ]);
   });
 
@@ -301,6 +336,8 @@ describe('tradeMap trade links', () => {
     };
     const lines = buildTradeLinkLines(links, candles, layers, 'tpc', '2h', markers);
     expect(lines[0].points[0].time).toBe(lines[0].points[1].time);
+    expect(lines[0].points[0].value).toBe(1);
+    expect(lines[0].points[1].value).toBe(1);
   });
 });
 

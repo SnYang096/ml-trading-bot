@@ -97,11 +97,20 @@ def _spa_index() -> FileResponse:
             status_code=503,
             detail="Frontend not built. Run: make frontend-build",
         )
-    return FileResponse(_SPA_INDEX)
+    # Always revalidate HTML so deploys pick up new hashed JS/CSS (avoids stale chunk 404s).
+    return FileResponse(
+        _SPA_INDEX,
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 @app.get("/trade-map")
 def trade_map_page() -> FileResponse:
+    return _spa_index()
+
+
+@app.get("/trade-map-grid")
+def trade_map_grid_page() -> FileResponse:
     return _spa_index()
 
 

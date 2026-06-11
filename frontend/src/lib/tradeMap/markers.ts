@@ -460,6 +460,33 @@ function nearestCandleTime(times: number[], t: number): number {
   return best;
 }
 
+function markerSourcePriority(markerId: string | null | undefined): number {
+  const id = String(markerId || '');
+  if (id.includes(':positions:')) return 3;
+  if (id.includes(':position_operations:')) return 2;
+  if (id.includes(':orders:')) return 1;
+  return 0;
+}
+
+/** One marker per strategy/event/bar — prefer positions over orders duplicates. */
+export function dedupeMarkersForChart(markers: TradeMarker[]): TradeMarker[] {
+  const byKey = new Map<string, TradeMarker>();
+  for (const m of markers) {
+    const key = [
+      String(m.strategy || '').toLowerCase(),
+      String(m.event || '').toLowerCase(),
+      Number(m.time),
+      String(m.side || '').toLowerCase(),
+      String(m.status || 'filled').toLowerCase(),
+    ].join('|');
+    const prev = byKey.get(key);
+    if (!prev || markerSourcePriority(m.id) > markerSourcePriority(prev.id)) {
+      byKey.set(key, m);
+    }
+  }
+  return [...byKey.values()].sort((a, b) => Number(a.time) - Number(b.time));
+}
+
 /** LWC requires marker time to match a candle time exactly (unix sec). */
 export function snapMarkersToCandleTimes(
   markers: TradeMarker[],
@@ -520,6 +547,7 @@ export function prepareChartMarkers(
   }
   if (candles.length) {
     incoming = snapMarkersToCandleTimes(incoming, candles);
+    incoming = dedupeMarkersForChart(incoming);
   }
   return incoming;
 }

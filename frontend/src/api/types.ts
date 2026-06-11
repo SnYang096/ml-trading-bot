@@ -118,6 +118,21 @@ export interface OrderRow {
   [key: string]: unknown;
 }
 
+export interface FunnelStrategyStats {
+  regime_passed?: number;
+  regime_denied?: number;
+  prefilter_passed?: number;
+  prefilter_denied?: number;
+  direction?: number;
+  gate_passed?: number;
+}
+
+export interface FunnelSnapshot {
+  timestamp?: string;
+  symbol?: string;
+  by_strategy?: Record<string, FunnelStrategyStats>;
+}
+
 export interface SignalRow {
   symbol: string;
   map_href?: string;
@@ -175,10 +190,49 @@ export interface RegimeOpsRow {
   config_reference_at?: string;
 }
 
+export interface DailyPnlPoint {
+  date?: string;
+  week_start?: string;
+  label?: string;
+  pnl?: number | null;
+  cumulative?: number | null;
+}
+
+export interface AccountScopeBlock {
+  scope?: string;
+  label?: string;
+  realized_pnl?: number | null;
+  unrealized_pnl?: number | null;
+  closed_trades?: number | null;
+  open_positions?: number | null;
+  exchange?: Record<string, unknown>;
+  daily_realized?: DailyPnlPoint[];
+}
+
+export interface AccountStrategyRow {
+  scope?: string;
+  strategy?: string;
+  realized_pnl?: number | null;
+  unrealized_pnl?: number | null;
+  closed_trades?: number | null;
+  open_positions?: number | null;
+}
+
 export interface AccountSummary {
+  symbol?: string;
   totals?: Record<string, number | null>;
   recent_realized?: Record<string, unknown>;
+  exchange_ledger?: {
+    totals?: Record<string, number | null>;
+    accounts?: Array<Record<string, unknown>>;
+  };
   ledger?: { totals?: Record<string, number | null> };
+  scopes?: AccountScopeBlock[];
+  strategies?: AccountStrategyRow[];
+  daily_realized?: DailyPnlPoint[];
+  weekly_realized?: DailyPnlPoint[];
+  cumulative_realized?: DailyPnlPoint[];
+  notes?: string[];
   by_scope?: unknown[];
   reconciliation?: unknown;
 }

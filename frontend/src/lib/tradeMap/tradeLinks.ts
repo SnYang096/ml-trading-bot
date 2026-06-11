@@ -73,6 +73,42 @@ export function nearestLoadedCandleTime(candles: Candle[], rawTime: number): num
   return best;
 }
 
+export function candleAtLoadedTime(candles: Candle[], rawTime: number): Candle | null {
+  if (!candles.length) return null;
+  const t = nearestLoadedCandleTime(candles, rawTime);
+  return candles.find((c) => Number(c.time) === t) || null;
+}
+
+/** Pin link endpoints onto a loaded bar (time + OHLC anchor for LWC line series). */
+export function snapLinkPointToCandle(
+  candles: Candle[],
+  rawTime: number,
+  fillPrice: number,
+  event: 'entry' | 'exit',
+  side: string,
+): { time: number; value: number } {
+  const candle = candleAtLoadedTime(candles, rawTime);
+  const time = candle ? Number(candle.time) : nearestLoadedCandleTime(candles, rawTime);
+  if (!candle) {
+    return { time, value: fillPrice };
+  }
+  const lo = Number(candle.low);
+  const hi = Number(candle.high);
+  const close = Number(candle.close);
+  const sideL = String(side || 'long').toLowerCase();
+  let value = fillPrice;
+  if (event === 'entry') {
+    value = sideL === 'short' ? hi : lo;
+  } else if (Number.isFinite(close)) {
+    value = close;
+  }
+  if (!Number.isFinite(value)) value = fillPrice;
+  if (Number.isFinite(lo) && Number.isFinite(hi)) {
+    value = Math.min(hi, Math.max(lo, value));
+  }
+  return { time, value };
+}
+
 export function clipLinkToCandles(
   link: TradeLink,
   candles: Candle[],
@@ -110,6 +146,9 @@ function linkEndpoint(
   marker: TradeMarker | null,
   fallbackTime: number,
   fallbackPrice: number,
+  candles: Candle[],
+  event: 'entry' | 'exit',
+  side: string,
 ): { time: number; value: number } | null {
   const tRaw = marker ? Number(marker.time) : fallbackTime;
   const t = Number.isFinite(tRaw) ? tRaw : fallbackTime;
@@ -118,7 +157,8 @@ function linkEndpoint(
     value = Number(marker.price);
   }
   if (!Number.isFinite(t) || !Number.isFinite(value)) return null;
-  return { time: t, value };
+  if (!candles.length) return { time: t, value };
+  return snapLinkPointToCandle(candles, t, value, event, side);
 }
 
 /** Resolve link endpoints from chart markers when ids match (same times as arrow markers). */
@@ -131,15 +171,22 @@ export function resolveTradeLinkEndpoints(
   const clipped = candles.length ? clipLinkToCandles(link, candles, timeframe) : link;
   const entryMarker = markerById(markers, link.entry_marker_id);
   const exitMarker = markerById(markers, link.exit_marker_id);
+  const linkSide = String(link.side || entryMarker?.side || exitMarker?.side || 'long');
   const entry = linkEndpoint(
     entryMarker,
     Number(clipped.entry_time),
     Number(clipped.entry_price),
+    candles,
+    'entry',
+    linkSide,
   );
   const exit = linkEndpoint(
     exitMarker,
     Number(clipped.exit_time),
     Number(clipped.exit_price),
+    candles,
+    'exit',
+    linkSide,
   );
   if (!entry || !exit) return null;
   let t0 = entry.time;

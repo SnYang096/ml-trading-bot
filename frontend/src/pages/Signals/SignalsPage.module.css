@@ -1,0 +1,91 @@
+.page {
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
+
+.hint {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.panel h3 {
+  margin: 0 0 10px;
+  font-size: 0.95rem;
+}
+
+.tableWrap {
+  overflow: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.table th,
+.table td {
+  border-bottom: 1px solid var(--border);
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.table tbody tr:hover {
+  background: var(--surface);
+}
+
+.strategyCell .strategyLine {
+  margin-bottom: 4px;
+  line-height: 1.35;
+}
+
+.strategyCell .strategyLine:last-child {
+  margin-bottom: 0;
+}
+
+.funnelPanel {
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 12px 12px;
+  background: var(--bg-elevated);
+}
+
+.funnelPanel > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 12px 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 16px;
+}
+
+.funnelPanel > summary::-webkit-details-marker {
+  display: none;
+}
+
+.funnelTitle {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.funnelHint {
+  font-size: 0.78rem;
+}
+
+.funnelFilters label {
+  margin-right: 12px;
+  font-size: 0.8rem;
+}
+
+.funnelNote {
+  margin: 0 0 10px;
+  font-size: 0.78rem;
+}

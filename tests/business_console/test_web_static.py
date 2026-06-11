@@ -155,13 +155,15 @@ def test_orders_client_pagination() -> None:
     assert "下一页" in orders
 
 
-def test_account_recon_lazy_load() -> None:
+def test_account_tables_and_pnl_curve() -> None:
     account = _read("pages/Account/AccountPage.tsx")
-    assert "reconOpen" in account
-    assert "展开对账" in account
-    assert "enabled: reconOpen" in account
+    views = _read("pages/Account/accountViews.tsx")
     assert "/api/account/reconciliation/all" in account
-    assert "SCOPE_LABELS" in account
+    assert "ScopesTable" in account
+    assert "EquityCurveChart" in account
+    assert "ReconciliationPanels" in account
+    assert "类型" in views
+    assert "累计盈利曲线" in account
 
 
 def test_mini_grid_markers_hide_text() -> None:

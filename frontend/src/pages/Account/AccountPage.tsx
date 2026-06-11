@@ -2,49 +2,40 @@ import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { useState } from 'react';
 import { apiGet } from '@/api/client.ts';
-import type {
-  AccountReconIssue,
-  AccountReconScopeBlock,
-  AccountReconciliationAll,
-  AccountSummary,
-  SymbolRow,
-} from '@/api/types.ts';
-import { fmtPnl, getSymbol, isAllSymbols, pnlClass, setSymbol, SCOPE_LABELS } from '@/lib/shell.ts';
-
-function fmtUsdt(n: unknown): string {
-  const v = Number(n);
-  if (!Number.isFinite(v)) return '—';
-  return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-const RECON_SCOPES = ['spot', 'trend', 'multi_leg'] as const;
-
-function scopeIssues(
-  recon: AccountReconciliationAll | undefined,
-  scope: (typeof RECON_SCOPES)[number],
-): {
-  engine?: AccountReconScopeBlock;
-  pnl?: AccountReconScopeBlock;
-  issues: AccountReconIssue[];
-} {
-  const engine = recon?.engine?.[scope];
-  const pnl = recon?.pnl?.scopes?.[scope];
-  const issues: AccountReconIssue[] = [
-    ...(engine?.issues || []).map((i) => ({ ...i, layer: i.layer || 'engine' })),
-    ...(pnl?.issues || []).map((i) => ({ ...i, layer: i.layer || 'pnl' })),
-  ];
-  return { engine, pnl, issues };
-}
+import type { AccountReconciliationAll, AccountSummary, SymbolRow } from '@/api/types.ts';
+import { fmtPnl, getSymbol, isAllSymbols, pnlClass, setSymbol, SYMBOL_ALL } from '@/lib/shell.ts';
+import {
+  DailyPnlChart,
+  EquityCurveChart,
+  fmtUsdt,
+  KpiCard,
+  ReconciliationPanels,
+  ScopesTable,
+  SpotHoldingsPanel,
+  StrategiesTable,
+  WeeklyPnlChart,
+  WeeklyPnlTable,
+} from './accountViews.tsx';
+import styles from './AccountPage.module.css';
 
 export function AccountPage() {
   const [searchParams] = useSearchParams();
   const [symbol, setSym] = useState(searchParams.get('symbol') || getSymbol() || 'ETHUSDT');
   const [lookback, setLookback] = useState('0');
-  const [reconOpen, setReconOpen] = useState(false);
 
   const symbolsQuery = useQuery({
     queryKey: ['symbols'],
     queryFn: () => apiGet<SymbolRow[]>('/api/trade-map/symbols'),
+  });
+
+  const globalQuery = useQuery({
+    queryKey: ['account-summary-global'],
+    queryFn: () =>
+      apiGet<AccountSummary>('/api/account/summary', {
+        symbol: SYMBOL_ALL,
+        lookback_days: '0',
+        scopes: 'trend,spot,multi_leg',
+      }),
   });
 
   const summaryQuery = useQuery({
@@ -64,94 +55,187 @@ export function AccountPage() {
         symbol,
         lookback_days: lookback,
       }),
-    enabled: reconOpen,
   });
 
-  const totals = summaryQuery.data?.data?.totals || {};
-  const ledger = summaryQuery.data?.data?.ledger?.totals || {};
-  const recent = summaryQuery.data?.data?.recent_realized || {};
+  const global = globalQuery.data?.data;
+  const scoped = summaryQuery.data?.data;
   const recon = reconQuery.data?.data;
+  const gTotals = global?.totals || {};
+  const gLedger = global?.exchange_ledger?.totals || global?.ledger?.totals || {};
+  const sTotals = scoped?.totals || {};
+  const recent = scoped?.recent_realized || {};
   const reconIssues = recon?.issues?.length ?? 0;
 
+  const refreshAll = () => {
+    globalQuery.refetch();
+    summaryQuery.refetch();
+    reconQuery.refetch();
+  };
+
   return (
-    <div className="page">
+    <div className={styles.page}>
       <div className="toolbar-row">
         <h2>账户总览</h2>
-        <label>
-          Symbol
-          <select
-            value={symbol}
-            onChange={(e) => {
-              setSym(e.target.value);
-              if (!isAllSymbols(e.target.value)) setSymbol(e.target.value);
-            }}
-          >
-            <option value="*">全部</option>
-            {(symbolsQuery.data?.data || [{ symbol: 'ETHUSDT' }]).map((r) => (
-              <option key={r.symbol} value={r.symbol}>
-                {r.symbol}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Lookback
-          <select value={lookback} onChange={(e) => setLookback(e.target.value)}>
-            <option value="0">0d</option>
-            <option value="7">7d</option>
-            <option value="30">30d</option>
-          </select>
-        </label>
-        <button type="button" onClick={() => summaryQuery.refetch()}>
+        <button type="button" onClick={refreshAll}>
           刷新
         </button>
+        <a href="/orders">订单列表</a>
       </div>
-      <div className="panel" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
-        <div>
-          <div className="muted">总权益（总账）</div>
-          <div>{fmtUsdt(ledger.equity_usdt ?? totals.equity_usdt)} USDT</div>
-        </div>
-        <div>
-          <div className="muted">已实现盈亏</div>
-          <div className={pnlClass(totals.realized_pnl)}>{fmtPnl(totals.realized_pnl)} USDT</div>
-        </div>
-        <div>
-          <div className="muted">浮盈</div>
-          <div className={pnlClass(totals.unrealized_pnl)}>{fmtPnl(totals.unrealized_pnl)} USDT</div>
-        </div>
-        <div>
-          <div className="muted">已平仓</div>
-          <div>{totals.closed_trades ?? 0} 笔</div>
-        </div>
-      </div>
-      {recent.last_day ? (
-        <section className="panel">
-          <h3>已实现盈亏速览</h3>
-          <p>
-            最近日 {String(recent.last_day)} ·{' '}
-            <span className={pnlClass(recent.last_day_pnl)}>{fmtPnl(recent.last_day_pnl)} USDT</span>
+
+      <section className={styles.section}>
+        <header>
+          <h2>全局资产</h2>
+          <p className={`muted ${styles.sectionNote}`}>
+            总账权益与钱包余额为币安全账户汇总，不受下方 Symbol 筛选影响。
           </p>
-          <p>
-            本周 <span className={pnlClass(recent.this_week_pnl)}>{fmtPnl(recent.this_week_pnl)} USDT</span>
+        </header>
+        <div className={styles.kpiRow}>
+          <KpiCard
+            label="总权益（总账）"
+            value={`${fmtUsdt(gLedger.equity_usdt ?? gTotals.equity_usdt)} USDT`}
+            hint="币安各账户之和"
+            valueClass={styles.kpiGlobal}
+          />
+          <KpiCard
+            label="总钱包余额"
+            value={`${fmtUsdt(gLedger.wallet_balance_usdt ?? gTotals.wallet_balance_usdt)} USDT`}
+            hint="USDT"
+          />
+          <KpiCard
+            label="总可用"
+            value={`${fmtUsdt(gLedger.available_usdt ?? gTotals.available_usdt)} USDT`}
+            hint="USDT"
+          />
+          <KpiCard
+            label="合约未实现"
+            value={`${fmtUsdt(gLedger.exchange_unrealized_pnl_usdt ?? gTotals.exchange_unrealized_pnl_usdt)} USDT`}
+            hint="交易所"
+          />
+        </div>
+        {global?.exchange_ledger ? (
+          <div className={styles.ledgerStrip}>
+            <span>
+              总账权益 <strong>{fmtUsdt(gLedger.equity_usdt)}</strong> USDT
+            </span>
+            <span>
+              总钱包 <strong>{fmtUsdt(gLedger.wallet_balance_usdt)}</strong>
+            </span>
+            <span>
+              总可用 <strong>{fmtUsdt(gLedger.available_usdt)}</strong>
+            </span>
+            <span>
+              合约未实现 <strong>{fmtUsdt(gLedger.exchange_unrealized_pnl_usdt)}</strong>
+            </span>
+          </div>
+        ) : null}
+      </section>
+
+      <section className={styles.section}>
+        <header className={styles.sectionHead}>
+          <div>
+            <h2>策略与账户层盈亏</h2>
+            <p className={`muted ${styles.sectionNote}`}>已实现盈亏、持仓与按日统计受 Symbol 与回看期筛选。</p>
+          </div>
+          <div className="toolbar-row">
+            <label>
+              Symbol
+              <select
+                value={symbol}
+                onChange={(e) => {
+                  setSym(e.target.value);
+                  if (!isAllSymbols(e.target.value)) setSymbol(e.target.value);
+                }}
+              >
+                <option value="*">全部</option>
+                {(symbolsQuery.data?.data || [{ symbol: 'ETHUSDT' }]).map((r) => (
+                  <option key={r.symbol} value={r.symbol}>
+                    {r.symbol}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              回看
+              <select value={lookback} onChange={(e) => setLookback(e.target.value)}>
+                <option value="0">全部</option>
+                <option value="7">7 天</option>
+                <option value="14">14 天</option>
+                <option value="30">30 天</option>
+                <option value="90">90 天</option>
+                <option value="365">365 天</option>
+              </select>
+            </label>
+          </div>
+        </header>
+
+        <div className={styles.kpiRow}>
+          <KpiCard label="已实现盈亏" value={`${fmtPnl(sTotals.realized_pnl)} USDT`} hint="本地 DB" valueClass={pnlClass(sTotals.realized_pnl)} />
+          <KpiCard label="持仓浮盈" value={`${fmtPnl(sTotals.unrealized_pnl)} USDT`} hint="本地估算" valueClass={pnlClass(sTotals.unrealized_pnl)} />
+          <KpiCard label="已平仓笔数" value={String(sTotals.closed_trades ?? 0)} hint="笔" />
+          <KpiCard label="未平仓位/批次" value={String(sTotals.open_positions ?? 0)} hint="个" />
+        </div>
+
+        {recent.last_day != null || recent.this_week_pnl != null ? (
+          <section className="panel">
+            <h3>已实现盈亏速览</h3>
+            <p className="muted">自然周按 UTC 周一重计。</p>
+            <div className={styles.kpiRow}>
+              <KpiCard
+                label="最近交易日"
+                value={`${String(recent.last_day || '—')} · ${fmtPnl(recent.last_day_pnl)} USDT`}
+                valueClass={pnlClass(recent.last_day_pnl)}
+              />
+              <KpiCard
+                label={`本周已实现 (${String(recent.this_week_start || '—')} 起)`}
+                value={`${fmtPnl(recent.this_week_pnl)} USDT`}
+                valueClass={pnlClass(recent.this_week_pnl)}
+              />
+              <KpiCard
+                label={`上周已实现 (${String(recent.last_week_start || '—')} 起)`}
+                value={`${fmtPnl(recent.last_week_pnl)} USDT`}
+                valueClass={pnlClass(recent.last_week_pnl)}
+              />
+            </div>
+          </section>
+        ) : null}
+
+        <div className={styles.grid2}>
+          <section className="panel">
+            <h3>账户层汇总 (本地 DB)</h3>
+            <ScopesTable scopes={scoped?.scopes || []} />
+          </section>
+          <section className="panel">
+            <h3>策略汇总 (本地 DB)</h3>
+            <StrategiesTable strategies={scoped?.strategies || []} />
+          </section>
+        </div>
+
+        <div className={styles.grid2}>
+          <SpotHoldingsPanel scopes={scoped?.scopes || []} />
+        </div>
+
+        <section className="panel" style={{ marginTop: 16 }}>
+          <h3>已实现盈亏</h3>
+          <p className="muted" style={{ margin: '0 0 12px' }}>
+            按 UTC 自然周汇总；累计曲线为已实现盈亏累加，不含交易所浮盈。
           </p>
+          <h4 className={styles.pnlSubhead}>按周统计</h4>
+          <WeeklyPnlChart weekly={scoped?.weekly_realized || []} />
+          <WeeklyPnlTable weekly={scoped?.weekly_realized || []} />
+          <h4 className={styles.pnlSubhead}>累计盈利曲线</h4>
+          <EquityCurveChart curve={scoped?.cumulative_realized || []} />
+          <h4 className={styles.pnlSubhead}>按日明细</h4>
+          <DailyPnlChart daily={scoped?.daily_realized || []} />
+          {scoped?.notes?.length ? (
+            <p className={styles.notes}>{scoped.notes.map((n) => `· ${n}`).join('\n')}</p>
+          ) : null}
         </section>
-      ) : null}
-      <section className="panel">
-        <div className="toolbar-row" style={{ marginBottom: 8 }}>
-          <h3 style={{ margin: 0 }}>对账</h3>
-          {!reconOpen ? (
-            <button type="button" onClick={() => setReconOpen(true)}>
-              展开对账
-            </button>
-          ) : (
-            <button type="button" onClick={() => reconQuery.refetch()}>
-              刷新对账
-            </button>
-          )}
-        </div>
-        {!reconOpen ? (
-          <p className="muted">点击「展开对账」加载 A·Spot / B·Trend / C·Multi-leg 与交易所比对。</p>
-        ) : reconQuery.isFetching && !recon ? (
+
+        <header style={{ marginTop: 32 }}>
+          <h2>交易所对账</h2>
+          <p className={`muted ${styles.sectionNote}`}>比对币安 API 实际资产与本地数据库记录的差异。</p>
+        </header>
+        {reconQuery.isFetching && !recon ? (
           <p className="muted">加载对账…</p>
         ) : reconQuery.isError ? (
           <p className="pnl-neg">对账加载失败：{String(reconQuery.error)}</p>
@@ -167,54 +251,13 @@ export function AccountPage() {
                 <span className="muted"> · 交易所快照 {String(recon.pnl.fetched_at)}</span>
               ) : null}
             </p>
-            <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
-              {RECON_SCOPES.map((scope) => {
-                const { engine, pnl, issues } = scopeIssues(recon, scope);
-                const ok = (engine?.ok ?? true) && (pnl?.ok ?? true) && issues.length === 0;
-                const exErr = engine?.exchange_snapshot && !(engine.exchange_snapshot as { ok?: boolean }).ok
-                  ? String((engine.exchange_snapshot as { error?: string }).error || '交易所不可用')
-                  : null;
-                return (
-                  <div key={scope} className="panel" style={{ margin: 0, padding: 12 }}>
-                    <div className="toolbar-row" style={{ marginBottom: 6 }}>
-                      <strong>{SCOPE_LABELS[scope] || scope}</strong>
-                      <span className={ok ? 'pnl-pos' : 'pnl-neg'}>{ok ? '一致' : `${issues.length} 项`}</span>
-                    </div>
-                    {exErr ? <p className="muted">{exErr}</p> : null}
-                    {pnl?.local ? (
-                      <p className="muted" style={{ fontSize: '0.85rem', margin: '4px 0' }}>
-                        本地 已实现 {fmtPnl(pnl.local.realized_pnl)} · 浮盈 {fmtPnl(pnl.local.unrealized_pnl)} ·
-                        未平 {pnl.local.open_positions ?? 0}
-                      </p>
-                    ) : null}
-                    {engine?.local_snapshot?.note ? (
-                      <p className="muted" style={{ fontSize: '0.85rem' }}>
-                        {String(engine.local_snapshot.note)}
-                      </p>
-                    ) : null}
-                    {issues.length ? (
-                      <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: '0.85rem' }}>
-                        {issues.map((issue, idx) => (
-                          <li key={`${scope}-${issue.kind}-${idx}`}>
-                            <span className="muted">{issue.layer || 'issue'}</span> · {issue.kind || 'unknown'} —{' '}
-                            {issue.message || JSON.stringify(issue)}
-                          </li>
-                        ))}
-                      </ul>
-                    ) : ok ? (
-                      <p className="pnl-pos" style={{ fontSize: '0.85rem', margin: '8px 0 0' }}>
-                        订单/持仓与交易所一致
-                      </p>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
+            <ReconciliationPanels recon={recon} />
           </>
         )}
       </section>
+
       <p className="status-line">
-        {summaryQuery.isFetching ? '加载中…' : `${symbol} · ${lookback}d lookback`}
+        {summaryQuery.isFetching ? '加载中…' : `${symbol} · ${lookback === '0' ? '全部历史' : `${lookback}d`}`}
       </p>
     </div>
   );

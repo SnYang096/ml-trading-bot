@@ -152,7 +152,15 @@ export const MiniTradeMapChart = memo(function MiniTradeMapChart({
       }
     }
     linkSeriesRef.current = [];
-    const lines = buildTradeLinkLines(tradeLinks, candles, layers, '', timeframe);
+    const prepared = prepareChartMarkers(markers, candles, null, layers, '');
+    const lines = buildTradeLinkLines(
+      tradeLinks,
+      candles,
+      layers,
+      '',
+      timeframe,
+      prepared,
+    );
     for (const line of lines) {
       const ls = chart.addSeries(
         LineSeries,

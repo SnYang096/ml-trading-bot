@@ -40,3 +40,5 @@ def test_signals_page_served(client):
         / "SignalsPage.tsx"
     ).read_text(encoding="utf-8")
     assert "策略信号" in tsx
+    assert "策略漏斗" in tsx
+    assert "/api/trend/funnel" in tsx
