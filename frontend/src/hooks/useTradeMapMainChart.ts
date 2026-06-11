@@ -98,8 +98,30 @@ export function useTradeMapMainChart(params: MainChartParams) {
   const mainOverlaySeriesRef = useRef<Map<string, ISeriesApi<'Line'>>>(new Map());
   const tradeLinkSeriesRef = useRef<ISeriesApi<'Line'>[]>([]);
   const [labelSpecs, setLabelSpecs] = useState<ChopGridLabelSpec[]>([]);
+  const [chartReadyTick, setChartReadyTick] = useState(0);
   const paramsRef = useRef(params);
   paramsRef.current = params;
+
+  const applyChartViewport = useCallback((chart: IChartApi, barCount: number, fitPending: boolean) => {
+    const scrollAdjust = useTradeMapStore.getState().historyScrollAdjust;
+    if (scrollAdjust && isValidLogicalRange(scrollAdjust, barCount)) {
+      chart.timeScale().setVisibleLogicalRange(scrollAdjust);
+      useTradeMapStore.setState({ historyScrollAdjust: null });
+      return;
+    }
+    if (scrollAdjust) {
+      useTradeMapStore.setState({ historyScrollAdjust: null });
+    }
+    const cur = chart.timeScale().getVisibleLogicalRange();
+    if (!fitPending && isValidLogicalRange(cur, barCount)) return;
+    const lr = visibleLogicalRange(barCount);
+    if (lr && isValidLogicalRange(lr, barCount)) {
+      chart.timeScale().setVisibleLogicalRange(lr);
+      if (fitPending) {
+        useTradeMapStore.getState().setBundlePhase({ chartFitPending: false });
+      }
+    }
+  }, []);
 
   const clearOverlaySeries = useCallback((chart: IChartApi) => {
     for (const s of overlaySeriesRef.current) {
@@ -308,6 +330,7 @@ export function useTradeMapMainChart(params: MainChartParams) {
     seriesRef.current = series;
     markersRef.current = markerPlugin;
     paramsRef.current.onChartReady?.(chart);
+    setChartReadyTick((n) => n + 1);
 
     chart.subscribeCrosshairMove((param) => {
       if (!param.time) {
@@ -360,20 +383,7 @@ export function useTradeMapMainChart(params: MainChartParams) {
     const clean = sanitizeCandlesForLwc(p.candles) as CandlestickData<Time>[];
     if (!clean.length) return;
     series.setData(clean);
-
-    const scrollAdjust = useTradeMapStore.getState().historyScrollAdjust;
-    if (scrollAdjust) {
-      if (isValidLogicalRange(scrollAdjust, clean.length)) {
-        chart.timeScale().setVisibleLogicalRange(scrollAdjust);
-      }
-      useTradeMapStore.setState({ historyScrollAdjust: null });
-    } else if (p.chartFitPending) {
-      const lr = visibleLogicalRange(clean.length);
-      if (lr) {
-        chart.timeScale().setVisibleLogicalRange(lr);
-      }
-      useTradeMapStore.getState().setBundlePhase({ chartFitPending: false });
-    }
+    applyChartViewport(chart, clean.length, p.chartFitPending);
     applyMainOverlays(chart);
     applyChopLayers(chart, series);
     applyTradeLinks(chart);
@@ -387,6 +397,8 @@ export function useTradeMapMainChart(params: MainChartParams) {
     params.tradeLinks,
     params.timeframe,
     params.chartFitPending,
+    chartReadyTick,
+    applyChartViewport,
     applyChopLayers,
     applyMainOverlays,
     applyTradeLinks,

@@ -12,6 +12,7 @@ import {
   isValidLogicalRange,
   logicalRangeAfterHistoryPrepend,
   sanitizeCandlesForLwc,
+  visibleLogicalRange,
 } from '@/lib/tradeMap/candles.ts';
 import {
   chopGridHysteresisActive,
@@ -84,6 +85,12 @@ describe('tradeMap ohlcv', () => {
   it('isValidLogicalRange guards out-of-bounds viewport', () => {
     expect(isValidLogicalRange({ from: 370, to: 410 }, 100)).toBe(false);
     expect(isValidLogicalRange({ from: 370, to: 410 }, 460)).toBe(true);
+  });
+
+  it('visibleLogicalRange handles single-bar series', () => {
+    const lr = visibleLogicalRange(1);
+    expect(lr).toEqual({ from: 0, to: 0.5 });
+    expect(isValidLogicalRange(lr, 1)).toBe(true);
   });
 });
 

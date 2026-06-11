@@ -407,7 +407,7 @@ export function TradeMapPage() {
                 enabled={chopLabelsEnabled}
               />
             </div>
-            {!chartBusy && hasCandles ? (
+            {hasCandles ? (
               <SubchartStack
                 mainChart={mainChart}
                 candles={lastCandles}

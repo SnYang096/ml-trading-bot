@@ -85,12 +85,24 @@ export function useTradeMapBundle() {
       const { data: shellData, meta: shellMeta } = await fetchBundle(buildFullShellQuery(state));
       const candles = shellData.ohlcv?.candles || [];
       state.setLastCandles(candles);
+      const shellPhase: {
+        loading: boolean;
+        lastMainOverlays: typeof shellData.main_overlays;
+        statusText: string;
+        ohlcvLoadedFrom?: string;
+        ohlcvLoadedTo?: string;
+      } = {
+        loading: false,
+        lastMainOverlays: shellData.main_overlays || {},
+        statusText: candles.length
+          ? `${candles.length} bars · loading markers…`
+          : 'loading markers…',
+      };
       if (shellMeta?.range_start && !state.ohlcvLoadedFrom) {
-        state.setBundlePhase({
-          ohlcvLoadedFrom: String(shellMeta.range_start),
-          ohlcvLoadedTo: String(shellMeta.range_end || new Date().toISOString()),
-        });
+        shellPhase.ohlcvLoadedFrom = String(shellMeta.range_start);
+        shellPhase.ohlcvLoadedTo = String(shellMeta.range_end || new Date().toISOString());
       }
+      useTradeMapStore.setState(shellPhase);
 
       const [markersResp, featuresResp] = await Promise.all([
         fetchBundle(buildFullMarkersQuery(useTradeMapStore.getState(), markerFrom)),
@@ -102,7 +114,6 @@ export function useTradeMapBundle() {
         markers: markersResp.data.markers || [],
         lastTradeLinks: (markersResp.data.trade_links || []) as TradeLink[],
         lastOverlays: (featuresResp.data.overlays || {}) as import('@/lib/tradeMap/types.ts').FeatureOverlays,
-        lastMainOverlays: shellData.main_overlays || {},
         lastChopMapData: featuresResp.data.chop_grid_overlay,
         chopRegimeRegions: featuresResp.data.chop_regime_regions || [],
         strategyStageRegions: featuresResp.data.strategy_stage_regions || {},

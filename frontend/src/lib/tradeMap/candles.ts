@@ -15,8 +15,12 @@ export function visibleLogicalRange(
 ): LogicalRange | null {
   const n = Math.max(0, Number(barCount) || 0);
   if (n <= 0) return null;
+  if (n === 1) return { from: 0, to: 0.5 };
   const vis = defaultVisibleBarCount(n, visibleBars);
-  return { from: Math.max(0, n - vis), to: n - 1 };
+  const from = Math.max(0, n - vis);
+  const to = n - 1;
+  if (to <= from) return { from: 0, to: Math.min(n - 1, from + 1) };
+  return { from, to };
 }
 
 /** Shift visible logical range after prepending `added` bars (apply only after setData). */
