@@ -46,10 +46,19 @@ def messages_from_monitor_detail(
         if a:
             lines.append(str(a))
 
-    if status == "NO_PLATEAUS":
+    if status in ("NO_PLATEAUS", "BASELINE_MISSING"):
         skipped = body.get("skipped")
         if skipped:
             lines.append(str(skipped))
+
+    for it in body.get("items") or []:
+        if not isinstance(it, dict):
+            continue
+        if it.get("kind") == "regime_shares":
+            cur = it.get("current") or it.get("shares") or {}
+            if isinstance(cur, dict) and cur:
+                parts = ", ".join(f"{k}={float(v):.1%}" for k, v in sorted(cur.items()))
+                lines.append(f"regime mix: {parts}")
 
     if strategy == "_factor_health":
         for it in body.get("items") or []:

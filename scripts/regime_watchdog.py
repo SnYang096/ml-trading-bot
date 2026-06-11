@@ -108,10 +108,16 @@ def _extract_bull_conditional_rules(
     return rules
 
 
+from src.monitoring.regime_health import (
+    has_labeled_regime_schema,
+    regime_shares_from_window,
+    resolve_baseline_regime_shares,
+)
 from src.research.stat_kernels.drift import (
     evaluate_ic_drift_vs_baseline,
     evaluate_psi_features,
 )
+from src.time_series_model.regime.threshold_calibrator import load_regime_yaml
 
 
 def evaluate_factor_health(
@@ -164,48 +170,96 @@ def evaluate_strategy(
     baseline_trigger_rates: Optional[Dict[str, float]],
     bull_share_tol: float,
     trigger_drift_tol_rel: float,
+    regime_yaml: Optional[Dict[str, Any]] = None,
+    baseline_entry: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """检查当前 window 内 H 设计的健康度。"""
+    """检查当前 window 内 regime / gate 健康度（legacy EMA 或 labeled regime）。"""
     items: List[Dict[str, Any]] = []
     alerts: List[str] = []
+    regime_raw = regime_yaml or {}
 
-    if "ema_1200_position" not in window_df.columns:
-        return {
-            "strategy": strategy,
-            "skipped": "ema_1200_position missing in window",
-            "items": [],
-            "alerts": ["MISSING_FEATURE: ema_1200_position"],
-        }
+    if has_labeled_regime_schema(regime_raw):
+        shares = regime_shares_from_window(window_df, regime_raw)
+        n_total = len(window_df)
+        bull_share = shares.get("bull", 0.0)
+        bear_share = shares.get("bear", 0.0)
+        neutral_share = shares.get("neutral", 0.0)
+        items.append(
+            {
+                "kind": "regime_shares",
+                "schema": "labeled_allowed_regimes",
+                "n": n_total,
+                "bull_share": bull_share,
+                "bear_share": bear_share,
+                "neutral_share": neutral_share,
+                "shares": shares,
+            }
+        )
+        baseline_shares = resolve_baseline_regime_shares(
+            regime_yaml=regime_raw,
+            baseline_entry=baseline_entry,
+        )
+        if baseline_shares:
+            for label, base_share in baseline_shares.items():
+                cur = shares.get(label, 0.0)
+                delta = cur - base_share
+                if abs(delta) > bull_share_tol:
+                    alerts.append(
+                        f"REGIME_SHARE_DRIFT: {label} {cur:.1%} vs baseline {base_share:.1%}"
+                        f" (delta={delta:+.1%}, tol={bull_share_tol:+.1%})"
+                    )
+        elif baseline_bull_share is not None:
+            delta = bull_share - baseline_bull_share
+            if abs(delta) > bull_share_tol:
+                alerts.append(
+                    f"BULL_SHARE_DRIFT: {bull_share:.1%} vs baseline {baseline_bull_share:.1%}"
+                    f" (delta={delta:+.1%}, tol={bull_share_tol:+.1%})"
+                )
+        ema = (
+            pd.to_numeric(window_df["ema_1200_position"], errors="coerce")
+            if "ema_1200_position" in window_df.columns
+            else pd.Series(dtype=float)
+        )
+        bull_mask = pd.Series(False, index=window_df.index)
+        bear_mask = pd.Series(False, index=window_df.index)
+    else:
+        if "ema_1200_position" not in window_df.columns:
+            return {
+                "strategy": strategy,
+                "skipped": "ema_1200_position missing in window",
+                "items": [],
+                "alerts": ["MISSING_FEATURE: ema_1200_position"],
+            }
 
-    ema = pd.to_numeric(window_df["ema_1200_position"], errors="coerce")
-    bull_mask = (ema >= 0.10).fillna(False)
-    bear_mask = (ema <= -0.10).fillna(False)
-    n_total = int(ema.notna().sum())
-    bull_share = float(bull_mask.mean()) if n_total else 0.0
-    bear_share = float(bear_mask.mean()) if n_total else 0.0
+        ema = pd.to_numeric(window_df["ema_1200_position"], errors="coerce")
+        bull_mask = (ema >= 0.10).fillna(False)
+        bear_mask = (ema <= -0.10).fillna(False)
+        n_total = int(ema.notna().sum())
+        bull_share = float(bull_mask.mean()) if n_total else 0.0
+        bear_share = float(bear_mask.mean()) if n_total else 0.0
 
-    items.append(
-        {
-            "kind": "ema_distribution",
-            "n": n_total,
-            "mean": float(ema.mean()) if n_total else None,
-            "p25": _percentile(ema, 0.25),
-            "p50": _percentile(ema, 0.50),
-            "p75": _percentile(ema, 0.75),
-            "p90": _percentile(ema, 0.90),
-            "bull_share": bull_share,
-            "bear_share": bear_share,
-            "neutral_share": 1.0 - bull_share - bear_share,
-        }
-    )
+        items.append(
+            {
+                "kind": "ema_distribution",
+                "n": n_total,
+                "mean": float(ema.mean()) if n_total else None,
+                "p25": _percentile(ema, 0.25),
+                "p50": _percentile(ema, 0.50),
+                "p75": _percentile(ema, 0.75),
+                "p90": _percentile(ema, 0.90),
+                "bull_share": bull_share,
+                "bear_share": bear_share,
+                "neutral_share": 1.0 - bull_share - bear_share,
+            }
+        )
 
-    if baseline_bull_share is not None:
-        delta = bull_share - baseline_bull_share
-        if abs(delta) > bull_share_tol:
-            alerts.append(
-                f"BULL_SHARE_DRIFT: {bull_share:.1%} vs baseline {baseline_bull_share:.1%}"
-                f" (delta={delta:+.1%}, tol={bull_share_tol:+.1%})"
-            )
+        if baseline_bull_share is not None:
+            delta = bull_share - baseline_bull_share
+            if abs(delta) > bull_share_tol:
+                alerts.append(
+                    f"BULL_SHARE_DRIFT: {bull_share:.1%} vs baseline {baseline_bull_share:.1%}"
+                    f" (delta={delta:+.1%}, tol={bull_share_tol:+.1%})"
+                )
 
     rules = _extract_bull_conditional_rules(gate_cfg)
     trigger_rates: Dict[str, float] = {}
@@ -389,6 +443,8 @@ def run_watchdog(args: argparse.Namespace) -> int:
             )
             any_alert = True
             continue
+        regime_path = strategies_root / s / "archetypes" / "regime.yaml"
+        regime_raw = load_regime_yaml(regime_path) if regime_path.is_file() else {}
         base_for_s = (baseline or {}).get(s) or {}
         result = evaluate_strategy(
             strategy=s,
@@ -398,6 +454,8 @@ def run_watchdog(args: argparse.Namespace) -> int:
             baseline_trigger_rates=base_for_s.get("trigger_rates"),
             bull_share_tol=args.bull_share_tol,
             trigger_drift_tol_rel=args.trigger_drift_tol_rel,
+            regime_yaml=regime_raw,
+            baseline_entry=base_for_s if isinstance(base_for_s, dict) else None,
         )
         reports.append(result)
         any_alert = any_alert or bool(result.get("any_alert"))
@@ -436,16 +494,29 @@ def run_watchdog(args: argparse.Namespace) -> int:
         if r.get("skipped"):
             lines.append(f"  [{s}] SKIPPED: {r['skipped']}")
             continue
-        ema_item = next(
-            (it for it in r.get("items", []) if it.get("kind") == "ema_distribution"),
+        share_item = next(
+            (
+                it
+                for it in r.get("items", [])
+                if it.get("kind") in ("regime_shares", "ema_distribution")
+            ),
             {},
         )
-        lines.append(
-            f"  [{s}] n={r.get('n_window')}"
-            f"  ema p50={ema_item.get('p50', float('nan')):.3f}"
-            f"  bull={ema_item.get('bull_share', 0):.1%}"
-            f"  bear={ema_item.get('bear_share', 0):.1%}"
-        )
+        if share_item.get("kind") == "regime_shares":
+            lines.append(
+                f"  [{s}] n={r.get('n_window')}"
+                f"  bull={share_item.get('bull_share', 0):.1%}"
+                f"  bear={share_item.get('bear_share', 0):.1%}"
+                f"  neutral={share_item.get('neutral_share', 0):.1%}"
+                f"  (labeled regime)"
+            )
+        else:
+            lines.append(
+                f"  [{s}] n={r.get('n_window')}"
+                f"  ema p50={share_item.get('p50', float('nan')):.3f}"
+                f"  bull={share_item.get('bull_share', 0):.1%}"
+                f"  bear={share_item.get('bear_share', 0):.1%}"
+            )
         for rid, tr in r.get("trigger_rates", {}).items():
             lines.append(f"      rule {rid}: actual_trigger={tr:.2%}")
         for a in r.get("alerts") or []:

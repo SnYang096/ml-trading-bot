@@ -33,6 +33,10 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.plateau_stability import PlateauRange, plateau_range_from_dict
+from src.monitoring.regime_health import (
+    evaluate_regime_share_drift,
+    has_labeled_regime_schema,
+)
 from src.research.stat_kernels.drift import plateau_mid_in_band
 from src.time_series_model.regime.threshold_calibrator import load_regime_yaml
 
@@ -44,10 +48,20 @@ def evaluate_strategy_drift(
     window_df: pd.DataFrame,
     drift_quantile: float = 0.5,
     tail_band_q: tuple[float, float] = (0.25, 0.75),
+    baseline_entry: Optional[Dict[str, Any]] = None,
+    regime_share_tol: float = 0.10,
 ) -> Dict[str, Any]:
-    """检查 last_calibration.plateaus 下的 feature 当前分位是否漂出 plateau。"""
+    """Plateau drift (legacy) or labeled-regime share drift (new schema)."""
     plateaus = (regime_yaml.get("last_calibration") or {}).get("plateaus") or []
     if not plateaus:
+        if has_labeled_regime_schema(regime_yaml):
+            return evaluate_regime_share_drift(
+                strategy=strategy,
+                regime_yaml=regime_yaml,
+                window_df=window_df,
+                baseline_entry=baseline_entry,
+                share_tol=regime_share_tol,
+            )
         return {
             "strategy": strategy,
             "any_alert": False,
@@ -127,6 +141,17 @@ def main() -> int:
         action="store_true",
         help="On ALERT, write rd_loop yaml snippets under results/drift_suggestions/",
     )
+    p.add_argument(
+        "--baseline-json",
+        default="config/monitoring/regime_watchdog_baseline.json",
+        help="Per-strategy regime_shares / bull_share baseline (optional).",
+    )
+    p.add_argument(
+        "--regime-share-tol",
+        type=float,
+        default=0.10,
+        help="Labeled-regime share drift tolerance (abs delta).",
+    )
     args = p.parse_args()
     return run_drift_monitor(args)
 
@@ -140,6 +165,14 @@ def run_drift_monitor(args: argparse.Namespace) -> int:
         print(f"ERROR: window parquet not found: {pq}", file=sys.stderr)
         return 3
     window_df = pd.read_parquet(pq)
+
+    baseline: Dict[str, Any] = {}
+    if args.baseline_json:
+        bp = Path(args.baseline_json)
+        if not bp.is_absolute():
+            bp = (PROJECT_ROOT / bp).resolve()
+        if bp.is_file():
+            baseline = json.loads(bp.read_text(encoding="utf-8"))
 
     strategies_root = Path(args.strategies_root)
     if not strategies_root.is_absolute():
@@ -171,6 +204,10 @@ def run_drift_monitor(args: argparse.Namespace) -> int:
             regime_yaml=regime_yaml,
             window_df=window_df,
             drift_quantile=float(args.drift_quantile),
+            baseline_entry=(
+                (baseline or {}).get(s) if isinstance(baseline, dict) else None
+            ),
+            regime_share_tol=float(args.regime_share_tol),
         )
         report.append(r)
         if r["any_alert"]:
@@ -192,8 +229,8 @@ def run_drift_monitor(args: argparse.Namespace) -> int:
     )
     print(f"saved: {out_json}")
     for r in report:
-        flag = "ALERT" if r["any_alert"] else "OK"
-        print(f"  {r['strategy']:>5}: {flag} ({len(r['items'])} feature(s))")
+        flag = r.get("status") or ("ALERT" if r["any_alert"] else "OK")
+        print(f"  {r['strategy']:>5}: {flag} ({len(r['items'])} item(s))")
 
     if args.emit_rd_loop_suggestions and any_alert:
         from scripts.research.drift_suggestions import write_drift_suggestions

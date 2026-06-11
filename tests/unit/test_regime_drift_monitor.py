@@ -75,3 +75,27 @@ def test_no_plateaus_reports_uncalibrated_not_ok():
     assert r["status"] == "NO_PLATEAUS"
     assert r["items"] == []
     assert "plateaus" in (r.get("skipped") or "")
+
+
+def test_labeled_regime_uses_share_drift_not_no_plateaus():
+    cfg = {
+        "allowed_regimes": {
+            "bull": {
+                "match": "all",
+                "rules": [
+                    {"feature": "adx_50", "operator": ">=", "value": 25},
+                    {"feature": "ema_1200_position", "operator": ">=", "value": 0.1},
+                ],
+            },
+            "bear": {
+                "match": "any",
+                "rules": [
+                    {"feature": "ema_1200_position", "operator": "<=", "value": -0.1}
+                ],
+            },
+        }
+    }
+    df = pd.DataFrame({"adx_50": [30.0] * 20, "ema_1200_position": [0.2] * 20})
+    r = evaluate_strategy_drift(strategy="tpc", regime_yaml=cfg, window_df=df)
+    assert r["status"] == "BASELINE_MISSING"
+    assert r["items"][0]["kind"] == "regime_shares"
