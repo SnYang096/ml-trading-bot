@@ -19,7 +19,13 @@ def _fake_run_dir(tmp_path: Path) -> Path:
     (out / "watchdog" / "wd1").mkdir(parents=True)
     (out / "drift" / "dr1").mkdir(parents=True)
     (out / "heartbeat.json").write_text(
-        json.dumps({"task": "weekly_rule_stack", "status": "ALERT"}),
+        json.dumps(
+            {
+                "task": "weekly_rule_stack",
+                "status": "ALERT",
+                "strategies": "tpc",
+            }
+        ),
         encoding="utf-8",
     )
     (out / "watchdog" / "wd1" / "report.json").write_text(
@@ -71,7 +77,7 @@ def test_upsert_monitor_events_sqlite(tmp_path):
         output_dir=out,
         db_path=db,
     )
-    assert n >= 2
+    assert n >= 1
     conn = sqlite3.connect(db)
     try:
         rows = conn.execute(
@@ -80,7 +86,7 @@ def test_upsert_monitor_events_sqlite(tmp_path):
     finally:
         conn.close()
     strategies = {r[0]: (r[1], r[2]) for r in rows}
-    assert strategies["bpc"][0] == "OK"
+    assert "bpc" not in strategies
     assert strategies["tpc"][0] == "ALERT"
 
 
@@ -88,7 +94,8 @@ def test_drift_no_plateaus_status_in_sqlite(tmp_path):
     out = tmp_path / "out" / "20260101_1200"
     (out / "drift" / "dr1").mkdir(parents=True)
     (out / "heartbeat.json").write_text(
-        json.dumps({"task": "monthly", "status": "OK"}), encoding="utf-8"
+        json.dumps({"task": "monthly", "status": "OK", "strategies": "tpc"}),
+        encoding="utf-8",
     )
     (out / "drift" / "dr1" / "drift_report.json").write_text(
         json.dumps(
@@ -121,7 +128,7 @@ def test_drift_no_plateaus_status_in_sqlite(tmp_path):
         ).fetchone()
     finally:
         conn.close()
-    assert row[0] == "NO_PLATEAUS"
+    assert row is None
 
 
 def test_index_monitor_run_combined(tmp_path):
@@ -135,5 +142,5 @@ def test_index_monitor_run_combined(tmp_path):
         registry_db=tmp_path / "registry.sqlite",
         index_path=tmp_path / "index.json",
     )
-    assert meta["sqlite_rows"] >= 2
+    assert meta["sqlite_rows"] >= 1
     assert Path(meta["index_path"]).is_file()

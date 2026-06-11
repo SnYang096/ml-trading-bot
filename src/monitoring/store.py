@@ -83,6 +83,23 @@ def _latest_glob(parent: Path, pattern: str) -> Optional[Path]:
     return hits[0] if hits else None
 
 
+_DRIFT_SKIP_STATUSES = frozenset(
+    {"NO_PLATEAUS", "BASELINE_MISSING", "SKIPPED", "UNSUPPORTED"}
+)
+
+
+def monitored_strategies_from_artifacts(artifacts: Dict[str, Any]) -> Optional[set[str]]:
+    """Strategies resolved for this manifest run (heartbeat.strategies csv)."""
+    hb = artifacts.get("heartbeat") or {}
+    if not isinstance(hb, dict):
+        return None
+    raw = str(hb.get("strategies") or "").strip()
+    if not raw:
+        return None
+    out = {s.strip().lower() for s in raw.split(",") if s.strip()}
+    return out or None
+
+
 def collect_run_artifacts(output_dir: Path) -> Dict[str, Any]:
     """Gather heartbeat + latest watchdog/drift JSON under a manifest output_dir."""
     out: Dict[str, Any] = {
@@ -201,6 +218,7 @@ def upsert_monitor_events_from_run(
     """Insert per-strategy rows into monitor_event from watchdog/drift reports."""
     db = init_registry_db(db_path)
     artifacts = collect_run_artifacts(output_dir)
+    monitored = monitored_strategies_from_artifacts(artifacts)
     now = datetime.now(timezone.utc).isoformat()
     rows: List[tuple] = []
 
@@ -210,6 +228,8 @@ def upsert_monitor_events_from_run(
             continue
         strat = str(r.get("strategy", ""))
         if not strat:
+            continue
+        if monitored is not None and strat.lower() not in monitored:
             continue
         st = "ALERT" if r.get("any_alert") else "OK"
         eid = f"{cadence}:{run_ts}:watchdog:{strat}"
@@ -296,10 +316,13 @@ def upsert_monitor_events_from_run(
         strat = str(r.get("strategy", ""))
         if not strat:
             continue
+        if monitored is not None and strat.lower() not in monitored:
+            continue
+        status = str(r.get("status") or "")
+        if status in _DRIFT_SKIP_STATUSES:
+            continue
         if r.get("any_alert"):
             st = "ALERT"
-        elif r.get("status") == "NO_PLATEAUS":
-            st = "NO_PLATEAUS"
         else:
             st = "OK"
         eid = f"{cadence}:{run_ts}:drift:{strat}"

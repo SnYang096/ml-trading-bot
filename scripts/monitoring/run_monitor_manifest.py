@@ -367,6 +367,18 @@ def execute_manifest(
                 run_ts=run_ts,
             )
             drift_out = out_dir / "drift"
+            baseline = _resolve_path(
+                str(
+                    cfg.get("baseline")
+                    or "config/monitoring/regime_watchdog_baseline.json"
+                ),
+                run_ts=run_ts,
+            )
+            strategies_root = str(
+                cfg.get("strategies_root")
+                or manifest.get("strategies_root")
+                or "live/highcap/config/strategies"
+            )
             argv = [
                 "--strategies",
                 strategies_csv,
@@ -374,11 +386,15 @@ def execute_manifest(
                 str(pq),
                 "--out-dir",
                 str(drift_out),
+                "--strategies-root",
+                strategies_root,
+                "--baseline-json",
+                str(baseline),
             ]
             if cfg.get("emit_rd_loop_suggestions"):
                 argv.append("--emit-rd-loop-suggestions")
             if dry_run:
-                print(f"[dry-run] drift {pq}")
+                print(f"[dry-run] drift {pq} strategies={strategies_csv}")
                 continue
             if _use_subprocess_fallback():
                 rc = _run_monitor_script("regime_drift_monitor.py", argv)
@@ -390,9 +406,11 @@ def execute_manifest(
                     window_parquet=str(pq),
                     out_dir=str(drift_out),
                     strategies=strategies_csv,
-                    strategies_root="config/strategies",
-                    drift_quantile=0.5,
+                    strategies_root=strategies_root,
+                    drift_quantile=float(cfg.get("drift_quantile", 0.5)),
                     emit_rd_loop_suggestions=bool(cfg.get("emit_rd_loop_suggestions")),
+                    baseline_json=str(baseline),
+                    regime_share_tol=float(cfg.get("regime_share_tol", 0.10)),
                 )
                 rc = run_drift_monitor(ns)
             if rc != 0:
