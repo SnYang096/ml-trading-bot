@@ -447,9 +447,14 @@ def trend_markers(
             },
         )
 
-    ord_time_clause, ord_time_params = _sql_time_range_expr(
-        start_ts, end_ts, "COALESCE(o.filled_at, o.created_at)"
-    )
+    # When include_open_orders=True, pending orders outside the chart window
+    # must still be returned; skip SQL time pushdown so they aren't filtered out.
+    if include_open_orders:
+        ord_time_clause, ord_time_params = "", []
+    else:
+        ord_time_clause, ord_time_params = _sql_time_range_expr(
+            start_ts, end_ts, "COALESCE(o.filled_at, o.created_at)"
+        )
     ord_sql = f"""
         SELECT o.order_id, o.symbol AS symbol, o.side AS side, o.status,
                o.filled_at, o.created_at, o.average_price, o.filled_quantity, o.position_id,
@@ -531,7 +536,12 @@ def spot_markers(
     out: List[Dict[str, Any]] = []
     seen: Set[str] = set()
     # Push time range into SQL — spot_orders.created_at is TEXT ISO 8601.
-    time_clause, time_params = _sql_time_range(start_ts, end_ts, col="created_at")
+    # When include_open_orders=True, pending orders outside the chart window
+    # must still be returned; skip SQL time pushdown so they aren't filtered out.
+    if include_open_orders:
+        time_clause, time_params = "", []
+    else:
+        time_clause, time_params = _sql_time_range(start_ts, end_ts, col="created_at")
     sql = f"""
         SELECT order_id, created_at, updated_at, symbol, side, order_type,
                quantity, price, status, filled_quantity, filled_quote_usdt

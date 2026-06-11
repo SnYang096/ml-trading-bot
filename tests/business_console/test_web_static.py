@@ -107,7 +107,7 @@ def test_trade_map_js_layer_toggle_does_not_reset_history(client):
     bundle = client.get("/static/trade-map/bundle.js").text
     assert "opts.resetMarkerRange" in bundle
     assert '!S.ohlcvLoadedFrom || mode === "full"' not in bundle
-    assert "!S.ohlcvLoadedFrom || opts.resetOhlcvRange" in bundle
+    assert "!S.ohlcvLoadedFrom || resetOhlcvRange" in bundle
     assert 'resetChartRangeIds = new Set(["symbolSelect", "timeframeSelect"])' in body
     assert '"layerChopGrid"' in body
     assert '"mainEma1200"' in body
