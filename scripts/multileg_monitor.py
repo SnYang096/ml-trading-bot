@@ -177,44 +177,59 @@ def _render_html(path: Path, report: Dict[str, Any]) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def main() -> int:
-    p = argparse.ArgumentParser(description="Monitor multi-leg drift and health.")
-    p.add_argument("--config", default="config/pipelines/multileg_orchestrate_2h.yaml")
-    p.add_argument("--run-id", default="", help="optional rolling_sim run id")
-    p.add_argument("--lookback-months", type=int, default=6)
-    p.add_argument("--out-json", default="")
-    p.add_argument("--out-html", default="")
-    args = p.parse_args()
-
-    cfg_path = Path(args.config)
+def run_multileg_monitor(
+    *,
+    config: str | Path = "config/pipelines/multileg_orchestrate_2h.yaml",
+    run_id: str = "",
+    lookback_months: int = 6,
+    strategies_filter: List[str] | None = None,
+    rolling_root: str | Path | None = None,
+    out_json: str | Path = "",
+    out_html: str | Path = "",
+) -> tuple[int, Dict[str, Any]]:
+    """Build multileg health report; return (exit_code, report)."""
+    cfg_path = Path(config)
     if not cfg_path.is_absolute():
         cfg_path = PROJECT_ROOT / cfg_path
     cfg = load_pipeline_config(cfg_path)
 
-    history_dir = PROJECT_ROOT / str(
-        (cfg.get("output") or {}).get("history_dir", "") or ""
-    )
-    run_root = (
-        (history_dir / "_rolling_sim" / str(args.run_id).strip())
-        if str(args.run_id).strip()
-        else _latest_rolling_root(history_dir)
-    )
+    if rolling_root:
+        run_root = Path(rolling_root)
+        if not run_root.is_absolute():
+            run_root = (PROJECT_ROOT / run_root).resolve()
+    else:
+        history_dir = PROJECT_ROOT / str(
+            (cfg.get("output") or {}).get("history_dir", "") or ""
+        )
+        run_root = (
+            (history_dir / "_rolling_sim" / str(run_id).strip())
+            if str(run_id).strip()
+            else _latest_rolling_root(history_dir)
+        )
     if not run_root.exists():
         raise FileNotFoundError(f"run root not found: {run_root}")
 
-    strategies = []
+    strategies: List[str] = []
     strategy_types: Dict[str, str] = {}
+    filter_set = (
+        {s.strip().lower() for s in strategies_filter if str(s).strip()}
+        if strategies_filter
+        else None
+    )
     for name, scfg in (cfg.get("strategies") or {}).items():
+        key = str(name).strip().lower()
+        if filter_set is not None and key not in filter_set:
+            continue
         st = str((scfg or {}).get("strategy_type", "") or "").strip().lower()
         if st in {"grid", "dual_add_trend", "trend_scalp"}:
             strategies.append(name)
             strategy_types[name] = st
 
     rows = _load_monthly_strategy_rows(run_root, strategies)
-    if int(args.lookback_months) > 0 and len(rows) > int(args.lookback_months) * max(
+    if int(lookback_months) > 0 and len(rows) > int(lookback_months) * max(
         len(strategies), 1
     ):
-        rows = rows[-int(args.lookback_months) * max(len(strategies), 1) :]
+        rows = rows[-int(lookback_months) * max(len(strategies), 1) :]
 
     monitor_cfg = cfg.get("multi_leg_monitor", {}) or {}
     max_drawdown_r = float(monitor_cfg.get("max_drawdown_r", 0.10) or 0.10)
@@ -262,12 +277,10 @@ def main() -> int:
     b_seg_win, r_seg_win = _split_baseline_recent(segment_win_vals)
 
     regime_rows = _load_monthly_regime_rows(run_root, strategy_types)
-    if int(args.lookback_months) > 0 and len(regime_rows) > int(
-        args.lookback_months
-    ) * max(len(strategies), 1):
-        regime_rows = regime_rows[
-            -int(args.lookback_months) * max(len(strategies), 1) :
-        ]
+    if int(lookback_months) > 0 and len(regime_rows) > int(lookback_months) * max(
+        len(strategies), 1
+    ):
+        regime_rows = regime_rows[-int(lookback_months) * max(len(strategies), 1) :]
     entry_chop_vals = [float(r.get("entry_chop", 0.0) or 0.0) for r in regime_rows]
     median_chop_vals = [float(r.get("median_chop", 0.0) or 0.0) for r in regime_rows]
     trend_flip_vals = [float(r.get("trend_flips", 0.0) or 0.0) for r in regime_rows]
@@ -354,33 +367,56 @@ def main() -> int:
         "regime_rows": regime_rows,
     }
 
-    out_json = (
-        Path(args.out_json)
-        if str(args.out_json).strip()
+    out_json_path = (
+        Path(out_json)
+        if str(out_json).strip()
         else run_root / "multi_leg_health_report.json"
     )
-    out_html = (
-        Path(args.out_html)
-        if str(args.out_html).strip()
+    out_html_path = (
+        Path(out_html)
+        if str(out_html).strip()
         else run_root / "multi_leg_health_report.html"
     )
-    if not out_json.is_absolute():
-        out_json = PROJECT_ROOT / out_json
-    if not out_html.is_absolute():
-        out_html = PROJECT_ROOT / out_html
-    out_json.parent.mkdir(parents=True, exist_ok=True)
-    out_html.parent.mkdir(parents=True, exist_ok=True)
-    out_json.write_text(
+    if not out_json_path.is_absolute():
+        out_json_path = PROJECT_ROOT / out_json_path
+    if not out_html_path.is_absolute():
+        out_html_path = PROJECT_ROOT / out_html_path
+    out_json_path.parent.mkdir(parents=True, exist_ok=True)
+    out_html_path.parent.mkdir(parents=True, exist_ok=True)
+    out_json_path.write_text(
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    _render_html(out_html, report)
+    _render_html(out_html_path, report)
     print(
         json.dumps(
-            {"decision": decision, "json": str(out_json), "html": str(out_html)},
+            {
+                "decision": decision,
+                "json": str(out_json_path),
+                "html": str(out_html_path),
+            },
             ensure_ascii=False,
         )
     )
-    return 0
+    exit_code = 0 if decision == "OK" else 1
+    return exit_code, report
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description="Monitor multi-leg drift and health.")
+    p.add_argument("--config", default="config/pipelines/multileg_orchestrate_2h.yaml")
+    p.add_argument("--run-id", default="", help="optional rolling_sim run id")
+    p.add_argument("--lookback-months", type=int, default=6)
+    p.add_argument("--out-json", default="")
+    p.add_argument("--out-html", default="")
+    args = p.parse_args()
+    rc, _ = run_multileg_monitor(
+        config=args.config,
+        run_id=args.run_id,
+        lookback_months=int(args.lookback_months),
+        out_json=args.out_json,
+        out_html=args.out_html,
+    )
+    return rc
 
 
 if __name__ == "__main__":

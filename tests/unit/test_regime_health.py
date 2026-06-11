@@ -5,8 +5,10 @@ from __future__ import annotations
 import pandas as pd
 
 from src.monitoring.regime_health import (
+    evaluate_multileg_entry_health,
     evaluate_regime_share_drift,
     has_labeled_regime_schema,
+    has_multileg_regime_schema,
     regime_shares_from_window,
 )
 
@@ -77,6 +79,54 @@ def test_regime_share_drift_baseline_missing_not_alert():
         regime_yaml=TPC_LABELED_REGIME,
         window_df=df,
         baseline_entry=None,
+    )
+    assert r["any_alert"] is False
+    assert r["status"] == "BASELINE_MISSING"
+
+
+CHOP_GRID_REGIME = {
+    "extensions": {
+        "multileg": {
+            "entry_feature": "bpc_semantic_chop",
+            "entry_min": 0.52,
+        }
+    },
+    "last_calibration": {
+        "multileg_baseline": {
+            "chop_grid": {"entry_pass_rate": 0.50, "median_entry_feature": 0.55}
+        }
+    },
+}
+
+
+def test_has_multileg_regime_schema():
+    assert has_multileg_regime_schema(CHOP_GRID_REGIME) is True
+    assert has_multileg_regime_schema({"extensions": {}}) is False
+
+
+def test_multileg_pass_rate_drift_alerts():
+    df = pd.DataFrame({"bpc_semantic_chop": [0.8] * 50})
+    r = evaluate_multileg_entry_health(
+        strategy="chop_grid",
+        regime_yaml=CHOP_GRID_REGIME,
+        window_df=df,
+        pass_rate_tol=0.10,
+    )
+    assert r["status"] == "ALERT"
+    assert any("MULTILEG_PASS_RATE_DRIFT" in a for a in r.get("alerts") or [])
+
+
+def test_multileg_baseline_missing_not_alert():
+    df = pd.DataFrame({"bpc_semantic_chop": [0.6] * 50})
+    regime = {
+        "extensions": {
+            "multileg": {"entry_feature": "bpc_semantic_chop", "entry_min": 0.52}
+        }
+    }
+    r = evaluate_multileg_entry_health(
+        strategy="chop_grid",
+        regime_yaml=regime,
+        window_df=df,
     )
     assert r["any_alert"] is False
     assert r["status"] == "BASELINE_MISSING"

@@ -20,7 +20,10 @@ windows:
     # symbols: same set as near when refreshing baseline; must match Tier-0 reference
     parquet: results/monitoring/window/{run_ts}/features_current_deep.parquet
 
-strategies: [bpc, tpc, me, srb]
+strategies_source: constitution
+strategies_layer: pcm
+constitution: live/highcap/config/constitution/constitution.yaml
+strategies_root: live/highcap/config/strategies
 
 # Shared watchdog tuning (per-step keys override these).
 # psi_features: explicit monitoring contract columns (not full features.yaml); see README § PSI.

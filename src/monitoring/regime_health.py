@@ -111,3 +111,143 @@ def evaluate_regime_share_drift(
         "alerts": alerts,
         "items": [item],
     }
+
+
+def has_multileg_regime_schema(regime_yaml: Dict[str, Any]) -> bool:
+    ext = regime_yaml.get("extensions") or {}
+    ml = ext.get("multileg")
+    if not isinstance(ml, dict):
+        return False
+    return bool(str(ml.get("entry_feature") or "").strip()) and ml.get("entry_min") is not None
+
+
+def multileg_config(regime_yaml: Dict[str, Any]) -> Dict[str, Any]:
+    ext = regime_yaml.get("extensions") or {}
+    ml = ext.get("multileg")
+    return ml if isinstance(ml, dict) else {}
+
+
+def resolve_multileg_baseline(
+    *,
+    strategy: str,
+    regime_yaml: Dict[str, Any],
+    baseline_entry: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, float]]:
+    """Baseline entry pass metrics from watchdog JSON or regime last_calibration."""
+    entry = baseline_entry or {}
+    raw = entry.get("multileg_baseline")
+    if isinstance(raw, dict):
+        row = raw.get(strategy) or raw
+        if isinstance(row, dict) and row.get("entry_pass_rate") is not None:
+            return {
+                "entry_pass_rate": float(row["entry_pass_rate"]),
+                "median_entry_feature": float(row.get("median_entry_feature") or 0.0),
+            }
+
+    lc = regime_yaml.get("last_calibration") or {}
+    raw = lc.get("multileg_baseline")
+    if isinstance(raw, dict):
+        row = raw.get(strategy) or raw
+        if isinstance(row, dict) and row.get("entry_pass_rate") is not None:
+            return {
+                "entry_pass_rate": float(row["entry_pass_rate"]),
+                "median_entry_feature": float(row.get("median_entry_feature") or 0.0),
+            }
+    return None
+
+
+def entry_pass_rate_from_window(
+    window_df: pd.DataFrame,
+    *,
+    entry_feature: str,
+    entry_min: float,
+    min_samples: int = 20,
+) -> tuple[Optional[float], Optional[float], Optional[str]]:
+    """Return (pass_rate, median_feature, skip_reason)."""
+    if entry_feature not in window_df.columns:
+        return None, None, f"entry_feature {entry_feature!r} not in window parquet"
+    series = pd.to_numeric(window_df[entry_feature], errors="coerce").dropna()
+    if len(series) < min_samples:
+        return None, None, f"insufficient samples ({len(series)} < {min_samples})"
+    rate = float((series >= float(entry_min)).sum()) / len(series)
+    return rate, float(series.median()), None
+
+
+def evaluate_multileg_entry_health(
+    *,
+    strategy: str,
+    regime_yaml: Dict[str, Any],
+    window_df: pd.DataFrame,
+    baseline_entry: Optional[Dict[str, Any]] = None,
+    pass_rate_tol: float = 0.10,
+    min_samples: int = 20,
+) -> Dict[str, Any]:
+    """Compare extensions.multileg entry pass rate vs baseline."""
+    if not has_multileg_regime_schema(regime_yaml):
+        return {
+            "strategy": strategy,
+            "any_alert": False,
+            "status": "UNSUPPORTED",
+            "skipped": "extensions.multileg schema missing in regime.yaml",
+            "items": [],
+        }
+
+    ml = multileg_config(regime_yaml)
+    entry_feature = str(ml.get("entry_feature") or "")
+    entry_min = float(ml.get("entry_min"))
+    pass_rate, median_feat, skip = entry_pass_rate_from_window(
+        window_df,
+        entry_feature=entry_feature,
+        entry_min=entry_min,
+        min_samples=min_samples,
+    )
+    baseline = resolve_multileg_baseline(
+        strategy=strategy,
+        regime_yaml=regime_yaml,
+        baseline_entry=baseline_entry,
+    )
+    item: Dict[str, Any] = {
+        "kind": "multileg_entry",
+        "entry_feature": entry_feature,
+        "entry_min": entry_min,
+        "current_pass_rate": pass_rate,
+        "current_median_entry_feature": median_feat,
+        "baseline": baseline,
+        "pass_rate_tol": pass_rate_tol,
+    }
+    if skip:
+        return {
+            "strategy": strategy,
+            "any_alert": False,
+            "status": "SKIPPED",
+            "skipped": skip,
+            "items": [item],
+        }
+    if baseline is None:
+        return {
+            "strategy": strategy,
+            "any_alert": False,
+            "status": "BASELINE_MISSING",
+            "skipped": (
+                "multileg_baseline missing — add last_calibration.multileg_baseline "
+                f"for {strategy} after Tier-0"
+            ),
+            "items": [item],
+        }
+
+    base_rate = float(baseline["entry_pass_rate"])
+    delta = float(pass_rate) - base_rate
+    alerts: List[str] = []
+    if abs(delta) > pass_rate_tol:
+        alerts.append(
+            f"MULTILEG_PASS_RATE_DRIFT: {pass_rate:.1%} vs baseline {base_rate:.1%}"
+            f" (delta={delta:+.1%}, tol={pass_rate_tol:+.1%})"
+        )
+
+    return {
+        "strategy": strategy,
+        "any_alert": bool(alerts),
+        "status": "ALERT" if alerts else "OK",
+        "alerts": alerts,
+        "items": [item],
+    }

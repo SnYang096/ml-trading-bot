@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -144,6 +145,21 @@ def _watchdog_namespace(
     )
 
 
+def _resolve_strategies(
+    manifest: Dict[str, Any],
+) -> tuple[str, Dict[str, Any]]:
+    from src.monitoring.constitution_strategies import resolve_manifest_strategies
+
+    slugs, meta = resolve_manifest_strategies(manifest, repo_root=PROJECT_ROOT)
+    if not slugs:
+        layer = meta.get("strategies_layer", "pcm")
+        raise ValueError(
+            f"no monitor strategies resolved for layer={layer!r}; "
+            f"constitution={meta.get('constitution')}"
+        )
+    return ",".join(slugs), meta
+
+
 def execute_manifest(
     manifest: Dict[str, Any],
     *,
@@ -156,11 +172,7 @@ def execute_manifest(
     if not steps:
         raise ValueError("manifest has no steps")
 
-    strategies = manifest.get("strategies") or ["bpc", "tpc", "me", "srb"]
-    if isinstance(strategies, list):
-        strategies_csv = ",".join(str(s) for s in strategies)
-    else:
-        strategies_csv = str(strategies)
+    strategies_csv, strategies_meta = _resolve_strategies(manifest)
 
     out_dir_raw = (
         manifest.get("output_dir")
@@ -386,6 +398,111 @@ def execute_manifest(
             if rc != 0:
                 exit_code = 1
 
+        elif name == "watchdog-c":
+            win_key = _normalize_window_key(str(cfg.get("window", "near")))
+            pq = window_paths.get(win_key) or _resolve_path(
+                str((_window_cfg(manifest, win_key).get("parquet"))),
+                run_ts=run_ts,
+            )
+            baseline = _resolve_path(
+                str(
+                    cfg.get("baseline")
+                    or "config/monitoring/regime_watchdog_baseline.json"
+                ),
+                run_ts=run_ts,
+            )
+            wd_out = out_dir / "watchdog_c"
+            argv = [
+                "--strategies",
+                strategies_csv,
+                "--window-parquet",
+                str(pq),
+                "--baseline-json",
+                str(baseline),
+                "--out-dir",
+                str(wd_out),
+                "--strategies-root",
+                str(
+                    cfg.get("strategies_root")
+                    or manifest.get("strategies_root")
+                    or "live/highcap/config/strategies"
+                ),
+                "--pass-rate-tol",
+                str(cfg.get("pass_rate_tol", 0.10)),
+            ]
+            if dry_run:
+                print(f"[dry-run] watchdog-c {pq} strategies={strategies_csv}")
+                continue
+            if _use_subprocess_fallback():
+                rc = _run_monitor_script("regime_watchdog_c.py", argv)
+            else:
+                import argparse
+                from scripts.regime_watchdog_c import run_watchdog_c
+
+                ns = argparse.Namespace(
+                    window_parquet=str(pq),
+                    strategies=strategies_csv,
+                    strategies_root=str(
+                        cfg.get("strategies_root")
+                        or manifest.get("strategies_root")
+                        or "live/highcap/config/strategies"
+                    ),
+                    baseline_json=str(baseline),
+                    out_dir=str(wd_out),
+                    pass_rate_tol=float(cfg.get("pass_rate_tol", 0.10)),
+                )
+                rc = run_watchdog_c(ns)
+            if rc != 0:
+                exit_code = 1
+
+        elif name == "multileg-kpi":
+            kpi_out = out_dir / "multileg_kpi"
+            kpi_json = kpi_out / "report.json"
+            if dry_run:
+                print(
+                    f"[dry-run] multileg-kpi strategies={strategies_csv} → {kpi_json}"
+                )
+                continue
+            if _use_subprocess_fallback():
+                argv = [
+                    "--config",
+                    str(
+                        cfg.get("config")
+                        or "config/pipelines/multileg_orchestrate_2h.yaml"
+                    ),
+                    "--lookback-months",
+                    str(cfg.get("lookback_months", 6)),
+                    "--out-json",
+                    str(kpi_json),
+                ]
+                if cfg.get("run_id"):
+                    argv.extend(["--run-id", str(cfg["run_id"])])
+                rc = _run_monitor_script("multileg_monitor.py", argv)
+            else:
+                from scripts.multileg_monitor import run_multileg_monitor
+
+                try:
+                    rc, report = run_multileg_monitor(
+                        config=str(
+                            cfg.get("config")
+                            or "config/pipelines/multileg_orchestrate_2h.yaml"
+                        ),
+                        run_id=str(cfg.get("run_id") or ""),
+                        lookback_months=int(cfg.get("lookback_months", 6)),
+                        strategies_filter=strategies_csv.split(","),
+                        rolling_root=cfg.get("rolling_root"),
+                        out_json=kpi_json,
+                    )
+                    kpi_out.mkdir(parents=True, exist_ok=True)
+                except Exception as exc:
+                    print(f"ERROR multileg-kpi: {exc}", file=sys.stderr)
+                    rc = 3
+                    report = {"decision": "ERROR", "error": str(exc)}
+                    kpi_out.mkdir(parents=True, exist_ok=True)
+                    kpi_json.write_text(json.dumps(report, indent=2), encoding="utf-8")
+            if rc != 0:
+                exit_code = 1
+
         else:
             raise ValueError(f"unknown manifest step: {name!r}")
 
@@ -399,14 +516,14 @@ def execute_manifest(
     if dr_pq:
         os.environ["DRIFT_PARQUET"] = str(dr_pq)
 
-    import json
-
     heartbeat = {
         "task": manifest.get("monitor_id", "monitor_manifest"),
         "ts": datetime.now(timezone.utc).isoformat(),
         "status": "ALERT" if exit_code else "OK",
         "manifest": str(config_path),
         "run_ts": run_ts,
+        "strategies": strategies_csv,
+        "strategies_meta": strategies_meta,
         "watchdog_parquet": str(wd_pq) if wd_pq else None,
         "drift_parquet": str(dr_pq) if dr_pq else None,
         "output_dir": str(out_dir),

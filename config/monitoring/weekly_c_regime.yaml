@@ -1,0 +1,24 @@
+# C-system weekly regime monitor (chop_grid + trend_scalp from constitution).
+monitor_id: weekly_c_regime
+output_dir: results/monitoring/weekly_c_regime/{run_ts}
+
+strategies_source: constitution
+strategies_layer: multi_leg
+constitution: live/highcap/config/constitution/constitution.yaml
+strategies_root: live/highcap/config/strategies
+
+windows:
+  near:
+    source: feature_bus_export
+    lookback_days: 7
+    timeframe: 120T
+    parquet: results/monitoring/window/{run_ts}/features_c_7d.parquet
+
+watchdog_defaults:
+  pass_rate_tol: 0.10
+
+steps:
+  - export-window: { window: near }
+  - watchdog-c:
+      window: near
+      baseline: config/monitoring/regime_watchdog_baseline.json

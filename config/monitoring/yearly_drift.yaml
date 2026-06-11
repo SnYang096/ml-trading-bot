@@ -8,7 +8,10 @@ windows:
     timeframe: 120T
     parquet: results/monitoring/window/{run_ts}/features_current_full.parquet
 
-strategies: [bpc, tpc, me, srb]
+strategies_source: constitution
+strategies_layer: pcm
+constitution: live/highcap/config/constitution/constitution.yaml
+strategies_root: live/highcap/config/strategies
 
 steps:
   - export-window: { window: deep }

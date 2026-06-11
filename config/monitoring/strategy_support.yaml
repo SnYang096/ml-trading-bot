@@ -1,0 +1,5 @@
+# Bus drift/watchdog eligibility (separate from constitution enabled_archetypes).
+# Constitution lists what runs live; this lists what monitoring can compare to Tier-0 baseline.
+pcm_drift_ready:
+  - tpc
+# bpc, me, srb: omit until regime_shares/plateaus baseline promoted (see LAYER_PROMOTION_CRITERIA).

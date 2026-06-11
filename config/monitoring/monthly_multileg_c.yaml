@@ -1,0 +1,12 @@
+# C-system monthly multileg KPI (chop_grid + trend_scalp from constitution).
+monitor_id: monthly_multileg_c
+output_dir: results/monitoring/monthly_multileg_c/{run_ts}
+
+strategies_source: constitution
+strategies_layer: multi_leg
+constitution: live/highcap/config/constitution/constitution.yaml
+
+steps:
+  - multileg-kpi:
+      config: config/pipelines/multileg_orchestrate_2h.yaml
+      lookback_months: 6

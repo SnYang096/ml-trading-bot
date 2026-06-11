@@ -89,7 +89,9 @@ def collect_run_artifacts(output_dir: Path) -> Dict[str, Any]:
         "output_dir": str(output_dir),
         "heartbeat": None,
         "watchdog_report": None,
+        "watchdog_c_report": None,
         "drift_report": None,
+        "multileg_kpi_report": None,
     }
     hb = output_dir / "heartbeat.json"
     if hb.is_file():
@@ -104,6 +106,21 @@ def collect_run_artifacts(output_dir: Path) -> Dict[str, Any]:
     if dr:
         out["drift_report"] = str(dr)
         out["drift"] = _read_json(dr)
+
+    wdc = _latest_glob(output_dir / "watchdog_c", "**/report.json")
+    if wdc:
+        out["watchdog_c_report"] = str(wdc)
+        out["watchdog_c"] = _read_json(wdc)
+
+    mk = output_dir / "multileg_kpi" / "report.json"
+    if mk.is_file():
+        out["multileg_kpi_report"] = str(mk)
+        out["multileg_kpi"] = _read_json(mk)
+    else:
+        mk_glob = _latest_glob(output_dir / "multileg_kpi", "**/report.json")
+        if mk_glob:
+            out["multileg_kpi_report"] = str(mk_glob)
+            out["multileg_kpi"] = _read_json(mk_glob)
 
     return out
 
@@ -151,6 +168,15 @@ def update_monitoring_index(
         cadence_row["drift_no_plateaus"] = any(
             isinstance(r, dict) and r.get("status") == "NO_PLATEAUS" for r in reports
         )
+    if artifacts.get("watchdog_c"):
+        cadence_row["watchdog_c_any_alert"] = bool(
+            (artifacts["watchdog_c"] or {}).get("any_alert")
+        )
+    if artifacts.get("multileg_kpi"):
+        mk = artifacts["multileg_kpi"] or {}
+        decision = str(mk.get("decision") or "OK")
+        cadence_row["multileg_kpi_decision"] = decision
+        cadence_row["multileg_kpi_any_alert"] = decision not in ("OK", "")
 
     cadences = index.setdefault("cadences", {})
     if not isinstance(cadences, dict):
@@ -213,6 +239,50 @@ def upsert_monitor_events_from_run(
                 "ALERT",
                 json.dumps(fh, ensure_ascii=False),
                 artifacts.get("watchdog_report"),
+                run_ts,
+                str(output_dir),
+                now,
+            )
+        )
+
+    wdc = artifacts.get("watchdog_c") or {}
+    for r in wdc.get("reports") or []:
+        if not isinstance(r, dict):
+            continue
+        strat = str(r.get("strategy", ""))
+        if not strat:
+            continue
+        st = str(r.get("status") or ("ALERT" if r.get("any_alert") else "OK"))
+        eid = f"{cadence}:{run_ts}:watchdog_c:{strat}"
+        rows.append(
+            (
+                eid,
+                cadence,
+                "watchdog_c",
+                strat,
+                st,
+                json.dumps(r, ensure_ascii=False),
+                artifacts.get("watchdog_c_report"),
+                run_ts,
+                str(output_dir),
+                now,
+            )
+        )
+
+    mk = artifacts.get("multileg_kpi") or {}
+    if mk:
+        decision = str(mk.get("decision") or "OK")
+        st = "ALERT" if decision not in ("OK", "") else "OK"
+        eid = f"{cadence}:{run_ts}:multileg_kpi:_aggregate"
+        rows.append(
+            (
+                eid,
+                cadence,
+                "multileg_kpi",
+                "_multileg_kpi",
+                st,
+                json.dumps(mk, ensure_ascii=False),
+                artifacts.get("multileg_kpi_report"),
                 run_ts,
                 str(output_dir),
                 now,

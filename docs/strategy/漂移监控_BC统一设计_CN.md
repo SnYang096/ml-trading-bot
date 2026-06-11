@@ -310,9 +310,10 @@ Promote **E22 TPC ADX regime** 后：在标定窗上跑 `mlbot monitor catalog` 
 | **P0** | bus export + daily/weekly B + CMS 卡片 + Telegram | ✅ 已上线 |
 | **P0.5** | labeled regime_shares（TPC ADX） | ✅ `regime_health.py` |
 | **P1 B** | 补全 bpc/me/srb `regime_shares` baseline；live 同步 regime.yaml | 🔲 运维 |
-| **P1 C manifest** | 新增 `weekly_c_regime.yaml`、`monthly_multileg_c.yaml`、`schedules.yaml` 条目 | 🔲 本文档 |
-| **P2 C verb** | `watchdog-c`：`extensions.multileg` pass_rate；`multileg-kpi` step 纳入 scheduler | 🔲 开发 |
-| **P2 统一** | `strategies_root` 指向 `live/highcap/config/strategies`（远程 manifest 显式） | 🔲 部署 |
+| **P1 C manifest** | 新增 `weekly_c_regime.yaml`、`monthly_multileg_c.yaml`、`schedules.yaml` 条目 | ✅ |
+| **P2 C verb** | `watchdog-c`：`extensions.multileg` pass_rate；`multileg-kpi` step 纳入 scheduler | ✅ |
+| **P2 统一** | `strategies_source: constitution` + `strategy_support.yaml`（B 仅 `tpc` drift-ready） | ✅ |
+| **P2 部署** | VPS timer 启用 `weekly_c` / `monthly_c`；补 C `multileg_baseline` | 🔲 运维 |
 | **P3** | PSI 列从 gate/regime 自动推导；ledger realized-R（B 执行层） | 远期 |
 
 ---

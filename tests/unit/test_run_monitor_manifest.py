@@ -30,6 +30,7 @@ def test_window_key_legacy_short_long_aliases():
 def test_weekly_manifest_loads_and_has_four_steps():
     manifest = _load_manifest(WEEKLY_MANIFEST)
     assert manifest["monitor_id"] == "weekly_rule_stack"
+    assert manifest.get("strategies_source") == "constitution"
     steps = manifest["steps"]
     assert [next(iter(s)) for s in steps] == [
         "export-window",
@@ -40,6 +41,16 @@ def test_weekly_manifest_loads_and_has_four_steps():
     assert manifest["windows"]["deep"]["source"] == "feature_bus_export"
     assert "near" in manifest["windows"]
     assert "deep" in manifest["windows"]
+
+
+def test_weekly_c_manifest_has_watchdog_c_step():
+    path = PROJECT_ROOT / "config/monitoring/weekly_c_regime.yaml"
+    manifest = _load_manifest(path)
+    assert manifest["strategies_layer"] == "multi_leg"
+    assert [next(iter(s)) for s in manifest["steps"]] == [
+        "export-window",
+        "watchdog-c",
+    ]
 
 
 def test_execute_manifest_dry_run_substitutes_run_ts(capsys):

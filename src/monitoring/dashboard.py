@@ -10,7 +10,15 @@ from typing import Any, Dict, List, Optional
 from src.monitoring.staleness import build_cadence_cards, list_stale_cadences
 from src.monitoring.store import load_monitoring_index, load_schedules
 
-CADENCE_DISPLAY_ORDER = ("daily", "weekly", "monthly", "quarterly", "yearly")
+CADENCE_DISPLAY_ORDER = (
+    "daily",
+    "weekly",
+    "weekly_c",
+    "monthly",
+    "monthly_c",
+    "quarterly",
+    "yearly",
+)
 
 
 def _cadence_sort_key(cadence: str) -> int:
