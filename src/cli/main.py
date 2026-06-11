@@ -7930,6 +7930,71 @@ def research_promote(args):
     _research_forward("promote", list(args))
 
 
+@research.command("init")
+@click.argument("topic")
+@click.option("--strategy", default="tpc")
+@click.option("--layers", default="regime", help="Layer hint for README (comma-separated)")
+@click.option("--segment", default="recent_6m_oos")
+@click.option("--force", is_flag=True, help="Overwrite existing experiment directory")
+def research_init(topic, strategy, layers, segment, force):
+    """Scaffold config/experiments/<topic>/ with rd_loop phase1 + monitor_bundle draft."""
+    from scripts.research.init_experiment import init_experiment
+
+    try:
+        out = init_experiment(
+            topic,
+            strategy=strategy,
+            layers=layers,
+            segment=segment,
+            force=force,
+        )
+    except FileExistsError as e:
+        click.echo(f"ERROR: {e}", err=True)
+        sys.exit(3)
+    click.echo(f"created {out}")
+    click.echo(f"  Phase 1: PYTHONPATH=src:scripts python scripts/rd_loop.py \\")
+    click.echo(f"    --hypothesis-yaml {out / f'rd_loop_{topic}_phase1.yaml'}")
+
+
+@research.command("promote-baseline")
+@click.option(
+    "--experiment-dir",
+    default=None,
+    type=click.Path(),
+    help="Experiment dir containing monitor_bundle/bundle.json",
+)
+@click.option("--strategy", default=None)
+@click.option("--layer", default="regime")
+@click.option(
+    "--parquet",
+    default=None,
+    type=click.Path(),
+    help="One-shot: export+promote from calibration parquet (no prior draft)",
+)
+@click.option("--enable-drift-ready", is_flag=True)
+@click.option("--dry-run", is_flag=True)
+def research_promote_baseline(
+    experiment_dir, strategy, layer, parquet, enable_drift_ready, dry_run
+):
+    """Phase 5: write monitor_bundle to git baselines (watchdog / PSI / regime_shares)."""
+    from scripts.research.promote_baseline import promote_baseline_main
+
+    argv = []
+    if experiment_dir:
+        argv += ["--experiment-dir", experiment_dir]
+    if strategy:
+        argv += ["--strategy", strategy]
+    if layer:
+        argv += ["--layer", layer]
+    if parquet:
+        argv += ["--parquet", parquet]
+    if enable_drift_ready:
+        argv.append("--enable-drift-ready")
+    if dry_run:
+        argv.append("--dry-run")
+    sys.exit(promote_baseline_main(argv))
+
+
 # =============================================================================
 # Monitor Commands (drift / regime health — local + remote)
 # =============================================================================

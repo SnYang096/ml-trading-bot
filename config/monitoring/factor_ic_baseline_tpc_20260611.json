@@ -1,0 +1,21 @@
+{
+  "target": "forward_rr",
+  "source_parquet": "config/monitoring/reference/tpc_psi_ref.parquet",
+  "ts": "20260611_promote",
+  "rows": [
+    {
+      "feature": "ema_1200_position",
+      "bucket": "all",
+      "n": 4270,
+      "rank_ic": 0.06840573515381472,
+      "p_value": 7.679802741935465e-06
+    },
+    {
+      "feature": "adx_50",
+      "bucket": "all",
+      "n": 4270,
+      "rank_ic": 0.22302619591375172,
+      "p_value": 2.829064289373353e-49
+    }
+  ]
+}

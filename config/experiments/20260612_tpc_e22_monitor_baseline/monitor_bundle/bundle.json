@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "strategy": "tpc",
+  "layer": "regime",
+  "schema": "labeled",
+  "calibration": {
+    "parquet": "results/monitoring/tier0/tpc_20260612/features_labeled_recent_6m_oos.parquet",
+    "n_rows": 4270,
+    "symbols": [
+      "BTCUSDT",
+      "SOLUSDT"
+    ]
+  },
+  "regime": {
+    "regime_shares": {
+      "bull": 0.0,
+      "bear": 0.8210772833723653,
+      "neutral": 0.17892271662763465
+    },
+    "rules_hash": "64705543d32dc56010f6f386982fcd9732177593"
+  },
+  "psi": {
+    "features": [
+      "ema_1200_position",
+      "vol_persistence",
+      "vol_leverage_asymmetry",
+      "adx_50"
+    ],
+    "reference_parquet": "monitor_bundle/reference/tpc_psi_ref.parquet",
+    "sha256": "f4d671379a8a1f94695c7b3780844f59aeb81d4670015ea5a28eca08136ed2be"
+  },
+  "generated_at": "2026-06-11T12:08:27.911166+00:00",
+  "ic": {
+    "target": "forward_rr",
+    "rows": [
+      {
+        "feature": "ema_1200_position",
+        "bucket": "all",
+        "n": 4270,
+        "rank_ic": 0.06840573515381472,
+        "p_value": 7.679802741935465e-06
+      },
+      {
+        "feature": "adx_50",
+        "bucket": "all",
+        "n": 4270,
+        "rank_ic": 0.22302619591375172,
+        "p_value": 2.829064289373353e-49
+      }
+    ]
+  },
+  "smoke": {
+    "drift_exit": 0,
+    "watchdog_exit": 0,
+    "rules_stale": false,
+    "generated_at": "2026-06-11T12:08:28.733260+00:00"
+  }
+}

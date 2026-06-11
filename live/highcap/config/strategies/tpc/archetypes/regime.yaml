@@ -33,3 +33,12 @@ allowed_sides:
 - short
 locked: true
 lock_reason: E22 ADX(50) regime — Phase 3 验证 bull+recent +88% vs baseline; bear trailing 必须保留（E23 ablation 证明 bear 关 trailing = -6.14R）
+
+last_calibration:
+  timestamp: '2026-06-11T12:08:35.991440+00:00'
+  data_source: results/monitoring/tier0/tpc_20260612/features_labeled_recent_6m_oos.parquet
+  regime_shares:
+    bull: 0.0
+    bear: 0.8210772833723653
+    neutral: 0.17892271662763465
+  rules_hash: 64705543d32dc56010f6f386982fcd9732177593

@@ -1,9 +1,14 @@
 {
-  "factor_ic_baseline_ref": "config/monitoring/factor_ic_baseline_tpc_20260526.json",
+  "factor_ic_baseline_ref": "config/monitoring/factor_ic_baseline_tpc_20260611.json",
   "tpc": {
-    "bull_share": 0.028650295069484105,
-    "trigger_rates": {},
-    "source": "results/monitoring/tier0/tpc_20260603/features_labeled_recent_6m_oos.parquet",
-    "n": 10506
+    "source": "results/monitoring/tier0/tpc_20260612/features_labeled_recent_6m_oos.parquet",
+    "n": 4270,
+    "regime_shares": {
+      "bull": 0.0,
+      "bear": 0.8210772833723653,
+      "neutral": 0.17892271662763465
+    },
+    "bull_share": 0.0,
+    "rules_hash": "64705543d32dc56010f6f386982fcd9732177593"
   }
 }

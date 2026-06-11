@@ -1,0 +1,31 @@
+# Experiment scaffold — copied by `mlbot research init`
+# Replace 20260612_tpc_e22_monitor_baseline, tpc, 20260611, recent_6m_oos placeholders.
+
+topic: 20260612_tpc_e22_monitor_baseline
+strategy: tpc
+output_dir: results/rd_loop/20260612_tpc_e22_monitor_baseline
+
+# Phase 0: prepare-only or Tier-0 parquet path
+features_parquet: &parquet results/monitoring/tier0/tpc_20260612/features_labeled_recent_6m_oos.parquet
+
+# quick_layer_scans optional; baseline-only run uses monitor_bundle below
+# quick_layer_scans:
+#   - mode: condition-set
+#     features_parquet: *parquet
+#     label: success_no_rr_extreme
+#     layer: regime
+#     condition:
+#       - "bull_proxy: adx_50>=25 AND ema_1200_position>=0.10"
+#     out: quick_scan/phase1_condition_set.md
+
+monitor_bundle:
+  strategy: tpc
+  layer: regime
+  parquet: *parquet
+  out_dir: monitor_bundle
+  mode: draft
+
+# variant_grid: variants/20260612_tpc_e22_monitor_baseline_grid.yaml
+# decision_doc:
+#   topic: 20260612_tpc_e22_monitor_baseline
+#   out: decision_doc_skeleton.md

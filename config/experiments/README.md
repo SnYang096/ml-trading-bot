@@ -6,7 +6,7 @@
 |------|------|
 | `README.md` | **实验卡片**：物料清单、跑法、`results/` 路径、链到决策文档（不写长表） |
 | `DECISION.md` / `*_experiment_*.md` | **决策全文**：假设表、变体/回测结果、promote 结论（原 `docs/decisions/` 已迁入） |
-| `rd_loop_*.yaml` | offline 扫描编排（mlbot research + 可选 variant_grid + **`tree_steps`** 树通道） |
+| `rd_loop_*.yaml` | offline 扫描编排（mlbot research + 可选 **`monitor_bundle`** draft + variant_grid + **`tree_steps`**） |
 | `*_grid.yaml` | event_backtest 变体网格 |
 
 ### `tree_steps`（树通道 fast_scalp 等）
@@ -51,7 +51,7 @@ Phase 5  三条杠 promote → prod YAML locked
 | 2 | `DECISION.md` 假设表 + τ | **禁止手拍窗宽进 grid** |
 | 3 | `python -m scripts.event_backtest --variant-grid …/*_grid.yaml` | canonical 三阶段；yaml 加 `trading_map: true` 则同跑分段地图 |
 | 4 | 同上 grid 或 `*_bull_maps_grid.yaml` | **优先分段地图**（与 R 同窗）；全窗 map 仅当必须看跨段连续 K 线 |
-| 5 | [`LAYER_PROMOTION_CRITERIA.md`](LAYER_PROMOTION_CRITERIA.md) | Total R ↑、maxDD 不恶化、可解释 |
+| 5 | [`LAYER_PROMOTION_CRITERIA.md`](LAYER_PROMOTION_CRITERIA.md) | Total R ↑、maxDD 不恶化、可解释；**monitor baseline**: `mlbot research promote-baseline` |
 
 **反模式（不得当 promote 依据）**：
 
@@ -95,9 +95,16 @@ PYTHONPATH=src:scripts python scripts/rd_loop.py \
 ## 跑法
 
 ```bash
-# 完整 R&D loop（扫描 → 可选 grid → decision doc）
+# 新实验脚手架（含 rd_loop phase1 + monitor_bundle draft 块）
+mlbot research init 20260612_tpc_regime_baseline --strategy tpc --segment recent_6m_oos
+
+# 完整 R&D loop（扫描 → monitor_bundle draft → 可选 grid → decision doc）
 PYTHONPATH=src:scripts python scripts/rd_loop.py \
   --hypothesis-yaml config/experiments/<dir>/rd_loop_*.yaml
+
+# Phase 5 监控 baseline promote
+mlbot research promote-baseline \
+  --experiment-dir config/experiments/<dir> --enable-drift-ready
 
 # 仅因果 backtest
 PYTHONPATH=src:scripts python -m scripts.event_backtest \

@@ -127,14 +127,21 @@ Remote also needs **local data only on the server**: archive bars, feature-bus, 
 
 On the **same calibration window** documented in `DECISION.md` (recommended: `recent_6m_oos`):
 
-1. **Plateaus**: run `regime_threshold_calibrate` (or equivalent) → write `archetypes/regime.yaml` `last_calibration.plateaus`.
-2. **Watchdog baseline**: on calibration-window parquet, update `config/monitoring/regime_watchdog_baseline.json` for `<slug>` (bull_share, trigger_rates). That parquet is **reference only**, not remote weekly current.
-3. **IC baseline** (if gate IC monitoring applies): `mlbot research ic` → `config/monitoring/factor_ic_baseline_<slug>_<date>.json`; set `factor_ic_baseline_ref` in watchdog baseline.
-4. **PSI contract**: list production gate/prefilter columns in `config/monitoring/weekly_<slug>.yaml` `psi_features` (default script list is only 3 features).
-5. **Decision + reproduce**: finish `DECISION.md`; `git push` → remote `git pull` + deploy `live/highcap`.
-6. **Do not ship**: full `results/train_final` to prod for cron; remote builds current via bus export + archive-batch (see drift doc §7).
+1. **Phase 1 draft**: `rd_loop` with `monitor_bundle.mode: draft` → `config/experiments/<topic>/monitor_bundle/bundle.json` (not in git).
+2. **Phase 5 promote**: `mlbot research promote-baseline --experiment-dir config/experiments/<topic> --enable-drift-ready` writes:
+   - **Labeled (TPC)**: `regime_shares` + `rules_hash` → `regime_watchdog_baseline.json` + `regime.yaml` `last_calibration.regime_shares` (**no** regime-layer feature plateaus for TPC).
+   - **Legacy plateau regime**: `last_calibration.plateaus` on calibration parquet quantiles.
+   - **PSI ref**: trimmed columns → `config/monitoring/reference/<slug>_psi_ref.parquet`.
+   - **IC baseline** (if `forward_rr` in parquet): `config/monitoring/factor_ic_baseline_<slug>_*.json`; `factor_ic_baseline_ref` in watchdog baseline.
+3. **PSI contract**: gate/prefilter columns in manifest `psi_features` (default 3 + `adx_50` for TPC).
+4. **Decision + reproduce**: finish `DECISION.md`; `git push` → remote `git pull` + deploy `live/highcap`.
+5. **Do not ship**: full `results/train_final` to prod for cron; remote builds current via bus export + archive-batch (see drift doc §7).
 
-Repeat 1–4 after ALERT-driven R&D **only if** a new promote changes thresholds or monitored features.
+**One-shot migration** (no prior draft): `mlbot research promote-baseline --strategy tpc --parquet <calibration.parquet> --enable-drift-ready`.
+
+Repeat after ALERT-driven R&D **only if** a new promote changes thresholds or monitored features.
+
+See also: [`docs/strategy/研发与监控打通_CN.md`](../../docs/strategy/研发与监控打通_CN.md).
 
 **Flow (full diagram)**: [`漂移监控_mlbot_monitor_CN.md`](../../docs/strategy/漂移监控_mlbot_monitor_CN.md) §10.2.
 

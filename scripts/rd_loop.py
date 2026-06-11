@@ -389,6 +389,111 @@ def _resolve_quick_scan_html_cfg(cfg: Dict[str, Any]) -> Optional[Dict[str, Any]
     return None
 
 
+def _resolve_bundle_parquet(
+    cfg: Dict[str, Any],
+    mb: Dict[str, Any],
+    output_dir: Path,
+    state: Dict[str, Any],
+) -> Path:
+    raw = mb.get("parquet") or cfg.get("features_parquet")
+    if raw is None:
+        raise ValueError(
+            "monitor_bundle requires parquet or top-level features_parquet"
+        )
+    if str(raw).strip().lower() == "auto":
+        steps = state.get("tree_pipeline_steps") or {}
+        last_prepare: Optional[Dict[str, Any]] = None
+        for _key, meta in sorted(steps.items()):
+            if not isinstance(meta, dict):
+                continue
+            if meta.get("mode") == "prepare-only" and meta.get("exit_code") == 0:
+                last_prepare = meta
+        if last_prepare and last_prepare.get("output_root"):
+            pq = Path(str(last_prepare["output_root"])) / "features_labeled.parquet"
+            return _resolve_project_path(pq)
+        raise ValueError(
+            "monitor_bundle parquet: auto requires a successful tree_steps prepare-only "
+            "with output_root recorded in rd_loop_state.json"
+        )
+    pq = _resolve_project_path(str(raw), relative_to=output_dir)
+    if not pq.is_file():
+        pq = _resolve_project_path(str(raw))
+    return pq
+
+
+def _step_monitor_bundle(
+    cfg: Dict[str, Any],
+    output_dir: Path,
+    state: Dict[str, Any],
+    *,
+    hypothesis_path: Optional[Path] = None,
+) -> int:
+    mb = cfg.get("monitor_bundle")
+    if not mb or not isinstance(mb, dict):
+        return 0
+    mode = str(mb.get("mode") or "draft").lower()
+    if mode == "promote":
+        print(
+            "ERROR: monitor_bundle.mode=promote is not supported in rd_loop.\n"
+            "  Use: mlbot research promote-baseline --experiment-dir <dir>",
+            file=sys.stderr,
+        )
+        return 2
+    if mode != "draft":
+        print(f"ERROR: unknown monitor_bundle.mode: {mode}", file=sys.stderr)
+        return 2
+
+    from scripts.monitoring.export_monitor_bundle import export_monitor_bundle
+
+    strategy = str(mb.get("strategy") or cfg.get("strategy") or "")
+    layer = str(mb.get("layer") or "regime")
+    if not strategy:
+        print("ERROR: monitor_bundle requires strategy", file=sys.stderr)
+        return 3
+
+    try:
+        pq = _resolve_bundle_parquet(cfg, mb, output_dir, state)
+    except ValueError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 3
+    if not pq.is_file():
+        print(f"ERROR: features parquet not found: {pq}", file=sys.stderr)
+        return 3
+
+    exp_dir = hypothesis_path.parent if hypothesis_path else output_dir
+    out_rel = str(mb.get("out_dir") or "monitor_bundle")
+    out_dir = _resolve_project_path(out_rel, relative_to=exp_dir)
+
+    cal = mb.get("calibration") if isinstance(mb.get("calibration"), dict) else {}
+    try:
+        result = export_monitor_bundle(
+            strategy=strategy,
+            layer=layer,
+            parquet=pq,
+            out_dir=out_dir,
+            calibration=cal,
+            run_smoke=mb.get("run_smoke", True) is not False,
+        )
+    except Exception as e:
+        print(f"ERROR: monitor_bundle export failed: {e}", file=sys.stderr)
+        return 3
+
+    state.setdefault("monitor_bundle", {})
+    state["monitor_bundle"] = {
+        "bundle_path": str(result["bundle_path"]),
+        "out_dir": str(out_dir),
+        "finished_at": datetime.now(timezone.utc).isoformat(),
+    }
+    print(f"monitor_bundle draft → {result['bundle_path']}")
+    smoke = result.get("smoke_report") or {}
+    if smoke.get("drift_exit", 0) != 0 or smoke.get("watchdog_exit", 0) != 0:
+        print(
+            f"WARNING: smoke drift={smoke.get('drift_exit')} watchdog={smoke.get('watchdog_exit')}",
+            file=sys.stderr,
+        )
+    return 0
+
+
 def _step_quick_scan_html(cfg: Dict[str, Any], output_dir: Path) -> int:
     html_cfg = _resolve_quick_scan_html_cfg(cfg)
     if html_cfg is None:
@@ -757,6 +862,10 @@ def _step_tree_pipeline(
             "exit_code": rc,
             "finished_at": datetime.now(timezone.utc).isoformat(),
         }
+        if step.get("mode") == "prepare-only" and step.get("output_root"):
+            state["tree_pipeline_steps"][str(i)]["output_root"] = str(
+                _resolve_project_path(step["output_root"])
+            )
         _save_state(output_dir, state)
         worst = max(worst, rc)
         if rc != 0:
@@ -842,6 +951,12 @@ def run_loop(
 
     steps = [
         ("research_scan", lambda: _step_research_scan(cfg, out)),
+        (
+            "monitor_bundle",
+            lambda: _step_monitor_bundle(
+                cfg, out, state, hypothesis_path=hypothesis_path
+            ),
+        ),
         ("quick_scan_html", lambda: _step_quick_scan_html(cfg, out)),
         ("tree_pipeline", lambda: _step_tree_pipeline(cfg, out, state)),
         ("variant_grid", lambda: _step_variant_grid(cfg, out)),

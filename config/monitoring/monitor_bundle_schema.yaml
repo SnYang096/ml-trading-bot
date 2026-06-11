@@ -1,0 +1,89 @@
+# monitor_bundle v1 — R&D draft / Phase 5 promote schema
+# See docs/strategy/研发与监控打通_CN.md
+
+version: 1
+
+# schema kinds (regime layer)
+schema_kinds:
+  labeled:
+    description: allowed_regimes + rules → regime_shares baseline (TPC E22)
+    regime_fields: [regime_shares, rules_hash]
+  plateau:
+    description: legacy regime with last_calibration.plateaus P50 band drift
+    regime_fields: [plateaus]
+  multileg:
+    description: C multileg entry_feature pass rate baseline
+    regime_fields: [multileg_baseline]
+
+# Example: TPC labeled (canonical)
+example_labeled:
+  version: 1
+  strategy: tpc
+  layer: regime
+  schema: labeled
+  calibration:
+    segment: recent_6m_oos
+    start_date: "2025-10-01"
+    end_date: "2026-03-31"
+    parquet: results/monitoring/tier0/tpc_20260611/features_labeled.parquet
+    n_rows: 10506
+    symbols: [BTCUSDT, ETHUSDT]
+  regime:
+    regime_shares:
+      bull: 0.05
+      bear: 0.45
+      neutral: 0.50
+    rules_hash: "<sha1 of allowed_regimes canonical JSON>"
+  psi:
+    features:
+      - ema_1200_position
+      - adx_50
+      - vol_persistence
+      - vol_leverage_asymmetry
+    reference_parquet: monitor_bundle/reference/tpc_psi_ref.parquet
+    sha256: "<hex after promote>"
+  ic:
+    target: forward_rr
+    rows: []
+  smoke:
+    watchdog_exit: 0
+    drift_exit: 0
+    generated_at: "2026-06-11T00:00:00+00:00"
+
+# Example: C multileg
+example_multileg:
+  version: 1
+  strategy: chop_grid
+  layer: regime
+  schema: multileg
+  calibration:
+    segment: recent_6m_oos
+    parquet: results/monitoring/tier0/c_multileg/features_labeled.parquet
+  regime:
+    multileg_baseline:
+      chop_grid:
+        entry_pass_rate: 0.38
+        median_entry_feature: 0.55
+      trend_scalp:
+        entry_pass_rate: 0.22
+        median_entry_feature: 0.41
+  smoke:
+    drift_exit: 0
+
+promote_targets:
+  regime.regime_shares:
+    - config/monitoring/regime_watchdog_baseline.json
+    - config/strategies/{strategy}/archetypes/regime.yaml last_calibration.regime_shares
+  regime.plateaus:
+    - config/strategies/{strategy}/archetypes/regime.yaml last_calibration.plateaus
+  regime.multileg_baseline:
+    - config/strategies/{strategy}/archetypes/regime.yaml last_calibration.multileg_baseline
+  psi.reference_parquet:
+    - config/monitoring/reference/{slug}_psi_ref.parquet
+  ic:
+    - config/monitoring/factor_ic_baseline_{slug}_*.json
+
+storage:
+  psi_ref_in_git: true
+  git_lfs: false
+  max_psi_ref_mb: 5

@@ -1,0 +1,4 @@
+# Phase 5 promote overrides (optional). Main command:
+#   mlbot research promote-baseline --experiment-dir config/experiments/{{TOPIC}}
+enable_drift_ready: true
+dry_run: false

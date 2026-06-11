@@ -36,7 +36,9 @@
 | **Entry** | `mlbot research plateau`（加 regime+prefilter filter） | 同上 | entry 候选 + calibrate draft | 同上 |
 | **跨层 IC** | `mlbot research ic` / `mlbot analyze factor-eval` | 同上 | IC@H json | 符号与层叙事不矛盾 |
 | **分层** | `mlbot research segment` | 同上 | stratify json | 子群 lift 方向一致 |
-| **编排** | `scripts/rd_loop.py` | `config/experiments/rd_loop_*.yaml` | `results/rd_loop/<topic>/` | 各 scan md 齐全 |
+| **编排** | `scripts/rd_loop.py` | `config/experiments/rd_loop_*.yaml` | `results/rd_loop/<topic>/` | 各 scan md 齐全；可选 **`monitor_bundle` draft** |
+| **监控 baseline** | `mlbot research promote-baseline` | `monitor_bundle/bundle.json` | git monitoring JSON + PSI ref | Phase 5；见 [`研发与监控打通_CN.md`](研发与监控打通_CN.md) |
+| **实验脚手架** | `mlbot research init <topic>` | `config/experiments/_template/` | `config/experiments/<topic>/` | rd_loop phase1 + promote_baseline.yaml |
 | **人审写回** | `mlbot research calibrate` → `mlbot research promote` | plateau / batch json | draft yaml + skip manifest | promote 保留 `locked`；必 `--yes` 或 `--dry-run` |
 
 **`mlbot research` 子命令**（统一入口，替代直接调 `quick_layer_scan` / 单层 optimize 做 ①）：

@@ -246,6 +246,8 @@ flowchart LR
 
 ## 8. Baseline 与 promote 后维护
 
+**自动化路径（2026-06）**：Phase 1 `rd_loop` `monitor_bundle.mode: draft` → Phase 5 `mlbot research promote-baseline`。Schema 与命令见 [`研发与监控打通_CN.md`](研发与监控打通_CN.md) · [`monitor_bundle_schema.yaml`](../../config/monitoring/monitor_bundle_schema.yaml)。
+
 ```mermaid
 flowchart LR
   T0[Tier-0 / promote 标定窗]
