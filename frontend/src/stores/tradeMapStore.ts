@@ -83,7 +83,7 @@ export const useTradeMapStore = create<TradeMapState>((set) => ({
   featureStrategyFocus: '',
   featureSearchQuery: '',
   featureDrawerOpen: false,
-  paneVolume: false,
+  paneVolume: true,
   ordersDockOpen: false,
   lastCandles: [],
   lastOverlays: {},
@@ -141,12 +141,24 @@ export function loadLayout(): Record<string, unknown> | null {
 
 export function resetHistoryState(): void {
   useTradeMapStore.setState({
+    lastCandles: [],
+    markers: [],
+    lastOverlays: {},
+    lastMainOverlays: {},
+    lastChopMapData: null,
+    chopRegimeRegions: [],
+    strategyStageRegions: {},
+    lastTradeLinks: [],
     ohlcvLoadedFrom: null,
     ohlcvLoadedTo: null,
     markerQueryFromIso: null,
     lastMarkerPollSince: null,
-    lastTradeLinks: [],
+    selectedMarkerId: null,
+    highlightBarTime: null,
+    statusText: '',
+    loading: false,
     historyExhausted: false,
+    chartFitPending: true,
   });
 }
 

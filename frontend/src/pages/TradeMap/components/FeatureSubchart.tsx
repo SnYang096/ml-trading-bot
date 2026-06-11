@@ -4,14 +4,29 @@ import {
   LineSeries,
   createChart,
   type IChartApi,
+  type ISeriesApi,
   type Time,
 } from 'lightweight-charts';
 import type { Candle } from '@/api/types.ts';
 import { CHART_THEME } from '@/lib/tradeMap/constants.ts';
-import { alignSeriesToCandleTimes, clipOverlayPointsToCandles, subchartColor } from '@/lib/tradeMap';
+import {
+  clipOverlayPointsToCandles,
+  forwardFillOverlayToCandles,
+  subchartColor,
+} from '@/lib/tradeMap';
 import { mainChartOverlaySeriesOptions, subchartBaseOptions } from '@/lib/tradeMap/chartOverlay.ts';
 import type { FeatureOverlay } from '@/lib/tradeMap/types.ts';
 import styles from './SubchartStack.module.css';
+
+function featureSeriesData(
+  overlay: FeatureOverlay,
+  candles: Candle[],
+): { time: Time; value: number }[] {
+  const pts = clipOverlayPointsToCandles(overlay.points || [], candles);
+  return forwardFillOverlayToCandles(pts, candles)
+    .filter((p) => p.value != null && Number.isFinite(Number(p.value)))
+    .map((p) => ({ time: p.time as Time, value: Number(p.value) }));
+}
 
 interface VolumePaneProps {
   candles: Candle[];
@@ -21,9 +36,12 @@ interface VolumePaneProps {
 export function VolumePane({ candles, mainChart }: VolumePaneProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
+  const fittedRef = useRef(false);
 
   useEffect(() => {
     if (!hostRef.current) return;
+    fittedRef.current = false;
     const chart = createChart(hostRef.current, {
       ...subchartBaseOptions,
       width: hostRef.current.clientWidth,
@@ -31,10 +49,7 @@ export function VolumePane({ candles, mainChart }: VolumePaneProps) {
     });
     const series = chart.addSeries(HistogramSeries, { color: CHART_THEME.volume });
     chartRef.current = chart;
-    const data = candles
-      .filter((x) => x.volume != null && Number.isFinite(Number(x.volume)))
-      .map((x) => ({ time: x.time as Time, value: Number(x.volume), color: CHART_THEME.volume }));
-    series.setData(data);
+    seriesRef.current = series;
 
     const ro = new ResizeObserver(() => {
       if (hostRef.current) {
@@ -49,7 +64,23 @@ export function VolumePane({ candles, mainChart }: VolumePaneProps) {
       ro.disconnect();
       chart.remove();
       chartRef.current = null;
+      seriesRef.current = null;
+      fittedRef.current = false;
     };
+  }, []);
+
+  useEffect(() => {
+    const series = seriesRef.current;
+    const chart = chartRef.current;
+    if (!series || !chart || !candles.length) return;
+    const data = candles
+      .filter((x) => x.volume != null && Number.isFinite(Number(x.volume)))
+      .map((x) => ({ time: x.time as Time, value: Number(x.volume), color: CHART_THEME.volume }));
+    series.setData(data);
+    if (!fittedRef.current) {
+      chart.timeScale().fitContent();
+      fittedRef.current = true;
+    }
   }, [candles]);
 
   useEffect(() => {
@@ -66,9 +97,12 @@ export function VolumePane({ candles, mainChart }: VolumePaneProps) {
         }
       }
     };
-    sync();
+    const raf = requestAnimationFrame(sync);
     main.timeScale().subscribeVisibleLogicalRangeChange(sync);
-    return () => main.timeScale().unsubscribeVisibleLogicalRangeChange(sync);
+    return () => {
+      cancelAnimationFrame(raf);
+      main.timeScale().unsubscribeVisibleLogicalRangeChange(sync);
+    };
   }, [mainChart]);
 
   return (
@@ -90,9 +124,14 @@ interface FeaturePaneProps {
 export function FeaturePane({ column, overlay, candles, colorIndex, mainChart }: FeaturePaneProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const fittedRef = useRef(false);
+  const seriesData = featureSeriesData(overlay, candles);
+  const hasData = seriesData.length > 0;
 
   useEffect(() => {
-    if (!hostRef.current) return;
+    if (!hostRef.current || !hasData) return;
+    fittedRef.current = false;
     const chart = createChart(hostRef.current, {
       ...subchartBaseOptions,
       width: hostRef.current.clientWidth,
@@ -104,8 +143,8 @@ export function FeaturePane({ column, overlay, candles, colorIndex, mainChart }:
       mainChartOverlaySeriesOptions({ color, lineWidth: 2 }),
     );
     chartRef.current = chart;
-    const pts = clipOverlayPointsToCandles(overlay.points || [], candles);
-    series.setData(alignSeriesToCandleTimes(pts, candles) as { time: Time; value: number }[]);
+    seriesRef.current = series;
+    series.setData(seriesData);
 
     const ro = new ResizeObserver(() => {
       if (hostRef.current) {
@@ -119,8 +158,22 @@ export function FeaturePane({ column, overlay, candles, colorIndex, mainChart }:
     return () => {
       ro.disconnect();
       chart.remove();
+      chartRef.current = null;
+      seriesRef.current = null;
+      fittedRef.current = false;
     };
-  }, [column, overlay, candles, colorIndex]);
+  }, [column, colorIndex, hasData]);
+
+  useEffect(() => {
+    const series = seriesRef.current;
+    const chart = chartRef.current;
+    if (!series || !chart || !hasData) return;
+    series.setData(seriesData);
+    if (!fittedRef.current) {
+      chart.timeScale().fitContent();
+      fittedRef.current = true;
+    }
+  }, [seriesData, hasData]);
 
   useEffect(() => {
     const main = mainChart;
@@ -136,15 +189,22 @@ export function FeaturePane({ column, overlay, candles, colorIndex, mainChart }:
         }
       }
     };
-    sync();
+    const raf = requestAnimationFrame(sync);
     main.timeScale().subscribeVisibleLogicalRangeChange(sync);
-    return () => main.timeScale().unsubscribeVisibleLogicalRangeChange(sync);
+    return () => {
+      cancelAnimationFrame(raf);
+      main.timeScale().unsubscribeVisibleLogicalRangeChange(sync);
+    };
   }, [mainChart]);
 
   return (
     <div className={styles.pane}>
       <span className={styles.label}>{column}</span>
-      <div ref={hostRef} className={styles.inner} />
+      {hasData ? (
+        <div ref={hostRef} className={styles.inner} />
+      ) : (
+        <div className={styles.emptyPane}>特征数据对齐中…</div>
+      )}
     </div>
   );
 }

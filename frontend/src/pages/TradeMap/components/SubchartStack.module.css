@@ -38,3 +38,15 @@
   position: absolute;
   inset: 0;
 }
+
+.emptyPane {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
+}

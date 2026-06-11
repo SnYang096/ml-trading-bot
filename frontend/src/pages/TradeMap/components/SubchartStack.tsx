@@ -43,15 +43,16 @@ export function SubchartStack({ mainChart, candles, overlays, onBarClick }: Prop
     [panePlan],
   );
 
-  if (!paneVolume && !colsForPanes.length) return null;
+  const showMetricsTable = tableFirst && Boolean(focus);
+  if (!paneVolume && !colsForPanes.length && !showMetricsTable) return null;
 
   return (
     <div className={styles.stack}>
       {paneVolume ? <VolumePane candles={candles} mainChart={mainChart} /> : null}
-      {tableFirst && metricsItem ? (
+      {showMetricsTable ? (
         <FeatureMetricsTable
-          strategyId={metricsItem.strategy || focus || 'chop_grid'}
-          columns={metricsItem.columns || colsForPanes}
+          strategyId={metricsItem?.strategy || focus || 'chop_grid'}
+          columns={metricsItem?.columns || colsForPanes}
           candles={candles}
           overlays={overlays}
           highlightTime={highlightBarTime}

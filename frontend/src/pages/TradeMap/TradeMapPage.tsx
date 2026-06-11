@@ -80,7 +80,7 @@ export function TradeMapPage() {
   const { refreshFull, refreshPoll, refreshMarkersOnly, refreshMainOverlays, initFromLayout, resetHistory } =
     useTradeMapBundle();
   const { applyStrategyFocus, applyLayerDefaults } = useTradeMapFeatureCatalog({
-    catalogEnabled: featureDrawerOpen || selectedFeatureColumns.length > 0,
+    catalogEnabled: true,
   });
   useTradeMapHistory(mainChart);
 
@@ -183,7 +183,6 @@ export function TradeMapPage() {
                 resetHistory();
                 setStoreSymbol(e.target.value);
                 setSymbol(e.target.value);
-                setBundlePhase({ chartFitPending: true, ohlcvLoadedFrom: null });
               }}
             >
               {symbolOptions.map((row) => (
@@ -200,7 +199,6 @@ export function TradeMapPage() {
               onChange={(e) => {
                 resetHistory();
                 setTimeframe(e.target.value);
-                setBundlePhase({ chartFitPending: true, ohlcvLoadedFrom: null });
               }}
             >
               <option value="15min">15min</option>
@@ -364,12 +362,14 @@ export function TradeMapPage() {
                 enabled={chopLabelsEnabled}
               />
             </div>
-            <SubchartStack
-              mainChart={mainChart}
-              candles={lastCandles}
-              overlays={lastOverlays}
-              onBarClick={scrollChartToBarTime}
-            />
+            {!loading && hasCandles ? (
+              <SubchartStack
+                mainChart={mainChart}
+                candles={lastCandles}
+                overlays={lastOverlays}
+                onBarClick={scrollChartToBarTime}
+              />
+            ) : null}
           </div>
           <div className={styles.markerList}>
             {markers.slice(0, 60).map((m) => (
