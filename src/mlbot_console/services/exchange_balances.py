@@ -273,13 +273,16 @@ def fetch_scope_exchange_balance(
         if meta["account_type"] == "futures_usdtm":
             raw = _fetch_futures_account_raw(api_key=api_key, api_secret=api_secret)
             parsed = parse_futures_account(raw)
+            account_upnl = float(parsed.get("unrealized_pnl_usdt") or 0.0)
+            parsed = dict(parsed)
+            parsed["account_unrealized_pnl_usdt"] = account_upnl
             if symbol_scoped:
-                parsed = dict(parsed)
-                parsed["unrealized_pnl_usdt"] = futures_symbol_unrealized_pnl(
-                    raw, sym_filter
-                )
+                sym_upnl = futures_symbol_unrealized_pnl(raw, sym_filter)
+                parsed["symbol_unrealized_pnl_usdt"] = sym_upnl
+                parsed["unrealized_pnl_usdt"] = sym_upnl
                 out["unrealized_pnl_basis"] = "symbol"
             else:
+                parsed["symbol_unrealized_pnl_usdt"] = account_upnl
                 out["unrealized_pnl_basis"] = "account"
         else:
             parsed = _fetch_spot_equity(
@@ -339,7 +342,12 @@ def build_exchange_ledger(
         equity_sum += float(row.get("equity_usdt") or 0.0)
         wallet_sum += float(row.get("wallet_balance_usdt") or 0.0)
         available_sum += float(row.get("available_usdt") or 0.0)
-        exchange_upnl += float(row.get("unrealized_pnl_usdt") or 0.0)
+        exchange_upnl += float(
+            row.get("account_unrealized_pnl_usdt")
+            if row.get("account_unrealized_pnl_usdt") is not None
+            else row.get("unrealized_pnl_usdt")
+            or 0.0
+        )
     return {
         "symbol": sym_meta,
         "accounts": accounts,

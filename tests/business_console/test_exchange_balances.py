@@ -67,6 +67,35 @@ def test_fetch_scope_unconfigured(monkeypatch: pytest.MonkeyPatch) -> None:
     assert row["equity_usdt"] is None
 
 
+def test_fetch_scope_futures_symbol_filter_keeps_account_unrealized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = {
+        "totalWalletBalance": "1000",
+        "totalMarginBalance": "1008",
+        "availableBalance": "900",
+        "totalUnrealizedProfit": "8",
+        "positions": [
+            {"symbol": "BTCUSDT", "positionAmt": "0.01", "unRealizedProfit": "8"},
+            {"symbol": "ETHUSDT", "positionAmt": "0", "unRealizedProfit": "0"},
+        ],
+    }
+
+    monkeypatch.setenv("BINANCE_API_KEY", "k")
+    monkeypatch.setenv("BINANCE_API_SECRET", "s")
+    with patch(
+        "mlbot_console.services.exchange_balances._fetch_futures_account_raw",
+        return_value=raw,
+    ):
+        row = fetch_scope_exchange_balance("trend", symbol="ETHUSDT")
+
+    assert row["ok"] is True
+    assert row["account_unrealized_pnl_usdt"] == pytest.approx(8.0)
+    assert row["symbol_unrealized_pnl_usdt"] == pytest.approx(0.0)
+    assert row["unrealized_pnl_usdt"] == pytest.approx(0.0)
+    assert row["unrealized_pnl_basis"] == "symbol"
+
+
 def test_build_exchange_ledger_sums_ok_accounts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -42,8 +42,18 @@ export function KpiCard({
   );
 }
 
-export function ScopesTable({ scopes }: { scopes: AccountScopeBlock[] }) {
+export function ScopesTable({
+  scopes,
+  symbolFilter = '*',
+}: {
+  scopes: AccountScopeBlock[];
+  symbolFilter?: string;
+}) {
   if (!scopes?.length) return <p className="muted">无数据</p>;
+  const symbolScoped =
+    symbolFilter.trim() !== '' &&
+    symbolFilter.trim() !== '*' &&
+    symbolFilter.toUpperCase() !== 'ALL';
   return (
     <div className={styles.tableWrap}>
       <table className={styles.table}>
@@ -54,6 +64,7 @@ export function ScopesTable({ scopes }: { scopes: AccountScopeBlock[] }) {
             <th>权益</th>
             <th>可用</th>
             <th>交易所浮盈</th>
+            {symbolScoped ? <th>品种浮盈</th> : null}
             <th>已实现</th>
             <th>本地浮盈</th>
             <th>已平仓</th>
@@ -64,6 +75,9 @@ export function ScopesTable({ scopes }: { scopes: AccountScopeBlock[] }) {
           {scopes.map((s) => {
             const ex = (s.exchange || {}) as Record<string, unknown>;
             const label = s.label || SCOPE_LABELS[String(s.scope || '')] || s.scope || '—';
+            const accountUpnl =
+              ex.account_unrealized_pnl_usdt ?? ex.unrealized_pnl_usdt;
+            const symbolUpnl = ex.symbol_unrealized_pnl_usdt;
             return (
               <tr key={String(s.scope)}>
                 <td>
@@ -75,7 +89,10 @@ export function ScopesTable({ scopes }: { scopes: AccountScopeBlock[] }) {
                 <td>{exCell(ex, 'wallet_balance_usdt')}</td>
                 <td>{exCell(ex, 'equity_usdt')}</td>
                 <td>{exCell(ex, 'available_usdt')}</td>
-                <td className={pnlClass(ex.unrealized_pnl_usdt)}>{exCell(ex, 'unrealized_pnl_usdt')}</td>
+                <td className={pnlClass(accountUpnl)}>{fmtUsdt(accountUpnl)}</td>
+                {symbolScoped ? (
+                  <td className={pnlClass(symbolUpnl)}>{fmtUsdt(symbolUpnl)}</td>
+                ) : null}
                 <td className={pnlClass(s.realized_pnl)}>{fmtPnl(s.realized_pnl)}</td>
                 <td className={pnlClass(s.unrealized_pnl)}>{fmtPnl(s.unrealized_pnl)}</td>
                 <td>{String(s.closed_trades ?? 0)}</td>
@@ -104,17 +121,27 @@ export function StrategiesTable({ strategies }: { strategies: AccountStrategyRow
           </tr>
         </thead>
         <tbody>
-          {strategies.map((s) => (
-            <tr key={`${s.scope}-${s.strategy}`}>
-              <td>
-                {s.scope} · {s.strategy}
-              </td>
-              <td className={pnlClass(s.realized_pnl)}>{fmtPnl(s.realized_pnl)}</td>
-              <td className={pnlClass(s.unrealized_pnl)}>{fmtPnl(s.unrealized_pnl)}</td>
-              <td>{String(s.closed_trades ?? 0)}</td>
-              <td>{String(s.open_positions ?? 0)}</td>
-            </tr>
-          ))}
+          {strategies.map((s) => {
+            const scopeLabel =
+              s.scope_label || SCOPE_LABELS[String(s.scope || '')] || s.scope || '—';
+            const title = s.strategy_title || s.strategy || '—';
+            const inactive =
+              (s.realized_pnl ?? 0) === 0 &&
+              (s.unrealized_pnl ?? 0) === 0 &&
+              (s.closed_trades ?? 0) === 0 &&
+              (s.open_positions ?? 0) === 0;
+            return (
+              <tr key={`${s.scope}-${s.strategy}`} className={inactive ? 'muted' : undefined}>
+                <td>
+                  {scopeLabel} · {title}
+                </td>
+                <td className={pnlClass(s.realized_pnl)}>{fmtPnl(s.realized_pnl)}</td>
+                <td className={pnlClass(s.unrealized_pnl)}>{fmtPnl(s.unrealized_pnl)}</td>
+                <td>{String(s.closed_trades ?? 0)}</td>
+                <td>{String(s.open_positions ?? 0)}</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

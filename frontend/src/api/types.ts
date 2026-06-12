@@ -225,7 +225,9 @@ export interface AccountScopeBlock {
 
 export interface AccountStrategyRow {
   scope?: string;
+  scope_label?: string;
   strategy?: string;
+  strategy_title?: string;
   realized_pnl?: number | null;
   unrealized_pnl?: number | null;
   closed_trades?: number | null;

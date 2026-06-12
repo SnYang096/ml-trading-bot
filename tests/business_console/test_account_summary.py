@@ -266,6 +266,73 @@ def test_account_summary_filters_by_scopes(
     assert trend_only["totals"].get("equity_usdt") == full["totals"].get("equity_usdt")
 
 
+def test_account_summary_seeds_registry_trend_strategies_without_local_trades(
+    trend_db, spot_db, spot_ledger_db, multi_leg_db, bus_root
+) -> None:
+    """B·Trend rows appear even when local DB has no positions for the symbol."""
+    from mlbot_console.services.strategy_registry import get_console_strategies
+
+    data = build_account_summary(
+        trend_db=trend_db,
+        spot_db=spot_db,
+        spot_ledger_db=spot_ledger_db,
+        multi_leg_db=multi_leg_db,
+        feature_bus_root=bus_root,
+        symbol="BTCUSDT",
+        lookback_days=0,
+    )
+    trend = [s for s in data["strategies"] if s["scope"] == "trend"]
+    expected = {
+        m["id"] for m in get_console_strategies() if m.get("account_layer") == "trend"
+    }
+    assert expected <= {s["strategy"] for s in trend}
+    tpc = next(s for s in trend if s["strategy"] == "tpc")
+    assert tpc["realized_pnl"] == 0.0
+    assert tpc["closed_trades"] == 0
+    assert tpc["strategy_title"] == "TPC"
+    assert tpc["scope_label"] == "B·Trend"
+
+
+def test_trend_open_position_unrealized_uses_entry_qty_when_size_missing(
+    trend_db, spot_db, spot_ledger_db, multi_leg_db, bus_root
+) -> None:
+    conn = sqlite3.connect(trend_db)
+    conn.execute(
+        """
+        INSERT INTO positions VALUES (
+            'p_open2', 'ETHUSDT', 'long',
+            '2026-05-19T08:00:00+00:00', NULL,
+            2100.0, NULL, NULL, 'open', 'tpc', 2095.0, NULL, NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO orders VALUES (
+            'ord_open2', 'ETHUSDT', 'BUY', 'filled', 'limit',
+            0.5, 2100.0, NULL,
+            '2026-05-19T08:00:00+00:00', '2026-05-19T08:00:00+00:00',
+            '2026-05-19T08:00:00+00:00', 2100.0, 0.5, 'p_open2'
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    data = build_account_summary(
+        trend_db=trend_db,
+        spot_db=spot_db,
+        spot_ledger_db=spot_ledger_db,
+        multi_leg_db=multi_leg_db,
+        feature_bus_root=bus_root,
+        symbol="ETHUSDT",
+        lookback_days=0,
+    )
+    trend_scope = next(s for s in data["scopes"] if s["scope"] == "trend")
+    assert trend_scope["open_positions"] >= 1
+    assert trend_scope["unrealized_pnl"] != 0.0
+
+
 def test_orders_list_api_includes_pnl_on_trend_exit(client) -> None:
     r = client.get(
         "/api/orders/list",

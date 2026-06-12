@@ -134,7 +134,9 @@ export function AccountPage() {
         <header className={styles.sectionHead}>
           <div>
             <h2>策略与账户层盈亏</h2>
-            <p className={`muted ${styles.sectionNote}`}>已实现盈亏、持仓与按日统计受 Symbol 与回看期筛选。</p>
+            <p className={`muted ${styles.sectionNote}`}>
+              已实现盈亏、持仓与按日统计受 Symbol 与回看期筛选。交易所浮盈列为全账户；选单品种时另显示该品种浮盈。
+            </p>
           </div>
           <div className="toolbar-row">
             <label>
@@ -202,10 +204,13 @@ export function AccountPage() {
         <div className={styles.grid2}>
           <section className="panel">
             <h3>账户层汇总 (本地 DB)</h3>
-            <ScopesTable scopes={scoped?.scopes || []} />
+            <ScopesTable scopes={scoped?.scopes || []} symbolFilter={symbol} />
           </section>
           <section className="panel">
             <h3>策略汇总 (本地 DB)</h3>
+            <p className="muted" style={{ margin: '0 0 8px', fontSize: '0.85rem' }}>
+              含 constitution 启用策略；无成交时显示 0（灰色行）。
+            </p>
             <StrategiesTable strategies={scoped?.strategies || []} />
           </section>
         </div>

@@ -13,6 +13,8 @@ from mlbot_console.services.db import query_rows
 from mlbot_console.services.spot_pnl import compute_spot_order_pnl, spot_holdings_from_orders
 from mlbot_console.services.strategy_registry import (
     default_spot_strategy_id,
+    get_console_strategies,
+    get_live_console_strategies,
     spot_strategy_ids,
 )
 from mlbot_console.services.exchange_balances import build_exchange_ledger
@@ -297,22 +299,16 @@ def _trend_stats(
         if st == "open" or not row.get("exit_time"):
             open_count += 1
             by_strategy[strat]["open_positions"] += 1
-            
-            # Calculate unrealized PnL
+
             sym = str(row.get("symbol") or "").upper()
-            qty = float(row.get("current_size") or 0.0)
-            entry_px = float(row.get("entry_price") or 0.0)
             mark_px = float(mark_prices.get(sym) or 0.0)
-            
-            if qty > 0 and entry_px > 0 and mark_px > 0:
-                side = str(row.get("side") or "").lower()
-                if side in {"buy", "long"}:
-                    upnl = (mark_px - entry_px) * qty
-                else:
-                    upnl = (entry_px - mark_px) * qty
+            upnl = _trend_unrealized_pnl_usdt(
+                row, mark_px, entry_qty_by_pid=entry_qty_by_pid
+            )
+            if upnl is not None:
                 unrealized += upnl
                 by_strategy[strat]["unrealized_pnl"] += upnl
-                
+
             continue
         pnl = _trend_realized_pnl_usdt(row, entry_qty_by_pid=entry_qty_by_pid)
         if pnl is None:
@@ -517,6 +513,49 @@ def _empty_scope_stats(scope: str) -> Dict[str, Any]:
     }
 
 
+def _registry_strategies_for_summary() -> List[Dict[str, str]]:
+    live = get_live_console_strategies()
+    return live if live else get_console_strategies()
+
+
+def _empty_strategy_row(scope: str, strategy_id: str, *, title: str = "") -> Dict[str, Any]:
+    return {
+        "scope": scope,
+        "strategy": strategy_id,
+        "strategy_title": title or strategy_id,
+        "scope_label": _SCOPE_LABELS.get(scope, scope),
+        "realized_pnl": 0.0,
+        "unrealized_pnl": 0.0,
+        "closed_trades": 0,
+        "open_positions": 0,
+    }
+
+
+def _merge_registry_strategy_rows(
+    strategy_rows: Dict[str, Dict[str, Any]],
+    *,
+    allowed_scopes: set[str],
+) -> None:
+    """Ensure constitution/console strategies appear even with zero local DB activity."""
+    taxonomy_by_id = {s["id"]: s for s in get_console_strategies()}
+    for meta in _registry_strategies_for_summary():
+        sid = str(meta.get("id") or "").strip().lower()
+        if not sid:
+            continue
+        scope = str(meta.get("account_layer") or "trend").strip().lower()
+        if scope not in allowed_scopes:
+            continue
+        key = f"{scope}:{sid}"
+        tax = taxonomy_by_id.get(sid, {})
+        title = str(tax.get("title") or meta.get("title") or sid)
+        if key in strategy_rows:
+            row = strategy_rows[key]
+            row.setdefault("strategy_title", title)
+            row.setdefault("scope_label", _SCOPE_LABELS.get(scope, scope))
+            continue
+        strategy_rows[key] = _empty_strategy_row(scope, sid, title=title)
+
+
 def _merge_daily(series_list: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
     daily: Dict[str, float] = defaultdict(float)
     for series in series_list:
@@ -654,6 +693,8 @@ def build_account_summary(
             strategy_rows[key] = {
                 "scope": scope_name,
                 "strategy": strat,
+                "strategy_title": strat,
+                "scope_label": _SCOPE_LABELS.get(scope_name, scope_name),
                 "realized_pnl": float(agg.get("realized_pnl") or 0.0),
                 "unrealized_pnl": float(agg.get("unrealized_pnl") or 0.0),
                 "closed_trades": int(agg.get("closed_trades") or 0.0),
@@ -661,6 +702,9 @@ def build_account_summary(
                     agg.get("open_positions") or agg.get("open_lots") or 0.0
                 ),
             }
+
+    allowed_scopes = {str(s.get("scope") or "") for s in scope_blocks}
+    _merge_registry_strategy_rows(strategy_rows, allowed_scopes=allowed_scopes)
 
     daily = _merge_daily([s["daily_realized"] for s in scope_blocks])
 
@@ -745,21 +789,36 @@ def build_account_summary(
         ),
         "daily_realized": daily,
         "mark_prices": marks,
-        "notes": [
-            "余额/权益来自币安实时 API：Trend→BINANCE_API_KEY，Multi-leg→MULTI_LEG_BINANCE_FUTURES_*，Spot→BINANCE_SPOT_*。",
-            "合约权益=totalMarginBalance，钱包余额=totalWalletBalance；现货权益≈USDT+持仓按标记价折算。",
-            "总账 equity_usdt 为各账户权益之和（三个独立子账户，非单账户拆分）。",
-            "Trend PnL from positions.realized_pnl on closed rows.",
-            "Spot PnL uses FIFO buy lots by fill time; sells realize against oldest buys.",
-            "Spot open buys show unrealized PnL when bars_1min close is available.",
-            "Multi-leg PnL approximated from filled entry/exit leg prices × quantity.",
-            (
-                "Realized PnL and daily chart include all historical exits."
-                if lookback_days <= 0
-                else f"Realized PnL and daily chart only include exits within the last {lookback_days} days."
-            ),
-        ],
+        "notes": _account_summary_notes(
+            lookback_days=lookback_days,
+            symbol=symbol,
+        ),
     }
+
+
+def _account_summary_notes(*, lookback_days: int, symbol: str) -> List[str]:
+    notes = [
+        "余额/权益来自币安实时 API：Trend→BINANCE_API_KEY，Multi-leg→MULTI_LEG_BINANCE_FUTURES_*，Spot→BINANCE_SPOT_*。",
+        "合约权益=totalMarginBalance，钱包余额=totalWalletBalance；现货权益≈USDT+持仓按标记价折算。",
+        "总账 equity_usdt 为各账户权益之和（三个独立子账户，非单账户拆分）。",
+        "账户层「交易所浮盈」= 该子账户 totalUnrealizedProfit（全账户）；Symbol 筛选时另显示当前品种浮盈。",
+        "Trend PnL from positions.realized_pnl on closed rows.",
+        "Spot PnL uses FIFO buy lots by fill time; sells realize against oldest buys.",
+        "Spot open buys show unrealized PnL when bars_1min close is available.",
+        "Multi-leg PnL approximated from filled entry/exit leg prices × quantity.",
+        (
+            "Realized PnL and daily chart include all historical exits."
+            if lookback_days <= 0
+            else f"Realized PnL and daily chart only include exits within the last {lookback_days} days."
+        ),
+    ]
+    if not _is_all_symbols(symbol):
+        sym = str(symbol).upper()
+        notes.insert(
+            4,
+            f"Symbol={sym}：本地已实现/浮盈/未平仅统计该品种；若持仓在其他品种请选「全部」。",
+        )
+    return notes
 
 
 def build_order_pnl_maps(
