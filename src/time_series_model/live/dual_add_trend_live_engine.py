@@ -196,6 +196,7 @@ class DualAddTrendLiveEngine:
         self.state = self.load_state()
         self._pending_actions: List[Dict[str, Any]] = []
         self.metrics_strategy = str(metrics_strategy or "")
+        self._live_exchange_has_activity = False
 
     def _emit_dual_bar_outcome(self, symbol: str, outcome: str) -> None:
         from src.order_management.hedge_engine_metrics import (
@@ -287,6 +288,71 @@ class DualAddTrendLiveEngine:
             encoding="utf-8",
         )
 
+    def is_stale_active_ghost(self) -> bool:
+        """True when ``active`` is set but nothing real remains on this segment."""
+        return bool(
+            self.state.active
+            and not self.state.pending_orders
+            and not self.state.inventory
+            and not self._live_exchange_has_activity
+        )
+
+    def clear_stale_active_if_ghost(self) -> bool:
+        """Drop a ghost segment so it cannot block the shared multi-leg cap."""
+        if not self.is_stale_active_ghost():
+            return False
+        logger.warning(
+            "trend_scalp stale active state reset: symbol=%s segment_id=%s",
+            self.state.symbol,
+            self.state.segment_id,
+        )
+        self.state.active = False
+        self.save_state()
+        gate = getattr(self, "_concurrency_gate", None)
+        if gate is not None:
+            gate.notify_deactivation(self.state.symbol, "trend_scalp")
+        return True
+
+    def holds_real_grid_slot(self) -> bool:
+        """True iff this engine's active segment really occupies a concurrency slot."""
+        if not bool(getattr(self.state, "active", False)):
+            return False
+        return bool(
+            self.state.pending_orders
+            or self.state.inventory
+            or self._live_exchange_has_activity
+        )
+
+    def sync_live_exchange_state(
+        self,
+        *,
+        exchange_positions: Iterable[Any],
+        exchange_orders: Iterable[Any],
+    ) -> None:
+        """Use exchange truth so ghost ``active`` flags do not block the shared cap."""
+        self._live_exchange_has_activity = False
+        sym = str(self.state.symbol or "").upper()
+        if not sym:
+            return
+        has_local = bool(self.state.inventory or self.state.pending_orders)
+        open_trend_orders = [
+            dict(o)
+            for o in exchange_orders
+            if str(o.get("clientOrderId") or o.get("client_order_id") or "").startswith(
+                "dat_"
+            )
+            and str(o.get("symbol") or "").upper() == sym
+        ]
+        positions = [
+            dict(p)
+            for p in exchange_positions
+            if str(p.get("symbol") or "").upper() == sym
+            and abs(float(p.get("positionAmt") or p.get("quantity") or 0)) > 0
+        ]
+        self._live_exchange_has_activity = bool(open_trend_orders) or (
+            bool(positions) and has_local
+        )
+
     def on_bar(
         self,
         *,
@@ -315,6 +381,8 @@ class DualAddTrendLiveEngine:
             "LONG" if str(features.get("trend_direction", "UP")) == "UP" else "SHORT"
         )
         self.state.last_timestamp = timestamp
+        if self.state.symbol == symbol:
+            self.clear_stale_active_if_ghost()
         if self.state.active and self.state.symbol == symbol:
             self.state.bar_index += 1
 

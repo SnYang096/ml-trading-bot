@@ -434,8 +434,8 @@ class ChopGridLiveEngine:
 
         An ``active`` segment carrying no pending orders, no inventory and no live
         exchange activity is a ghost (cleared via :meth:`clear_stale_active_if_ghost`),
-        so it must not count toward ``max_concurrent_grid_symbols`` and block other
-        symbols from starting.
+        so it must not count toward ``max_concurrent_multi_leg_symbols`` and block
+        other symbols from starting.
         """
         if not bool(getattr(self.state, "active", False)):
             return False

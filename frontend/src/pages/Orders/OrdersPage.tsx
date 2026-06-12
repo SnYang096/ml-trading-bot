@@ -9,6 +9,7 @@ import {
   displayOrderPrice,
   displayOrderQty,
   displayPositionSideLabel,
+  displayLinkQty,
   fmtPnl,
   formatUnixTs,
   getScopesDefault,
@@ -274,7 +275,7 @@ export function OrdersPage() {
                     <td>{r.strategy}</td>
                     <td>{r.leg || '—'}</td>
                     <td>{displayPositionSideLabel(r.side)}</td>
-                    <td>{r.qty != null ? String(r.qty) : '—'}</td>
+                    <td>{displayLinkQty(r)}</td>
                     <td>{Number.isFinite(Number(r.entry_price)) ? String(r.entry_price) : '—'}</td>
                     <td>{Number.isFinite(Number(r.exit_price)) ? String(r.exit_price) : '—'}</td>
                     <td className={pnlClass(r.pnl_usdt)}>

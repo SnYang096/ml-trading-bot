@@ -275,6 +275,8 @@ def max_concurrent_multi_leg_symbols_from_ml(ml: Mapping[str, Any]) -> Optional[
         return None
     raw = rs.get("max_concurrent_multi_leg_symbols")
     if raw is None:
+        raw = rs.get("max_concurrent_grid_symbols")
+    if raw is None:
         return None
     try:
         v = int(raw)

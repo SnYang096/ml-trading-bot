@@ -261,13 +261,14 @@ multi_leg:
   # Observed account DD is usually lower; tune each strategy independently for balanced risk.
   sizing:
     chop_grid:
-      # Live 500U + BTC min lot: level ≈ 20% equity (segment_dd/(max_loss×6 levels)).
-      # sim_multileg @500: 4-segment maxDD ~-9.5% (trade replay, not re-run pipeline).
+      # Live 10kU + BTC min lot: level ≈ 40% equity (0.072/(max_loss×6 levels)).
+      # Raised from 0.036 after sizing replay; cooldown (3 bars) limits chop↔trend thrash.
       segment_dd_target: 0.072
       max_loss_per_grid: 0.03
       max_levels_per_side: 3
     trend_scalp:
-      # Live 500U + BTC min lot: leg ≈ 20% equity (segment_dd/(max_loss×4 units)).
+      # Live 10kU + BTC min lot: leg unit ≈ 90% equity (0.072/(max_loss×4 units)).
+      # Raised from 0.016; gross capped by max_gross_exposure_units + account risk_limits.
       segment_dd_target: 0.072
       max_loss_per_segment: 0.02
       max_gross_exposure_units: 4
@@ -275,7 +276,7 @@ multi_leg:
     # Offline budget anchor for pct-based risk_limits and validation reports.
     # In live trading, actual equity/drawdown should come from account sync / exchange
     # state; this value is not a replacement for real account balance.
-    equity_usdt: 500 # Offline fallback anchor; live sizing/caps use synced exchange equity (run_multi_leg_live._sync_multi_leg_sizing_equity).
+    equity_usdt: 10000 # Offline fallback anchor; live sizing/caps use synced exchange equity (run_multi_leg_live._sync_multi_leg_sizing_equity).
     # Kill-switch: halt new risk when drawdown from peak exceeds this (operator accepts ~20%).
     max_drawdown_pct: 0.20
   # Account-level hard stop for multi-leg live orders (separate API keys from trend).
@@ -289,12 +290,12 @@ multi_leg:
 
   risk_limits:
     # Pct limits resolve against synced equity (fallback account.equity_usdt).
-    # Sized for segment_dd 0.036 chop / 0.016 trend (≈20% equity per level/leg):
-    #   chop 6-level gross ≈ 120%; trend 4-leg gross ≈ 80%, 2-leg net ≈ 40%.
-    max_gross_notional_pct: 1.40
-    max_net_notional_pct: 0.85
-    max_symbol_gross_notional_pct: 1.30 # ≥ chop full grid gross on one symbol.
-    max_symbol_net_notional_pct: 0.45 # ≥ trend 2-leg net (40%) + headroom.
+    # segment_dd 0.072 → ~40% equity/level (chop) / ~90% equity/leg (trend).
+    # Trend 3 legs (3×9000=27000) + chop 4 levels (4×4000=16000) must both fit.
+    max_gross_notional_pct: 2.70 # ≥ trend 3 legs (27000); capped above by max_gross_leverage 3.0.
+    max_net_notional_pct: 2.00 # ≥ 2-leg same-direction net (18000); 3-leg same-direction intentionally blocked.
+    max_symbol_gross_notional_pct: 2.70 # ≥ chop 4 levels (16000) + trend 3 legs (27000).
+    max_symbol_net_notional_pct: 1.80 # ≥ 2-leg same-direction net (18000).
     # chop_grid + trend_scalp: shared cap on distinct symbols with any active
     # multi-leg strategy segment. Neither strategy counts ghost (no inventory /
     # pending orders / exchange activity) segments toward the limit.

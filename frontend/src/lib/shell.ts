@@ -48,6 +48,12 @@ export function displayOrderQty(row: {
   return '—';
 }
 
+export function displayLinkQty(link: { qty?: number | null }): string {
+  const n = Number(link.qty);
+  if (Number.isFinite(n) && n > 0) return String(n);
+  return '—';
+}
+
 /** Limit/fill/trigger price; chop_grid SL/TP algo orders use stop_price, not price. */
 export function displayOrderPrice(row: {
   display_price?: number | null;

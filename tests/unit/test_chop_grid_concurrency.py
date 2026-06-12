@@ -198,6 +198,34 @@ multi_leg:
     assert args.max_concurrent_multi_leg_symbols == 3
 
 
+def test_max_concurrent_grid_symbols_legacy_key(tmp_path, monkeypatch) -> None:
+    from src.config.multileg_sizing import max_concurrent_multi_leg_symbols_from_ml
+
+    y = tmp_path / "legacy.yaml"
+    y.write_text(
+        """
+multi_leg:
+  risk_limits:
+    max_concurrent_grid_symbols: 4
+""",
+        encoding="utf-8",
+    )
+    import yaml
+
+    ml = yaml.safe_load(y.read_text(encoding="utf-8"))["multi_leg"]
+    assert max_concurrent_multi_leg_symbols_from_ml(ml) == 4
+
+
+def test_trend_ghost_active_engine_does_not_occupy_a_slot() -> None:
+    """Trend stale active must not block the shared multi-leg symbol cap."""
+    gate = MultiLegConcurrencyGate(3)
+    gate.register("BTCUSDT", _FakeEngine(True, holds=True), strategy="chop_grid")
+    gate.register("SOLUSDT", _FakeEngine(True, holds=True), strategy="chop_grid")
+    gate.register("XRPUSDT", _FakeEngine(True, holds=False), strategy="trend_scalp")
+    gate.register("ETHUSDT", _FakeEngine(False), strategy="trend_scalp")
+    assert gate.allow_new_segment("ETHUSDT", strategy="trend_scalp") is True
+
+
 # ── cooldown tests ──────────────────────────────────────────────────────────
 
 

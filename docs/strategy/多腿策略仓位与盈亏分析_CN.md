@@ -135,3 +135,52 @@ TP 目标通常较小但方向性更强：
 `segment_dd_target: 0.072` 的 720 USDT 是 sizing 公式的**预算上限**，用来反推仓位大小。实际单段最大亏损被 risk stop 限制在 **~120 USDT (chop)** 或 regime 退出 **~180-360 USDT (trend)**，大约是理论值的 **1/6 ~ 1/2**。
 
 720 USDT 需要所有仓位同时成交且同时打到止损，在有 regime + risk stop + protection orders 三层保护的情况下基本不会发生。
+
+---
+
+## 7. Gross cap、Net cap 与网格 flip（2026-06-12 讨论 → 方案 A）
+
+在 `segment_dd_target: 0.072`、10kU 下，chop 每档 ≈ **40% equity**（4,000），trend 每腿 ≈ **90% equity**（9,000）。
+
+### 7.1 Gross cap（2.70，方案 A）
+
+| 同时持仓 | gross | 是否常见 | 2.70 cap 结果 |
+| --- | --- | --- | --- |
+| Chop 3 档（单边满） | 120% | 常见 | ✅ |
+| Chop 4 档（3+1 flip） | 160% | 常见 flip | ✅ |
+| Chop 6 档全满 | 240% | 极少 | ✅（2.70 不再拦 6 档；实际由 inventory/spacing 限制极难发生） |
+| Trend 3 腿（hedge） | 270% | 实盘上限 | ✅ 刚好打满 pool |
+| Trend 4 腿 | 360% | — | ❌ > 2.70 |
+
+> 从 1.60 提到 2.70 是为了支持 trend 3 腿。副作用：chop 6 档不再被 gross cap 拦截，但 6 格全满在实际中几乎不可能（双侧各 3 格同时持仓），且 net cap + kill switch 仍在兜底。
+
+### 7.2 Net cap（分层设计）
+
+| 参数 | 原始 | review 修 | 方案 A（当前） | 解析（10k） |
+| --- | --- | --- | --- | --- |
+| `max_gross_notional_pct` | 1.60 | 1.60 | **2.70** | 27,000 |
+| `max_net_notional_pct` | 0.85 | 1.20 | **2.00** | 20,000 |
+| `max_symbol_gross_notional_pct` | 1.60 | 1.60 | **2.70** | 27,000 |
+| `max_symbol_net_notional_pct` | 0.45 | 1.00 | **1.80** | 18,000 |
+
+### 7.3 Trend 实际腿数
+
+| 场景 | gross | net | 结果 |
+| --- | --- | --- | --- |
+| Trend 1 腿 | 9,000 | 9,000 | ✅ |
+| Trend 2 腿 | 18,000 | ≤9,000（hedge） | ✅ |
+| **Trend 3 腿** | **27,000** | ≤9,000（hedge） | ✅ |
+| Trend 3 腿全同向 | 27,000 | 27,000 | ❌ net cap 拦截 |
+| Trend 4 腿 | 36,000 | — | ❌ gross > 27,000 |
+
+> Chop 4 档（16,000）与 Trend 3 腿（27,000）共享 gross cap 2.70。`max_gross_leverage: 3.0` 为终极天花板。两策略 `segment_dd_target` 均为 0.072，最大 DD 预算对等（720 USDT）。
+
+多 symbol 并发、`MultiLegConcurrencyGate`、cooldown 与本次补丁详见：[多腿并发门控与配置变更说明_20260612_CN.md](./多腿并发门控与配置变更说明_20260612_CN.md)
+
+---
+
+## 8. 相关链接
+
+- [多腿并发门控与配置变更说明_20260612_CN.md](./多腿并发门控与配置变更说明_20260612_CN.md) — review、未提交补丁、gross/net cap 决策
+- `config/constitution/constitution.yaml` — prod 模板
+- `live/highcap/config/constitution/constitution.yaml` — highcap live

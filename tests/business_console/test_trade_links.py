@@ -111,6 +111,7 @@ def test_filled_tp_closes_link(multi_leg_db):
     assert links[0]["status"] == "closed"
     assert links[0]["exit_kind"] == "take_profit"
     assert links[0]["pnl_usdt"] == pytest.approx(1.2)
+    assert links[0]["qty"] == pytest.approx(0.2)
     assert links[0]["color"] == "#26a69a"
     assert extras == []
 
