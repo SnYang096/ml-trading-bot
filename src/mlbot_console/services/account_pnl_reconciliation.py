@@ -7,10 +7,8 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
-from mlbot_console.services.account_summary import (
-    _is_all_symbols,
-    build_account_summary,
-)
+from mlbot_console.services.account_summary import build_account_summary
+from mlbot_console.services.symbols import is_all_symbols
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +62,7 @@ def reconcile_scope_pnl(
         )
         return issues
 
-    symbol_scoped = not _is_all_symbols(symbol)
+    symbol_scoped = not is_all_symbols(symbol)
     local_u = float(scope_block.get("unrealized_pnl") or 0.0)
     open_pos = int(scope_block.get("open_positions") or 0)
     closed = int(scope_block.get("closed_trades") or 0)
@@ -278,7 +276,7 @@ def reconcile_pnl_vs_exchange(
         floor_env="MLBOT_RECON_GLOBAL_PNL_TOL_USDT",
         pct_env="MLBOT_RECON_GLOBAL_PNL_TOL_PCT",
     )
-    symbol_scoped = not _is_all_symbols(symbol)
+    symbol_scoped = not is_all_symbols(symbol)
     if (
         not symbol_scoped
         and ledger_totals.get("accounts_ok", 0) > 0

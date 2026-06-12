@@ -21,14 +21,13 @@ from mlbot_console.services.exchange_balances import build_exchange_ledger
 from mlbot_console.services.trade_links import multi_leg_trade_links
 from mlbot_console.services.trade_markers import _parse_ts
 
+from mlbot_console.services.symbols import is_all_symbols
+
 _SCOPE_LABELS = {
     "trend": "B·Trend",
     "spot": "A·Spot",
     "multi_leg": "C·Multi-leg",
 }
-
-def _is_all_symbols(symbol: str) -> bool:
-    return str(symbol or "").strip().upper() in {"", "*", "ALL", "__ALL__"}
 
 
 def latest_close_prices(feature_bus_root: Path, symbols: List[str]) -> Dict[str, float]:
@@ -265,7 +264,7 @@ def _trend_stats(
         return _empty_scope_stats("trend")
     where = ""
     params: tuple[Any, ...] = ()
-    if symbol and not _is_all_symbols(symbol):
+    if symbol and not is_all_symbols(symbol):
         where = " WHERE symbol = ?"
         params = (symbol.upper(),)
     rows = query_rows(
@@ -279,7 +278,7 @@ def _trend_stats(
         params,
     )
     entry_qty_by_pid = _trend_entry_qty_by_position(
-        trend_db, symbol if symbol and not _is_all_symbols(symbol) else None
+        trend_db, symbol if symbol and not is_all_symbols(symbol) else None
     )
     realized = 0.0
     unrealized = 0.0
@@ -408,7 +407,7 @@ def _multileg_stats(
     if not multi_leg_db.is_file():
         return _empty_scope_stats("multi_leg")
     symbols = _discover_symbols(trend_db=Path("/dev/null"), spot_db=Path("/dev/null"), multi_leg_db=multi_leg_db)
-    if symbol and not _is_all_symbols(symbol):
+    if symbol and not is_all_symbols(symbol):
         symbols = [symbol.upper()]
     realized = 0.0
     unrealized = 0.0
@@ -766,7 +765,7 @@ def build_account_summary(
     from mlbot_console.services.mark_prices import fetch_mark_prices
     marks = fetch_mark_prices(feature_bus_root, symbols)
 
-    sym_arg = None if _is_all_symbols(symbol) else symbol
+    sym_arg = None if is_all_symbols(symbol) else symbol
     trend = _trend_stats(trend_db, symbol=sym_arg, mark_prices=marks, since_ts=since_ts)
     spot = _spot_stats(
         spot_db, symbol=sym_arg, mark_prices=marks, since_ts=since_ts
@@ -876,7 +875,7 @@ def build_account_summary(
     )
 
     return {
-        "symbol": "ALL" if _is_all_symbols(symbol) else str(symbol).upper(),
+        "symbol": "ALL" if is_all_symbols(symbol) else str(symbol).upper(),
         "lookback_days": lookback_days,
         "since_ts": since_ts,
         "totals": totals,
@@ -922,7 +921,7 @@ def _account_summary_notes(*, lookback_days: int, symbol: str) -> List[str]:
             else f"Realized PnL and daily chart only include exits within the last {lookback_days} days."
         ),
     ]
-    if not _is_all_symbols(symbol):
+    if not is_all_symbols(symbol):
         sym = str(symbol).upper()
         notes.insert(
             4,
@@ -945,7 +944,7 @@ def build_order_pnl_maps(
     scope_set = {str(s).strip().lower() for s in (scopes or ()) if str(s).strip()}
     if not scope_set:
         scope_set = {"trend", "spot", "multi_leg"}
-    sym = None if _is_all_symbols(symbol) else symbol.upper()
+    sym = None if is_all_symbols(symbol) else symbol.upper()
     marks = dict(mark_prices or {})
     if not marks and feature_bus_root is not None and feature_bus_root.is_dir():
         if sym:

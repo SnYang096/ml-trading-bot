@@ -83,8 +83,7 @@ def _fetch_futures_account_raw(*, api_key: str, api_secret: str) -> Dict[str, An
     return data
 
 
-def _is_all_symbols(symbol: str) -> bool:
-    return str(symbol or "").strip().upper() in {"", "*", "ALL", "__ALL__"}
+from mlbot_console.services.symbols import is_all_symbols
 
 
 def _symbol_base_asset(symbol: str) -> str:
@@ -100,7 +99,7 @@ def futures_open_positions(
     """Non-flat futures legs from ``/fapi/v2/account`` ``positions`` array."""
     sym_filter = (
         str(symbol).upper()
-        if symbol and not _is_all_symbols(symbol)
+        if symbol and not is_all_symbols(symbol)
         else ""
     )
     out: List[Dict[str, Any]] = []
@@ -302,7 +301,7 @@ def fetch_scope_exchange_balance(
         out["error_code"] = "not_configured"
         return out
     sym_filter = str(symbol or "").strip().upper()
-    symbol_scoped = sym_filter and not _is_all_symbols(sym_filter)
+    symbol_scoped = sym_filter and not is_all_symbols(sym_filter)
     try:
         if meta["account_type"] == "futures_usdtm":
             raw = _fetch_futures_account_raw(api_key=api_key, api_secret=api_secret)
@@ -358,7 +357,7 @@ def build_exchange_ledger(
     want = scopes or ["trend", "spot", "multi_leg"]
     sym_meta = (
         str(symbol).upper()
-        if symbol and not _is_all_symbols(symbol)
+        if symbol and not is_all_symbols(symbol)
         else "ALL"
     )
     accounts: List[Dict[str, Any]] = []

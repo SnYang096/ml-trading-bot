@@ -23,11 +23,7 @@ from mlbot_console.services.multileg_repair_tp import (
 )
 from mlbot_console.services.trade_markers import _marker_id, _parse_ts
 
-_ALL_SYMBOLS = frozenset({"", "*", "ALL", "__ALL__"})
-
-
-def _is_all_symbols(symbol: str) -> bool:
-    return str(symbol or "").strip().upper() in _ALL_SYMBOLS
+from mlbot_console.services.symbols import is_all_symbols
 
 
 def _row_time(row: Dict[str, Any]) -> int:
@@ -456,9 +452,9 @@ def _trend_position_event_rows(
 def _trend_operation_rows(
     db_path: Path, symbol: str, limit: int
 ) -> List[Dict[str, Any]]:
-    where = "" if _is_all_symbols(symbol) else "WHERE p.symbol = ?"
+    where = "" if is_all_symbols(symbol) else "WHERE p.symbol = ?"
     params: tuple[Any, ...] = (
-        (int(limit),) if _is_all_symbols(symbol) else (symbol.upper(), int(limit))
+        (int(limit),) if is_all_symbols(symbol) else (symbol.upper(), int(limit))
     )
     sql = f"""
         SELECT po.operation_id, po.position_id, po.operation_type,
@@ -559,7 +555,7 @@ def _entry_leg_ids_in_rows(rows: List[Dict[str, Any]]) -> Set[str]:
 def _query_open_multileg_positions(
     db_path: Path, symbol: str
 ) -> List[Dict[str, Any]]:
-    if _is_all_symbols(symbol):
+    if is_all_symbols(symbol):
         sql = """
             SELECT leg_id, strategy, symbol, side, entry_price, quantity, status,
                    opened_at, updated_at
@@ -662,7 +658,7 @@ def _supplement_multileg_repair_tp(
     symbol: str,
     rows: List[Dict[str, Any]],
 ) -> None:
-    if _is_all_symbols(symbol) or not db_path.is_file():
+    if is_all_symbols(symbol) or not db_path.is_file():
         return
     known = {str(r.get("order_id") or "") for r in rows}
     for row in _query_repair_tp_orders(db_path, symbol):
@@ -680,7 +676,7 @@ def _supplement_multileg_inventory_entries(
     engine_data_root: Optional[Path] = None,
 ) -> None:
     """Add open inventory legs missing from multi_leg_orders (e.g. S1 when only S1_tp shows)."""
-    if _is_all_symbols(symbol):
+    if is_all_symbols(symbol):
         return
     covered = _entry_leg_ids_in_rows(rows)
     seen_legs: Set[str] = set(covered)
@@ -812,7 +808,7 @@ def trend_orders(
     if status_filter:
         excluded = [s for s in excluded if s.lower() != status_filter]
     status_clause, status_params = _sql_excluded_status_clause(excluded, alias="o")
-    if _is_all_symbols(symbol):
+    if is_all_symbols(symbol):
         sql = f"""
             SELECT o.order_id, o.symbol AS symbol, o.side AS side, o.status, o.order_type,
                    o.quantity, o.price, o.stop_price, o.filled_quantity, o.average_price,
@@ -843,13 +839,13 @@ def trend_orders(
         rows = query_rows(db_path, sql, (sym, *status_params, int(limit)))
     pos_sql = _positions_select_from(db_path)
     pos_params: tuple[Any, ...] = ()
-    if not _is_all_symbols(symbol):
+    if not is_all_symbols(symbol):
         pos_sql += " WHERE symbol = ?"
         pos_params = (symbol.upper(),)
     pos_sql += " ORDER BY COALESCE(exit_time, entry_time) DESC LIMIT ?"
     pos_rows = query_rows(db_path, pos_sql, (*pos_params, int(limit)))
     entry_qty_by_pid = _trend_entry_qty_by_position(
-        db_path, None if _is_all_symbols(symbol) else symbol.upper()
+        db_path, None if is_all_symbols(symbol) else symbol.upper()
     )
     out = [_normalize("trend", r) for r in rows]
     _enrich_trend_sl_tp(out, pos_rows)
@@ -913,7 +909,7 @@ def spot_orders_list(
     status_match, match_params = _sql_included_status_clause(
         status_filter, alias="spot_orders"
     )
-    if _is_all_symbols(symbol):
+    if is_all_symbols(symbol):
         sql = f"""
             SELECT {select}
             FROM spot_orders
@@ -948,7 +944,7 @@ def fetch_multileg_raw_rows(
     end_ts: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """All chop_grid-related rows for symbol, including synthetic inventory legs."""
-    if not db_path.is_file() or _is_all_symbols(symbol):
+    if not db_path.is_file() or is_all_symbols(symbol):
         return []
     sym = symbol.upper()
     from mlbot_console.services.trade_markers import _sql_time_range_expr
@@ -957,7 +953,7 @@ def fetch_multileg_raw_rows(
         start_ts, end_ts, "COALESCE(filled_at, created_at)"
     )
     sql = f"""
-        SELECT local_order_id AS order_id, symbol, side, status, order_type, purpose,
+        SELECT local_order_id AS order_id, symbol, side, position_side, status, order_type, purpose,
                quantity, price, stop_price, filled_quantity, average_price, created_at,
                filled_at, strategy, leg_id, client_order_id
         FROM multi_leg_orders
@@ -1000,7 +996,7 @@ def multi_leg_orders_list(
     if strat:
         strategy_clause = " AND lower(multi_leg_orders.strategy) = ?"
         strategy_params = (strat,)
-    if _is_all_symbols(symbol):
+    if is_all_symbols(symbol):
         sql = f"""
             SELECT local_order_id AS order_id, symbol, side, position_side, status,
                    order_type, purpose, quantity, price, stop_price, filled_quantity,

@@ -44,6 +44,7 @@ class MultiLegStorage:
         cursor = conn.execute("PRAGMA table_info(multi_leg_orders)")
         existing = {str(row[1]) for row in cursor.fetchall()}
         alters = [
+            ("position_side", "TEXT"),
             ("filled_quantity", "REAL DEFAULT 0"),
             ("average_price", "REAL"),
             ("commission", "REAL DEFAULT 0"),

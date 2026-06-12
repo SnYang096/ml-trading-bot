@@ -269,6 +269,45 @@ def test_apply_execution_report_does_not_zero_market_fill(tmp_path) -> None:
         conn.close()
 
 
+def test_legacy_db_gets_position_side_column(tmp_path) -> None:
+    db_path = tmp_path / "legacy_multi_leg.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE multi_leg_orders (
+            local_order_id TEXT PRIMARY KEY,
+            run_id TEXT,
+            strategy TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            leg_id TEXT,
+            side TEXT NOT NULL,
+            order_type TEXT NOT NULL,
+            purpose TEXT,
+            quantity REAL NOT NULL,
+            price REAL,
+            stop_price REAL,
+            client_order_id TEXT,
+            exchange_order_id TEXT,
+            status TEXT NOT NULL,
+            raw_json TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    MultiLegStorage(str(db_path))
+
+    conn = sqlite3.connect(db_path)
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(multi_leg_orders)")}
+        assert "position_side" in cols
+    finally:
+        conn.close()
+
+
 def test_lookup_order_purpose_by_exchange_and_client_id(tmp_path) -> None:
     db_path = tmp_path / "multi_leg.db"
     storage = MultiLegStorage(str(db_path))

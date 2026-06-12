@@ -10,13 +10,9 @@ from typing import Any, Dict, List, Optional, Set
 
 from mlbot_console.services.db import query_rows
 from mlbot_console.services.exchange_balances import fetch_scope_exchange_balance
+from mlbot_console.services.symbols import is_all_symbols
 
 logger = logging.getLogger(__name__)
-
-
-def _is_all_symbols(symbol: Optional[str]) -> bool:
-    sym = str(symbol or "").strip().upper()
-    return sym in {"", "*", "ALL", "__ALL__"}
 
 
 def _spot_tracked_assets(spot_db: Optional[Path], spot_ledger_db: Optional[Path]) -> Set[str]:
@@ -51,7 +47,7 @@ def _local_trend_open_positions(
     from mlbot_console.services.account_summary import _trend_entry_qty_by_position
 
     sym = str(symbol or "").strip().upper()
-    sym_filter = sym if sym and not _is_all_symbols(sym) else None
+    sym_filter = sym if sym and not is_all_symbols(sym) else None
     entry_qty = _trend_entry_qty_by_position(Path(trend_db), sym_filter)
     where = " WHERE lower(status) = 'open'"
     params: tuple[Any, ...] = ()
@@ -140,7 +136,7 @@ def reconcile_account(
         # Only reconcile assets the strategy books; ignore stray wallet balances (e.g. fee ETH).
         compare_assets = tracked if tracked else set(local_holdings.keys())
         sym = str(symbol or "").strip().upper()
-        if sym and not _is_all_symbols(sym) and sym.endswith("USDT"):
+        if sym and not is_all_symbols(sym) and sym.endswith("USDT"):
             base = sym[:-4]
             if base:
                 compare_assets = {base} if not compare_assets else compare_assets & {base}
@@ -254,7 +250,7 @@ def reconcile_account(
         local_snapshot = {"open_positions": local_positions}
         exchange_positions = list(exchange.get("exchange_open_positions") or [])
         sym_u = str(symbol or "").strip().upper()
-        if sym_u and not _is_all_symbols(sym_u):
+        if sym_u and not is_all_symbols(sym_u):
             exchange_positions = [
                 p
                 for p in exchange_positions

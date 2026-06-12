@@ -24,8 +24,7 @@ def _scopes_list(scopes: str) -> List[str]:
     return [s.strip().lower() for s in scopes.split(",") if s.strip()]
 
 
-def _is_all_symbols(symbol: str) -> bool:
-    return str(symbol or "").strip().upper() in {"", "*", "ALL", "__ALL__"}
+from mlbot_console.services.symbols import is_all_symbols
 
 
 @router.get("/api/orders/list")
@@ -59,7 +58,7 @@ def orders_list(
         engine_data_root=SETTINGS.engine_data_root,
         strategy=strategy,
     )
-    sym_meta = "ALL" if _is_all_symbols(symbol) else symbol.upper()
+    sym_meta = "ALL" if is_all_symbols(symbol) else symbol.upper()
     return ok(rows, meta={"count": len(rows), "symbol": sym_meta})
 
 
@@ -71,7 +70,7 @@ def orders_trade_links(
     limit: int = Query(200, ge=1, le=500),
 ) -> dict:
     """Closed round-trips: entry + exit on one row (same pairing as Trade Map links)."""
-    if _is_all_symbols(symbol):
+    if is_all_symbols(symbol):
         return ok(
             [],
             meta={
