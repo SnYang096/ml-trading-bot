@@ -238,12 +238,12 @@ multi_leg:
     chop_grid:
       # Live 500U + BTC min lot: level ≈ 20% equity (segment_dd/(max_loss×6 levels)).
       # sim_multileg @500: 4-segment maxDD ~-9.5% (trade replay, not re-run pipeline).
-      segment_dd_target: 0.036
+      segment_dd_target: 0.072
       max_loss_per_grid: 0.03
       max_levels_per_side: 3
     trend_scalp:
       # Live 500U + BTC min lot: leg ≈ 20% equity (segment_dd/(max_loss×4 units)).
-      segment_dd_target: 0.016
+      segment_dd_target: 0.072
       max_loss_per_segment: 0.02
       max_gross_exposure_units: 4
   account:
@@ -270,10 +270,16 @@ multi_leg:
     max_net_notional_pct: 0.85
     max_symbol_gross_notional_pct: 1.30 # ≥ chop full grid gross on one symbol.
     max_symbol_net_notional_pct: 0.45 # ≥ trend 2-leg net (40%) + headroom.
-    # chop_grid: at most this many symbols may hold an active grid segment at once.
-    # Sizing does NOT divide by universe size; overlap is limited here instead.
-    # Live highcap uses the same cap (6); gross notional still capped by pct limits.
-    max_concurrent_grid_symbols: 6
+    # chop_grid + trend_scalp: shared cap on distinct symbols with any active
+    # multi-leg strategy segment. Neither strategy counts ghost (no inventory /
+    # pending orders / exchange activity) segments toward the limit.
+    max_concurrent_multi_leg_symbols: 6
+    # Minimum bars (×120 min) before a symbol can switch back to the previous
+    # strategy after a chop↔trend handover. Prevents thrashing that generates
+    # unnecessary close+reopen friction. 0 = no cooldown (legacy).
+    # Experiment 20260612_chop_grid_cooldown_protect: 3 bars +0.93% return,
+    # -86% conflicts vs baseline. Beyond 3 bars no further gain.
+    strategy_switch_cooldown_bars: 3
     # Maximum number of resting open orders across all multi-leg strategies.
     max_resting_orders: 60 # Cap on open limit orders (grid + dual-add combined).
 

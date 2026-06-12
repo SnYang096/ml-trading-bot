@@ -16,7 +16,7 @@ Usage
         --chop-root results/chop_grid/experiments/stack_ablation_20260604/E7_four_segment/dense_3l_live \\
         --trend-root results/trend_scalp/experiments/segment_validate_20260603_timeline \\
         --segments bear_2022 bull_2023_2024 recent_range_to_bear recent_6m_oos \\
-        --max-concurrent-grid-symbols 3
+        --max-concurrent-multi-leg-symbols 3
 """
 from __future__ import annotations
 
@@ -190,7 +190,7 @@ def main() -> None:
     ap.add_argument("--max-levels-per-side", type=int, default=3)
     ap.add_argument("--max-loss-per-segment", type=float, default=0.02)
     ap.add_argument("--max-gross-exposure-units", type=int, default=4)
-    ap.add_argument("--max-concurrent-grid-symbols", type=int, default=0)
+    ap.add_argument("--max-concurrent-multi-leg-symbols", type=int, default=0)
     ap.add_argument("--unit-notional", type=float, default=None)
     args = ap.parse_args()
 
@@ -260,7 +260,9 @@ def main() -> None:
     gate_stats = apply_multileg_segment_gates(
         chop_seg,
         trend_seg,
-        max_concurrent_grid_symbols=int(args.max_concurrent_grid_symbols or 0),
+        max_concurrent_multi_leg_symbols=int(
+            args.max_concurrent_multi_leg_symbols or 0
+        ),
     )
     chop_allowed = filter_trades_by_segment_blocks(
         chop_tr, gate_stats.blocked_chop_segment_ids
@@ -278,8 +280,10 @@ def main() -> None:
         f"  trend blocked segments: {gate_stats.blocked_trend_segments} "
         f"(symbol conflicts={gate_stats.peak_symbol_conflicts})"
     )
-    if args.max_concurrent_grid_symbols > 0:
-        print(f"  max_concurrent_grid_symbols={args.max_concurrent_grid_symbols}")
+    if args.max_concurrent_multi_leg_symbols > 0:
+        print(
+            f"  max_concurrent_multi_leg_symbols={args.max_concurrent_multi_leg_symbols}"
+        )
 
     if not chop_allowed.empty:
         m = simulate_account_trades(

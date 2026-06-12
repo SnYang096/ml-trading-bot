@@ -424,6 +424,9 @@ class ChopGridLiveEngine:
         self.state.active = False
         self.state.current_regime = "idle"
         self.save_state()
+        gate = getattr(self, "_concurrency_gate", None)
+        if gate is not None:
+            gate.notify_deactivation(self.state.symbol, "chop_grid")
         return True
 
     def holds_real_grid_slot(self) -> bool:
@@ -1457,6 +1460,9 @@ class ChopGridLiveEngine:
         self.state.level_replenish_count = {}
         self.state.active = False
         self.state.current_regime = "idle"
+        gate = getattr(self, "_concurrency_gate", None)
+        if gate is not None:
+            gate.notify_deactivation(self.state.symbol, "chop_grid")
         return actions
 
     def _may_replenish_level(self, level_key: str) -> bool:

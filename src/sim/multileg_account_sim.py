@@ -38,12 +38,13 @@ def apply_multileg_segment_gates(
     chop_segments: pd.DataFrame,
     trend_segments: pd.DataFrame,
     *,
-    max_concurrent_grid_symbols: int = 0,
+    max_concurrent_multi_leg_symbols: int = 0,
     strategy_priority: Tuple[StrategyName, ...] = ("chop_grid", "trend_scalp"),
 ) -> MultilegGateStats:
     """Replay segment starts/ends on one account timeline.
 
-    - ``max_concurrent_grid_symbols``: chop_grid-only cap (distinct symbols).
+    - ``max_concurrent_multi_leg_symbols``: shared cap on distinct symbols
+      across both chop_grid + trend_scalp (0 = unlimited).
     - Per-symbol mutex: if a symbol is owned by one strategy, the other cannot
       start a new segment on that symbol until the owner segment ends.
     - Same-timestamp tie-break: ends before starts; starts follow ``strategy_priority``.
@@ -76,16 +77,18 @@ def apply_multileg_segment_gates(
     events.sort(key=_sort_key)
 
     symbol_owner: Dict[str, StrategyName] = {}
-    active_chop_symbols: Set[str] = set()
+    active_ml_symbols: Set[str] = set()
     blocked_chop: Set[str] = set()
     blocked_trend: Set[str] = set()
-    peak_chop = 0
+    peak_ml_symbols = 0
     conflicts = 0
 
     for _ts, kind, strategy, seg_id, sym in events:
         if kind == "end":
-            if strategy == "chop_grid" and sym in active_chop_symbols:
-                active_chop_symbols.discard(sym)
+            if strategy == "chop_grid" and sym in active_ml_symbols:
+                active_ml_symbols.discard(sym)
+            if strategy == "trend_scalp" and sym in active_ml_symbols:
+                active_ml_symbols.discard(sym)
             if symbol_owner.get(sym) == strategy:
                 del symbol_owner[sym]
             continue
@@ -104,12 +107,15 @@ def apply_multileg_segment_gates(
                 blocked_trend.add(seg_id)
             continue
 
-        if strategy == "chop_grid" and max_concurrent_grid_symbols > 0:
-            if sym not in active_chop_symbols and len(active_chop_symbols) >= max_concurrent_grid_symbols:
-                blocked_chop.add(seg_id)
+        if max_concurrent_multi_leg_symbols > 0:
+            if sym not in active_ml_symbols and len(active_ml_symbols) >= max_concurrent_multi_leg_symbols:
+                if strategy == "chop_grid":
+                    blocked_chop.add(seg_id)
+                else:
+                    blocked_trend.add(seg_id)
                 continue
-            active_chop_symbols.add(sym)
-            peak_chop = max(peak_chop, len(active_chop_symbols))
+            active_ml_symbols.add(sym)
+            peak_ml_symbols = max(peak_ml_symbols, len(active_ml_symbols))
 
         symbol_owner[sym] = strategy
 
@@ -117,7 +123,7 @@ def apply_multileg_segment_gates(
     stats.blocked_trend_segment_ids = blocked_trend
     stats.blocked_chop_segments = len(blocked_chop)
     stats.blocked_trend_segments = len(blocked_trend)
-    stats.peak_chop_symbols = peak_chop
+    stats.peak_chop_symbols = peak_ml_symbols
     stats.peak_symbol_conflicts = conflicts
     return stats
 

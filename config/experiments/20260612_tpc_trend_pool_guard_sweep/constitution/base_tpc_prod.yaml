@@ -162,12 +162,9 @@ resource_allocation:
   # 列表顺序 = 同 bar 多 archetype 时 PCM 仲裁优先级（除非另写 intent_selection_policy.archetype_priority）
   enabled_archetypes:
     - tpc # Trend Pullback Continuation (primary production trend archetype).
-    - bpc # Breakout Pullback Continuation (research PCM candidate).
-    - me # Momentum Expansion (research PCM candidate).
-    - srb # Structural Range Breakout (research PCM candidate).
 
   # trend/fat-tail 账户池 slot 规则（仅作用于 run_live.py + LivePCM）。
-  # 运行时 trend 槽成员 = archetype_groups.trend ∩ enabled_archetypes（见 constitution_config）。
+  # 运行时 trend 槽成员 = enabled_archetypes（多策略研究配置才另写 archetype_groups.trend）。
   slot_policy:
     trend_group: trend # Key into archetype_groups; names the slot-sharing pool.
     min_trend_slots_per_symbol: 1 # At least one trend slot may target each symbol when signals compete.
@@ -211,13 +208,6 @@ resource_allocation:
     # If REST account/position reads fail, reject new risk instead of failing open.
     fail_closed: true
 
-  archetype_groups:
-    trend: # Named pool for slot_policy.trend_group; members share per-symbol slot rules.
-      - tpc
-      - bpc
-      - me
-      - srb
-
   per_strategy_limits:
     # ── TPC（Trend Pullback Continuation）──
     # 未配置时 ConstitutionExecutor.validate_add_position 对未知策略将 max_add_times 默认=1，
@@ -226,21 +216,6 @@ resource_allocation:
       max_risk_per_trade: 0.01
       allow_add_position: true
       max_add_times: 3
-      require_locked_profit: true
-    bpc:
-      max_risk_per_trade: 0.01
-      allow_add_position: true
-      max_add_times: 2
-      require_locked_profit: true
-    me:
-      max_risk_per_trade: 0.01
-      allow_add_position: true
-      max_add_times: 2
-      require_locked_profit: true
-    srb:
-      max_risk_per_trade: 0.01
-      allow_add_position: true
-      max_add_times: 2
       require_locked_profit: true
 
   # 未配置 direction_policy 时 LivePCM 不做事：方向由各策略 / gate 决定。
@@ -299,9 +274,6 @@ multi_leg:
     # multi-leg strategy segment. Neither strategy counts ghost (no inventory /
     # pending orders / exchange activity) segments toward the limit.
     max_concurrent_multi_leg_symbols: 6
-    # Minimum bars between chop↔trend strategy switches on same symbol.
-    # Experiment 20260612_chop_grid_cooldown_protect: 3 bars +0.93%, -86% conflicts.
-    strategy_switch_cooldown_bars: 3
     # Maximum number of resting open orders across all multi-leg strategies.
     max_resting_orders: 60 # Cap on open limit orders (grid + dual-add combined).
 

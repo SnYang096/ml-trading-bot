@@ -1,0 +1,48 @@
+# TPC trend_pool_guard sweep — prod TPC only, constitution variants only
+experiment_id: tpc_trend_pool_guard_20260612
+decision_doc: config/experiments/20260612_tpc_trend_pool_guard_sweep/DECISION.md
+strategy: tpc
+data_path: data/parquet_data
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - BNBUSDT
+  - XRPUSDT
+  - ADAUSDT
+
+runs:
+  - variant: G0_prod_1_2
+    strategies_root: config/strategies
+    constitution_yaml: config/experiments/20260612_tpc_trend_pool_guard_sweep/constitution/G0_prod_1_2.yaml
+    start_date: "2022-01-01"
+    end_date: "2026-04-01"
+    output_dir: results/tpc/experiments/pool_guard_20260612/G0_prod_1_2
+
+  - variant: G1_be1_3
+    strategies_root: config/strategies
+    constitution_yaml: config/experiments/20260612_tpc_trend_pool_guard_sweep/constitution/G1_be1_3.yaml
+    start_date: "2022-01-01"
+    end_date: "2026-04-01"
+    output_dir: results/tpc/experiments/pool_guard_20260612/G1_be1_3
+
+  - variant: G2_be3_3
+    strategies_root: config/strategies
+    constitution_yaml: config/experiments/20260612_tpc_trend_pool_guard_sweep/constitution/G2_be3_3.yaml
+    start_date: "2022-01-01"
+    end_date: "2026-04-01"
+    output_dir: results/tpc/experiments/pool_guard_20260612/G2_be3_3
+
+  - variant: G3_be3_6
+    strategies_root: config/strategies
+    constitution_yaml: config/experiments/20260612_tpc_trend_pool_guard_sweep/constitution/G3_be3_6.yaml
+    start_date: "2022-01-01"
+    end_date: "2026-04-01"
+    output_dir: results/tpc/experiments/pool_guard_20260612/G3_be3_6
+
+  - variant: G4_guard_off
+    strategies_root: config/strategies
+    constitution_yaml: config/experiments/20260612_tpc_trend_pool_guard_sweep/constitution/G4_guard_off.yaml
+    start_date: "2022-01-01"
+    end_date: "2026-04-01"
+    output_dir: results/tpc/experiments/pool_guard_20260612/G4_guard_off

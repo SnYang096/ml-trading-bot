@@ -21,7 +21,8 @@ Each strategy can set its own ``segment_dd_target`` under ``multi_leg.sizing``::
         max_loss_per_segment: 0.02
         max_gross_exposure_units: 4
 
-Portfolio overlap is capped separately (``max_concurrent_grid_symbols``).
+Portfolio overlap is capped for both strategies together
+(``max_concurrent_multi_leg_symbols``).
 """
 
 from __future__ import annotations
@@ -268,11 +269,11 @@ def resolve_multi_leg_unit_notional(
     )
 
 
-def max_concurrent_grid_symbols_from_ml(ml: Mapping[str, Any]) -> Optional[int]:
+def max_concurrent_multi_leg_symbols_from_ml(ml: Mapping[str, Any]) -> Optional[int]:
     rs = ml.get("risk_limits")
     if not isinstance(rs, dict):
         return None
-    raw = rs.get("max_concurrent_grid_symbols")
+    raw = rs.get("max_concurrent_multi_leg_symbols")
     if raw is None:
         return None
     try:

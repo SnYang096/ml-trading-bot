@@ -58,6 +58,7 @@ export interface TradeLink {
   exit_marker_id?: string;
   side?: string;
   pnl_usdt?: number | null;
+  qty?: number | null;
   color?: string;
 }
 

@@ -327,6 +327,12 @@ class DualAddTrendLiveEngine:
             and not (self.cfg.exclude_box_prefilter and is_box)
         )
         if should_enter:
+            gate = getattr(self, "_concurrency_gate", None)
+            if gate is not None and not gate.allow_new_segment(
+                symbol, strategy="trend_scalp"
+            ):
+                should_enter = False
+        if should_enter:
             actions.extend(
                 self._start_segment(symbol, timestamp, close, atr, trend_side)
             )
@@ -790,6 +796,9 @@ class DualAddTrendLiveEngine:
         # Keep pending_orders intact; on_execution_results will filter them.
         self.state.inventory = []
         self.state.active = False
+        gate = getattr(self, "_concurrency_gate", None)
+        if gate is not None:
+            gate.notify_deactivation(self.state.symbol, "trend_scalp")
         return actions
 
     def _place_order(

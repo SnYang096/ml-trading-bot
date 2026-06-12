@@ -138,6 +138,7 @@ def _append_link(
     exit_kind: str,
     side: str = "long",
     pnl_usdt: Optional[float] = None,
+    qty: Optional[float] = None,
 ) -> None:
     if str(status).lower() != "closed":
         return
@@ -159,6 +160,7 @@ def _append_link(
             "entry_marker_id": entry_marker_id,
             "exit_marker_id": exit_marker_id,
             "side": side,
+            "qty": qty,
             "pnl_usdt": pnl_usdt,
             "color": _closed_link_color(
                 strategy=strat,
@@ -243,6 +245,7 @@ def _append_entry_tp_links(
             exit_kind="take_profit",
             side=_leg_position_side(row),
             pnl_usdt=_multileg_link_pnl_usdt(row, filled_tp),
+            qty=filled_quantity(row),
         )
         return
 
@@ -354,6 +357,7 @@ def _append_orphan_market_exit_links(
                 exit_kind="market_exit",
                 side=_leg_position_side(ent),
                 pnl_usdt=_multileg_link_pnl_usdt(ent, mex),
+                qty=ent_qty,
             )
             linked_entries.add(entry_mid)
             linked_exits.add(exit_mid)
@@ -425,6 +429,7 @@ def multi_leg_trade_links(
                     exit_kind="market_exit",
                     side=_leg_position_side(ent),
                     pnl_usdt=_multileg_link_pnl_usdt(ent, row),
+                    qty=filled_quantity(ent),
                 )
 
     _append_orphan_market_exit_links(links, rows, by_group)
@@ -490,6 +495,7 @@ def trend_trade_links(
         exit_mid = _marker_id("trend", "positions", f"{pid}:exit")
         pnl = _trend_realized_pnl_usdt(row, entry_qty_by_pid=entry_qty_by_pid)
         side = str(row.get("side") or "long").lower()
+        qty = entry_qty_by_pid.get(pid)
         _append_link(
             links,
             strategy=strat,
@@ -504,6 +510,7 @@ def trend_trade_links(
             exit_kind="exit",
             side=side,
             pnl_usdt=float(pnl) if pnl is not None else None,
+            qty=qty,
         )
     op_sql = """
         SELECT po.operation_id, po.operation_type, po.operation_time, po.price,

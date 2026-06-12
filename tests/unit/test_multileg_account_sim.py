@@ -51,7 +51,9 @@ def test_mutex_blocks_trend_when_chop_owns_symbol() -> None:
             }
         ]
     )
-    stats = apply_multileg_segment_gates(chop, trend, max_concurrent_grid_symbols=0)
+    stats = apply_multileg_segment_gates(
+        chop, trend, max_concurrent_multi_leg_symbols=0
+    )
     assert "T1" in stats.blocked_trend_segment_ids
     assert stats.blocked_chop_segments == 0
 
@@ -59,7 +61,7 @@ def test_mutex_blocks_trend_when_chop_owns_symbol() -> None:
 def test_chop_concurrent_cap_blocks_fourth_symbol() -> None:
     chop = _seg_rows()
     stats = apply_multileg_segment_gates(
-        chop, pd.DataFrame(), max_concurrent_grid_symbols=3
+        chop, pd.DataFrame(), max_concurrent_multi_leg_symbols=3
     )
     assert "C4" in stats.blocked_chop_segment_ids
     assert stats.peak_chop_symbols == 3

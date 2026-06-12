@@ -684,8 +684,12 @@ def apply_multi_leg_args_from_constitution(args: Any) -> None:
         args.unit_notional = float(
             units.get("chop_grid") or units.get("trend_scalp") or next(iter(units.values()))
         )
-    from src.config.multileg_sizing import max_concurrent_grid_symbols_from_ml
-
-    cap = max_concurrent_grid_symbols_from_ml(ml)
+    from src.config.multileg_sizing import max_concurrent_multi_leg_symbols_from_ml
+    cap = max_concurrent_multi_leg_symbols_from_ml(ml)
     if cap is not None:
-        setattr(args, "max_concurrent_grid_symbols", int(cap))
+        setattr(args, "max_concurrent_multi_leg_symbols", int(cap))
+    rs = ml.get("risk_limits")
+    if isinstance(rs, dict):
+        cd = rs.get("strategy_switch_cooldown_bars")
+        if cd is not None:
+            setattr(args, "strategy_switch_cooldown_bars", int(cd))

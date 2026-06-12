@@ -24,6 +24,13 @@ export function getSymbol(): string {
   return localStorage.getItem(SYMBOL_KEY) || '';
 }
 
+/** Account / Orders symbol filter: URL param wins; otherwise 全部 (not trade-map localStorage). */
+export function resolveConsoleSymbol(searchParam: string | null | undefined): string {
+  const fromUrl = String(searchParam ?? '').trim();
+  if (fromUrl) return fromUrl;
+  return SYMBOL_ALL;
+}
+
 export function isAllSymbols(sym: string): boolean {
   const s = String(sym || '').trim();
   return !s || s === SYMBOL_ALL || s.toUpperCase() === 'ALL';

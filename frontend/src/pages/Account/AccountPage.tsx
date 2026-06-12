@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useState } from 'react';
 import { apiGet } from '@/api/client.ts';
 import type { AccountReconciliationAll, AccountSummary, SymbolRow } from '@/api/types.ts';
-import { fmtPnl, getSymbol, isAllSymbols, pnlClass, setSymbol, SYMBOL_ALL } from '@/lib/shell.ts';
+import { fmtPnl, isAllSymbols, pnlClass, resolveConsoleSymbol, setSymbol, SYMBOL_ALL } from '@/lib/shell.ts';
 import {
   DailyPnlChart,
   EquityCurveChart,
@@ -21,7 +21,7 @@ import styles from './AccountPage.module.css';
 
 export function AccountPage() {
   const [searchParams] = useSearchParams();
-  const [symbol, setSym] = useState(searchParams.get('symbol') || getSymbol() || 'ETHUSDT');
+  const [symbol, setSym] = useState(() => resolveConsoleSymbol(searchParams.get('symbol')));
   const [lookback, setLookback] = useState('0');
 
   const symbolsQuery = useQuery({
@@ -149,7 +149,7 @@ export function AccountPage() {
                   if (!isAllSymbols(e.target.value)) setSymbol(e.target.value);
                 }}
               >
-                <option value="*">全部</option>
+                <option value={SYMBOL_ALL}>全部</option>
                 {(symbolsQuery.data?.data || [{ symbol: 'ETHUSDT' }]).map((r) => (
                   <option key={r.symbol} value={r.symbol}>
                     {r.symbol}

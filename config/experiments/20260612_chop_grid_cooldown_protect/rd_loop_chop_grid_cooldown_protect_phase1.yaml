@@ -1,0 +1,28 @@
+# Experiment scaffold — copied by `mlbot research init`
+# Replace chop_grid_cooldown_protect, chop_grid, 20260612, bear_2022,bull_2023_2024,recent_range_to_bear,recent_6m_oos placeholders.
+
+topic: chop_grid_cooldown_protect
+strategy: chop_grid
+output_dir: results/rd_loop/chop_grid_cooldown_protect
+
+# Phase 0: prepare-only or Tier-0 parquet path
+features_parquet: &parquet results/monitoring/tier0/chop_grid_20260612/features_labeled.parquet
+
+quick_layer_scans:
+  - mode: condition-set
+    features_parquet: *parquet
+    label: success_no_rr_extreme
+    layer: regime
+    out: quick_scan/phase1_condition_set.md
+
+monitor_bundle:
+  strategy: chop_grid
+  layer: regime
+  parquet: *parquet
+  out_dir: monitor_bundle
+  mode: draft
+
+# variant_grid: variants/chop_grid_cooldown_protect_grid.yaml
+# decision_doc:
+#   topic: chop_grid_cooldown_protect
+#   out: decision_doc_skeleton.md

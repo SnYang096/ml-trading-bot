@@ -1,27 +1,27 @@
-import { useQuery } from '@tanstack/react-query';
-import { Link, useSearchParams } from 'react-router-dom';
-import { useEffect, useMemo, useState } from 'react';
 import { apiGet } from '@/api/client.ts';
-import { usePageVisible, visibleRefetchInterval } from '@/hooks/usePageVisible.ts';
 import type { OrderRow, SymbolRow, TradeLink } from '@/api/types.ts';
+import { usePageVisible, visibleRefetchInterval } from '@/hooks/usePageVisible.ts';
 import {
+  SCOPE_LABELS,
+  SYMBOL_ALL,
   displayExitKind,
   displayOrderAction,
   displayOrderPrice,
   displayOrderQty,
   displayPositionSideLabel,
   fmtPnl,
+  formatUnixTs,
   getScopesDefault,
-  getSymbol,
   isAllSymbols,
   pnlClass,
+  resolveConsoleSymbol,
   setScopesState,
   setSymbol,
-  SCOPE_LABELS,
-  SYMBOL_ALL,
-  formatUnixTs,
 } from '@/lib/shell.ts';
 import { listStrategiesForLayers, scopesFromLayers as scopesFromLayersLib } from '@/lib/tradeMap';
+import { useQuery } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 
 interface LayerState {
   trend: boolean;
@@ -41,7 +41,7 @@ const DEFAULT_EXCLUDE_STATUS = 'expired,canceled,rejected';
 export function OrdersPage() {
   const pageVisible = usePageVisible();
   const [searchParams] = useSearchParams();
-  const [symbol, setSym] = useState(searchParams.get('symbol') || getSymbol() || 'ETHUSDT');
+  const [symbol, setSym] = useState(() => resolveConsoleSymbol(searchParams.get('symbol')));
   const [viewMode, setViewMode] = useState<ViewMode>('legs');
   const [layers, setLayers] = useState<LayerState>(() => {
     const saved = getScopesDefault();
@@ -249,6 +249,7 @@ export function OrdersPage() {
               <th>Strategy</th>
               <th>Leg</th>
               <th>方向</th>
+              <th>Qty</th>
               <th>开仓价</th>
               <th>平仓价</th>
               <th>PNL</th>
@@ -273,6 +274,7 @@ export function OrdersPage() {
                     <td>{r.strategy}</td>
                     <td>{r.leg || '—'}</td>
                     <td>{displayPositionSideLabel(r.side)}</td>
+                    <td>{r.qty != null ? String(r.qty) : '—'}</td>
                     <td>{Number.isFinite(Number(r.entry_price)) ? String(r.entry_price) : '—'}</td>
                     <td>{Number.isFinite(Number(r.exit_price)) ? String(r.exit_price) : '—'}</td>
                     <td className={pnlClass(r.pnl_usdt)}>
@@ -286,7 +288,7 @@ export function OrdersPage() {
               })
             ) : (
               <tr>
-                <td colSpan={showSymbol ? 11 : 10} className="muted">
+                <td colSpan={showSymbol ? 12 : 11} className="muted">
                   无已平仓回合
                 </td>
               </tr>

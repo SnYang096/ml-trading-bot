@@ -119,7 +119,7 @@ from src.order_management.multi_leg_risk_governor import (  # noqa: E402
     MultiLegRiskLimits,
 )
 from src.order_management.chop_grid_concurrency import (  # noqa: E402
-    ChopGridConcurrencyGate,
+    MultiLegConcurrencyGate,
 )
 from src.live_data_stream.constitution_config import (  # noqa: E402
     apply_multi_leg_args_from_constitution,
@@ -530,8 +530,13 @@ def build_daemon(
             lookback_days=args.lookback_days,
         )
     runtimes: List[StrategyRuntime] = []
-    max_cg = int(getattr(args, "max_concurrent_grid_symbols", 0) or 0)
-    chop_grid_gate = ChopGridConcurrencyGate(max_cg) if max_cg > 0 else None
+    max_cg = int(getattr(args, "max_concurrent_multi_leg_symbols", 0) or 0)
+    cooldown_bars = int(getattr(args, "strategy_switch_cooldown_bars", 0) or 0)
+    ml_gate = (
+        MultiLegConcurrencyGate(max_cg, cooldown_bars=cooldown_bars)
+        if max_cg > 0
+        else None
+    )
     multi_engine_symbols = {
         s
         for s, n in Counter(
@@ -568,8 +573,8 @@ def build_daemon(
                 )
             )
             engine = _make_engine(strategy, symbol=symbol, args=args)
-            if strategy == "chop_grid" and chop_grid_gate is not None:
-                chop_grid_gate.register(symbol, engine)
+            if ml_gate is not None:
+                ml_gate.register(symbol, engine, strategy=strategy)
             orchestrator = MultiLegLiveOrchestrator(
                 engine=engine,
                 governor=governor,
@@ -740,10 +745,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-symbol-net-notional", type=float, default=400.0)
     p.add_argument("--max-resting-orders", type=int, default=60)
     p.add_argument(
-        "--max-concurrent-grid-symbols",
+        "--max-concurrent-multi-leg-symbols",
         type=int,
         default=0,
-        help="Max chop_grid symbols with an active segment at once (0=constitution/default off)",
+        help="Max distinct symbols with active multi-leg segments (0=constitution/default off)",
     )
     p.add_argument(
         "--constitution-yaml",
