@@ -422,6 +422,9 @@ def _trend_position_event_rows(
             )
         exit_ts = _parse_ts(row.get("exit_time"))
         if exit_ts is not None:
+            from mlbot_console.services.account_summary import _trend_realized_pnl_usdt
+
+            pnl = _trend_realized_pnl_usdt(row, entry_qty_by_pid=qty_map)
             out.append(
                 _normalize(
                     "trend",
@@ -439,9 +442,9 @@ def _trend_position_event_rows(
                         "filled_quantity": pos_qty,
                         "created_at": row.get("exit_time"),
                         "strategy_id": strat,
-                        "realized_pnl": row.get("realized_pnl"),
-                        "pnl_usdt": row.get("realized_pnl"),
-                        "pnl_hint": "已实现" if row.get("realized_pnl") is not None else None,
+                        "realized_pnl": pnl,
+                        "pnl_usdt": pnl,
+                        "pnl_hint": "已实现" if pnl is not None else None,
                         "_marker_source": "positions",
                     },
                 )
