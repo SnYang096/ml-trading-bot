@@ -205,8 +205,10 @@ class PositionTracker:
 
             # trailing SL 更新时同步交易所挂单（仅在未触发退出时）
             if close_reason is None:
-                self._maybe_sync_exchange_sl(pid, pos)
-                self._persist_position_record(pid, pos)
+                if self._maybe_sync_exchange_sl(pid, pos):
+                    closed.append(pid)
+                elif pid in self._positions:
+                    self._persist_position_record(pid, pos)
 
             if close_reason:
                 close_decisions[pid] = (str(close_reason), float(exit_price))
@@ -280,16 +282,19 @@ class PositionTracker:
         elif (not is_long) and new_sl < old_sl_f:
             pos["stop_loss_price"] = new_sl
 
-    def close(self, position_id: str, qty: float, reason: str) -> None:
+    def close(self, position_id: str, qty: float, reason: str) -> bool:
         """平仓：cancel SL/TP 挂单 → market 平仓
 
         Args:
             position_id: 持仓 ID
             qty: 平仓数量
             reason: 退出原因（用于日志）
+
+        Returns:
+            True 当市价平仓单成功提交；失败（异常）返回 False。
         """
         if qty <= 0 or self.order_manager is None:
-            return
+            return False
 
         pos = self._positions.get(position_id, {})
 
@@ -349,6 +354,8 @@ class PositionTracker:
                 self.symbol,
                 reason,
             )
+            return False
+        return True
 
     def close_from_exchange(
         self,
@@ -690,22 +697,26 @@ class PositionTracker:
                 new_sl,
             )
 
-    def _maybe_sync_exchange_sl(self, pid: str, pos: Dict[str, Any]) -> None:
-        """Place or refresh exchange STOP_MARKET when software stop_loss_price is set."""
+    def _maybe_sync_exchange_sl(self, pid: str, pos: Dict[str, Any]) -> bool:
+        """Place or refresh exchange STOP_MARKET when software stop_loss_price is set.
+
+        Returns True when the local position was removed (e.g. -2021 market close
+        or -4509 ghost reconcile) so callers skip re-persisting as OPEN.
+        """
         if self.order_manager is None:
-            return
+            return False
         if self._should_skip_exchange_sl_sync(pid, pos):
-            return
+            return False
 
         new_sl_raw = pos.get("stop_loss_price")
         if new_sl_raw is None:
-            return
+            return False
         try:
             new_sl = float(new_sl_raw)
         except (TypeError, ValueError):
-            return
+            return False
         if new_sl <= 0:
-            return
+            return False
         self._persist_position_record(pid, pos)
 
         old_sl_raw = pos.get("_exchange_sl_price")
@@ -716,7 +727,7 @@ class PositionTracker:
                 old_sl = None
             else:
                 if abs(new_sl - old_sl) < 1e-8:
-                    return  # 价格未变，不操作
+                    return False  # 价格未变，不操作
         else:
             old_sl = None
 
@@ -725,7 +736,7 @@ class PositionTracker:
         is_long = side_str in {"LONG", "BUY"}
         qty = float(pos.get("qty") or 0.0)
         if qty <= 0:
-            return
+            return False
 
         mark = self._fetch_mark_price(position_side)
         if mark is not None and self._stop_would_immediately_trigger(
@@ -739,9 +750,18 @@ class PositionTracker:
                 new_sl,
                 pid,
             )
-            self.close(pid, qty, reason="sl_breached_mark")
+            if not self.close(pid, qty, reason="sl_breached_mark"):
+                # 市价平失败：保留本地仓位（软件 SL 下个 bar 继续兜底），
+                # 跳过本轮 STOP 挂单（必然 -2021）。
+                logger.error(
+                    "[%s] -2021 market close failed, keep local position pid=%s",
+                    self.symbol,
+                    pid,
+                )
+                return False
             self._positions.pop(pid, None)
-            return
+            self._persist_state()
+            return True
 
         # cancel 旧挂单（仅更新路径；首次挂单无旧单）
         old_oid = pos.get("_exchange_sl_order_id")
@@ -806,13 +826,13 @@ class PositionTracker:
                 if "-4509" in str(exc) and self._reconcile_local_position_if_exchange_flat(
                     pid, position_side
                 ):
-                    return
+                    return True
                 self._log_exchange_sl_failure(new_sl, last_exc, log_key=_4130_log_key)
-                return
+                return False
         if new_order is None:
             if last_exc is not None:
                 self._log_exchange_sl_failure(new_sl, last_exc, log_key=_4130_log_key)
-            return
+            return False
         if old_sl is None:
             logger.info(
                 "[%s] 交易所 SL 首次挂单: %.4f order=%s pid=%s",
@@ -833,6 +853,7 @@ class PositionTracker:
         pos["_exchange_sl_price"] = new_sl
         self._persist_position_record(pid, pos)
         self._persist_state()
+        return False
 
     def _reconcile_local_position_if_exchange_flat(
         self, pid: str, position_side: str

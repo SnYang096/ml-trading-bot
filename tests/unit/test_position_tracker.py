@@ -276,6 +276,29 @@ class TestEnforceAll:
         assert closed == []
         assert len(tracker) == 1
 
+    def test_enforce_all_sl_breached_mark_keeps_sqlite_closed(self, tmp_path):
+        """-2021 guard must not re-persist CLOSED row as OPEN after market close."""
+        from src.order_management.models import PositionStatus
+        from src.order_management.storage import Storage
+
+        db_path = tmp_path / "order_management.db"
+        storage = Storage(str(db_path))
+        om = _make_om()
+        om.storage = storage
+        om.binance_api.get_ticker_price.return_value = 48500.0
+        tracker = _make_tracker(om)
+        pos = _make_pos(entry_price=50000.0, atr=500.0, stop_loss_r=2.0)
+        tracker.add("pid1", pos)
+
+        closed = tracker.enforce_all(_make_features(close=51000.0))
+
+        assert "pid1" in closed
+        assert len(tracker) == 0
+        row = storage.get_position("pid1")
+        assert row is not None
+        assert row.status == PositionStatus.CLOSED
+        assert row.exit_reason == "sl_breached_mark"
+
     def test_structural_exit_ema200_triggered(self):
         """LONG 价格跌破 EMA200 且 breakeven_locked=True → 触发 structural exit"""
         om = _make_om()
@@ -598,6 +621,43 @@ class TestSyncExchangeSL:
         assert kwargs["order_type"] == OrderType.MARKET
         assert kwargs["close_position"] is False
         assert tracker.get("pid1") is None
+
+    def test_sync_exchange_sl_2021_close_failure_keeps_position(self):
+        """If the -2021 market close errors, keep local position (software SL active)."""
+        om = _make_om()
+        om.binance_api.get_ticker_price.return_value = 48500.0
+        om.place_order.side_effect = Exception("network down")
+        tracker = _make_tracker(om)
+        pos = _make_pos(stop_loss_r=2.0)
+        tracker.add("pid1", pos)
+        pos["stop_loss_price"] = 49000.0
+
+        tracker.sync_exchange_sl("pid1")
+
+        assert tracker.get("pid1") is not None
+
+    def test_ensure_exchange_stop_losses_2021_close_persists_state(self, tmp_path):
+        """-2021 close at startup must also persist JSON state (no ghost on restart)."""
+        import json as _json
+
+        om = _make_om()
+        om.binance_api.get_ticker_price.return_value = 48500.0
+        state_path = tmp_path / "BTCUSDT.json"
+        tracker = PositionTracker(
+            order_manager=om,
+            symbol="BTCUSDT",
+            default_bar_minutes=240,
+            state_path=state_path,
+        )
+        pos = _make_pos(stop_loss_r=2.0)
+        tracker.add("pid1", pos)
+        pos["stop_loss_price"] = 49000.0
+
+        tracker.ensure_exchange_stop_losses()
+
+        assert tracker.get("pid1") is None
+        saved = _json.loads(state_path.read_text(encoding="utf-8"))
+        assert saved.get("positions") == {}
 
     def test_sync_exchange_sl_market_close_when_stop_breached_short(self):
         from src.order_management.models import OrderType

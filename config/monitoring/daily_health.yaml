@@ -20,8 +20,8 @@ watchdog_defaults:
 
 steps:
   - export-window: { window: near }
-  - validate-window: { window: near }
   - account-equity-snapshot: {}
+  - validate-window: { window: near }
   - watchdog:
       window: near
       baseline: config/monitoring/regime_watchdog_baseline.json
