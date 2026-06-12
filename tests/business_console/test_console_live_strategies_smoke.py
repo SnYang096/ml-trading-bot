@@ -28,11 +28,16 @@ def test_live_strategies_from_repo_constitution():
     cfg = load_constitution_dict(str(SETTINGS.constitution_yaml))
     live = get_live_console_strategies()
     ids = [s["id"] for s in live]
-    assert set(ids) == set(console_live_strategies_from_constitution(cfg))
+    const_ids = set(console_live_strategies_from_constitution(cfg))
+    assert set(ids) <= const_ids
     assert "tpc" in ids
     assert "chop_grid" in ids
     assert "trend_scalp" in ids
     assert "spot_accum_simple" in ids
+    # PCM whitelist may list research archetypes without live/highcap trees.
+    assert "bpc" not in ids
+    assert "me" not in ids
+    assert "srb" not in ids
     by_id = {s["id"]: s["account_layer"] for s in live}
     assert by_id["chop_grid"] == "multi_leg"
     assert by_id["trend_scalp"] == "multi_leg"

@@ -140,18 +140,30 @@ def _trend_realized_pnl_usdt(
 ) -> Optional[float]:
     if not row.get("exit_time"):
         return None
-    rpnl = row.get("realized_pnl")
-    if rpnl is not None:
-        try:
-            return float(rpnl)
-        except (TypeError, ValueError):
-            pass
     entry_px = float(row.get("entry_price") or 0.0)
     exit_px = float(row.get("exit_price") or 0.0)
     qty = _trend_position_qty(row, entry_qty_by_pid)
+    side = str(row.get("pos_side") or row.get("side") or "long").lower()
+    rpnl = row.get("realized_pnl")
+    if rpnl is not None:
+        try:
+            val = float(rpnl)
+            if val != 0.0:
+                return val
+            if (
+                qty > 0
+                and entry_px > 0
+                and exit_px > 0
+                and abs(entry_px - exit_px) > 1e-9
+            ):
+                if side in {"buy", "long"}:
+                    return (exit_px - entry_px) * qty
+                return (entry_px - exit_px) * qty
+            return val
+        except (TypeError, ValueError):
+            pass
     if qty <= 0 or entry_px <= 0 or exit_px <= 0:
         return None
-    side = str(row.get("pos_side") or row.get("side") or "long").lower()
     if side in {"buy", "long"}:
         return (exit_px - entry_px) * qty
     return (entry_px - exit_px) * qty
@@ -184,8 +196,25 @@ def _trend_realized_rec(pnl: float) -> Dict[str, Any]:
     }
 
 
-def _is_exchange_sync_close(row: Mapping[str, Any]) -> bool:
-    return str(row.get("exit_reason") or "").startswith("exchange_sync")
+def _is_exchange_sync_stat_exclude(row: Mapping[str, Any]) -> bool:
+    """Exclude bookkeeping sync closes from realized stats (not economic round-trips)."""
+    reason = str(row.get("exit_reason") or "")
+    if not reason.startswith("exchange_sync"):
+        return False
+    if "duplicate" in reason:
+        return True
+    entry_px = float(row.get("entry_price") or 0.0)
+    exit_px = float(row.get("exit_price") or 0.0)
+    rpnl = row.get("realized_pnl")
+    try:
+        pnl = float(rpnl) if rpnl is not None else None
+    except (TypeError, ValueError):
+        pnl = None
+    if pnl is not None and abs(pnl) > 1e-9:
+        return False
+    if entry_px > 0 and exit_px > 0 and abs(entry_px - exit_px) > 1e-9:
+        return False
+    return True
 
 
 def _trend_unrealized_rec(pnl: float) -> Dict[str, Any]:
@@ -300,7 +329,7 @@ def _trend_stats(
             continue
         strat = str(row.get("strategy_id") or "trend").lower()
         st = str(row.get("status") or "").lower()
-        if st != "open" and row.get("exit_time") and _is_exchange_sync_close(row):
+        if st != "open" and row.get("exit_time") and _is_exchange_sync_stat_exclude(row):
             sync_cleanup_closed += 1
             continue
         if st == "open" or not row.get("exit_time"):
@@ -825,6 +854,20 @@ def build_account_summary(
 
     allowed_scopes = {str(s.get("scope") or "") for s in scope_blocks}
     _merge_registry_strategy_rows(strategy_rows, allowed_scopes=allowed_scopes)
+    live_strategy_ids = {
+        str(s.get("scope") or ""): {
+            str(m.get("id") or "").lower()
+            for m in _registry_strategies_for_summary()
+            if str(m.get("account_layer") or "") == str(s.get("scope") or "")
+        }
+        for s in scope_blocks
+    }
+    strategy_rows = {
+        key: row
+        for key, row in strategy_rows.items()
+        if str(row.get("strategy") or "").lower()
+        in live_strategy_ids.get(str(row.get("scope") or ""), set())
+    }
 
     daily = _merge_daily([s["daily_realized"] for s in scope_blocks])
     daily = _fill_daily_realized_calendar(daily, lookback_days=lookback_days)

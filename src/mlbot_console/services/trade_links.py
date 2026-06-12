@@ -37,6 +37,29 @@ PNL_LINK_COLOR_LOSS = "#ef5350"
 PNL_LINK_COLOR_FLAT = "#8b949e"
 
 
+def _multileg_link_pnl_usdt(
+    entry_row: Dict[str, Any], exit_row: Dict[str, Any]
+) -> Optional[float]:
+    """Realized PnL for a closed entry↔exit leg pair (FIFO qty from entry fill)."""
+    from mlbot_console.services.account_summary import _link_pnl_usdt
+
+    qty = filled_quantity(entry_row)
+    if qty <= 0:
+        return None
+    entry_rec = {
+        "filled_quantity": qty,
+        "quantity": qty,
+        "average_price": _price(entry_row),
+        "price": entry_row.get("price"),
+        "side": entry_row.get("side"),
+    }
+    exit_rec = {
+        "average_price": _price(exit_row),
+        "price": exit_row.get("price"),
+    }
+    return _link_pnl_usdt(entry_rec, exit_rec)
+
+
 def _order_rows(db_path: Path, symbol: str) -> List[Dict[str, Any]]:
     sql = """
         SELECT local_order_id, strategy, symbol, side, position_side, purpose, status,
@@ -219,6 +242,7 @@ def _append_entry_tp_links(
             status="closed",
             exit_kind="take_profit",
             side=_leg_position_side(row),
+            pnl_usdt=_multileg_link_pnl_usdt(row, filled_tp),
         )
         return
 
@@ -329,6 +353,7 @@ def _append_orphan_market_exit_links(
                 status="closed",
                 exit_kind="market_exit",
                 side=_leg_position_side(ent),
+                pnl_usdt=_multileg_link_pnl_usdt(ent, mex),
             )
             linked_entries.add(entry_mid)
             linked_exits.add(exit_mid)
@@ -399,6 +424,7 @@ def multi_leg_trade_links(
                     status="closed",
                     exit_kind="market_exit",
                     side=_leg_position_side(ent),
+                    pnl_usdt=_multileg_link_pnl_usdt(ent, row),
                 )
 
     _append_orphan_market_exit_links(links, rows, by_group)
@@ -426,15 +452,24 @@ def trend_trade_links(
     if not db_path.is_file():
         return []
     sym = symbol.upper()
+    from mlbot_console.services.account_summary import (
+        _is_exchange_sync_stat_exclude,
+        _trend_entry_qty_by_position,
+        _trend_realized_pnl_usdt,
+    )
+
+    entry_qty_by_pid = _trend_entry_qty_by_position(db_path, sym)
     sql = """
-        SELECT position_id, symbol, side, entry_time, exit_time,
-               entry_price, exit_price, realized_pnl, status, strategy_id
+        SELECT position_id, symbol, side, current_size, entry_time, exit_time,
+               entry_price, exit_price, realized_pnl, status, strategy_id, exit_reason
         FROM positions
         WHERE symbol = ?
         ORDER BY entry_time ASC
     """
     links: List[Dict[str, Any]] = []
     for row in query_rows(db_path, sql, (sym,)):
+        if _is_exchange_sync_stat_exclude(row):
+            continue
         entry_ts = _parse_ts(row.get("entry_time"))
         try:
             entry_px = float(row.get("entry_price"))
@@ -453,7 +488,7 @@ def trend_trade_links(
         if exit_ts is None or exit_px is None:
             continue
         exit_mid = _marker_id("trend", "positions", f"{pid}:exit")
-        pnl = row.get("realized_pnl")
+        pnl = _trend_realized_pnl_usdt(row, entry_qty_by_pid=entry_qty_by_pid)
         side = str(row.get("side") or "long").lower()
         _append_link(
             links,

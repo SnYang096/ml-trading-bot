@@ -108,7 +108,7 @@ def test_account_summary_lookback_filters_old_trend_exit(
     assert trend_scope["closed_trades"] == 0
 
 
-def test_trend_stats_excludes_exchange_sync_closes(
+def test_trend_stats_excludes_zero_exchange_sync_flat(
     trend_db, spot_db, spot_ledger_db, multi_leg_db, bus_root
 ) -> None:
     recent_exit = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
@@ -139,6 +139,39 @@ def test_trend_stats_excludes_exchange_sync_closes(
     assert trend_scope.get("sync_cleanup_closed") == 1
     assert trend_scope["realized_pnl"] == 0.0
     assert trend_scope["closed_trades"] == 0
+
+
+def test_trend_stats_includes_economic_exchange_sync_flat(
+    trend_db, spot_db, spot_ledger_db, multi_leg_db, bus_root
+) -> None:
+    recent_exit = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    conn = sqlite3.connect(trend_db)
+    conn.execute(
+        """
+        INSERT INTO positions VALUES (
+            'sync2', 'ETHUSDT', 'long',
+            '2024-01-01T10:00:00+00:00', ?, 100.0, 110.0, 10.0,
+            'closed', 'tpc', NULL, NULL, 1.0, 'exchange_sync_flat'
+        )
+        """,
+        (recent_exit,),
+    )
+    conn.commit()
+    conn.close()
+
+    data = build_account_summary(
+        trend_db=trend_db,
+        spot_db=spot_db,
+        spot_ledger_db=spot_ledger_db,
+        multi_leg_db=multi_leg_db,
+        feature_bus_root=bus_root,
+        symbol="ETHUSDT",
+        lookback_days=7,
+    )
+    trend_scope = next(s for s in data["scopes"] if s["scope"] == "trend")
+    assert trend_scope.get("sync_cleanup_closed", 0) == 0
+    assert trend_scope["realized_pnl"] == pytest.approx(10.0)
+    assert trend_scope["closed_trades"] == 1
 
 
 def test_account_summary_recent_exit_included(
@@ -354,7 +387,9 @@ def test_account_summary_seeds_registry_trend_strategies_without_local_trades(
         for m in get_live_console_strategies()
         if m.get("account_layer") == "trend"
     }
-    assert expected <= {s["strategy"] for s in trend}
+    assert {s["strategy"] for s in trend} == expected
+    assert "bpc" not in {s["strategy"] for s in trend}
+    assert "me" not in {s["strategy"] for s in trend}
     tpc = next(s for s in trend if s["strategy"] == "tpc")
     assert tpc["realized_pnl"] == 0.0
     assert tpc["closed_trades"] == 0

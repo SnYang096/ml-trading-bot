@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
-from typing import Dict, List, Optional
+from pathlib import Path
+from typing import Dict, List, Optional, Union
 
 from time_series_model.live.feature_stage_taxonomy import CONSOLE_STRATEGIES
 
@@ -58,9 +59,20 @@ def spot_strategy_ids() -> tuple[str, ...]:
     return strategies_for_layer("spot")
 
 
+def strategy_has_deployed_archetypes(
+    strategy_id: str, *, strategies_root: Union[str, Path]
+) -> bool:
+    """True when live/highcap/config/strategies/<id>/archetypes exists."""
+    sid = str(strategy_id or "").strip().lower()
+    if not sid:
+        return False
+    arch = strategies_root / sid / "archetypes"
+    return arch.is_dir()
+
+
 @lru_cache(maxsize=1)
 def get_live_console_strategies() -> List[Dict[str, str]]:
-    """Strategies enabled in constitution.yaml (matches prod runners, not repo archetypes)."""
+    """Constitution-enabled strategies with deployed live archetype trees."""
     meta_by_id = {s["id"]: s for s in get_console_strategies()}
     try:
         from mlbot_console.config import SETTINGS
@@ -100,7 +112,14 @@ def get_live_console_strategies() -> List[Dict[str, str]]:
                         "title": key,
                     }
                 )
-        return sorted(out, key=lambda x: x["id"])
+        deployed = [
+            row
+            for row in out
+            if strategy_has_deployed_archetypes(
+                str(row.get("id") or ""), strategies_root=SETTINGS.strategies_root
+            )
+        ]
+        return sorted(deployed, key=lambda x: x["id"])
     except Exception:
         # Fail closed: do not show research archetypes when constitution is unreadable.
         return []

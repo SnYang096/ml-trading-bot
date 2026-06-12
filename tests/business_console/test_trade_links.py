@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from mlbot_console.services.trade_links import (
     collect_trade_links,
@@ -109,6 +110,7 @@ def test_filled_tp_closes_link(multi_leg_db):
     assert len(links) == 1
     assert links[0]["status"] == "closed"
     assert links[0]["exit_kind"] == "take_profit"
+    assert links[0]["pnl_usdt"] == pytest.approx(1.2)
     assert links[0]["color"] == "#26a69a"
     assert extras == []
 
@@ -161,6 +163,7 @@ def test_filled_s2_short_tp_link(multi_leg_db):
     assert s2_links[0]["entry_price"] == 656.42
     assert s2_links[0]["exit_price"] == 649.98
     assert s2_links[0]["entry_price"] > s2_links[0]["exit_price"]
+    assert s2_links[0]["pnl_usdt"] == pytest.approx(1.288)
     assert extras == []
 
 
@@ -228,11 +231,11 @@ def test_trend_open_position_emits_no_trade_link(trend_db):
     conn = sqlite3.connect(trend_db)
     conn.execute(
         """
-        INSERT INTO positions VALUES (
-            'p_open', 'ETHUSDT', 'long',
-            '2024-01-02T10:00:00+00:00', NULL,
-            110.0, NULL, NULL, 'open', 'bpc', NULL, NULL, 1.0
-        )
+            INSERT INTO positions VALUES (
+                'p_open', 'ETHUSDT', 'long',
+                '2024-01-02T10:00:00+00:00', NULL,
+                110.0, NULL, NULL, 'open', 'bpc', NULL, NULL, 1.0, NULL
+            )
         """
     )
     conn.commit()
@@ -313,11 +316,11 @@ def test_collect_trade_links_includes_spot_but_not_open_trend(
     conn = sqlite3.connect(trend_db)
     conn.execute(
         """
-        INSERT INTO positions VALUES (
-            'p_open2', 'ETHUSDT', 'long',
-            '2024-01-02T10:00:00+00:00', NULL,
-            110.0, NULL, NULL, 'open', 'bpc', NULL, NULL, 1.0
-        )
+            INSERT INTO positions VALUES (
+                'p_open2', 'ETHUSDT', 'long',
+                '2024-01-02T10:00:00+00:00', NULL,
+                110.0, NULL, NULL, 'open', 'bpc', NULL, NULL, 1.0, NULL
+            )
         """
     )
     conn.commit()
