@@ -28,6 +28,7 @@ class ConsoleSettings:
     universe_yaml: Path
     trend_order_db: Path
     live_monitor_db: Path
+    account_snapshot_db: Path
     spot_order_db: Path
     spot_ledger_db: Path
     multi_leg_db: Path
@@ -89,6 +90,12 @@ class ConsoleSettings:
                 os.getenv(
                     "MLBOT_CONSOLE_LIVE_MONITOR_DB",
                     str(live_data / "db" / "live_monitor.db"),
+                )
+            ),
+            account_snapshot_db=Path(
+                os.getenv(
+                    "MLBOT_ACCOUNT_SNAPSHOT_DB",
+                    str(live_data / "db" / "account_equity.db"),
                 )
             ),
             spot_order_db=Path(

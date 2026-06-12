@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import type {
+  AccountCurves,
   AccountReconIssue,
   AccountReconciliationAll,
   AccountScopeBlock,
@@ -300,6 +301,71 @@ export function WeeklyPnlTable({ weekly }: { weekly: DailyPnlPoint[] }) {
   );
 }
 
+export function AccountEquityChart({ curves }: { curves: AccountCurves | undefined }) {
+  const balance = curves?.balance || [];
+  const equity = curves?.equity || [];
+  if (!balance.length && !equity.length) {
+    return <p className="muted">{curves?.note || '无钱包/权益曲线数据'}</p>;
+  }
+  const dates = balance.length >= equity.length ? balance : equity;
+  const balByDate = new Map(balance.map((p) => [String(p.date || ''), Number(p.value_usdt) || 0]));
+  const eqByDate = new Map(equity.map((p) => [String(p.date || ''), Number(p.value_usdt) || 0]));
+  const vals: number[] = [];
+  for (const pt of dates) {
+    const d = String(pt.date || '');
+    vals.push(balByDate.get(d) ?? 0, eqByDate.get(d) ?? 0);
+  }
+  let minV = Math.min(...vals);
+  let maxV = Math.max(...vals);
+  if (minV === maxV) {
+    minV -= 1;
+    maxV += 1;
+  }
+  const span = maxV - minV;
+  const w = 900;
+  const h = 180;
+  const padX = 12;
+  const padY = 18;
+  const innerW = w - padX * 2;
+  const innerH = h - padY * 2;
+  const yFor = (v: number) => padY + innerH - ((v - minV) / span) * innerH;
+  const xFor = (i: number) => padX + (i / Math.max(1, dates.length - 1)) * innerW;
+  const lineCoords = (series: Map<string, number>) =>
+    dates
+      .map((pt, i) => {
+        const v = series.get(String(pt.date || '')) ?? 0;
+        return `${xFor(i).toFixed(1)},${yFor(v).toFixed(1)}`;
+      })
+      .join(' ');
+  const lastBal = balance.length ? Number(balance[balance.length - 1].value_usdt) : 0;
+  const lastEq = equity.length ? Number(equity[equity.length - 1].value_usdt) : 0;
+  return (
+    <div className={styles.equityWrap}>
+      <div className={styles.curveLegend}>
+        <span className={styles.legendBalance}>钱包 balance</span>
+        <span className={styles.legendEquity}>权益 equity</span>
+      </div>
+      <svg className={styles.equitySvg} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" role="img">
+        <polyline className={`${styles.equityLine} ${styles.balanceLine}`} points={lineCoords(balByDate)} />
+        <polyline className={`${styles.equityLine} ${styles.equityEquityLine}`} points={lineCoords(eqByDate)} />
+      </svg>
+      <div className={styles.equityMeta}>
+        <span>{dates[0]?.date || ''}</span>
+        <span>
+          钱包 {fmtUsdt(lastBal)} · 权益 {fmtUsdt(lastEq)}
+        </span>
+        <span>{dates[dates.length - 1]?.date || ''}</span>
+      </div>
+      {curves?.note ? (
+        <p className="muted" style={{ margin: '6px 0 0', fontSize: '0.8rem' }}>
+          {curves.note}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** @deprecated use AccountEquityChart — kept for tests */
 export function EquityCurveChart({ curve }: { curve: DailyPnlPoint[] }) {
   const pts = curve || [];
   if (!pts.length) return <p className="muted">回看期内无已实现盈亏记录</p>;

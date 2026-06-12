@@ -71,6 +71,32 @@ def _first_positive_price(*values: Any) -> Optional[float]:
 
 def _resolve_display_price(item: Dict[str, Any], row: Dict[str, Any]) -> Optional[float]:
     """Fill/limit/trigger price for console tables (algo SL/TP store trigger in stop_price)."""
+    status = str(row.get("status") or item.get("status") or "").lower()
+    otype = str(
+        row.get("order_type") or row.get("purpose") or item.get("order_type") or ""
+    ).lower()
+    is_stop_like = "stop" in otype or "take_profit" in otype
+    unfilled = status in {
+        "open",
+        "new",
+        "pending",
+        "submitted",
+        "partially_filled",
+        "rejected",
+        "canceled",
+        "cancelled",
+        "expired",
+    }
+    if is_stop_like and unfilled:
+        return _first_positive_price(
+            item.get("stop_price"),
+            item.get("stop_loss_price"),
+            item.get("take_profit_price"),
+            item.get("average_price"),
+            item.get("price"),
+            item.get("exit_price"),
+            row.get("exit_price"),
+        )
     return _first_positive_price(
         item.get("average_price"),
         item.get("price"),
@@ -80,6 +106,79 @@ def _resolve_display_price(item: Dict[str, Any], row: Dict[str, Any]) -> Optiona
         item.get("exit_price"),
         row.get("exit_price"),
     )
+
+
+def _resolve_order_position_side(scope: str, row: Dict[str, Any]) -> Optional[str]:
+    """Hedge position side (LONG/SHORT) for readable open/close labels."""
+    from mlbot_console.services.multileg_order_links import (
+        leg_side_kind,
+        trend_entry_position_side,
+    )
+
+    raw = str(row.get("position_side") or "").upper()
+    if raw in {"LONG", "SHORT"}:
+        return raw
+    pos_side = str(row.get("pos_side") or "").lower()
+    if pos_side in {"long", "short"}:
+        return pos_side.upper()
+    if scope == "multi_leg":
+        te = trend_entry_position_side(row)
+        if te:
+            return te
+        oid = str(row.get("order_id") or row.get("local_order_id") or "")
+        kind = leg_side_kind(oid)
+        if kind == "L":
+            return "LONG"
+        if kind == "S":
+            return "SHORT"
+        side = str(row.get("side") or "").upper()
+        purpose = str(row.get("purpose") or row.get("order_type") or "").lower()
+        if side in {"LONG", "SHORT"} and (
+            "entry" in purpose or "place" in purpose or purpose in {"", "limit", "market"}
+        ):
+            return side
+    if scope == "trend":
+        te = trend_entry_position_side(row)
+        if te:
+            return te
+        ot = str(row.get("order_type") or "").lower()
+        if ot in {"position_entry", "position_exit"}:
+            side = str(row.get("side") or "").lower()
+            if side in {"buy", "long"}:
+                return "LONG"
+            if side in {"sell", "short"}:
+                return "SHORT"
+    return None
+
+
+def _resolve_order_is_closing(
+    scope: str, row: Dict[str, Any], position_side: Optional[str]
+) -> bool:
+    """Whether the order closes/reduces an existing position."""
+    if row.get("is_closing") is True:
+        return True
+    if row.get("is_closing") is False:
+        return False
+    purpose = str(row.get("purpose") or row.get("order_type") or "").lower()
+    oid = str(row.get("order_id") or row.get("local_order_id") or "").lower()
+    if (
+        "take_profit" in purpose
+        or "stop_loss" in purpose
+        or "market_exit" in purpose
+        or "position_exit" in purpose
+    ):
+        return True
+    if "entry" in purpose or "position_entry" in purpose or purpose == "place":
+        return False
+    if oid.endswith(":exit") or oid.endswith("_tp") or "_sl" in oid:
+        return True
+    ps = str(position_side or "").upper()
+    side = str(row.get("side") or "").upper()
+    if ps == "LONG" and side == "SELL":
+        return True
+    if ps == "SHORT" and side == "BUY":
+        return True
+    return False
 
 
 def _resolve_filled_quantity(row: Dict[str, Any], status: str) -> float:
@@ -201,11 +300,15 @@ def _normalize(
         "multi_leg": "multi_leg_orders",
     }.get(scope, "orders")
     marker_key = oid
+    position_side = _resolve_order_position_side(scope, row)
+    is_closing = _resolve_order_is_closing(scope, row, position_side)
     item = {
         "scope": scope,
         "order_id": oid,
         "symbol": sym,
         "side": side,
+        "position_side": position_side,
+        "is_closing": is_closing,
         "status": status,
         "order_type": row.get("order_type") or row.get("purpose"),
         "purpose": row.get("purpose"),
@@ -305,6 +408,8 @@ def _trend_position_event_rows(
                         "order_id": f"{pid}:entry",
                         "symbol": sym,
                         "side": _position_action_side(pos_side, "entry"),
+                        "pos_side": pos_side,
+                        "is_closing": False,
                         "status": "filled",
                         "order_type": "position_entry",
                         "quantity": pos_qty,
@@ -328,6 +433,8 @@ def _trend_position_event_rows(
                         "order_id": f"{pid}:exit",
                         "symbol": sym,
                         "side": _position_action_side(pos_side, "exit"),
+                        "pos_side": pos_side,
+                        "is_closing": True,
                         "status": "closed",
                         "order_type": "position_exit",
                         "quantity": pos_qty,
@@ -710,7 +817,7 @@ def trend_orders(
             SELECT o.order_id, o.symbol AS symbol, o.side AS side, o.status, o.order_type,
                    o.quantity, o.price, o.stop_price, o.filled_quantity, o.average_price,
                    o.created_at, o.updated_at, o.filled_at,
-                   o.position_id, p.strategy_id,
+                   o.position_id, p.strategy_id, p.side AS pos_side,
                    p.stop_loss_price, p.take_profit_price
             FROM orders o
             LEFT JOIN positions p ON p.position_id = o.position_id
@@ -725,7 +832,7 @@ def trend_orders(
             SELECT o.order_id, o.symbol AS symbol, o.side AS side, o.status, o.order_type,
                    o.quantity, o.price, o.stop_price, o.filled_quantity, o.average_price,
                    o.created_at, o.updated_at, o.filled_at,
-                   o.position_id, p.strategy_id,
+                   o.position_id, p.strategy_id, p.side AS pos_side,
                    p.stop_loss_price, p.take_profit_price
             FROM orders o
             LEFT JOIN positions p ON p.position_id = o.position_id
@@ -895,9 +1002,10 @@ def multi_leg_orders_list(
         strategy_params = (strat,)
     if _is_all_symbols(symbol):
         sql = f"""
-            SELECT local_order_id AS order_id, symbol, side, status, order_type, purpose,
-                   quantity, price, stop_price, filled_quantity, average_price, created_at,
-                   filled_at, strategy, leg_id, client_order_id, raw_json
+            SELECT local_order_id AS order_id, symbol, side, position_side, status,
+                   order_type, purpose, quantity, price, stop_price, filled_quantity,
+                   average_price, created_at, filled_at, strategy, leg_id,
+                   client_order_id, raw_json
             FROM multi_leg_orders
             WHERE 1=1{status_clause}{status_match}{strategy_clause}
             ORDER BY COALESCE(filled_at, created_at) DESC
@@ -911,9 +1019,10 @@ def multi_leg_orders_list(
     else:
         sym = symbol.upper()
         sql = f"""
-            SELECT local_order_id AS order_id, symbol, side, status, order_type, purpose,
-                   quantity, price, stop_price, filled_quantity, average_price, created_at,
-                   filled_at, strategy, leg_id, client_order_id, raw_json
+            SELECT local_order_id AS order_id, symbol, side, position_side, status,
+                   order_type, purpose, quantity, price, stop_price, filled_quantity,
+                   average_price, created_at, filled_at, strategy, leg_id,
+                   client_order_id, raw_json
             FROM multi_leg_orders
             WHERE symbol = ?{status_clause}{status_match}{strategy_clause}
             ORDER BY COALESCE(filled_at, created_at) DESC

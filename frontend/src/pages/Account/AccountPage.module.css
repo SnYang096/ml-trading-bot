@@ -214,6 +214,29 @@
   stroke: var(--negative);
 }
 
+.equityEquityLine {
+  stroke: var(--positive);
+}
+
+.balanceLine {
+  stroke: var(--accent-cyan);
+}
+
+.curveLegend {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 6px;
+  font-size: 0.8rem;
+}
+
+.legendBalance {
+  color: var(--accent-cyan);
+}
+
+.legendEquity {
+  color: var(--positive);
+}
+
 .equityMeta {
   display: flex;
   justify-content: space-between;

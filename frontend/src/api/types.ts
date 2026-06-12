@@ -204,6 +204,18 @@ export interface RegimeOpsRow {
   config_reference_at?: string;
 }
 
+export interface AccountCurvePoint {
+  date?: string;
+  value_usdt?: number | null;
+}
+
+export interface AccountCurves {
+  balance?: AccountCurvePoint[];
+  equity?: AccountCurvePoint[];
+  anchor_wallet_usdt?: number | null;
+  note?: string;
+}
+
 export interface DailyPnlPoint {
   date?: string;
   week_start?: string;
@@ -248,6 +260,7 @@ export interface AccountSummary {
   daily_realized?: DailyPnlPoint[];
   weekly_realized?: DailyPnlPoint[];
   cumulative_realized?: DailyPnlPoint[];
+  account_curves?: AccountCurves;
   notes?: string[];
   by_scope?: unknown[];
   reconciliation?: unknown;

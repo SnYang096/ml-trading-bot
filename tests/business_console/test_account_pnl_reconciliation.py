@@ -13,6 +13,28 @@ from mlbot_console.services.account_pnl_reconciliation import (
 )
 
 
+def test_reconcile_scope_pnl_skips_spot_unrealized_mismatch() -> None:
+    issues = reconcile_scope_pnl(
+        "spot",
+        scope_block={
+            "scope": "spot",
+            "realized_pnl": 0.0,
+            "unrealized_pnl": 12.5,
+            "open_positions": 0,
+            "closed_trades": 3,
+        },
+        exchange_row={
+            "ok": True,
+            "equity_usdt": 100.0,
+            "wallet_balance_usdt": 100.0,
+            "unrealized_pnl_usdt": 0.0,
+            "holdings_value_usdt": 100.0,
+        },
+        strategy_rows=[],
+    )
+    assert not any(i["kind"] == "unrealized_pnl_mismatch" for i in issues)
+
+
 def test_reconcile_scope_pnl_flags_unrealized_mismatch() -> None:
     issues = reconcile_scope_pnl(
         "multi_leg",

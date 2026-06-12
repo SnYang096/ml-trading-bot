@@ -7,6 +7,7 @@ import { fmtPnl, getSymbol, isAllSymbols, pnlClass, setSymbol, SYMBOL_ALL } from
 import {
   DailyPnlChart,
   EquityCurveChart,
+  AccountEquityChart,
   fmtUsdt,
   KpiCard,
   ReconciliationPanels,
@@ -212,7 +213,7 @@ export function AccountPage() {
           <section className="panel">
             <h3>策略汇总 (本地 DB)</h3>
             <p className="muted" style={{ margin: '0 0 8px', fontSize: '0.85rem' }}>
-              含 constitution 启用策略；无成交时显示 0（灰色行）。
+              仅 constitution 启用的 live 策略；无成交时显示 0（灰色行）。
             </p>
             <StrategiesTable strategies={scoped?.strategies || []} />
           </section>
@@ -225,12 +226,14 @@ export function AccountPage() {
         <section className="panel" style={{ marginTop: 16 }}>
           <h3>已实现盈亏</h3>
           <p className="muted" style={{ margin: '0 0 12px' }}>
-            按 UTC 自然周汇总；累计曲线为已实现盈亏累加，不含交易所浮盈。
+            按 UTC 自然周汇总。累计曲线为交易所钱包/权益（USDT）；历史权益≈钱包，最新点为币安实时值。
           </p>
           <h4 className={styles.pnlSubhead}>按周统计</h4>
           <WeeklyPnlChart weekly={scoped?.weekly_realized || []} />
           <WeeklyPnlTable weekly={scoped?.weekly_realized || []} />
-          <h4 className={styles.pnlSubhead}>累计盈利曲线</h4>
+          <h4 className={styles.pnlSubhead}>钱包 / 权益曲线</h4>
+          <AccountEquityChart curves={scoped?.account_curves} />
+          <h4 className={styles.pnlSubhead}>已实现盈亏（本地 DB · 累计）</h4>
           <EquityCurveChart curve={scoped?.cumulative_realized || []} />
           <h4 className={styles.pnlSubhead}>按日明细</h4>
           <DailyPnlChart daily={scoped?.daily_realized || []} />

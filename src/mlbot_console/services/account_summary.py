@@ -356,7 +356,7 @@ def _spot_stats(
         lambda: {"realized_pnl": 0.0, "unrealized_pnl": 0.0, "closed_trades": 0.0, "open_lots": 0.0}
     )
     daily: Dict[str, float] = defaultdict(float)
-    allowed = set(spot_strategy_ids())
+    allowed = _constitution_spot_strategy_ids() or set(spot_strategy_ids())
     default_strat = default_spot_strategy_id()
     for sid in allowed:
         by_strategy[sid]  # ensure keys exist
@@ -514,8 +514,16 @@ def _empty_scope_stats(scope: str) -> Dict[str, Any]:
 
 
 def _registry_strategies_for_summary() -> List[Dict[str, str]]:
-    live = get_live_console_strategies()
-    return live if live else get_console_strategies()
+    """Constitution live-enabled strategies only (no taxonomy / per_strategy_limits fallback)."""
+    return get_live_console_strategies()
+
+
+def _constitution_spot_strategy_ids() -> set[str]:
+    return {
+        str(s.get("id") or "").lower()
+        for s in get_live_console_strategies()
+        if str(s.get("account_layer") or "") == "spot" and str(s.get("id") or "")
+    }
 
 
 def _empty_strategy_row(scope: str, strategy_id: str, *, title: str = "") -> Dict[str, Any]:
@@ -602,7 +610,7 @@ def aggregate_weekly_realized(daily: List[Dict[str, Any]]) -> List[Dict[str, Any
 
 
 def cumulative_realized_curve(daily: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Running sum of daily realized PnL (equity curve of closed PnL only)."""
+    """Running sum of daily realized PnL (closed PnL only — not exchange wallet)."""
     cum = 0.0
     out: List[Dict[str, Any]] = []
     for pt in daily or []:
@@ -616,6 +624,96 @@ def cumulative_realized_curve(daily: List[Dict[str, Any]]) -> List[Dict[str, Any
             }
         )
     return out
+
+
+def build_wallet_equity_curves(
+    daily: List[Dict[str, Any]],
+    *,
+    wallet_usdt: Optional[float],
+    equity_usdt: Optional[float],
+    snapshot_db: Optional[Path] = None,
+    lookback_days: int = 0,
+) -> Dict[str, Any]:
+    """Wallet/equity curves: prefer daily exchange snapshots, else reconstruct from realized PnL."""
+    if snapshot_db is not None and Path(snapshot_db).is_file():
+        from mlbot_console.services.account_equity_snapshots import (
+            load_daily_equity_curves,
+            merge_live_into_curves,
+        )
+
+        snap_curves = load_daily_equity_curves(
+            Path(snapshot_db),
+            scope="all",
+            lookback_days=int(lookback_days),
+        )
+        if snap_curves.get("balance"):
+            return merge_live_into_curves(
+                snap_curves,
+                wallet_usdt=wallet_usdt,
+                equity_usdt=equity_usdt,
+            )
+
+    if not daily:
+        return {
+            "balance": [],
+            "equity": [],
+            "anchor_wallet_usdt": None,
+            "note": "无已实现日序列，无法绘制钱包/权益曲线",
+        }
+    if wallet_usdt is None:
+        return {
+            "balance": [],
+            "equity": [],
+            "anchor_wallet_usdt": None,
+            "note": "交易所钱包余额不可用",
+        }
+
+    if int(lookback_days) > 0:
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        live_wallet = float(wallet_usdt)
+        live_equity = float(equity_usdt if equity_usdt is not None else wallet_usdt)
+        return {
+            "balance": [{"date": today, "value_usdt": live_wallet}],
+            "equity": [{"date": today, "value_usdt": live_equity}],
+            "anchor_wallet_usdt": None,
+            "note": (
+                "无账户日快照时，lookback 窗口不提供历史钱包重建；"
+                "最新点为币安实时 wallet / margin balance"
+            ),
+        }
+
+    total_realized = sum(float(pt.get("pnl") or 0.0) for pt in daily)
+    wallet_anchor = float(wallet_usdt) - total_realized
+    cum = 0.0
+    balance_pts: List[Dict[str, Any]] = []
+    equity_pts: List[Dict[str, Any]] = []
+    for pt in daily:
+        cum += float(pt.get("pnl") or 0.0)
+        bal = wallet_anchor + cum
+        d = str(pt.get("date") or "")
+        balance_pts.append({"date": d, "value_usdt": bal})
+        equity_pts.append({"date": d, "value_usdt": bal})
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    last_date = str(daily[-1].get("date") or "")
+    live_wallet = float(wallet_usdt)
+    live_equity = float(equity_usdt if equity_usdt is not None else wallet_usdt)
+
+    if last_date == today:
+        balance_pts[-1]["value_usdt"] = live_wallet
+        equity_pts[-1]["value_usdt"] = live_equity
+    else:
+        balance_pts.append({"date": today, "value_usdt": live_wallet})
+        equity_pts.append({"date": today, "value_usdt": live_equity})
+
+    return {
+        "balance": balance_pts,
+        "equity": equity_pts,
+        "anchor_wallet_usdt": wallet_anchor,
+        "note": (
+            "历史权益≈钱包（无逐日浮盈快照）；最新点为币安实时 wallet / margin balance"
+        ),
+    }
 
 
 def _weekly_realized_kpis(daily: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -650,6 +748,7 @@ def build_account_summary(
     spot_ledger_db: Path,
     multi_leg_db: Path,
     feature_bus_root: Path,
+    account_snapshot_db: Optional[Path] = None,
     symbol: str = "*",
     lookback_days: int = 30,
     scopes: Optional[List[str]] = None,
@@ -767,6 +866,14 @@ def build_account_summary(
     weekly = aggregate_weekly_realized(daily)
     weekly_kpis = _weekly_realized_kpis(daily)
     cumulative = cumulative_realized_curve(daily)
+    ledger_totals_for_curves = dict(ledger.get("totals") or {})
+    account_curves = build_wallet_equity_curves(
+        daily,
+        wallet_usdt=ledger_totals_for_curves.get("wallet_balance_usdt"),
+        equity_usdt=ledger_totals_for_curves.get("equity_usdt"),
+        snapshot_db=account_snapshot_db,
+        lookback_days=lookback_days,
+    )
 
     return {
         "symbol": "ALL" if _is_all_symbols(symbol) else str(symbol).upper(),
@@ -781,6 +888,7 @@ def build_account_summary(
         },
         "weekly_realized": weekly,
         "cumulative_realized": cumulative,
+        "account_curves": account_curves,
         "exchange_ledger": ledger,
         "scopes": scope_blocks,
         "strategies": sorted(

@@ -177,6 +177,43 @@ class TestAddAndRetrieve:
         assert isinstance(got["entry_time"], datetime)
         assert got["entry_time"].tzinfo is not None
 
+    def test_restore_from_disk_re_mirrors_sqlite(self, tmp_path):
+        """After restart, restored JSON positions must re-write SQLite for console."""
+        from src.order_management.storage import Storage
+
+        db_path = tmp_path / "order_management.db"
+        storage = Storage(str(db_path))
+        om = _make_om()
+        om.storage = storage
+        state_path = tmp_path / "BTCUSDT.json"
+        tracker = PositionTracker(
+            order_manager=om,
+            symbol="BTCUSDT",
+            default_bar_minutes=240,
+            state_path=state_path,
+        )
+        tracker.add("pid1", _make_pos(side="SHORT", entry_price=100.0))
+
+        # Simulate empty SQLite (e.g. DB wiped) while JSON snapshot survives.
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        conn.execute("DELETE FROM positions")
+        conn.commit()
+        conn.close()
+
+        restored = PositionTracker(
+            order_manager=om,
+            symbol="BTCUSDT",
+            default_bar_minutes=240,
+            state_path=state_path,
+        )
+        assert restored.restore_from_disk(live_symbols={"BTCUSDT"}) == 1
+        row = storage.get_position("pid1")
+        assert row is not None
+        assert row.status.value == "open"
+        assert row.side.value == "short"
+
     def test_restore_skips_and_clears_when_exchange_has_no_symbol(self, tmp_path):
         state_path = tmp_path / "BTCUSDT.json"
         tracker = PositionTracker(
@@ -662,6 +699,7 @@ class TestExchangeCloseSync:
         om = _make_om()
         tracker = _make_tracker(om)
         pos = _make_pos()
+        pos["_exchange_sl_order_id"] = "sl-123"
         tracker.add("pid1", pos)
 
         ok = tracker.close_from_exchange(
@@ -671,3 +709,4 @@ class TestExchangeCloseSync:
         assert ok is True
         assert tracker.get("pid1") is None
         om.place_order.assert_not_called()
+        om.cancel_order.assert_called_with("sl-123")

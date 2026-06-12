@@ -79,3 +79,63 @@ def test_reconcile_account_trend_flags_exchange_position_missing_local(
     assert res["ok"] is False
     kinds = {i["kind"] for i in res["issues"]}
     assert "exchange_position_not_in_local_db" in kinds
+
+
+def test_reconcile_account_trend_symbol_filter_ignores_other_symbols(
+    trend_db: Path,
+) -> None:
+    import sqlite3
+
+    conn = sqlite3.connect(trend_db)
+    conn.execute(
+        """
+        INSERT INTO positions VALUES (
+            'p_bnb', 'BNBUSDT', 'long',
+            '2026-06-10T08:00:00+00:00', NULL,
+            1.0, NULL, NULL, 'open', 'tpc', 700.0, NULL, NULL
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    fake_exchange = {
+        "ok": True,
+        "exchange_open_positions": [],
+        "exchange_open_position_count": 0,
+    }
+    with patch(
+        "mlbot_console.services.account_reconciliation.fetch_scope_exchange_balance",
+        return_value=fake_exchange,
+    ) as fetch_mock:
+        res = reconcile_account("trend", trend_db=trend_db, symbol="XRPUSDT")
+
+    fetch_mock.assert_called_once()
+    assert fetch_mock.call_args.kwargs.get("symbol") == "XRPUSDT"
+    assert res["ok"] is True
+
+
+def test_local_trend_open_positions_skips_zero_qty_without_entry(
+    trend_db: Path,
+) -> None:
+    import sqlite3
+
+    from mlbot_console.services.account_reconciliation import (
+        _local_trend_open_positions,
+    )
+
+    conn = sqlite3.connect(trend_db)
+    conn.execute(
+        """
+        INSERT INTO positions VALUES (
+            'p_ghost', 'ETHUSDT', 'long',
+            '2026-06-10T08:00:00+00:00', NULL,
+            0.0, NULL, NULL, 'open', 'tpc', 2100.0, NULL, NULL
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    rows = _local_trend_open_positions(trend_db)
+    assert all(r["position_id"] != "p_ghost" for r in rows)

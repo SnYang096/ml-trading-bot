@@ -69,6 +69,7 @@ export function displayOrderPrice(row: {
 type OrderActionRow = {
   side?: string | null;
   position_side?: string | null;
+  is_closing?: boolean | null;
   purpose?: string | null;
   order_type?: string | null;
   order_id?: string | null;
@@ -76,32 +77,33 @@ type OrderActionRow = {
 };
 
 function orderPositionSide(row: OrderActionRow): 'long' | 'short' | null {
-  const side = String(row.side || '').toUpperCase();
   const ps = String(row.position_side || '').toUpperCase();
-  if (ps === 'LONG' || side === 'LONG') return 'long';
-  if (ps === 'SHORT' || side === 'SHORT') return 'short';
-  if (side === 'BUY') return 'long';
-  if (side === 'SELL') return 'short';
+  if (ps === 'LONG') return 'long';
+  if (ps === 'SHORT') return 'short';
   return null;
 }
 
 function orderIsClosing(row: OrderActionRow): boolean {
+  if (row.is_closing === true) return true;
+  if (row.is_closing === false) return false;
   const purpose = String(row.purpose || row.order_type || '').toLowerCase();
   const oid = String(row.order_id || '').toLowerCase();
   if (
     purpose.includes('take_profit') ||
     purpose.includes('stop_loss') ||
     purpose.includes('market_exit') ||
-    purpose.includes('exit')
+    purpose.includes('position_exit')
   ) {
     return true;
   }
-  if (oid.includes('_tp') || oid.includes('_sl')) return true;
+  if (purpose.includes('entry') || purpose.includes('position_entry') || purpose === 'place') {
+    return false;
+  }
+  if (oid.includes('_tp') || oid.includes('_sl') || oid.endsWith(':exit')) return true;
   const pos = orderPositionSide(row);
   const side = String(row.side || '').toUpperCase();
   if (pos === 'long' && side === 'SELL') return true;
   if (pos === 'short' && side === 'BUY') return true;
-  if ((side === 'LONG' || side === 'SHORT') && !purpose.includes('entry')) return true;
   return false;
 }
 
@@ -138,6 +140,7 @@ export function displayExitKind(kind: unknown): string {
   const k = String(kind || '').toLowerCase();
   if (k.includes('take_profit') || k === 'tp') return '止盈';
   if (k.includes('market_exit')) return '市价平';
+  if (k === 'sell') return '卖出';
   if (k.includes('stop')) return '止损';
   if (k === 'exit') return '平仓';
   return k ? k : '—';

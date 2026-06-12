@@ -41,6 +41,7 @@ def account_summary(
         spot_ledger_db=SETTINGS.spot_ledger_db,
         multi_leg_db=SETTINGS.multi_leg_db,
         feature_bus_root=SETTINGS.feature_bus_root,
+        account_snapshot_db=SETTINGS.account_snapshot_db,
         symbol=symbol,
         lookback_days=lookback_days,
         scopes=scope_list,

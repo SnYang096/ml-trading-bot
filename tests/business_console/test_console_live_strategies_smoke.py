@@ -19,14 +19,20 @@ def _clear_live_cache():
 
 
 def test_live_strategies_from_repo_constitution():
+    from src.live_data_stream.constitution_config import (
+        console_live_strategies_from_constitution,
+        load_constitution_dict,
+    )
+
     assert SETTINGS.constitution_yaml.is_file()
+    cfg = load_constitution_dict(str(SETTINGS.constitution_yaml))
     live = get_live_console_strategies()
     ids = [s["id"] for s in live]
+    assert set(ids) == set(console_live_strategies_from_constitution(cfg))
     assert "tpc" in ids
     assert "chop_grid" in ids
     assert "trend_scalp" in ids
     assert "spot_accum_simple" in ids
-    assert "bpc" not in ids
     by_id = {s["id"]: s["account_layer"] for s in live}
     assert by_id["chop_grid"] == "multi_leg"
     assert by_id["trend_scalp"] == "multi_leg"

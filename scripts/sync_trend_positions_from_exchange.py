@@ -1,0 +1,354 @@
+#!/usr/bin/env python3
+"""Mirror B·Trend exchange futures positions into local SQLite (+ optional JSON).
+
+Use when console / account summary diverges from Binance (orphan local rows,
+missing bootstrap after manual exchange fills, or JSON tracker out of sync).
+
+This is **not** a substitute for live PositionTracker on new entries — it
+reconciles **reporting** state from the exchange as source of truth.
+
+Example (inside quant-trend-swing container):
+
+  python3 scripts/sync_trend_positions_from_exchange.py --dry-run
+  python3 scripts/sync_trend_positions_from_exchange.py --write-json
+"""
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import json
+import logging
+import os
+import sys
+from collections import defaultdict
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+_SRC = _REPO_ROOT / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
+from src.order_management.binance_api import BinanceAPI
+from src.order_management.models import Position, PositionSide, PositionStatus
+from src.order_management.storage import Storage
+
+logger = logging.getLogger("sync_trend_positions_from_exchange")
+
+
+def _raw_symbol(ccxt_symbol: str) -> str:
+    return str(ccxt_symbol or "").replace("/", "").split(":")[0].upper().strip()
+
+
+def _norm_side(side: str) -> str:
+    s = str(side or "").lower()
+    if s in {"buy", "long"}:
+        return "long"
+    if s in {"sell", "short"}:
+        return "short"
+    return s
+
+
+def _exchange_legs(api: BinanceAPI) -> Dict[Tuple[str, str], Dict[str, Any]]:
+    """symbol, side → exchange leg (qty, entry, upnl)."""
+    out: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    for pos in api.get_positions() or []:
+        sym = _raw_symbol(str(pos.get("symbol") or ""))
+        side = _norm_side(str(pos.get("side") or ""))
+        qty = abs(float(pos.get("size") or 0.0))
+        if not sym or qty <= 0:
+            continue
+        key = (sym, side)
+        out[key] = {
+            "symbol": sym,
+            "side": side,
+            "quantity": qty,
+            "entry_price": float(pos.get("entry_price") or 0.0),
+            "unrealized_pnl_usdt": float(pos.get("unrealized_pnl") or 0.0),
+            "ccxt_symbol": str(pos.get("symbol") or ""),
+        }
+    return out
+
+
+def _local_open_rows(storage: Storage) -> List[Position]:
+    return list(storage.get_open_positions() or [])
+
+
+def _group_local(
+    rows: Iterable[Position],
+) -> Dict[Tuple[str, str], List[Position]]:
+    grouped: Dict[Tuple[str, str], List[Position]] = defaultdict(list)
+    for row in rows:
+        sym = str(row.symbol or "").upper()
+        side = _norm_side(
+            row.side.value if hasattr(row.side, "value") else str(row.side)
+        )
+        grouped[(sym, side)].append(row)
+    return grouped
+
+
+def _bootstrap_position_id(symbol: str) -> str:
+    base = symbol.removesuffix("USDT") if symbol.endswith("USDT") else symbol
+    return f"{base}:exchange_sync_{int(datetime.now(timezone.utc).timestamp() * 1e6)}"
+
+
+def _make_open_position(
+    *,
+    leg: Mapping[str, Any],
+    strategy_id: str,
+) -> Position:
+    sym = str(leg["symbol"])
+    side = PositionSide.LONG if leg["side"] == "long" else PositionSide.SHORT
+    qty = float(leg["quantity"])
+    entry = float(leg["entry_price"])
+    now = datetime.now(timezone.utc)
+    return Position(
+        position_id=_bootstrap_position_id(sym),
+        symbol=sym,
+        side=side,
+        entry_time=now,
+        entry_price=entry,
+        initial_size=qty,
+        current_size=qty,
+        total_cost=entry * qty,
+        status=PositionStatus.OPEN,
+        strategy_id=strategy_id,
+        archetype=strategy_id,
+        notes="exchange_sync",
+    )
+
+
+def _close_position_row(row: Position, *, reason: str) -> Position:
+    row.status = PositionStatus.CLOSED
+    row.exit_time = datetime.now(timezone.utc)
+    row.exit_reason = reason
+    row.current_size = 0.0
+    if row.exit_price is None and row.entry_price:
+        row.exit_price = float(row.entry_price)
+    return row
+
+
+def sync_trend_positions(
+    *,
+    api: BinanceAPI,
+    db_path: Path,
+    strategy_id: str = "tpc",
+    qty_tol_pct: float = 0.02,
+    dry_run: bool = True,
+    close_stale: bool = True,
+) -> Dict[str, Any]:
+    storage = Storage(str(db_path))
+    exchange = _exchange_legs(api)
+    local_rows = _local_open_rows(storage)
+    local = _group_local(local_rows)
+
+    report: Dict[str, Any] = {
+        "dry_run": dry_run,
+        "db_path": str(db_path),
+        "exchange_legs": len(exchange),
+        "local_open_rows": len(local_rows),
+        "inserted": [],
+        "updated": [],
+        "closed": [],
+        "unchanged": [],
+    }
+
+    for key, leg in exchange.items():
+        sym, side = key
+        qty_ex = float(leg["quantity"])
+        locals_for_key = list(local.get(key) or [])
+        loc_qty = sum(float(p.current_size or 0.0) for p in locals_for_key)
+        tol = max(1e-8, qty_ex * qty_tol_pct)
+
+        if not locals_for_key:
+            pid = _bootstrap_position_id(sym)
+            action = {
+                "kind": "insert",
+                "position_id": pid,
+                "symbol": sym,
+                "side": side,
+                "quantity": qty_ex,
+                "entry_price": leg["entry_price"],
+            }
+            report["inserted"].append(action)
+            if not dry_run:
+                storage.create_position(
+                    _make_open_position(leg=leg, strategy_id=strategy_id)
+                )
+            continue
+
+        if abs(loc_qty - qty_ex) <= tol:
+            report["unchanged"].append(
+                {"symbol": sym, "side": side, "quantity": qty_ex}
+            )
+            continue
+
+        primary = sorted(
+            locals_for_key,
+            key=lambda p: float(p.current_size or 0.0),
+            reverse=True,
+        )[0]
+        action = {
+            "kind": "resize",
+            "position_id": primary.position_id,
+            "symbol": sym,
+            "side": side,
+            "local_qty": loc_qty,
+            "exchange_qty": qty_ex,
+            "entry_price": leg["entry_price"],
+        }
+        report["updated"].append(action)
+        if not dry_run:
+            primary.current_size = qty_ex
+            primary.initial_size = max(float(primary.initial_size or 0.0), qty_ex)
+            primary.entry_price = float(
+                leg["entry_price"] or primary.entry_price or 0.0
+            )
+            primary.unrealized_pnl = float(leg.get("unrealized_pnl_usdt") or 0.0)
+            storage.update_position(primary)
+
+        extras = [p for p in locals_for_key if p.position_id != primary.position_id]
+        if extras and close_stale:
+            for row in extras:
+                closed = {
+                    "kind": "close_duplicate",
+                    "position_id": row.position_id,
+                    "symbol": sym,
+                    "side": side,
+                }
+                report["closed"].append(closed)
+                if not dry_run:
+                    storage.update_position(
+                        _close_position_row(row, reason="exchange_sync_duplicate")
+                    )
+
+    if close_stale:
+        for key, rows in local.items():
+            if key in exchange:
+                continue
+            for row in rows:
+                closed = {
+                    "kind": "close_stale",
+                    "position_id": row.position_id,
+                    "symbol": row.symbol,
+                    "side": _norm_side(
+                        row.side.value if hasattr(row.side, "value") else str(row.side)
+                    ),
+                }
+                report["closed"].append(closed)
+                if not dry_run:
+                    storage.update_position(
+                        _close_position_row(row, reason="exchange_sync_flat")
+                    )
+
+    report["summary"] = {
+        "insert": len(report["inserted"]),
+        "update": len(report["updated"]),
+        "close": len(report["closed"]),
+        "unchanged": len(report["unchanged"]),
+    }
+    return report
+
+
+def _write_json_snapshots(
+    *,
+    api: BinanceAPI,
+    state_dir: Path,
+    execution_yaml: Path,
+    archetype: str,
+    bar_minutes: int,
+    atr_pct: float,
+    dry_run: bool,
+) -> int:
+    boot_path = _REPO_ROOT / "scripts" / "bootstrap_position_tracker_from_exchange.py"
+    spec = importlib.util.spec_from_file_location("bootstrap_pt", boot_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load bootstrap module from {boot_path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return int(
+        mod.bootstrap(
+            api=api,
+            state_dir=state_dir,
+            execution_yaml=execution_yaml,
+            archetype=archetype,
+            bar_minutes=bar_minutes,
+            atr_pct=atr_pct,
+            dry_run=dry_run,
+        )
+    )
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument(
+        "--db-path",
+        default=os.getenv(
+            "MLBOT_ORDER_MANAGEMENT_DB_PATH",
+            str(_REPO_ROOT / "data" / "order_management.db"),
+        ),
+    )
+    p.add_argument("--strategy-id", default="tpc")
+    p.add_argument("--qty-tol-pct", type=float, default=0.02)
+    p.add_argument(
+        "--no-close-stale",
+        action="store_true",
+        help="Do not close local open rows when exchange is flat on that symbol+side",
+    )
+    p.add_argument(
+        "--write-json",
+        action="store_true",
+        help="Also rewrite position_tracker/*.json via bootstrap helper",
+    )
+    p.add_argument(
+        "--state-dir",
+        default=os.getenv(
+            "MLBOT_POSITION_TRACKER_STATE_DIR",
+            "live/highcap/data/position_tracker",
+        ),
+    )
+    p.add_argument(
+        "--execution-yaml",
+        default="live/highcap/config/strategies/tpc/archetypes/execution.yaml",
+    )
+    p.add_argument("--archetype", default="tpc")
+    p.add_argument("--bar-minutes", type=int, default=120)
+    p.add_argument("--atr-pct", type=float, default=0.01)
+    p.add_argument("--dry-run", action="store_true")
+    args = p.parse_args()
+
+    api_key = os.getenv("BINANCE_API_KEY") or os.getenv("BINANCE_FUTURES_API_KEY", "")
+    api_secret = os.getenv("BINANCE_API_SECRET") or os.getenv(
+        "BINANCE_FUTURES_API_SECRET", ""
+    )
+    if not api_key or not api_secret:
+        raise SystemExit("BINANCE_API_KEY / BINANCE_API_SECRET not set")
+
+    api = BinanceAPI(api_key, api_secret, testnet=False)
+    report = sync_trend_positions(
+        api=api,
+        db_path=Path(args.db_path),
+        strategy_id=str(args.strategy_id).lower().strip(),
+        qty_tol_pct=float(args.qty_tol_pct),
+        dry_run=bool(args.dry_run),
+        close_stale=not bool(args.no_close_stale),
+    )
+    if args.write_json:
+        report["json_written"] = _write_json_snapshots(
+            api=api,
+            state_dir=Path(args.state_dir),
+            execution_yaml=Path(args.execution_yaml),
+            archetype=str(args.archetype).lower().strip(),
+            bar_minutes=int(args.bar_minutes),
+            atr_pct=float(args.atr_pct),
+            dry_run=bool(args.dry_run),
+        )
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()

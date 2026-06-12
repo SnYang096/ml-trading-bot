@@ -334,6 +334,7 @@ def console_settings(
         universe_yaml=universe,
         trend_order_db=trend_db,
         live_monitor_db=tmp_path / "live_monitor.db",
+        account_snapshot_db=tmp_path / "db" / "account_equity.db",
         spot_order_db=spot_db,
         spot_ledger_db=spot_ledger_db,
         multi_leg_db=multi_leg_db,

@@ -122,6 +122,8 @@ class PositionTracker:
         self._positions = restored
         if restored:
             logger.info("[%s] restored %d persisted position(s)", sym, len(restored))
+            for pid, pos in restored.items():
+                self._persist_position_record(pid, pos)
         return len(restored)
 
     def ensure_exchange_stop_losses(self) -> int:
@@ -355,6 +357,29 @@ class PositionTracker:
         exit_price: Optional[float] = None,
     ) -> bool:
         """交易所已成交关闭后，同步移除本地持仓（不再重复下市价平仓单）"""
+        pos = self._positions.get(position_id)
+        if pos is None:
+            return False
+
+        if self.order_manager is not None:
+            for key in ("_exchange_sl_order_id", "_exchange_tp_order_id"):
+                oid = pos.get(key)
+                if oid:
+                    try:
+                        self.order_manager.cancel_order(oid)
+                    except Exception:
+                        pass
+            try:
+                self._cancel_open_close_position_conditionals(
+                    position_side=self._position_side_from_pos(pos)
+                )
+            except Exception:
+                logger.debug(
+                    "[%s] cancel conditionals on exchange close failed",
+                    self.symbol,
+                    exc_info=True,
+                )
+
         pos = self._positions.pop(position_id, None)
         if pos is None:
             return False
@@ -841,7 +866,7 @@ class PositionTracker:
             else:
                 storage.update_position(record)
         except Exception:
-            logger.debug(
+            logger.warning(
                 "[%s] persist position record skipped: %s",
                 self.symbol,
                 position_id,

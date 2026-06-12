@@ -16,6 +16,7 @@ strategies_root: live/highcap/config/strategies
 
 steps:
   - export-window: { window: near }
+  - account-equity-snapshot: {}
   - watchdog:
       window: near
       baseline: config/monitoring/regime_watchdog_baseline.json

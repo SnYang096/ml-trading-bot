@@ -65,18 +65,25 @@ def get_live_console_strategies() -> List[Dict[str, str]]:
     try:
         from mlbot_console.config import SETTINGS
         from src.live_data_stream.constitution_config import (
+            console_live_strategies_from_constitution,
             load_constitution_dict,
-            strategies_for_slot_metrics_from_constitution,
+            resolve_constitution_yaml_path,
         )
 
-        path = str(SETTINGS.constitution_yaml)
-        if not path or not os.path.isfile(path):
-            return []
+        explicit = str(SETTINGS.constitution_yaml or "").strip()
+        if explicit:
+            if not os.path.isfile(explicit):
+                return []
+            path = explicit
+        else:
+            path = resolve_constitution_yaml_path()
+            if not path or not os.path.isfile(path):
+                return []
         cfg = load_constitution_dict(path)
         if not cfg:
             return []
         out: List[Dict[str, str]] = []
-        for sid in strategies_for_slot_metrics_from_constitution(cfg):
+        for sid in console_live_strategies_from_constitution(cfg):
             key = str(sid).strip().lower()
             if not key:
                 continue

@@ -73,7 +73,7 @@ def reconcile_scope_pnl(
     ex_equity = exchange_row.get("equity_usdt")
     ex_wallet = exchange_row.get("wallet_balance_usdt")
 
-    if ex_u is not None:
+    if ex_u is not None and scope != "spot":
         ex_u_f = float(ex_u)
         delta_u = ex_u_f - local_u
         tol = _tol_usdt(

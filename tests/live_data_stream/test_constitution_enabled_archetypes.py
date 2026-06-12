@@ -9,6 +9,7 @@ import pytest
 
 from src.live_data_stream.constitution_config import (
     classic_slot_policy_from_constitution,
+    console_live_strategies_from_constitution,
     enabled_archetypes_from_constitution,
     load_constitution_dict,
     multi_leg_strategies_from_constitution,
@@ -279,5 +280,26 @@ def test_strategies_for_slot_metrics_unions_trend_multi_leg_spot() -> None:
         "tpc",
         "chop_grid",
         "trend_scalp",
+        "spot_accum_simple",
+    ]
+
+
+def test_console_live_strategies_excludes_per_strategy_limits_only() -> None:
+    cfg = {
+        "resource_allocation": {
+            "enabled_archetypes": ["tpc"],
+            "per_strategy_limits": {
+                "tpc": {"max_risk_per_trade": 0.01},
+                "bpc": {"max_risk_per_trade": 0.01},
+                "me": {"max_risk_per_trade": 0.01},
+            },
+            "archetype_groups": {"trend": ["tpc", "bpc", "me"]},
+        },
+        "multi_leg": {"strategies": ["chop_grid"]},
+        "spot": {"strategies": ["spot_accum_simple"]},
+    }
+    assert console_live_strategies_from_constitution(cfg) == [
+        "tpc",
+        "chop_grid",
         "spot_accum_simple",
     ]

@@ -14,6 +14,11 @@ from mlbot_console.services.exchange_balances import fetch_scope_exchange_balanc
 logger = logging.getLogger(__name__)
 
 
+def _is_all_symbols(symbol: Optional[str]) -> bool:
+    sym = str(symbol or "").strip().upper()
+    return sym in {"", "*", "ALL", "__ALL__"}
+
+
 def _spot_tracked_assets(spot_db: Optional[Path], spot_ledger_db: Optional[Path]) -> Set[str]:
     """Assets the spot strategy ledger / orders care about (not full wallet)."""
     assets: Set[str] = set()
@@ -43,12 +48,16 @@ def _local_trend_open_positions(
 ) -> List[Dict[str, Any]]:
     if not trend_db or not Path(trend_db).is_file():
         return []
-    where = " WHERE (lower(status) = 'open' OR exit_time IS NULL OR exit_time = '')"
-    params: tuple[Any, ...] = ()
+    from mlbot_console.services.account_summary import _trend_entry_qty_by_position
+
     sym = str(symbol or "").strip().upper()
-    if sym and sym not in {"", "*", "ALL", "__ALL__"}:
+    sym_filter = sym if sym and not _is_all_symbols(sym) else None
+    entry_qty = _trend_entry_qty_by_position(Path(trend_db), sym_filter)
+    where = " WHERE lower(status) = 'open'"
+    params: tuple[Any, ...] = ()
+    if sym_filter:
         where += " AND symbol = ?"
-        params = (sym,)
+        params = (sym_filter,)
     rows = query_rows(
         Path(trend_db),
         f"""
@@ -69,7 +78,10 @@ def _local_trend_open_positions(
         except (TypeError, ValueError):
             qty = 0.0
         if qty <= 0:
-            qty = 1.0
+            pid = str(row.get("position_id") or "")
+            qty = float(entry_qty.get(pid) or 0.0)
+        if qty <= 0:
+            continue
         out.append(
             {
                 "position_id": str(row.get("position_id") or ""),
@@ -91,11 +103,14 @@ def reconcile_account(
     spot_ledger_db: Any = None,
     multi_leg_db: Any = None,
     mark_prices: Optional[Dict[str, float]] = None,
+    symbol: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Reconcile exchange state with local state for a given scope."""
     
     # Fetch exchange state
-    exchange = fetch_scope_exchange_balance(scope, mark_prices=mark_prices)
+    exchange = fetch_scope_exchange_balance(
+        scope, mark_prices=mark_prices, symbol=symbol
+    )
     if not exchange.get("ok"):
         return {
             "scope": scope,
@@ -124,6 +139,11 @@ def reconcile_account(
 
         # Only reconcile assets the strategy books; ignore stray wallet balances (e.g. fee ETH).
         compare_assets = tracked if tracked else set(local_holdings.keys())
+        sym = str(symbol or "").strip().upper()
+        if sym and not _is_all_symbols(sym) and sym.endswith("USDT"):
+            base = sym[:-4]
+            if base:
+                compare_assets = {base} if not compare_assets else compare_assets & {base}
 
         for asset in compare_assets:
             ex_h = exchange_holdings.get(asset) or {"qty": 0.0, "value_usdt": 0.0}
@@ -228,10 +248,18 @@ def reconcile_account(
                     
     elif scope == "trend":
         local_positions = _local_trend_open_positions(
-            Path(str(trend_db)) if trend_db else None
+            Path(str(trend_db)) if trend_db else None,
+            symbol=symbol,
         )
         local_snapshot = {"open_positions": local_positions}
         exchange_positions = list(exchange.get("exchange_open_positions") or [])
+        sym_u = str(symbol or "").strip().upper()
+        if sym_u and not _is_all_symbols(sym_u):
+            exchange_positions = [
+                p
+                for p in exchange_positions
+                if str(p.get("symbol") or "").upper() == sym_u
+            ]
         local_by_key: Dict[str, float] = {}
         for p in local_positions:
             key = f"{p['symbol']}:{p['side']}"
@@ -301,6 +329,7 @@ def reconcile_all_accounts(
             spot_ledger_db=spot_ledger_db,
             multi_leg_db=multi_leg_db,
             mark_prices=mark_prices,
+            symbol=symbol,
         )
         engine_by_scope[scope] = res
         for issue in res.get("issues") or []:

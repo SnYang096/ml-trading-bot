@@ -521,6 +521,33 @@ def execute_manifest(
             if rc != 0:
                 exit_code = 1
 
+        elif name == "account-equity-snapshot":
+            if dry_run:
+                print("[dry-run] account-equity-snapshot (Binance wallet/equity → DB)")
+                continue
+            try:
+                from mlbot_console.config import SETTINGS
+                from mlbot_console.services.account_equity_snapshots import (
+                    capture_daily_account_snapshots,
+                )
+                from mlbot_console.services.mark_prices import fetch_mark_prices
+                from mlbot_console.services.universe import load_universe_symbols
+
+                db_path = Path(cfg.get("db_path") or SETTINGS.account_snapshot_db)
+                symbols = load_universe_symbols(SETTINGS.universe_yaml)
+                marks = fetch_mark_prices(SETTINGS.feature_bus_root, symbols)
+                snap_report = capture_daily_account_snapshots(
+                    db_path, mark_prices=marks
+                )
+                snap_out = out_dir / "account_equity_snapshot.json"
+                snap_out.write_text(json.dumps(snap_report, indent=2), encoding="utf-8")
+                print(
+                    f"account-equity-snapshot: {snap_report.get('rows_written')} rows "
+                    f"→ {db_path}"
+                )
+            except Exception as exc:
+                print(f"WARN account-equity-snapshot: {exc}", file=sys.stderr)
+
         else:
             raise ValueError(f"unknown manifest step: {name!r}")
 

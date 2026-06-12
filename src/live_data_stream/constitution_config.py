@@ -140,6 +140,38 @@ def strategies_for_slot_metrics_from_constitution(
     return out
 
 
+def console_live_strategies_from_constitution(
+    cfg: Optional[Dict[str, Any]] = None,
+    *,
+    constitution_path: Optional[str] = None,
+) -> List[str]:
+    """Live strategies for business console (account summary, regime ops).
+
+    Unlike ``strategies_for_slot_metrics_from_constitution`` (Prometheus bootstrap),
+    this does **not** union ``per_strategy_limits`` keys — those are risk caps for
+    research/PCM candidates, not proof a strategy is live-enabled.
+    """
+    if cfg is None:
+        path = resolve_constitution_yaml_path(override=constitution_path)
+        cfg = load_constitution_dict(path)
+    seen: Set[str] = set()
+    out: List[str] = []
+
+    def _add(items: Iterable[Any]) -> None:
+        for item in items:
+            key = str(item or "").strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(key)
+
+    policy = classic_slot_policy_from_constitution(cfg)
+    _add(policy.get("trend_archetypes") or [])
+    _add(multi_leg_strategies_from_constitution(cfg))
+    _add(spot_strategies_from_constitution(cfg))
+    return out
+
+
 def multi_leg_strategies_from_constitution(cfg: Dict[str, Any]) -> List[str]:
     raw = (multi_leg_section(cfg) or {}).get("strategies")
     if raw is None or raw == "":

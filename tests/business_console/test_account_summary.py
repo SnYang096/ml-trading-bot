@@ -12,9 +12,45 @@ from mlbot_console.services.account_summary import (
     aggregate_weekly_realized,
     build_account_summary,
     build_order_pnl_maps,
+    build_wallet_equity_curves,
     cumulative_realized_curve,
     latest_close_prices,
 )
+
+
+def test_build_wallet_equity_curves_lookback_without_snapshots_shows_live_only() -> (
+    None
+):
+    daily = [
+        {"date": "2026-06-10", "pnl": 10.0},
+        {"date": "2026-06-11", "pnl": -5.0},
+    ]
+    curves = build_wallet_equity_curves(
+        daily,
+        wallet_usdt=1005.0,
+        equity_usdt=1020.0,
+        lookback_days=30,
+    )
+    assert len(curves["balance"]) == 1
+    assert curves["balance"][0]["value_usdt"] == pytest.approx(1005.0)
+    assert curves["equity"][0]["value_usdt"] == pytest.approx(1020.0)
+    assert "日快照" in str(curves.get("note") or "")
+
+
+def test_build_wallet_equity_curves_reconstructs_balance_and_live_equity() -> None:
+    daily = [
+        {"date": "2026-06-10", "pnl": 10.0},
+        {"date": "2026-06-11", "pnl": -5.0},
+    ]
+    curves = build_wallet_equity_curves(
+        daily,
+        wallet_usdt=1005.0,
+        equity_usdt=1020.0,
+    )
+    assert curves["balance"][-1]["value_usdt"] == pytest.approx(1005.0)
+    assert curves["equity"][-1]["value_usdt"] == pytest.approx(1020.0)
+    assert curves["balance"][0]["value_usdt"] == pytest.approx(1010.0)
+    assert curves["equity"][0]["value_usdt"] == pytest.approx(1010.0)
 
 
 def test_build_account_summary(
@@ -270,7 +306,7 @@ def test_account_summary_seeds_registry_trend_strategies_without_local_trades(
     trend_db, spot_db, spot_ledger_db, multi_leg_db, bus_root
 ) -> None:
     """B·Trend rows appear even when local DB has no positions for the symbol."""
-    from mlbot_console.services.strategy_registry import get_console_strategies
+    from mlbot_console.services.strategy_registry import get_live_console_strategies
 
     data = build_account_summary(
         trend_db=trend_db,
@@ -283,7 +319,9 @@ def test_account_summary_seeds_registry_trend_strategies_without_local_trades(
     )
     trend = [s for s in data["strategies"] if s["scope"] == "trend"]
     expected = {
-        m["id"] for m in get_console_strategies() if m.get("account_layer") == "trend"
+        m["id"]
+        for m in get_live_console_strategies()
+        if m.get("account_layer") == "trend"
     }
     assert expected <= {s["strategy"] for s in trend}
     tpc = next(s for s in trend if s["strategy"] == "tpc")

@@ -22,6 +22,10 @@ def test_trend_orders_list(trend_db):
     }
     exit_row = next(r for r in position_rows if r["order_type"] == "position_exit")
     assert exit_row["side"] == "sell"
+    assert exit_row["position_side"] == "LONG"
+    assert exit_row["is_closing"] is True
+    assert entry_row["position_side"] == "LONG"
+    assert entry_row["is_closing"] is False
     assert exit_row["strategy"] == "tpc"
     assert float(exit_row["filled_quantity"]) == pytest.approx(2.5)
     assert exit_row["marker_id"] == "trend:positions:p1:exit"
