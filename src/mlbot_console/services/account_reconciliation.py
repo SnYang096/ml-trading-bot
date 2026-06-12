@@ -38,6 +38,51 @@ def _spot_tracked_assets(spot_db: Optional[Path], spot_ledger_db: Optional[Path]
     return assets
 
 
+def _local_trend_open_positions(
+    trend_db: Optional[Path], *, symbol: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    if not trend_db or not Path(trend_db).is_file():
+        return []
+    where = " WHERE (lower(status) = 'open' OR exit_time IS NULL OR exit_time = '')"
+    params: tuple[Any, ...] = ()
+    sym = str(symbol or "").strip().upper()
+    if sym and sym not in {"", "*", "ALL", "__ALL__"}:
+        where += " AND symbol = ?"
+        params = (sym,)
+    rows = query_rows(
+        Path(trend_db),
+        f"""
+        SELECT position_id, symbol, side, current_size, entry_price, status, strategy_id
+        FROM positions
+        {where}
+        """,
+        params,
+    )
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        sym_u = str(row.get("symbol") or "").upper()
+        side = str(row.get("side") or "long").lower()
+        if side in {"buy", "sell"}:
+            side = "long" if side == "buy" else "short"
+        try:
+            qty = float(row.get("current_size") or 0.0)
+        except (TypeError, ValueError):
+            qty = 0.0
+        if qty <= 0:
+            qty = 1.0
+        out.append(
+            {
+                "position_id": str(row.get("position_id") or ""),
+                "symbol": sym_u,
+                "side": side,
+                "quantity": qty,
+                "entry_price": float(row.get("entry_price") or 0.0),
+                "strategy_id": str(row.get("strategy_id") or ""),
+            }
+        )
+    return sorted(out, key=lambda x: (x["symbol"], x["side"], x["position_id"]))
+
+
 def reconcile_account(
     scope: str,
     *,
@@ -182,10 +227,44 @@ def reconcile_account(
                     local_snapshot["parse_error"] = str(exc)
                     
     elif scope == "trend":
-        # For trend, we can compare positions table with exchange positions
-        # But exchange_balances doesn't fetch positions yet, only account summary
-        # So we skip detailed trend reconciliation for now
-        pass
+        local_positions = _local_trend_open_positions(
+            Path(str(trend_db)) if trend_db else None
+        )
+        local_snapshot = {"open_positions": local_positions}
+        exchange_positions = list(exchange.get("exchange_open_positions") or [])
+        local_by_key: Dict[str, float] = {}
+        for p in local_positions:
+            key = f"{p['symbol']}:{p['side']}"
+            local_by_key[key] = local_by_key.get(key, 0.0) + float(p["quantity"])
+        exchange_by_key: Dict[str, float] = {}
+        for p in exchange_positions:
+            key = f"{p['symbol']}:{p['side']}"
+            exchange_by_key[key] = exchange_by_key.get(key, 0.0) + float(p["quantity"])
+
+        all_keys = set(local_by_key) | set(exchange_by_key)
+        for key in sorted(all_keys):
+            sym, side = key.split(":", 1)
+            ex_q = float(exchange_by_key.get(key) or 0.0)
+            loc_q = float(local_by_key.get(key) or 0.0)
+            tol = max(1e-6, max(ex_q, loc_q) * 0.02)
+            if abs(ex_q - loc_q) <= tol:
+                continue
+            if ex_q > 0 and loc_q == 0:
+                kind = "exchange_position_not_in_local_db"
+            elif loc_q > 0 and ex_q == 0:
+                kind = "local_position_not_on_exchange"
+            else:
+                kind = "position_mismatch"
+            issues.append(
+                {
+                    "kind": kind,
+                    "symbol": sym,
+                    "side": side,
+                    "exchange": ex_q,
+                    "local": loc_q,
+                    "delta": ex_q - loc_q,
+                }
+            )
 
     return {
         "scope": scope,

@@ -98,6 +98,27 @@ def reconcile_scope_pnl(
             )
 
     orphan_tol = _orphan_unrealized_tol()
+    if (
+        scope == "trend"
+        and open_pos == 0
+        and ex_u is not None
+        and abs(float(ex_u)) > orphan_tol
+        and abs(local_u) <= orphan_tol
+    ):
+        issues.append(
+            _issue(
+                kind="exchange_position_not_in_local_db",
+                scope=scope,
+                message=(
+                    f"交易所有浮盈 {float(ex_u):.2f} USDT，但本地 trend DB 未平=0；"
+                    "币安有持仓而 positions 表未同步（检查 live runner / 是否手工平仓）"
+                ),
+                exchange_unrealized=float(ex_u),
+                local_unrealized=local_u,
+                open_positions=open_pos,
+            )
+        )
+
     if open_pos == 0 and abs(local_u) > orphan_tol:
         issues.append(
             _issue(

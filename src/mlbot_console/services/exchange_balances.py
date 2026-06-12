@@ -94,6 +94,40 @@ def _symbol_base_asset(symbol: str) -> str:
     return sym
 
 
+def futures_open_positions(
+    data: Mapping[str, Any], *, symbol: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Non-flat futures legs from ``/fapi/v2/account`` ``positions`` array."""
+    sym_filter = (
+        str(symbol).upper()
+        if symbol and not _is_all_symbols(symbol)
+        else ""
+    )
+    out: List[Dict[str, Any]] = []
+    for pos in data.get("positions") or []:
+        sym = str(pos.get("symbol") or "").upper()
+        if sym_filter and sym != sym_filter:
+            continue
+        try:
+            amt = float(pos.get("positionAmt") or 0.0)
+        except (TypeError, ValueError):
+            amt = 0.0
+        if amt == 0.0:
+            continue
+        out.append(
+            {
+                "symbol": sym,
+                "side": "long" if amt > 0 else "short",
+                "quantity": abs(amt),
+                "position_amt": amt,
+                "entry_price": float(pos.get("entryPrice") or 0.0),
+                "mark_price": float(pos.get("markPrice") or 0.0),
+                "unrealized_pnl_usdt": float(pos.get("unRealizedProfit") or 0.0),
+            }
+        )
+    return sorted(out, key=lambda x: (x["symbol"], x["side"]))
+
+
 def futures_symbol_unrealized_pnl(
     data: Mapping[str, Any], symbol: str
 ) -> float:
@@ -275,6 +309,11 @@ def fetch_scope_exchange_balance(
             parsed = parse_futures_account(raw)
             account_upnl = float(parsed.get("unrealized_pnl_usdt") or 0.0)
             parsed = dict(parsed)
+            open_positions = futures_open_positions(
+                raw, symbol=sym_filter if symbol_scoped else None
+            )
+            parsed["exchange_open_positions"] = open_positions
+            parsed["exchange_open_position_count"] = len(open_positions)
             parsed["account_unrealized_pnl_usdt"] = account_upnl
             if symbol_scoped:
                 sym_upnl = futures_symbol_unrealized_pnl(raw, sym_filter)

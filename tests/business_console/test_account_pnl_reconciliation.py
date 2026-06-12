@@ -170,6 +170,29 @@ def test_reconcile_scope_pnl_ok_when_aligned() -> None:
     assert issues == []
 
 
+def test_reconcile_scope_pnl_flags_trend_exchange_float_without_local_open() -> None:
+    issues = reconcile_scope_pnl(
+        "trend",
+        scope_block={
+            "scope": "trend",
+            "realized_pnl": 0.0,
+            "unrealized_pnl": 0.0,
+            "open_positions": 0,
+            "closed_trades": 0,
+        },
+        exchange_row={
+            "ok": True,
+            "equity_usdt": 12620.0,
+            "wallet_balance_usdt": 12634.0,
+            "unrealized_pnl_usdt": -13.95,
+        },
+        strategy_rows=[],
+    )
+    kinds = {i["kind"] for i in issues}
+    assert "unrealized_pnl_mismatch" in kinds
+    assert "exchange_position_not_in_local_db" in kinds
+
+
 def test_reconcile_pnl_vs_exchange_integration(
     trend_db, spot_db, spot_ledger_db, multi_leg_db, bus_root
 ) -> None:

@@ -203,7 +203,10 @@ export function AccountPage() {
 
         <div className={styles.grid2}>
           <section className="panel">
-            <h3>账户层汇总 (本地 DB)</h3>
+            <h3>账户层汇总</h3>
+            <p className="muted" style={{ margin: '0 0 8px', fontSize: '0.85rem' }}>
+              钱包/权益/交易所浮盈 = 币安 API；已实现/本地浮盈/本地未平 = SQLite 账本（可能滞后）。
+            </p>
             <ScopesTable scopes={scoped?.scopes || []} symbolFilter={symbol} />
           </section>
           <section className="panel">

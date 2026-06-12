@@ -9,10 +9,25 @@ import pytest
 from mlbot_console.services.exchange_balances import (
     build_exchange_ledger,
     fetch_scope_exchange_balance,
+    futures_open_positions,
     futures_symbol_unrealized_pnl,
     parse_futures_account,
     spot_symbol_holdings_value,
 )
+
+
+def test_futures_open_positions_filters_flat_legs() -> None:
+    raw = {
+        "positions": [
+            {"symbol": "XRPUSDT", "positionAmt": "-100", "unRealizedProfit": "-13.95"},
+            {"symbol": "ETHUSDT", "positionAmt": "0", "unRealizedProfit": "0"},
+        ]
+    }
+    legs = futures_open_positions(raw)
+    assert len(legs) == 1
+    assert legs[0]["symbol"] == "XRPUSDT"
+    assert legs[0]["side"] == "short"
+    assert legs[0]["unrealized_pnl_usdt"] == pytest.approx(-13.95)
 
 
 def test_futures_symbol_unrealized_pnl_sums_hedge_legs() -> None:

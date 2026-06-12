@@ -65,10 +65,11 @@ export function ScopesTable({
             <th>可用</th>
             <th>交易所浮盈</th>
             {symbolScoped ? <th>品种浮盈</th> : null}
+            <th>交易所未平</th>
             <th>已实现</th>
             <th>本地浮盈</th>
             <th>已平仓</th>
-            <th>未平</th>
+            <th>本地未平</th>
           </tr>
         </thead>
         <tbody>
@@ -78,8 +79,17 @@ export function ScopesTable({
             const accountUpnl =
               ex.account_unrealized_pnl_usdt ?? ex.unrealized_pnl_usdt;
             const symbolUpnl = ex.symbol_unrealized_pnl_usdt;
+            const exOpenCount = ex.exchange_open_position_count;
+            const localOpen = Number(s.open_positions ?? 0);
+            const exUpnlNum = Number(accountUpnl);
+            const localUpnlNum = Number(s.unrealized_pnl ?? 0);
+            const pnlMismatch =
+              Number.isFinite(exUpnlNum) &&
+              Math.abs(exUpnlNum) > 0.5 &&
+              localOpen === 0 &&
+              Math.abs(localUpnlNum) < 0.5;
             return (
-              <tr key={String(s.scope)}>
+              <tr key={String(s.scope)} className={pnlMismatch ? styles.rowWarn : undefined}>
                 <td>
                   {label}
                   {ex.binance_label ? (
@@ -93,10 +103,16 @@ export function ScopesTable({
                 {symbolScoped ? (
                   <td className={pnlClass(symbolUpnl)}>{fmtUsdt(symbolUpnl)}</td>
                 ) : null}
+                <td>{exOpenCount != null ? String(exOpenCount) : '—'}</td>
                 <td className={pnlClass(s.realized_pnl)}>{fmtPnl(s.realized_pnl)}</td>
                 <td className={pnlClass(s.unrealized_pnl)}>{fmtPnl(s.unrealized_pnl)}</td>
                 <td>{String(s.closed_trades ?? 0)}</td>
-                <td>{String(s.open_positions ?? 0)}</td>
+                <td>
+                  {String(localOpen)}
+                  {pnlMismatch ? (
+                    <div className={`muted ${styles.sub} pnl-neg`}>与交易所不同步</div>
+                  ) : null}
+                </td>
               </tr>
             );
           })}
@@ -367,6 +383,33 @@ function issueRow(issue: AccountReconIssue, idx: number): ReactNode {
         <td>{String(issue.exchange ?? '—')}</td>
         <td>{String(issue.local ?? '—')}</td>
         <td>{fmtPnl(issue.delta)}</td>
+      </tr>
+    );
+  }
+  if (kind === 'exchange_position_not_in_local_db') {
+    return (
+      <tr key={idx}>
+        <td>交易所有仓·本地无</td>
+        <td colSpan={4}>{issue.message || JSON.stringify(issue)}</td>
+      </tr>
+    );
+  }
+  if (kind === 'local_position_not_on_exchange') {
+    return (
+      <tr key={idx}>
+        <td>本地有仓·交易所无</td>
+        <td>{String(issue.symbol || '—')}</td>
+        <td>{String(issue.exchange ?? 0)}</td>
+        <td>{String(issue.local ?? '—')}</td>
+        <td>{fmtPnl(issue.delta)}</td>
+      </tr>
+    );
+  }
+  if (kind === 'unrealized_pnl_mismatch') {
+    return (
+      <tr key={idx}>
+        <td>浮盈不符</td>
+        <td colSpan={4}>{issue.message || JSON.stringify(issue)}</td>
       </tr>
     );
   }

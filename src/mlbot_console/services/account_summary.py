@@ -802,6 +802,8 @@ def _account_summary_notes(*, lookback_days: int, symbol: str) -> List[str]:
         "合约权益=totalMarginBalance，钱包余额=totalWalletBalance；现货权益≈USDT+持仓按标记价折算。",
         "总账 equity_usdt 为各账户权益之和（三个独立子账户，非单账户拆分）。",
         "账户层「交易所浮盈」= 该子账户 totalUnrealizedProfit（全账户）；Symbol 筛选时另显示当前品种浮盈。",
+        "「已实现 / 本地浮盈 / 未平」来自本地 SQLite（trend/spot/multi_leg DB），与交易所实时持仓可能不同步。",
+        "若 B·Trend 交易所有浮盈但本地未平=0，见下方「交易所对账」或检查 live runner 是否写入 positions。",
         "Trend PnL from positions.realized_pnl on closed rows.",
         "Spot PnL uses FIFO buy lots by fill time; sells realize against oldest buys.",
         "Spot open buys show unrealized PnL when bars_1min close is available.",

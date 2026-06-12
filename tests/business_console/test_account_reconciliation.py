@@ -52,3 +52,30 @@ def test_reconcile_account_spot(spot_ledger_db: Path) -> None:
     assert issue["exchange"] == 0.51
     assert issue["local"] == 0.5
     assert issue["delta"] == pytest.approx(0.01)
+
+
+def test_reconcile_account_trend_flags_exchange_position_missing_local(
+    trend_db: Path,
+) -> None:
+    fake_exchange = {
+        "ok": True,
+        "unrealized_pnl_usdt": -13.95,
+        "exchange_open_positions": [
+            {
+                "symbol": "XRPUSDT",
+                "side": "short",
+                "quantity": 100.0,
+                "unrealized_pnl_usdt": -13.95,
+            }
+        ],
+        "exchange_open_position_count": 1,
+    }
+    with patch(
+        "mlbot_console.services.account_reconciliation.fetch_scope_exchange_balance",
+        return_value=fake_exchange,
+    ):
+        res = reconcile_account("trend", trend_db=trend_db)
+
+    assert res["ok"] is False
+    kinds = {i["kind"] for i in res["issues"]}
+    assert "exchange_position_not_in_local_db" in kinds

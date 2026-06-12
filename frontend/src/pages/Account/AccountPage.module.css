@@ -250,3 +250,7 @@
   white-space: pre-wrap;
   color: var(--text-dim);
 }
+
+.rowWarn {
+  background: rgba(255, 80, 80, 0.06);
+}
