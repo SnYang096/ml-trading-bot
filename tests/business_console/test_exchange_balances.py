@@ -50,6 +50,56 @@ def test_futures_symbol_unrealized_pnl_sums_hedge_legs() -> None:
     assert futures_symbol_unrealized_pnl(raw, "XRPUSDT") == pytest.approx(1.2)
 
 
+def test_futures_symbol_unrealized_pnl_computes_from_entry_mark_when_unrealized_zero() -> (
+    None
+):
+    """When Binance returns unRealizedProfit=0 but entryPrice/markPrice are valid,
+    compute PnL manually: short (entry-mark)*qty, long (mark-entry)*qty."""
+    raw = {
+        "positions": [
+            {
+                "symbol": "XRPUSDT",
+                "positionAmt": "-161.2",
+                "entryPrice": "1.104",
+                "markPrice": "1.080",
+                "unRealizedProfit": "0",  # Binance bug: per-leg PnL missing
+            },
+            {
+                "symbol": "BNBUSDT",
+                "positionAmt": "0.31",
+                "entryPrice": "630.68",
+                "markPrice": "600.0",
+                "unRealizedProfit": "0",
+            },
+        ]
+    }
+    xrp_upnl = futures_symbol_unrealized_pnl(raw, "XRPUSDT")
+    # short: (1.104 - 1.080) * 161.2 = 3.8688
+    assert xrp_upnl == pytest.approx(3.8688)
+    bnb_upnl = futures_symbol_unrealized_pnl(raw, "BNBUSDT")
+    # long: (600 - 630.68) * 0.31 = -9.5108
+    assert bnb_upnl == pytest.approx(-9.5108)
+
+
+def test_futures_open_positions_computes_upnl_manually() -> None:
+    raw = {
+        "positions": [
+            {
+                "symbol": "XRPUSDT",
+                "positionAmt": "-161.2",
+                "entryPrice": "1.104",
+                "markPrice": "1.080",
+                "unRealizedProfit": "0",
+            },
+        ]
+    }
+    legs = futures_open_positions(raw)
+    assert len(legs) == 1
+    assert legs[0]["unrealized_pnl_usdt"] == pytest.approx(3.8688)
+    assert legs[0]["mark_price"] == pytest.approx(1.080)
+    assert legs[0]["entry_price"] == pytest.approx(1.104)
+
+
 def test_spot_symbol_holdings_value_filters_asset() -> None:
     holdings = [
         {"asset": "XRP", "qty": 100.0, "value_usdt": 120.0},

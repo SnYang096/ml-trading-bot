@@ -93,6 +93,28 @@ def _symbol_base_asset(symbol: str) -> str:
     return sym
 
 
+def _compute_position_unrealized_pnl(pos: Mapping[str, Any]) -> float:
+    """Per-position unrealized PnL from entry/mark (Binance per-leg field is unreliable).
+
+    Prefer manual computation from entryPrice × markPrice when both are available,
+    falling back to ``unRealizedProfit`` only when mark data is missing.
+    """
+    try:
+        amt = float(pos.get("positionAmt") or 0.0)
+        entry = float(pos.get("entryPrice") or 0.0)
+        mark = float(pos.get("markPrice") or 0.0)
+    except (TypeError, ValueError):
+        return float(pos.get("unRealizedProfit") or 0.0)
+    if amt == 0.0:
+        return 0.0
+    if entry > 0 and mark > 0:
+        if amt > 0:
+            return (mark - entry) * amt
+        else:
+            return (entry - mark) * abs(amt)
+    return float(pos.get("unRealizedProfit") or 0.0)
+
+
 def futures_open_positions(
     data: Mapping[str, Any], *, symbol: Optional[str] = None
 ) -> List[Dict[str, Any]]:
@@ -121,7 +143,7 @@ def futures_open_positions(
                 "position_amt": amt,
                 "entry_price": float(pos.get("entryPrice") or 0.0),
                 "mark_price": float(pos.get("markPrice") or 0.0),
-                "unrealized_pnl_usdt": float(pos.get("unRealizedProfit") or 0.0),
+                "unrealized_pnl_usdt": _compute_position_unrealized_pnl(pos),
             }
         )
     return sorted(out, key=lambda x: (x["symbol"], x["side"]))
@@ -130,7 +152,7 @@ def futures_open_positions(
 def futures_symbol_unrealized_pnl(
     data: Mapping[str, Any], symbol: str
 ) -> float:
-    """Sum ``unRealizedProfit`` for non-flat legs of one futures symbol (hedge-safe)."""
+    """Sum per-position unrealized PnL (computed from entry/mark, not Binance field)."""
     sym = str(symbol).upper()
     total = 0.0
     for pos in data.get("positions") or []:
@@ -142,7 +164,7 @@ def futures_symbol_unrealized_pnl(
             amt = 0.0
         if amt == 0.0:
             continue
-        total += float(pos.get("unRealizedProfit") or 0.0)
+        total += _compute_position_unrealized_pnl(pos)
     return total
 
 
@@ -317,8 +339,22 @@ def fetch_scope_exchange_balance(
             if symbol_scoped:
                 sym_upnl = futures_symbol_unrealized_pnl(raw, sym_filter)
                 parsed["symbol_unrealized_pnl_usdt"] = sym_upnl
-                parsed["unrealized_pnl_usdt"] = sym_upnl
-                out["unrealized_pnl_basis"] = "symbol"
+                if sym_upnl == 0.0 and account_upnl != 0.0 and open_positions:
+                    # Binance per-position unRealizedProfit can be 0 while
+                    # account-level totalUnrealizedProfit is correct.
+                    # Fall back to account-level to avoid showing 0 wrongly.
+                    logger.debug(
+                        "futures symbol_unrealized_pnl=0 for %s (account_upnl=%.2f, "
+                        "%d open legs); keeping account-level unrealized",
+                        sym_filter,
+                        account_upnl,
+                        len(open_positions),
+                    )
+                    parsed["unrealized_pnl_usdt"] = account_upnl
+                    out["unrealized_pnl_basis"] = "account"
+                else:
+                    parsed["unrealized_pnl_usdt"] = sym_upnl
+                    out["unrealized_pnl_basis"] = "symbol"
             else:
                 parsed["symbol_unrealized_pnl_usdt"] = account_upnl
                 out["unrealized_pnl_basis"] = "account"
