@@ -18,9 +18,7 @@ from mlbot_console.services.account_summary import (
 )
 
 
-def test_build_wallet_equity_curves_lookback_without_snapshots_shows_live_only() -> (
-    None
-):
+def test_build_wallet_equity_curves_lookback_without_snapshots_reconstructs() -> None:
     daily = [
         {"date": "2026-06-10", "pnl": 10.0},
         {"date": "2026-06-11", "pnl": -5.0},
@@ -31,10 +29,10 @@ def test_build_wallet_equity_curves_lookback_without_snapshots_shows_live_only()
         equity_usdt=1020.0,
         lookback_days=30,
     )
-    assert len(curves["balance"]) == 1
-    assert curves["balance"][0]["value_usdt"] == pytest.approx(1005.0)
-    assert curves["equity"][0]["value_usdt"] == pytest.approx(1020.0)
-    assert "日快照" in str(curves.get("note") or "")
+    assert len(curves["balance"]) >= 2
+    assert curves["balance"][-1]["value_usdt"] == pytest.approx(1005.0)
+    assert curves["equity"][-1]["value_usdt"] == pytest.approx(1020.0)
+    assert curves["balance"][0]["value_usdt"] == pytest.approx(1010.0)
 
 
 def test_build_wallet_equity_curves_reconstructs_balance_and_live_equity() -> None:
@@ -106,6 +104,39 @@ def test_account_summary_lookback_filters_old_trend_exit(
         lookback_days=7,
     )
     trend_scope = next(s for s in data["scopes"] if s["scope"] == "trend")
+    assert trend_scope["realized_pnl"] == 0.0
+    assert trend_scope["closed_trades"] == 0
+
+
+def test_trend_stats_excludes_exchange_sync_closes(
+    trend_db, spot_db, spot_ledger_db, multi_leg_db, bus_root
+) -> None:
+    recent_exit = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    conn = sqlite3.connect(trend_db)
+    conn.execute(
+        """
+        INSERT INTO positions VALUES (
+            'sync1', 'ETHUSDT', 'long',
+            '2024-01-01T10:00:00+00:00', ?, 100.0, 100.0, 0.0,
+            'closed', 'tpc', 98.5, 106.0, 2.5, 'exchange_sync_flat'
+        )
+        """,
+        (recent_exit,),
+    )
+    conn.commit()
+    conn.close()
+
+    data = build_account_summary(
+        trend_db=trend_db,
+        spot_db=spot_db,
+        spot_ledger_db=spot_ledger_db,
+        multi_leg_db=multi_leg_db,
+        feature_bus_root=bus_root,
+        symbol="ETHUSDT",
+        lookback_days=7,
+    )
+    trend_scope = next(s for s in data["scopes"] if s["scope"] == "trend")
+    assert trend_scope.get("sync_cleanup_closed") == 1
     assert trend_scope["realized_pnl"] == 0.0
     assert trend_scope["closed_trades"] == 0
 
@@ -340,7 +371,7 @@ def test_trend_open_position_unrealized_uses_entry_qty_when_size_missing(
         INSERT INTO positions VALUES (
             'p_open2', 'ETHUSDT', 'long',
             '2026-05-19T08:00:00+00:00', NULL,
-            2100.0, NULL, NULL, 'open', 'tpc', 2095.0, NULL, NULL
+            2100.0, NULL, NULL, 'open', 'tpc', 2095.0, NULL, NULL, NULL
         )
         """
     )

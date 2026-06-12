@@ -1,0 +1,12 @@
+[Unit]
+Description=mlbot monitor monthly_c (C multileg month-over-month KPI)
+After=docker.service network-online.target
+Requires=docker.service
+OnFailure=mlbot-monitor-notify@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/quant-engine/deploy/systemd/mlbot-monitor-docker-run.sh monthly_c
+
+[Install]
+WantedBy=multi-user.target

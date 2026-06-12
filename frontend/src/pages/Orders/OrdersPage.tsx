@@ -71,7 +71,7 @@ export function OrdersPage() {
     queryFn: () => apiGet<SymbolRow[]>('/api/trade-map/symbols'),
   });
 
-  const legsEnabled = viewMode === 'legs' && !isAllSymbols(symbol);
+  const legsEnabled = viewMode === 'legs';
 
   const ordersQuery = useQuery({
     queryKey: ['orders', symbol, layers, statusFilter, strategyFilter],
@@ -117,12 +117,6 @@ export function OrdersPage() {
     setPage(0);
     setSelectedIdx(-1);
   }, [symbol, layers, statusFilter, strategyFilter, viewMode]);
-
-  useEffect(() => {
-    if (viewMode === 'legs' && isAllSymbols(symbol)) {
-      setViewMode('orders');
-    }
-  }, [symbol, viewMode]);
 
   const orderRows = ordersQuery.data?.data || [];
   const linkRows = linksQuery.data?.data || [];
@@ -250,6 +244,7 @@ export function OrdersPage() {
         <table className="data-table">
           <thead>
             <tr>
+              {showSymbol ? <th>Symbol</th> : null}
               <th>Scope</th>
               <th>Strategy</th>
               <th>Leg</th>
@@ -273,6 +268,7 @@ export function OrdersPage() {
                     onClick={() => setSelectedIdx(globalIdx)}
                     style={{ cursor: 'pointer' }}
                   >
+                    {showSymbol ? <td>{r.symbol || '—'}</td> : null}
                     <td>{SCOPE_LABELS[r.scope || ''] || r.scope || '—'}</td>
                     <td>{r.strategy}</td>
                     <td>{r.leg || '—'}</td>
@@ -290,8 +286,8 @@ export function OrdersPage() {
               })
             ) : (
               <tr>
-                <td colSpan={10} className="muted">
-                  {legsEnabled ? '无已平仓回合' : '回合视图需选择单个 Symbol'}
+                <td colSpan={showSymbol ? 11 : 10} className="muted">
+                  无已平仓回合
                 </td>
               </tr>
             )}

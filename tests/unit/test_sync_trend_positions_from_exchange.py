@@ -69,6 +69,14 @@ def test_sync_closes_stale_local_when_exchange_flat(tmp_path: Path) -> None:
     )
     api = MagicMock()
     api.get_positions.return_value = []
+    api.get_ticker_price.return_value = 2050.0
     report = sync_trend_positions(api=api, db_path=db, dry_run=False)
     assert report["summary"]["close"] == 1
     assert storage.get_open_positions() == []
+    closed = storage.get_position("old1")
+    assert closed is not None
+    assert closed.status == PositionStatus.CLOSED
+    assert closed.exit_reason == "exchange_sync_flat"
+    assert closed.exit_price == pytest.approx(2050.0)
+    assert closed.realized_pnl == pytest.approx((2100.0 - 2050.0) * 0.2)
+    api.get_ticker_price.assert_called_once_with("ETHUSDT")

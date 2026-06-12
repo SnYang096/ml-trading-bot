@@ -64,8 +64,8 @@ export function ScopesTable({
             <th>钱包余额</th>
             <th>权益</th>
             <th>可用</th>
-            <th>交易所浮盈</th>
-            {symbolScoped ? <th>品种浮盈</th> : null}
+            <th>{symbolScoped ? '品种浮盈' : '交易所浮盈'}</th>
+            {symbolScoped ? <th>全账户浮盈</th> : null}
             <th>交易所未平</th>
             <th>已实现</th>
             <th>本地浮盈</th>
@@ -80,13 +80,18 @@ export function ScopesTable({
             const accountUpnl =
               ex.account_unrealized_pnl_usdt ?? ex.unrealized_pnl_usdt;
             const symbolUpnl = ex.symbol_unrealized_pnl_usdt;
+            // When filtered by symbol, compare against symbol-level unrealized
+            // (not account-level which includes other symbols' PnL).
+            const displayUpnl = symbolScoped
+              ? (symbolUpnl ?? accountUpnl)
+              : accountUpnl;
             const exOpenCount = ex.exchange_open_position_count;
             const localOpen = Number(s.open_positions ?? 0);
-            const exUpnlNum = Number(accountUpnl);
+            const compareUpnlNum = Number(symbolScoped ? (symbolUpnl ?? 0) : accountUpnl);
             const localUpnlNum = Number(s.unrealized_pnl ?? 0);
             const pnlMismatch =
-              Number.isFinite(exUpnlNum) &&
-              Math.abs(exUpnlNum) > 0.5 &&
+              Number.isFinite(compareUpnlNum) &&
+              Math.abs(compareUpnlNum) > 0.5 &&
               localOpen === 0 &&
               Math.abs(localUpnlNum) < 0.5;
             return (
@@ -100,9 +105,9 @@ export function ScopesTable({
                 <td>{exCell(ex, 'wallet_balance_usdt')}</td>
                 <td>{exCell(ex, 'equity_usdt')}</td>
                 <td>{exCell(ex, 'available_usdt')}</td>
-                <td className={pnlClass(accountUpnl)}>{fmtUsdt(accountUpnl)}</td>
+                <td className={pnlClass(displayUpnl)}>{fmtUsdt(displayUpnl)}</td>
                 {symbolScoped ? (
-                  <td className={pnlClass(symbolUpnl)}>{fmtUsdt(symbolUpnl)}</td>
+                  <td className={pnlClass(accountUpnl)}>{fmtUsdt(accountUpnl)}</td>
                 ) : null}
                 <td>{exOpenCount != null ? String(exOpenCount) : '—'}</td>
                 <td className={pnlClass(s.realized_pnl)}>{fmtPnl(s.realized_pnl)}</td>

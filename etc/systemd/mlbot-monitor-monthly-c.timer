@@ -1,0 +1,9 @@
+[Unit]
+Description=mlbot monitor monthly_c — 1st of month 09:30 UTC
+
+[Timer]
+OnCalendar=*-*-01 09:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

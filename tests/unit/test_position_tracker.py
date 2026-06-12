@@ -35,6 +35,9 @@ def _make_om():
     om.binance_api.get_open_orders_for_sl_cleanup = (
         lambda symbol=None: om.binance_api.get_open_orders(symbol)
     )
+    # No default mark unless a test sets it (MagicMock() would coerce to ~1.0).
+    om.binance_api.get_ticker_price.return_value = None
+    om.binance_api.get_positions.return_value = []
     return om
 
 
@@ -578,6 +581,40 @@ class TestSyncExchangeSL:
         assert cancelled == 0
         om.binance_api.cancel_order.assert_not_called()
 
+    def test_sync_exchange_sl_market_close_when_stop_breached_long(self):
+        """-2021 guard: long mark below stop → market close, no STOP_MARKET."""
+        from src.order_management.models import OrderType
+
+        om = _make_om()
+        om.binance_api.get_ticker_price.return_value = 48500.0
+        tracker = _make_tracker(om)
+        pos = _make_pos(stop_loss_r=2.0)
+        tracker.add("pid1", pos)
+        pos["stop_loss_price"] = 49000.0
+
+        tracker.sync_exchange_sl("pid1")
+
+        kwargs = om.place_order.call_args.kwargs
+        assert kwargs["order_type"] == OrderType.MARKET
+        assert kwargs["close_position"] is False
+        assert tracker.get("pid1") is None
+
+    def test_sync_exchange_sl_market_close_when_stop_breached_short(self):
+        from src.order_management.models import OrderType
+
+        om = _make_om()
+        om.binance_api.get_ticker_price.return_value = 51500.0
+        tracker = _make_tracker(om)
+        pos = _make_pos(side="SHORT", stop_loss_r=2.0)
+        tracker.add("pid1", pos)
+        pos["stop_loss_price"] = 51000.0
+
+        tracker.sync_exchange_sl("pid1")
+
+        kwargs = om.place_order.call_args.kwargs
+        assert kwargs["order_type"] == OrderType.MARKET
+        assert tracker.get("pid1") is None
+
     def test_sync_exchange_sl_retries_after_4130(self):
         om = _make_om()
         om.place_order.side_effect = [
@@ -680,6 +717,21 @@ class TestClose:
         kwargs = place_calls[0].kwargs
         assert kwargs["order_type"] == OrderType.MARKET
         assert kwargs["reduce_only"] is True
+        assert kwargs.get("close_position") is False
+
+    def test_close_market_omits_close_position_flag(self):
+        """MARKET reduceOnly must not set closePosition (Binance -4136)."""
+        from src.order_management.models import OrderType
+
+        om = _make_om()
+        tracker = _make_tracker(om)
+        tracker.add("pid1", _make_pos(side="SHORT"))
+
+        tracker.close("pid1", qty=0.01, reason="tp_hit")
+
+        kwargs = om.place_order.call_args.kwargs
+        assert kwargs["order_type"] == OrderType.MARKET
+        assert kwargs["close_position"] is False
 
     def test_close_zero_qty_skips(self):
         """qty=0 时不下单"""

@@ -1,0 +1,12 @@
+[Unit]
+Description=mlbot monitor weekly_c (C multileg entry pass_rate on 7d bus)
+After=docker.service network-online.target
+Requires=docker.service
+OnFailure=mlbot-monitor-notify@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/quant-engine/deploy/systemd/mlbot-monitor-docker-run.sh weekly_c
+
+[Install]
+WantedBy=multi-user.target

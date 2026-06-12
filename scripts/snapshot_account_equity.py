@@ -6,6 +6,16 @@ Run once per UTC day (idempotent upsert for same date). Suggested cron (VPS):
   5 0 * * * docker exec mlbot-business-console python3 /app/scripts/snapshot_account_equity.py
 
 Or via monitoring manifest step ``account-equity-snapshot`` in daily_health.yaml.
+
+DB path: ``SETTINGS.account_snapshot_db`` → ``live_data/db/account_equity.db``
+(override with ``MLBOT_ACCOUNT_SNAPSHOT_DB``). VPS after deploy::
+
+  docker exec mlbot-business-console python3 /app/scripts/snapshot_account_equity.py
+  sudo systemctl enable --now mlbot-monitor-daily.timer
+
+Historical backfill cannot restore past exchange balances; use
+``scripts/backfill_account_equity_snapshots.py --from/--to`` to stamp today's
+values per UTC day from enable date forward.
 """
 from __future__ import annotations
 

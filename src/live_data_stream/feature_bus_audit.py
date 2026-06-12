@@ -15,6 +15,9 @@ if TYPE_CHECKING:
 _audit = logging.getLogger("mlbot.feature_bus.audit")
 _logger = logging.getLogger(__name__)
 
+# TPC monitor contract columns (watchdog regime + PSI); warn-only on publish.
+_MONITOR_CONTRACT_COLUMNS = ("ema_1200_position", "adx_50")
+
 
 class FeatureBusAuditError(RuntimeError):
     """Raised when published features violate bus audit thresholds."""
@@ -81,8 +84,60 @@ def audit_published_features(
     else:
         _audit.info("%s", json.dumps(payload, ensure_ascii=False, default=str))
 
+    _warn_monitor_contract_columns(
+        features,
+        symbol=symbol,
+        timeframe=timeframe,
+        context=context,
+    )
     _enforce_thresholds(report, symbol=symbol, timeframe=timeframe, context=context)
     return report
+
+
+def _warn_monitor_contract_columns(
+    features: Dict[str, Any],
+    *,
+    symbol: str,
+    timeframe: str,
+    context: str,
+) -> None:
+    """Warn when TPC 120T bus columns needed by monitor preflight are missing/all-NaN."""
+    tf = str(timeframe or "").strip().upper()
+    if tf not in {"120T", "120MIN", "2H"}:
+        return
+    missing: list[str] = []
+    all_nan: list[str] = []
+    for col in _MONITOR_CONTRACT_COLUMNS:
+        if col not in features:
+            missing.append(col)
+            continue
+        val = features.get(col)
+        try:
+            if val is None or (isinstance(val, float) and val != val):
+                all_nan.append(col)
+        except Exception:
+            all_nan.append(col)
+    if not missing and not all_nan:
+        return
+    _audit.warning(
+        "%s",
+        json.dumps(
+            {
+                "event": "monitor_contract_column_warning",
+                "context": context,
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "missing_columns": missing,
+                "nan_columns": all_nan,
+                "hint": (
+                    "check adx50_f in publisher requested_features and warmup depth "
+                    "for ema_1200_position"
+                ),
+            },
+            ensure_ascii=False,
+            default=str,
+        ),
+    )
 
 
 def should_skip_feature_bus_publish(report: Dict[str, Any]) -> bool:

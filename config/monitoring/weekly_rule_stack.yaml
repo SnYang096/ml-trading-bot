@@ -28,8 +28,8 @@ strategies_root: live/highcap/config/strategies
 # Shared watchdog tuning (per-step keys override these).
 # psi_features: explicit monitoring contract columns (not full features.yaml); see README § PSI.
 watchdog_defaults:
-  ic_baseline_json: config/monitoring/factor_ic_baseline_tpc_20260526.json
-  psi_features: ema_1200_position,vol_persistence,vol_leverage_asymmetry
+  ic_baseline_json: config/monitoring/factor_ic_baseline_tpc_20260611.json
+  psi_features: ema_1200_position,adx_50,vol_persistence,vol_leverage_asymmetry
   psi_tol: 0.25
   ic_flip_min_abs: 0.02
   bull_share_tol: 0.10
@@ -37,7 +37,10 @@ watchdog_defaults:
 
 steps:
   - export-window: { window: near }
+  - validate-window: { window: near }
   - export-window: { window: deep }
+  - validate-window: { window: deep }
+  - account-equity-snapshot: {}
   - watchdog:
       window: near
       baseline: config/monitoring/regime_watchdog_baseline.json

@@ -82,10 +82,18 @@ def test_orders_trade_links_api(client, multi_leg_db):
     assert isinstance(payload["data"], list)
 
 
-def test_orders_trade_links_all_symbols_empty(client):
+def test_orders_trade_links_all_symbols_returns_trend_links(client, trend_db):
     r = client.get(
         "/api/orders/trade-links",
-        params={"symbol": "*", "scopes": "multi_leg"},
+        params={"symbol": "*", "scopes": "trend", "limit": 500},
     )
     assert r.status_code == 200
-    assert r.json()["data"] == []
+    payload = r.json()
+    assert payload["meta"]["symbol"] == "ALL"
+    links = payload["data"]
+    assert isinstance(links, list)
+    assert len(links) >= 1
+    eth = next(x for x in links if x.get("symbol") == "ETHUSDT")
+    assert eth.get("status") == "closed"
+    assert eth.get("entry_price") == 100.0
+    assert eth.get("exit_price") == 105.0

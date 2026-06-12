@@ -312,7 +312,8 @@ class PositionTracker:
                 order_type=OrderType.MARKET,
                 quantity=float(qty),
                 reduce_only=True,
-                close_position=True,
+                # MARKET + closePosition is invalid on Binance (-4136); use qty+reduceOnly.
+                close_position=False,
                 position_id=position_id,
             )
             logger.info(
@@ -473,6 +474,69 @@ class PositionTracker:
             return None
         candidates.sort(key=lambda x: x[0])
         return candidates[0][1]
+
+    def _fetch_mark_price(self, position_side: str) -> Optional[float]:
+        """Best-effort mark/last for -2021 guard before exchange SL sync."""
+        api = getattr(self.order_manager, "binance_api", None) if self.order_manager else None
+        if api is None:
+            return None
+        get_ticker = getattr(api, "get_ticker_price", None)
+        if callable(get_ticker):
+            try:
+                px = get_ticker(self.symbol)
+                if px is None:
+                    pass
+                else:
+                    fpx = float(px)
+                    if fpx > 0:
+                        return fpx
+            except (TypeError, ValueError):
+                pass
+            except Exception:
+                logger.debug(
+                    "[%s] mark fetch via ticker failed",
+                    self.symbol,
+                    exc_info=True,
+                )
+        get_positions = getattr(api, "get_positions", None)
+        if callable(get_positions):
+            try:
+                for row in get_positions() or []:
+                    if not isinstance(row, dict):
+                        continue
+                    sym = str(row.get("symbol") or "").upper()
+                    if sym and sym != str(self.symbol or "").upper():
+                        continue
+                    ps = str(
+                        row.get("position_side") or row.get("positionSide") or ""
+                    ).upper()
+                    if ps and ps != position_side:
+                        continue
+                    mark = row.get("mark_price") or row.get("markPrice")
+                    if mark is not None:
+                        fmark = float(mark)
+                        if fmark > 0:
+                            return fmark
+            except (TypeError, ValueError):
+                pass
+            except Exception:
+                logger.debug(
+                    "[%s] mark fetch via positions failed",
+                    self.symbol,
+                    exc_info=True,
+                )
+        return None
+
+    @staticmethod
+    def _stop_would_immediately_trigger(
+        *, mark: float, stop_price: float, is_long: bool
+    ) -> bool:
+        """True when STOP_MARKET would reject with Binance -2021."""
+        if mark <= 0 or stop_price <= 0:
+            return False
+        if is_long:
+            return mark <= stop_price
+        return mark >= stop_price
 
     def _fetch_open_orders_for_sl_cleanup(self) -> List[Dict[str, Any]]:
         api = getattr(self.order_manager, "binance_api", None)
@@ -657,6 +721,27 @@ class PositionTracker:
             old_sl = None
 
         position_side = self._position_side_from_pos(pos)
+        side_str = str(pos.get("side", "")).upper()
+        is_long = side_str in {"LONG", "BUY"}
+        qty = float(pos.get("qty") or 0.0)
+        if qty <= 0:
+            return
+
+        mark = self._fetch_mark_price(position_side)
+        if mark is not None and self._stop_would_immediately_trigger(
+            mark=mark, stop_price=new_sl, is_long=is_long
+        ):
+            logger.warning(
+                "[%s] exchange SL skipped (-2021): mark=%.4f beyond stop=%.4f pid=%s "
+                "— market close",
+                self.symbol,
+                mark,
+                new_sl,
+                pid,
+            )
+            self.close(pid, qty, reason="sl_breached_mark")
+            self._positions.pop(pid, None)
+            return
 
         # cancel 旧挂单（仅更新路径；首次挂单无旧单）
         old_oid = pos.get("_exchange_sl_order_id")
@@ -672,11 +757,7 @@ class PositionTracker:
         self._cancel_open_close_position_conditionals(position_side=position_side)
 
         # place 新挂单
-        side_str = str(pos.get("side", "")).upper()
-        close_side = OrderSide.SELL if side_str in {"LONG", "BUY"} else OrderSide.BUY
-        qty = float(pos.get("qty") or 0.0)
-        if qty <= 0:
-            return
+        close_side = OrderSide.SELL if is_long else OrderSide.BUY
 
         new_order = None
         last_exc: Optional[Exception] = None

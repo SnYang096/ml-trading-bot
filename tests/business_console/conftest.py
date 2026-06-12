@@ -103,7 +103,8 @@ def trend_db(tmp_path: Path) -> Path:
             strategy_id TEXT,
             stop_loss_price REAL,
             take_profit_price REAL,
-            current_size REAL
+            current_size REAL,
+            exit_reason TEXT
         );
         CREATE TABLE position_operations (
             operation_id TEXT PRIMARY KEY,
@@ -139,7 +140,7 @@ def trend_db(tmp_path: Path) -> Path:
         INSERT INTO positions VALUES (
             'p1', 'ETHUSDT', 'long',
             '2024-01-01T10:00:00+00:00', '2024-01-01T14:00:00+00:00',
-            100.0, 105.0, 12.5, 'closed', 'tpc', 98.5, 106.0, 2.5
+            100.0, 105.0, 12.5, 'closed', 'tpc', 98.5, 106.0, 2.5, NULL
         )
         """
     )

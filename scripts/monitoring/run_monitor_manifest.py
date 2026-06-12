@@ -120,14 +120,14 @@ def _watchdog_namespace(
 
     ic_json = str(
         cfg.get("ic_baseline_json")
-        or "config/monitoring/factor_ic_baseline_tpc_20260526.json"
+        or "config/monitoring/factor_ic_baseline_tpc_20260611.json"
     )
     psi_raw = cfg.get("psi_features")
     if isinstance(psi_raw, list):
         psi_features = ",".join(str(x) for x in psi_raw)
     else:
         psi_features = str(
-            psi_raw or "ema_1200_position,vol_persistence,vol_leverage_asymmetry"
+            psi_raw or "ema_1200_position,adx_50,vol_persistence,vol_leverage_asymmetry"
         )
 
     return argparse.Namespace(
@@ -158,6 +158,56 @@ def _resolve_strategies(
             f"constitution={meta.get('constitution')}"
         )
     return ",".join(slugs), meta
+
+
+def _manifest_psi_features(manifest: Dict[str, Any]) -> str:
+    defaults = manifest.get("watchdog_defaults") or {}
+    if not isinstance(defaults, dict):
+        defaults = {}
+    psi_raw = defaults.get("psi_features")
+    if isinstance(psi_raw, list):
+        return ",".join(str(x) for x in psi_raw)
+    return str(
+        psi_raw or "ema_1200_position,adx_50,vol_persistence,vol_leverage_asymmetry"
+    )
+
+
+def _run_validate_window_step(
+    *,
+    manifest: Dict[str, Any],
+    parquet: Path,
+    out_dir: Path,
+    step_cfg: Dict[str, Any],
+) -> int:
+    from scripts.monitoring.validate_monitor_window import validate_monitor_parquet
+
+    psi_raw = step_cfg.get("psi_features")
+    if isinstance(psi_raw, list):
+        psi_csv = ",".join(str(x) for x in psi_raw)
+    elif psi_raw:
+        psi_csv = str(psi_raw)
+    else:
+        psi_csv = _manifest_psi_features(manifest)
+    psi_list = [s.strip() for s in psi_csv.split(",") if s.strip()]
+    try:
+        report = validate_monitor_parquet(
+            parquet,
+            required_columns=psi_list or None,
+        )
+        out_path = out_dir / f"validate_window_{parquet.stem}.json"
+        out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        print(f"validate-window OK → {parquet} ({report.get('n_rows')} rows)")
+        return 0
+    except ValueError as exc:
+        print(f"ERROR validate-window: {exc}", file=sys.stderr)
+        fail_path = out_dir / f"validate_window_{parquet.stem}.json"
+        fail_path.write_text(
+            json.dumps(
+                {"ok": False, "error": str(exc), "parquet": str(parquet)}, indent=2
+            ),
+            encoding="utf-8",
+        )
+        return 3
 
 
 def execute_manifest(
@@ -248,6 +298,26 @@ def execute_manifest(
             if rc != 0:
                 return rc, run_ts, out_dir
 
+        elif name == "validate-window":
+            win_key = _normalize_window_key(str(cfg.get("window", "near")))
+            pq = window_paths.get(win_key)
+            if pq is None:
+                raise KeyError(
+                    f"validate-window: window {win_key!r} not exported yet "
+                    "(run export-window first)"
+                )
+            if dry_run:
+                print(f"[dry-run] validate-window → {pq}")
+                continue
+            rc = _run_validate_window_step(
+                manifest=manifest,
+                parquet=pq,
+                out_dir=out_dir,
+                step_cfg=cfg,
+            )
+            if rc != 0:
+                return rc, run_ts, out_dir
+
         elif name == "archive-batch":
             win_key = _normalize_window_key(str(cfg.get("window", "deep")))
             win = _window_cfg(manifest, win_key)
@@ -328,7 +398,7 @@ def execute_manifest(
                     "--ic-baseline-json",
                     str(
                         wd_cfg.get("ic_baseline_json")
-                        or "config/monitoring/factor_ic_baseline_tpc_20260526.json"
+                        or "config/monitoring/factor_ic_baseline_tpc_20260611.json"
                     ),
                     "--psi-features",
                     str(

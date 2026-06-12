@@ -184,6 +184,10 @@ def _trend_realized_rec(pnl: float) -> Dict[str, Any]:
     }
 
 
+def _is_exchange_sync_close(row: Mapping[str, Any]) -> bool:
+    return str(row.get("exit_reason") or "").startswith("exchange_sync")
+
+
 def _trend_unrealized_rec(pnl: float) -> Dict[str, Any]:
     return {
         "pnl_usdt": float(pnl),
@@ -271,7 +275,7 @@ def _trend_stats(
         trend_db,
         f"""
         SELECT position_id, symbol, side, current_size, entry_time, exit_time,
-               entry_price, exit_price, realized_pnl, status, strategy_id
+               entry_price, exit_price, realized_pnl, status, strategy_id, exit_reason
         FROM positions
         {where}
         """,
@@ -284,6 +288,7 @@ def _trend_stats(
     unrealized = 0.0
     open_count = 0
     closed_count = 0
+    sync_cleanup_closed = 0
     by_strategy: Dict[str, Dict[str, float]] = defaultdict(
         lambda: {"realized_pnl": 0.0, "unrealized_pnl": 0.0, "closed_trades": 0.0, "open_positions": 0.0}
     )
@@ -295,6 +300,9 @@ def _trend_stats(
             continue
         strat = str(row.get("strategy_id") or "trend").lower()
         st = str(row.get("status") or "").lower()
+        if st != "open" and row.get("exit_time") and _is_exchange_sync_close(row):
+            sync_cleanup_closed += 1
+            continue
         if st == "open" or not row.get("exit_time"):
             open_count += 1
             by_strategy[strat]["open_positions"] += 1
@@ -328,6 +336,7 @@ def _trend_stats(
         "unrealized_pnl": unrealized,
         "open_positions": open_count,
         "closed_trades": closed_count,
+        "sync_cleanup_closed": sync_cleanup_closed,
         "by_strategy": dict(by_strategy),
         "daily_realized": [{"date": d, "pnl": daily[d]} for d in sorted(daily)],
     }
@@ -571,6 +580,33 @@ def _merge_daily(series_list: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]
     return [{"date": d, "pnl": daily[d]} for d in sorted(daily)]
 
 
+def _fill_daily_realized_calendar(
+    daily: List[Dict[str, Any]], *, lookback_days: int
+) -> List[Dict[str, Any]]:
+    """Insert pnl=0 for missing calendar days so bar charts are continuous."""
+    if not daily:
+        return daily
+    dates = sorted(str(pt.get("date") or "") for pt in daily if pt.get("date"))
+    if not dates:
+        return daily
+    start = _parse_utc_date(dates[0]).date()
+    end = _parse_utc_date(dates[-1]).date()
+    if lookback_days > 0:
+        window_start = (
+            datetime.now(timezone.utc) - timedelta(days=int(lookback_days))
+        ).date()
+        if window_start > start:
+            start = window_start
+    by_date = {str(pt["date"]): float(pt.get("pnl") or 0.0) for pt in daily}
+    out: List[Dict[str, Any]] = []
+    d = start
+    while d <= end:
+        key = d.isoformat()
+        out.append({"date": key, "pnl": by_date.get(key, 0.0)})
+        d += timedelta(days=1)
+    return out
+
+
 def _parse_utc_date(date_str: str) -> datetime:
     return datetime.strptime(str(date_str), "%Y-%m-%d").replace(tzinfo=timezone.utc)
 
@@ -665,20 +701,6 @@ def build_wallet_equity_curves(
             "equity": [],
             "anchor_wallet_usdt": None,
             "note": "交易所钱包余额不可用",
-        }
-
-    if int(lookback_days) > 0:
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        live_wallet = float(wallet_usdt)
-        live_equity = float(equity_usdt if equity_usdt is not None else wallet_usdt)
-        return {
-            "balance": [{"date": today, "value_usdt": live_wallet}],
-            "equity": [{"date": today, "value_usdt": live_equity}],
-            "anchor_wallet_usdt": None,
-            "note": (
-                "无账户日快照时，lookback 窗口不提供历史钱包重建；"
-                "最新点为币安实时 wallet / margin balance"
-            ),
         }
 
     total_realized = sum(float(pt.get("pnl") or 0.0) for pt in daily)
@@ -805,6 +827,7 @@ def build_account_summary(
     _merge_registry_strategy_rows(strategy_rows, allowed_scopes=allowed_scopes)
 
     daily = _merge_daily([s["daily_realized"] for s in scope_blocks])
+    daily = _fill_daily_realized_calendar(daily, lookback_days=lookback_days)
 
     ledger = build_exchange_ledger(mark_prices=marks, symbol=symbol)
     exchange_by_scope = {str(a["scope"]): a for a in ledger.get("accounts") or []}

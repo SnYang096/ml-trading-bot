@@ -53,7 +53,7 @@ def _norm_side(side: str) -> str:
 
 
 def _exchange_legs(api: BinanceAPI) -> Dict[Tuple[str, str], Dict[str, Any]]:
-    """symbol, side → exchange leg (qty, entry, upnl)."""
+    """symbol, side → exchange leg (qty, entry, upnl, mark)."""
     out: Dict[Tuple[str, str], Dict[str, Any]] = {}
     for pos in api.get_positions() or []:
         sym = _raw_symbol(str(pos.get("symbol") or ""))
@@ -67,6 +67,7 @@ def _exchange_legs(api: BinanceAPI) -> Dict[Tuple[str, str], Dict[str, Any]]:
             "side": side,
             "quantity": qty,
             "entry_price": float(pos.get("entry_price") or 0.0),
+            "mark_price": float(pos.get("mark_price") or 0.0),
             "unrealized_pnl_usdt": float(pos.get("unrealized_pnl") or 0.0),
             "ccxt_symbol": str(pos.get("symbol") or ""),
         }
@@ -121,13 +122,55 @@ def _make_open_position(
     )
 
 
-def _close_position_row(row: Position, *, reason: str) -> Position:
+def _fetch_mark_prices(api: BinanceAPI, symbols: Iterable[str]) -> Dict[str, float]:
+    """Best-effort mark/last for stale closes when exchange leg is flat."""
+    out: Dict[str, float] = {}
+    for sym in sorted({str(s or "").upper() for s in symbols if str(s or "").strip()}):
+        try:
+            px = api.get_ticker_price(sym)
+            if px is not None and float(px) > 0:
+                out[sym] = float(px)
+        except Exception as exc:
+            logger.warning("mark price fetch failed for %s: %s", sym, exc)
+    return out
+
+
+def _close_position_row(
+    row: Position,
+    *,
+    reason: str,
+    closing_price: Optional[float] = None,
+) -> Position:
     row.status = PositionStatus.CLOSED
     row.exit_time = datetime.now(timezone.utc)
     row.exit_reason = reason
+    qty = float(row.current_size or row.initial_size or 0.0)
+    entry = float(row.entry_price or 0.0)
     row.current_size = 0.0
-    if row.exit_price is None and row.entry_price:
-        row.exit_price = float(row.entry_price)
+    # Prefer exchange mark; fallback to stored unrealized or entry price.
+    if closing_price is not None and closing_price > 0:
+        row.exit_price = float(closing_price)
+    elif row.unrealized_pnl is not None and entry > 0 and qty > 0:
+        upnl = float(row.unrealized_pnl)
+        side = _norm_side(
+            row.side.value if hasattr(row.side, "value") else str(row.side)
+        )
+        if side == "long":
+            row.exit_price = entry + upnl / qty
+        else:
+            row.exit_price = entry - upnl / qty
+    elif row.exit_price is None and entry > 0:
+        row.exit_price = entry
+    # Compute realized PnL
+    if row.exit_price is not None and entry > 0 and qty > 0:
+        ep = float(row.exit_price)
+        side = _norm_side(
+            row.side.value if hasattr(row.side, "value") else str(row.side)
+        )
+        if side == "long":
+            row.realized_pnl = (ep - entry) * qty
+        else:
+            row.realized_pnl = (entry - ep) * qty
     return row
 
 
@@ -212,6 +255,11 @@ def sync_trend_positions(
 
         extras = [p for p in locals_for_key if p.position_id != primary.position_id]
         if extras and close_stale:
+            dup_mark = (
+                float(leg.get("mark_price") or 0.0)
+                if float(leg.get("mark_price") or 0.0) > 0
+                else None
+            )
             for row in extras:
                 closed = {
                     "kind": "close_duplicate",
@@ -222,14 +270,28 @@ def sync_trend_positions(
                 report["closed"].append(closed)
                 if not dry_run:
                     storage.update_position(
-                        _close_position_row(row, reason="exchange_sync_duplicate")
+                        _close_position_row(
+                            row,
+                            reason="exchange_sync_duplicate",
+                            closing_price=dup_mark,
+                        )
                     )
 
     if close_stale:
+        stale_symbols: List[str] = []
         for key, rows in local.items():
             if key in exchange:
                 continue
             for row in rows:
+                stale_symbols.append(str(row.symbol or "").upper())
+        mark_by_symbol = _fetch_mark_prices(api, stale_symbols)
+
+        for key, rows in local.items():
+            if key in exchange:
+                continue
+            for row in rows:
+                sym_u = str(row.symbol or "").upper()
+                stale_mark = mark_by_symbol.get(sym_u)
                 closed = {
                     "kind": "close_stale",
                     "position_id": row.position_id,
@@ -237,11 +299,16 @@ def sync_trend_positions(
                     "side": _norm_side(
                         row.side.value if hasattr(row.side, "value") else str(row.side)
                     ),
+                    "closing_price": stale_mark,
                 }
                 report["closed"].append(closed)
                 if not dry_run:
                     storage.update_position(
-                        _close_position_row(row, reason="exchange_sync_flat")
+                        _close_position_row(
+                            row,
+                            reason="exchange_sync_flat",
+                            closing_price=stale_mark,
+                        )
                     )
 
     report["summary"] = {

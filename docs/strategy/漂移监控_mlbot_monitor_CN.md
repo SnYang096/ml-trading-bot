@@ -692,14 +692,34 @@ promote 或 regime 标定变更后：在**标定/reference 窗**上重跑 watchd
 
 ### 8.2 systemd（远程 cron）
 
-| 单元 | 作用 |
-|------|------|
-| `etc/systemd/mlbot-weekly-watchdog.service` | `run_weekly.sh` → `mlbot monitor weekly` |
-| `etc/systemd/mlbot-weekly-watchdog.timer` | 默认周日 08:00 UTC；可改为**日更** |
+主路径：`deploy/systemd/mlbot-monitor-docker-run.sh <cadence>` → `monitor_scheduler.py`（manifest 见 `config/monitoring/schedules.yaml`）。
+
+| Timer 单元 | Cadence | OnCalendar (UTC) |
+|------------|---------|------------------|
+| `mlbot-monitor-daily.timer` | daily | 每天 06:30 |
+| `mlbot-monitor-weekly.timer` | weekly | 周日 08:00 |
+| `mlbot-monitor-weekly-c.timer` | weekly_c | 周日 08:30 |
+| `mlbot-monitor-monthly.timer` | monthly | 每月 1 日 09:00 |
+| `mlbot-monitor-monthly-c.timer` | monthly_c | 每月 1 日 09:30 |
+| `mlbot-monitor-quarterly.timer` | quarterly | 1/4/7/10 月 1 日 10:00 |
+| `mlbot-monitor-yearly.timer` | yearly | 1 月 1 日 11:00 |
+
+遗留（可选，与 weekly manifest 等价旧路径）：`mlbot-weekly-watchdog.timer` → `run_weekly.sh`。
+
+VPS 一次性启用（复制 `etc/systemd/mlbot-monitor-*` 到 `/etc/systemd/system/` 后）：
 
 ```bash
-sudo cp etc/systemd/mlbot-weekly-watchdog.* /etc/systemd/system/
-sudo systemctl enable --now mlbot-weekly-watchdog.timer
+sudo systemctl daemon-reload
+for t in daily weekly weekly-c monthly monthly-c quarterly yearly; do
+  sudo systemctl enable --now mlbot-monitor-${t}.timer
+done
+systemctl list-timers 'mlbot-monitor-*'
+```
+
+账户权益日快照（`daily_health` / `weekly_rule_stack` 的 `account-equity-snapshot` 步骤）写入 `live_data/db/account_equity.db`；deploy 后补跑：
+
+```bash
+docker exec mlbot-business-console python3 /app/scripts/snapshot_account_equity.py
 ```
 
 Service 中建议：
