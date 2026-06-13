@@ -6,6 +6,7 @@ import {
   SYMBOL_ALL,
   displayExitKind,
   displayOrderAction,
+  displayOrderKind,
   displayOrderPrice,
   displayOrderQty,
   displayPositionSideLabel,
@@ -428,6 +429,7 @@ export function OrdersPage() {
               <th>Scope</th>
               <th>Strategy</th>
               <th>动作</th>
+              <th>类型</th>
               <th>Status</th>
               <th>Qty</th>
               <th>Price</th>
@@ -450,6 +452,7 @@ export function OrdersPage() {
                     <td>{SCOPE_LABELS[r.scope] || r.scope}</td>
                     <td>{r.strategy}</td>
                     <td>{displayOrderAction(r)}</td>
+                    <td>{displayOrderKind(r)}</td>
                     <td>{r.status}</td>
                     <td>{displayOrderQty(r)}</td>
                     <td>{displayOrderPrice(r)}</td>
@@ -462,7 +465,7 @@ export function OrdersPage() {
               })
             ) : (
               <tr>
-                <td colSpan={showSymbol ? 9 : 8} className="muted">
+                <td colSpan={showSymbol ? 10 : 9} className="muted">
                   无订单
                 </td>
               </tr>

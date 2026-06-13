@@ -135,6 +135,35 @@ export function displayOrderAction(row: OrderActionRow): string {
   return side || '—';
 }
 
+type OrderKindRow = {
+  order_type?: string | null;
+  purpose?: string | null;
+  stop_price?: number | null;
+  stop_loss_price?: number | null;
+  take_profit_price?: number | null;
+};
+
+/** Limit vs conditional (algo) vs market — for CMS order type column. */
+export function displayOrderKind(row: OrderKindRow): string {
+  const ot = String(row.order_type || row.purpose || '').toLowerCase();
+  if (
+    ot.includes('stop_market') ||
+    ot.includes('take_profit_market') ||
+    ot.includes('trailing_stop') ||
+    ot.includes('stop') ||
+    ot.includes('take_profit')
+  ) {
+    return '条件单';
+  }
+  for (const key of ['stop_price', 'stop_loss_price', 'take_profit_price'] as const) {
+    const n = Number(row[key]);
+    if (Number.isFinite(n) && n > 0) return '条件单';
+  }
+  if (ot.includes('limit') || ot === 'marketable_limit') return '限价';
+  if (ot.includes('market')) return '市价';
+  return ot ? ot : '—';
+}
+
 export function displayPositionSideLabel(side: unknown): string {
   const s = String(side || '').toLowerCase();
   if (s === 'long') return '做多';

@@ -2,7 +2,8 @@
 Trend / live 「终态订单」REST 回填（独立于 User Stream）。
 
 ``OrderFlowListener`` 仅在收到终端 WS 时尝试 ``sync_order_status``；已在库中但未带均价的单子不会再次触发 WS。
-此处按可配置间隔调用 ``OrderManager.reconcile_recent_terminal_orders``，与磁盘 ``orders`` 表候选集对齐。
+此处按可配置间隔调用 ``OrderManager.reconcile_recent_terminal_orders`` 与
+``OrderManager.reconcile_open_orders``，与磁盘 ``orders`` 表对齐（含 stale ``pending``）。
 
 控制环境变量::
 
@@ -62,6 +63,17 @@ def terminal_order_backfill_should_run(order_manager: Any | None) -> bool:
     return callable(fn)
 
 
+def open_order_reconcile_should_run(order_manager: Any | None) -> bool:
+    if order_manager is None:
+        return False
+    if getattr(order_manager, "shadow", False):
+        return False
+    if getattr(order_manager, "binance_api", None) is None:
+        return False
+    fn = getattr(order_manager, "reconcile_open_orders", None)
+    return callable(fn)
+
+
 def terminal_order_backfill_env_int(name: str, default: int) -> int:
     raw = os.getenv(name, str(default))
     try:
@@ -88,15 +100,17 @@ async def periodic_terminal_order_backfill(
         )
         return
 
+    run_open_reconcile = open_order_reconcile_should_run(order_manager)
     lookback_hours = terminal_order_backfill_env_int(
         "MLBOT_TERMINAL_ORDER_BACKFILL_LOOKBACK_HOURS", 168
     )
     limit = terminal_order_backfill_env_int("MLBOT_TERMINAL_ORDER_BACKFILL_LIMIT", 200)
     logger.info(
-        "Terminal order REST backfill: every %.0fs lookback_hours=%s limit=%s",
+        "Terminal order REST backfill: every %.0fs lookback_hours=%s limit=%s open_reconcile=%s",
         interval,
         lookback_hours,
         limit,
+        run_open_reconcile,
     )
 
     if startup_delay_seconds > 0:
@@ -116,6 +130,11 @@ async def periodic_terminal_order_backfill(
                     limit=max(1, limit),
                 ),
             )
+            open_updated: list[Any] = []
+            if run_open_reconcile:
+                open_updated = await loop.run_in_executor(
+                    None, order_manager.reconcile_open_orders
+                )
             stats = getattr(order_manager, "_last_terminal_backfill_stats", {}) or {}
             stale_marked = int(stats.get("stale_marked", 0) or 0)
             api_error = int(stats.get("api_error", 0) or 0)
@@ -128,14 +147,16 @@ async def periodic_terminal_order_backfill(
                     issue_counts={
                         "stale_local_order": stale_marked,
                         "api_error": api_error,
+                        "open_reconcile_updated": len(open_updated),
                     },
                 )
             except Exception:
                 logger.debug("terminal backfill reconciliation metrics skipped", exc_info=True)
-            if updated:
+            if updated or open_updated:
                 logger.info(
-                    "Terminal order REST backfill: updated %s row(s)",
+                    "Terminal order REST backfill: terminal=%s open_reconcile=%s row(s)",
                     len(updated),
+                    len(open_updated),
                 )
         except asyncio.CancelledError:
             break

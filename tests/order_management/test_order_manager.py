@@ -147,3 +147,39 @@ def test_reconcile_open_orders_creates_missing(order_manager, mock_binance_api):
     created = order_manager.get_order(updated[0].order_id)
     assert created is not None
     assert created.binance_order_id == "binance_order_missing"
+
+
+def test_reconcile_open_orders_syncs_canceled_pending(order_manager, mock_binance_api):
+    """Local pending + exchange canceled (not in openOrders) must update SQLite."""
+    from src.order_management.models import Order
+
+    mock_binance_api.get_open_orders.return_value = []
+    mock_binance_api.get_order.return_value = {
+        "order_id": "4000001325799046",
+        "client_order_id": "tl_test",
+        "symbol": "ETHUSDT",
+        "side": "buy",
+        "type": "limit",
+        "status": "canceled",
+        "quantity": 0.05,
+        "filled": 0,
+        "average_price": None,
+    }
+    order = Order(
+        order_id="local_stale_pending",
+        binance_order_id="4000001325799046",
+        client_order_id="tl_test",
+        symbol="ETHUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        quantity=0.05,
+        status=OrderStatus.PENDING,
+        created_at=datetime.now(),
+    )
+    order_manager.storage.create_order(order)
+
+    updated = order_manager.reconcile_open_orders()
+    assert len(updated) == 1
+    got = order_manager.get_order("local_stale_pending")
+    assert got is not None
+    assert got.status == OrderStatus.CANCELED

@@ -15,6 +15,8 @@ def test_orders_page_displays_qty_with_zero_filled_fallback():
     )
     assert "displayOrderQty" in shell
     assert "displayOrderQty(r)" in tsx
+    assert "displayOrderKind" in shell
+    assert "displayOrderKind(r)" in tsx
     assert "strategyFilter" in tsx
     assert "listStrategiesForLayers" in tsx
     assert "exclude_status" in tsx
