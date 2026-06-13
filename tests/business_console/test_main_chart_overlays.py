@@ -348,6 +348,12 @@ def test_weekly_ema_chart_fallback_skips_short_window(bus_root) -> None:
     assert not out["weekly_ema_200"]["available"]
 
 
+def test_seed_ema_plausible_allows_deep_bear_close_below_ema() -> None:
+    seed = pd.DataFrame({"weekly_ema_200": [2525.0]})
+    candles = [{"close": 1669.0}]
+    assert _seed_ema_plausible(seed, candles) is True
+
+
 def test_stale_seed_412_rejected_when_spot_daily_available(tmp_path) -> None:
     """BNB-like: stale seed ~412 must not win when Vision daily recomputes ~650+."""
     import io

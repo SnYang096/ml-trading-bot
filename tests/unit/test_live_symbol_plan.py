@@ -45,3 +45,35 @@ def test_classic_plan_env_override_replaces_bus_set():
     )
     assert plan.bus_symbols == ["BTCUSDT", "ETHUSDT"]
     assert plan.strategy_symbols["tpc"] == ["BTCUSDT", "ETHUSDT"]
+
+
+def test_classic_plan_trend_scalp_uses_explicit_include_not_full_universe():
+    plan = resolve_live_classic_symbol_plan(
+        universe="highcap",
+        strategies_root="live/highcap/config/strategies",
+        enabled_archetypes=["trend_scalp"],
+    )
+    trend = plan.strategy_symbols["trend_scalp"]
+    assert "HYPEUSDT" in trend
+    assert "ADAUSDT" not in trend
+    assert set(trend) == {
+        "BTCUSDT",
+        "ETHUSDT",
+        "BNBUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "HYPEUSDT",
+    }
+    assert set(plan.bus_symbols) >= set(trend)
+
+
+def test_classic_plan_spot_accum_subset_of_universe():
+    plan = resolve_live_classic_symbol_plan(
+        universe="highcap",
+        strategies_root="live/highcap/config/strategies",
+        enabled_archetypes=["spot_accum_simple"],
+    )
+    spot = plan.strategy_symbols["spot_accum_simple"]
+    assert set(spot) == {"BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"}
+    assert "HYPEUSDT" not in spot
+    assert "XRPUSDT" not in spot

@@ -52,6 +52,14 @@ def _month_list(
     return months
 
 
+def _vision_open_time_unit(open_time: pd.Series) -> str:
+    """Binance Vision spot klines: ms (13 digits) through 2024, us (16 digits) from 2025."""
+    sample = pd.to_numeric(open_time, errors="coerce").dropna()
+    if sample.empty:
+        return "ms"
+    return "us" if float(sample.iloc[0]) > 1e14 else "ms"
+
+
 def parse_kline_zip_bytes(raw: bytes) -> pd.DataFrame:
     with zipfile.ZipFile(io.BytesIO(raw)) as zf:
         names = [n for n in zf.namelist() if n.endswith(".csv")]
@@ -66,7 +74,8 @@ def parse_kline_zip_bytes(raw: bytes) -> pd.DataFrame:
             )
     if df.empty:
         return df
-    ts = pd.to_datetime(df["open_time"], unit="ms", utc=True, errors="coerce")
+    unit = _vision_open_time_unit(df["open_time"])
+    ts = pd.to_datetime(df["open_time"], unit=unit, utc=True, errors="coerce")
     bar_index = pd.DatetimeIndex(ts.to_numpy())
     out = pd.DataFrame(
         {

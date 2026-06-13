@@ -112,6 +112,7 @@ def compute_weekly_ema_table(
     daily_close: pd.Series,
     *,
     ema_span_weeks: int = 200,
+    min_periods: Optional[int] = None,
 ) -> pd.DataFrame:
     """Resample daily close to W-SUN and compute weekly EMA."""
     c = pd.to_numeric(daily_close, errors="coerce").astype(float).dropna()
@@ -126,9 +127,9 @@ def compute_weekly_ema_table(
     )
     span = max(2, int(ema_span_weeks))
     # EMA200 needs ~200 weekly closes; span//5 allowed biased values (~400) on short history.
-    min_periods = span
+    mp = span if min_periods is None else max(2, min(int(min_periods), span))
     weekly["weekly_ema_200"] = weekly["close"].ewm(
-        span=span, adjust=False, min_periods=min_periods
+        span=span, adjust=False, min_periods=mp
     ).mean()
     weekly = weekly.rename(columns={"close": "weekly_close"})
     weekly.index.name = "week_ts"

@@ -89,6 +89,15 @@ def has_required_warmup_coverage(
     months: int,
 ) -> bool:
     """Check that each symbol has the full date span expected by warmup prepare."""
+    return not symbols_missing_warmup_coverage(ticks_dir, symbols, months)
+
+
+def symbols_missing_warmup_coverage(
+    ticks_dir: Path,
+    symbols: List[str],
+    months: int,
+) -> List[str]:
+    """Symbols that lack the contiguous warmup window on disk."""
     required_start, required_end = required_warmup_bounds(months)
     start_dt = datetime.strptime(required_start, "%Y-%m-%d")
     end_dt = datetime.strptime(required_end, "%Y-%m-%d")
@@ -98,13 +107,12 @@ def has_required_warmup_coverage(
         expected_dates.add(current.strftime("%Y-%m-%d"))
         current += timedelta(days=1)
 
+    missing: List[str] = []
     for symbol in symbols:
         dates = set(_iter_symbol_dates(ticks_dir, symbol))
-        if not dates:
-            return False
-        if not expected_dates.issubset(dates):
-            return False
-    return True
+        if not dates or not expected_dates.issubset(dates):
+            missing.append(symbol)
+    return missing
 
 
 def ticks_to_bars(ticks_df: pd.DataFrame) -> pd.DataFrame:
@@ -416,6 +424,7 @@ def convert_and_split(
     bars_output_dir: Path,
     *,
     daily_zip_glob_only: bool = True,
+    purge_zips_after_convert: bool = False,
 ) -> Dict[str, int]:
     """转换 ZIP → 1min 聚合 → 按日期拆分 → 写入 live 目录
 
@@ -506,7 +515,61 @@ def convert_and_split(
         stats[symbol] = n_tick_days
         print(f"      ✅ 写入 {n_tick_days} 天 ticks, {n_bar_days} 天 bars")
 
+    if purge_zips_after_convert:
+        _purge_warmup_zip_sources(
+            zip_dir,
+            symbols,
+            conversion_result=result,
+            daily_zip_glob_only=daily_zip_glob_only,
+        )
+
     return stats
+
+
+def _purge_warmup_zip_sources(
+    zip_dir: Path,
+    symbols: List[str],
+    *,
+    conversion_result: Dict,
+    daily_zip_glob_only: bool,
+) -> None:
+    """Delete Vision aggTrades ZIPs after successful parquet conversion (save disk)."""
+    sym_set = {str(s).upper() for s in symbols}
+    candidates: Set[Path] = set()
+    for key in ("converted_files", "skipped_files"):
+        for entry in conversion_result.get(key) or []:
+            raw = entry.get("original_file") if isinstance(entry, dict) else entry
+            if not raw:
+                continue
+            path = Path(str(raw))
+            if path.is_file():
+                candidates.add(path)
+    if not candidates:
+        pattern = (
+            VISION_UM_DAILY_ZIP_ONLY_GLOB
+            if daily_zip_glob_only
+            else "*aggTrades-*.zip"
+        )
+        for zp in zip_dir.glob(pattern):
+            stem = zp.name.upper()
+            if any(sym in stem for sym in sym_set):
+                candidates.add(zp)
+    removed = 0
+    freed = 0
+    for zp in sorted(candidates):
+        try:
+            if not zp.is_file():
+                continue
+            size = zp.stat().st_size
+            zp.unlink()
+            removed += 1
+            freed += size
+        except OSError as exc:
+            print(f"      ⚠️ ZIP 清理失败 {zp.name}: {exc}")
+    if removed:
+        print(
+            f"\n🧹 已清理 {removed} 个 warmup ZIP（释放约 {freed / (1024 * 1024):.1f} MiB）"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -586,6 +649,8 @@ def fill_gap(
     ticks_dir: Path,
     bars_dir: Path,
     zip_dir: Path,
+    *,
+    purge_zips_after_convert: bool = False,
 ) -> Dict[str, int]:
     """检测并补全数据缺口（包括中间缺口和尾部缺口）
 
@@ -630,7 +695,12 @@ def fill_gap(
 
         # 转换并写入
         stats = convert_and_split(
-            zip_dir, symbols, ticks_dir, bars_dir, daily_zip_glob_only=True
+            zip_dir,
+            symbols,
+            ticks_dir,
+            bars_dir,
+            daily_zip_glob_only=True,
+            purge_zips_after_convert=purge_zips_after_convert,
         )
         return stats
 
@@ -647,6 +717,7 @@ def prepare_warmup_dataset(
     force_full: bool = False,
     skip_download: bool = False,
     use_monthly_zip: bool = False,
+    purge_zips_after_convert: bool = False,
 ) -> Dict[str, int]:
     """Prepare live warmup ticks/bars from Binance Vision aggTrades.
 
@@ -671,6 +742,7 @@ def prepare_warmup_dataset(
             ticks_dir=ticks_dir,
             bars_dir=bars_dir,
             zip_dir=zip_dir,
+            purge_zips_after_convert=purge_zips_after_convert,
         )
 
     required_start, required_end = required_warmup_bounds(months)
@@ -715,6 +787,7 @@ def prepare_warmup_dataset(
         ticks_dir,
         bars_dir,
         daily_zip_glob_only=not use_monthly_zip,
+        purge_zips_after_convert=purge_zips_after_convert,
     )
 
 
@@ -778,6 +851,22 @@ def main():
         ),
     )
     parser.add_argument(
+        "--only-under-covered-symbols",
+        action="store_true",
+        help=(
+            "仅处理 ticks 未覆盖 warmup 窗口的 symbol（例如 universe 新增 HYPEUSDT 时"
+            "不重复下载 BTC/ETH 已有 6mo 数据）。"
+        ),
+    )
+    parser.add_argument(
+        "--purge-zips-after-convert",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "转换并写入 live ticks/bars 后删除已处理的 Vision ZIP（默认开启，节省磁盘）。"
+        ),
+    )
+    parser.add_argument(
         "--data-dir",
         default=None,
         help="ZIP 文件目录（默认: data/warmup_raw/{universe}）",
@@ -801,6 +890,21 @@ def main():
     bars_dir = live_root / "data" / "bars"
     ticks_dir.mkdir(parents=True, exist_ok=True)
     bars_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.only_under_covered_symbols:
+        need = symbols_missing_warmup_coverage(ticks_dir, symbols, args.months)
+        if not need:
+            print(
+                f"\n✅ 全部 {len(symbols)} 个 symbol 已覆盖 {args.months}mo warmup，跳过下载/转换"
+            )
+            return
+        covered = [s for s in symbols if s not in need]
+        if covered:
+            print(
+                f"   已覆盖跳过: {', '.join(covered)}"
+            )
+        symbols = need
+        print(f"   待补 warmup: {', '.join(symbols)}")
 
     # ZIP 下载目录（独立于 data/agg_data，避免混淆研究数据）
     if args.data_dir:
@@ -842,6 +946,7 @@ def main():
             ticks_dir=ticks_dir,
             bars_dir=bars_dir,
             zip_dir=zip_dir,
+            purge_zips_after_convert=args.purge_zips_after_convert,
         )
     else:
         stats = prepare_warmup_dataset(
@@ -853,6 +958,7 @@ def main():
             force_full=not args.incremental,
             skip_download=args.skip_download,
             use_monthly_zip=args.monthly_zip,
+            purge_zips_after_convert=args.purge_zips_after_convert,
         )
 
     # 汇总

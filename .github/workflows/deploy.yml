@@ -335,7 +335,9 @@ jobs:
                 --universe highcap \
                 --months 6 \
                 --data-dir data/warmup_raw/highcap \
-                --incremental
+                --incremental \
+                --only-under-covered-symbols \
+                --purge-zips-after-convert
 
             [Install]
             WantedBy=multi-user.target

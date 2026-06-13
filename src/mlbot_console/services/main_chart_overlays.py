@@ -123,7 +123,20 @@ def _weekly_ema_from_spot_daily(
     )
     if daily.empty or "close" not in daily.columns:
         return []
-    weekly = compute_weekly_ema_table(daily["close"], ema_span_weeks=200)
+    weekly_count = (
+        pd.DataFrame({"close": pd.to_numeric(daily["close"], errors="coerce")})
+        .dropna()
+        .resample("W-SUN", label="right", closed="right")
+        .last()
+        .dropna()
+        .shape[0]
+    )
+    min_periods = min(200, max(8, weekly_count // 2))
+    weekly = compute_weekly_ema_table(
+        daily["close"],
+        ema_span_weeks=200,
+        min_periods=min_periods,
+    )
     if weekly.empty or "weekly_ema_200" not in weekly.columns:
         return []
     ts = pd.to_datetime(weekly["week_ts"], utc=True, errors="coerce")
@@ -464,7 +477,11 @@ def _seed_ema_plausible(
     macro_spot_kline_root: Any = None,
     symbol: str = "",
 ) -> bool:
-    """Reject macro seed when EMA is far from spot (stale flat-line bug)."""
+    """Reject macro seed when EMA is far from spot (stale flat-line bug).
+
+    Deep-bear (close below weekly EMA) may show a large positive gap — that is
+    expected; only reject when price is far *above* a suspiciously low/frozen EMA.
+    """
     if seed is None or seed.empty or ema_column not in seed.columns or not candles:
         return False
     ema = pd.to_numeric(seed[ema_column], errors="coerce").dropna()
@@ -481,7 +498,9 @@ def _seed_ema_plausible(
     ref_ema = float(ema.iloc[-1])
     if ref_close <= 0 or ref_ema <= 0:
         return False
-    if abs(ref_ema - ref_close) / ref_close > float(max_rel_gap):
+    if ref_close <= ref_ema:
+        pass
+    elif (ref_close - ref_ema) / ref_close > float(max_rel_gap):
         return False
     if macro_spot_kline_root and symbol:
         daily_ema = _last_weekly_ema_from_spot_daily(

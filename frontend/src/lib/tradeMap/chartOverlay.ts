@@ -44,7 +44,6 @@ export function mainChartOverlaySeriesOptions(
   return {
     priceLineVisible: false,
     crosshairMarkerVisible: false,
-    autoscaleInfoProvider: overlayAutoscaleInfoProvider,
     ...extra,
   };
 }

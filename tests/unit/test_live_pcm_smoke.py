@@ -53,6 +53,26 @@ def test_live_pcm_decide_delegates_to_bpc() -> None:
     mock_bpc.decide.assert_called_once()
 
 
+def test_live_pcm_skips_symbol_not_in_strategy_meta() -> None:
+    mock_trend = MagicMock()
+    mock_trend.decide.return_value = []
+
+    pcm = LivePCM(max_slots=2)
+    pcm.register("trend_scalp", mock_trend)
+    pcm.set_strategy_symbol_universe(
+        {"trend_scalp": ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT"]}
+    )
+
+    blocked = pcm.decide(features={"close": 1.0}, symbol="HYPEUSDT")
+    assert blocked == []
+    mock_trend.decide.assert_not_called()
+    assert mock_trend._last_funnel == {"skip": "symbol_not_in_strategy_meta"}
+
+    allowed = pcm.decide(features={"close": 1.0}, symbol="BTCUSDT")
+    assert allowed == []
+    mock_trend.decide.assert_called_once()
+
+
 class _FakeTracker:
     def __init__(self, positions):
         self._positions = positions
