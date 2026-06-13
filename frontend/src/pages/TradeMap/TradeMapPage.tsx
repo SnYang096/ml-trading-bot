@@ -146,6 +146,13 @@ export function TradeMapPage() {
 
   const strategies = useMemo(() => listStrategiesForLayers(layers), [layers]);
   const chopLabelsEnabled = chopGridOverlayEnabled(layers, featureStrategyFocus);
+
+  useEffect(() => {
+    if (!featureStrategyFocus) return;
+    if (!strategies.some((s) => s.id === featureStrategyFocus)) {
+      applyStrategyFocus('');
+    }
+  }, [strategies, featureStrategyFocus, applyStrategyFocus]);
   const selectedMarker = useMemo(
     () => markers.find((m) => m.id === selectedMarkerId) || null,
     [markers, selectedMarkerId],
@@ -448,6 +455,7 @@ export function TradeMapPage() {
             <OrdersDock
               symbol={symbol}
               layers={layers}
+              strategyFocus={featureStrategyFocus}
               timeframe={timeframe}
               layout="bottom"
               selectedOrderId={selectedOrderId}

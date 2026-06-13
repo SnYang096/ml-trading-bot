@@ -950,11 +950,31 @@ def fetch_multileg_raw_rows(
     if not db_path.is_file() or is_all_symbols(symbol):
         return []
     sym = symbol.upper()
-    from mlbot_console.services.trade_markers import _sql_time_range_expr
+    from mlbot_console.services.trade_markers import _iso_from_unix
 
-    time_clause, time_params = _sql_time_range_expr(
-        start_ts, end_ts, "COALESCE(filled_at, created_at)"
-    )
+    # Build time clause handling mixed column types:
+    #   filled_at  = INTEGER (Unix timestamp)
+    #   created_at = TEXT    (ISO 8601 string like "2026-06-13 01:16:26")
+    # The generic ``_sql_time_range_expr`` would compare an INTEGER against a
+    # TEXT ISO param, which in SQLite always evaluates to false (INT < TEXT).
+    time_parts: list = []
+    time_params: list = []
+    if start_ts is not None:
+        iso = _iso_from_unix(start_ts)
+        if iso:
+            time_parts.append(
+                "(filled_at >= ? OR (filled_at IS NULL AND created_at >= ?))"
+            )
+            time_params.extend([start_ts, iso])
+    if end_ts is not None:
+        iso = _iso_from_unix(end_ts)
+        if iso:
+            time_parts.append(
+                "(filled_at <= ? OR (filled_at IS NULL AND created_at <= ?))"
+            )
+            time_params.extend([end_ts, iso])
+    time_clause = " AND " + " AND ".join(time_parts) if time_parts else ""
+
     sql = f"""
         SELECT local_order_id AS order_id, symbol, side, position_side, status, order_type, purpose,
                quantity, price, stop_price, filled_quantity, average_price, created_at,

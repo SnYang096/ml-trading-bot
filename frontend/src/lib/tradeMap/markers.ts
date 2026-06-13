@@ -563,12 +563,13 @@ export function prepareChartMarkers(
       synthesizeChopRegimeExitMarkers(candles, overlays),
     );
   }
-  if (!focus) {
-    const scopes = new Set<string>();
-    if (layers.trend) scopes.add('trend');
-    if (layers.spot) scopes.add('spot');
-    if (layers.multiLeg) scopes.add('multi_leg');
-    incoming = incoming.filter((m) => scopes.has(String(m.scope || '').toLowerCase()));
+  const scopes = new Set<string>();
+  if (layers.trend) scopes.add('trend');
+  if (layers.spot) scopes.add('spot');
+  if (layers.multiLeg) scopes.add('multi_leg');
+  incoming = incoming.filter((m) => scopes.has(String(m.scope || '').toLowerCase()));
+  if (focus) {
+    incoming = incoming.filter((m) => String(m.strategy || '').toLowerCase() === focus);
   }
   if (candles.length) {
     incoming = snapMarkersToCandleTimes(incoming, candles);

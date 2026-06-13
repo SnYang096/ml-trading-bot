@@ -76,6 +76,10 @@ class MockBinanceAPI:
         close_position: bool = False,
         client_order_id: Optional[str] = None,
         time_in_force: Optional[str] = None,
+        position_side: Optional[str] = None,
+        working_type: Optional[str] = None,
+        price_protect: Optional[bool] = None,
+        post_only: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """Simulate placing an order — instant fill at current price."""
         fill_price = price or self._last_prices.get(symbol, 0.0)

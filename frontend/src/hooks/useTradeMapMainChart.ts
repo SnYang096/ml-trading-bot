@@ -267,20 +267,13 @@ export function useTradeMapMainChart(params: MainChartParams) {
     }
     tradeLinkSeriesRef.current = [];
     const p = paramsRef.current;
-    const prepared = prepareChartMarkers(
-      p.markers,
-      p.candles,
-      p.overlays,
-      p.layers,
-      p.strategyFocus,
-    );
     const lines = buildTradeLinkLines(
       p.tradeLinks,
       p.candles,
       p.layers,
       p.strategyFocus,
       p.timeframe,
-      prepared,
+      p.markers,
     );
     for (const line of lines) {
       const series = chart.addSeries(

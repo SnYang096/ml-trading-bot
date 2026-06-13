@@ -122,9 +122,22 @@ def _ts_row(row: Dict[str, Any]) -> Optional[int]:
     return int(ts) if ts is not None else None
 
 
-def exit_kind_for_multileg_row(exit_row: Dict[str, Any]) -> str:
+def exit_kind_for_multileg_row(
+    exit_row: Dict[str, Any],
+    *,
+    entry_row: Optional[Dict[str, Any]] = None,
+) -> str:
     """Map a filled exit order to a console ``exit_kind`` label."""
+    exit_strat = str(exit_row.get("strategy") or "").lower()
     purpose = str(exit_row.get("purpose") or "").lower()
+    if (
+        entry_row is not None
+        and is_trend_entry_row(entry_row)
+        and exit_strat == "chop_grid"
+        and "market_exit" in purpose
+        and _is_filled_row(exit_row)
+    ):
+        return "cross_strategy_exit"
     oid = _order_key(exit_row).lower()
     if "take_profit" in purpose or "_tp" in oid:
         return "take_profit"
@@ -197,6 +210,55 @@ def _chop_grid_exit_for_entry(
     return best
 
 
+def _cross_strategy_flatten_for_trend_entry(
+    all_rows: List[Dict[str, Any]],
+    entry_row: Dict[str, Any],
+    *,
+    used_market_exit_ids: Optional[set[str]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Pair trend entry with chop_grid market_exit that flattened the shared slot."""
+    if not is_trend_entry_row(entry_row):
+        return None
+    entry_ts = _ts_row(entry_row)
+    if entry_ts is None:
+        return None
+    ent_side = _entry_position_side(entry_row)
+    ent_qty = filled_quantity(entry_row)
+    if ent_side is None or ent_qty <= 0:
+        return None
+    used = used_market_exit_ids if used_market_exit_ids is not None else set()
+    best: Optional[Dict[str, Any]] = None
+    best_ts = 2**62
+    for row in all_rows:
+        if str(row.get("strategy") or "").lower() != "chop_grid":
+            continue
+        purpose = str(row.get("purpose") or "").lower()
+        if "market_exit" not in purpose:
+            continue
+        if not _is_filled_row(row) or _price(row) is None:
+            continue
+        oid = _order_key(row)
+        if not oid or oid in used:
+            continue
+        exit_ts = _ts_row(row)
+        if exit_ts is None or exit_ts < entry_ts:
+            continue
+        if market_exit_closing_position_side(row) != ent_side:
+            continue
+        mex_qty = filled_quantity(row)
+        if mex_qty <= 0:
+            continue
+        qty_ratio = mex_qty / max(ent_qty, 1e-12)
+        if qty_ratio < 0.98 or qty_ratio > 1.02:
+            continue
+        if exit_ts < best_ts:
+            best = row
+            best_ts = exit_ts
+    if best is not None:
+        used.add(_order_key(best))
+    return best
+
+
 def _trend_exit_for_entry(
     group_rows: List[Dict[str, Any]], entry_row: Dict[str, Any]
 ) -> Optional[Dict[str, Any]]:
@@ -206,8 +268,10 @@ def _trend_exit_for_entry(
     if not entry_id:
         return None
     entry_ts = _ts_row(entry_row)
-    best: Optional[Dict[str, Any]] = None
-    best_ts = -1
+    filled_best: Optional[Dict[str, Any]] = None
+    filled_ts = -1
+    skipped_best: Optional[Dict[str, Any]] = None
+    skipped_ts = -1
     for row in group_rows:
         if not is_pairable_market_exit_row(row):
             continue
@@ -217,10 +281,18 @@ def _trend_exit_for_entry(
         exit_ts = _ts_row(row) or 0
         if entry_ts is not None and exit_ts < entry_ts:
             continue
-        if exit_ts >= best_ts:
-            best = row
-            best_ts = exit_ts
-    return best
+        status = str(row.get("status") or "").lower()
+        if _is_filled_row(row):
+            if exit_ts >= filled_ts:
+                filled_best = row
+                filled_ts = exit_ts
+        elif status in {"skipped_no_position", "rejected"}:
+            if exit_ts >= skipped_ts:
+                skipped_best = row
+                skipped_ts = exit_ts
+    if filled_best is not None:
+        return filled_best
+    return skipped_best
 
 
 def _orphan_market_exit_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -305,6 +377,14 @@ def _filled_exit_row(
     if exit_row is not None:
         return exit_row
 
+    exit_row = _cross_strategy_flatten_for_trend_entry(
+        all_rows or group_rows,
+        entry_row,
+        used_market_exit_ids=used_market_exit_ids,
+    )
+    if exit_row is not None:
+        return exit_row
+
     exit_row = _trend_exit_for_entry(group_rows, entry_row)
     if exit_row is not None:
         return exit_row
@@ -339,6 +419,9 @@ def _filled_exit_row(
             continue
         mex_qty = filled_quantity(mex)
         if mex_qty <= 0 or ent_qty > mex_qty * 1.02:
+            continue
+        qty_ratio = mex_qty / max(ent_qty, 1e-12)
+        if qty_ratio > 1.02:
             continue
         used.add(mex_id)
         return mex

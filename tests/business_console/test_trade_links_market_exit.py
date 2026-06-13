@@ -170,6 +170,81 @@ def test_trend_scalp_regime_exit_pairs_when_entry_leg_id_has_fill_suffix(
     assert links[0]["pnl_usdt"] == pytest.approx((1680.0 - 1685.77) * 0.126, rel=1e-4)
 
 
+def test_trend_scalp_pairs_chop_cross_strategy_flatten_before_skipped_regime(
+    multi_leg_db,
+) -> None:
+    """SOL-style: chop flatten closes trend entry; use real fill not skipped regime mark."""
+    from datetime import datetime, timezone
+
+    from src.order_management.multi_leg_storage import MultiLegStorage
+
+    storage = MultiLegStorage(str(multi_leg_db))
+    segment = "SOLUSDT_2026-06-12 15:15:33.368127+00:00"
+    entry_id = f"{segment}_initial_trend_BUY_0_0"
+    chop_exit_id = "cg_9537573aade1"
+    skipped_id = f"{entry_id}_fill0_exit_regime_exit_2026-06-12 15:31:05+00:00"
+    run_id = storage.create_run(
+        mode="testnet",
+        strategies=["chop_grid", "trend_scalp"],
+        symbols=["SOLUSDT"],
+        run_id="ts_chop_flatten",
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "trend_scalp",
+            "local_order_id": entry_id,
+            "leg_id": f"{entry_id}_fill0",
+            "symbol": "SOLUSDT",
+            "side": "BUY",
+            "position_side": "LONG",
+            "purpose": "entry",
+            "status": "filled",
+            "filled_quantity": 158.89,
+            "average_price": 68.63,
+            "filled_at": "2026-06-12 15:15:50+00:00",
+        }
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": chop_exit_id,
+            "symbol": "SOLUSDT",
+            "side": "SELL",
+            "position_side": "LONG",
+            "purpose": "market_exit",
+            "status": "filled",
+            "filled_quantity": 158.89,
+            "average_price": 68.65,
+            "filled_at": "2026-06-12 15:16:10+00:00",
+        }
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "trend_scalp",
+            "local_order_id": skipped_id,
+            "symbol": "SOLUSDT",
+            "side": "SELL",
+            "position_side": "LONG",
+            "purpose": "market_exit",
+            "status": "skipped_no_position",
+            "quantity": 158.89,
+            "filled_quantity": 0.0,
+            "created_at": "2026-06-12 15:31:05+00:00",
+            "raw": {"exit_price": 68.02, "quantity": 158.89, "reason": "regime_exit"},
+        }
+    )
+    links, _ = multi_leg_trade_links(multi_leg_db, "SOLUSDT")
+    assert len(links) == 1
+    assert links[0]["exit_kind"] == "cross_strategy_exit"
+    assert links[0]["exit_price"] == pytest.approx(68.65)
+    assert links[0]["pnl_usdt"] == pytest.approx((68.65 - 68.63) * 158.89, rel=1e-4)
+    exit_ts = int(datetime(2026, 6, 12, 15, 16, 10, tzinfo=timezone.utc).timestamp())
+    assert links[0]["exit_time"] == exit_ts
+
+
 def test_trend_scalp_skipped_no_position_regime_exit_still_links_loss(
     multi_leg_db,
 ) -> None:

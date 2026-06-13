@@ -8,7 +8,7 @@ import {
   setFeatureTaxonomy,
 } from '@/lib/tradeMap';
 import { MAX_FEATURE_SUBCHARTS } from '@/lib/tradeMap/constants.ts';
-import { useTradeMapStore } from '@/stores/tradeMapStore.ts';
+import { useTradeMapStore, saveLayout } from '@/stores/tradeMapStore.ts';
 
 interface FeatureColumnsResponse {
   columns?: string[];
@@ -71,11 +71,25 @@ export function useTradeMapFeatureCatalog(opts?: { catalogEnabled?: boolean }) {
   const applyStrategyFocus = (strategyId: string | null) => {
     const sid = strategyId?.trim() || '';
     setFocus(sid);
+    let nextCols = useTradeMapStore.getState().selectedFeatureColumns;
     if (sid) {
       const avail = useTradeMapStore.getState().availableFeatureColumns;
       const picks = presetColumnsForStrategy(sid, avail, MAX_FEATURE_SUBCHARTS);
-      if (picks.length) setSelected(picks);
+      if (picks.length) {
+        setSelected(picks);
+        nextCols = picks;
+      }
     }
+    const st = useTradeMapStore.getState();
+    saveLayout({
+      layers: st.layers,
+      selectedFeatureColumns: nextCols,
+      featureStrategyFocus: sid,
+      mainEma1200: st.mainEma1200,
+      mainWeeklyEma200: st.mainWeeklyEma200,
+      paneVolume: st.paneVolume,
+      ordersDockOpen: st.ordersDockOpen,
+    });
   };
 
   const applyLayerDefaults = () => {

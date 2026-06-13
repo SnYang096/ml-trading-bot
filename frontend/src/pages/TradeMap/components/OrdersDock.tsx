@@ -11,6 +11,7 @@ import styles from './OrdersDock.module.css';
 interface Props {
   symbol: string;
   layers: LayerState;
+  strategyFocus?: string;
   timeframe: string;
   layout?: 'bottom' | 'side';
   selectedOrderId: string | null;
@@ -22,6 +23,7 @@ interface Props {
 export function OrdersDock({
   symbol,
   layers,
+  strategyFocus = '',
   timeframe,
   layout = 'bottom',
   selectedOrderId,
@@ -30,12 +32,14 @@ export function OrdersDock({
   onSelectOrder,
 }: Props) {
   const pageVisible = usePageVisible();
+  const strat = String(strategyFocus || '').trim();
   const ordersQuery = useQuery({
-    queryKey: ['trade-map-orders-dock', symbol, layers],
+    queryKey: ['trade-map-orders-dock', symbol, layers, strat],
     queryFn: () =>
       apiGet<OrderRow[]>('/api/orders/list', {
         symbol,
         scopes: scopesFromLayers(layers),
+        strategy: strat || undefined,
         limit: 80,
       }),
     refetchInterval: visibleRefetchInterval(pageVisible, 15_000),
@@ -49,7 +53,10 @@ export function OrdersDock({
     <section className={wrapClass} aria-label="订单表">
       <div className={styles.head}>
         <h3>订单表</h3>
-        <span className={styles.hint}>点击行定位主图 · 十字线悬停高亮</span>
+        <span className={styles.hint}>
+          点击行定位主图 · 十字线悬停高亮
+          {strat ? ` · 策略=${strat}` : ''}
+        </span>
         <Link to={`/orders?symbol=${encodeURIComponent(symbol)}`}>完整订单页</Link>
       </div>
       <div className={styles.scroll}>

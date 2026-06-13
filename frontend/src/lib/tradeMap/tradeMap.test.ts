@@ -234,6 +234,26 @@ describe('tradeMap trade links', () => {
     expect(noPending.map((m) => m.id)).toEqual(['1', '2']);
   });
 
+  it('prepareChartMarkers filters by strategy focus and still applies scope layers', () => {
+    const raw = [
+      { id: '1', time: 100, scope: 'trend', strategy: 'tpc', status: 'filled' },
+      { id: '2', time: 200, scope: 'multi_leg', strategy: 'trend_scalp', status: 'filled' },
+      { id: '3', time: 300, scope: 'multi_leg', strategy: 'chop_grid', status: 'filled' },
+    ] as TradeMarker[];
+    const candles = [
+      { time: 100, open: 1, high: 1, low: 1, close: 1 },
+      { time: 200, open: 1, high: 1, low: 1, close: 1 },
+      { time: 300, open: 1, high: 1, low: 1, close: 1 },
+    ];
+    const trendScalpOnly = prepareChartMarkers(raw, candles, null, {
+      trend: true,
+      spot: false,
+      multiLeg: true,
+      pending: false,
+    }, 'trend_scalp');
+    expect(trendScalpOnly.map((m) => m.id)).toEqual(['2']);
+  });
+
   it('dedupeMarkersForChart keeps positions over orders on same bar', () => {
     const markers = [
       {

@@ -239,7 +239,7 @@ def multi_leg_trade_links(
             entry_marker_id=entry_mid,
             exit_marker_id=exit_mid,
             status="closed",
-            exit_kind=exit_kind_for_multileg_row(exit_row),
+            exit_kind=exit_kind_for_multileg_row(exit_row, entry_row=ent),
             side=_side_label_for_entry(ent),
             pnl_usdt=_multileg_link_pnl_usdt(ent, exit_row),
             qty=filled_quantity(ent),
