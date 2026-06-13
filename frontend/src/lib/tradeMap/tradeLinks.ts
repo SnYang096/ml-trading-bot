@@ -203,6 +203,26 @@ export interface TradeLinkLine {
   points: Array<{ time: number; value: number }>;
 }
 
+/** LWC line series requires strictly ascending times — skip same-bar entry/exit snaps. */
+export function tradeLinkLinePoints(
+  entry: { time: number; value: number },
+  exit: { time: number; value: number },
+): Array<{ time: number; value: number }> | null {
+  const t0 = Number(entry.time);
+  let t1 = Number(exit.time);
+  const v0 = Number(entry.value);
+  const v1 = Number(exit.value);
+  if (!Number.isFinite(t0) || !Number.isFinite(t1) || !Number.isFinite(v0) || !Number.isFinite(v1)) {
+    return null;
+  }
+  if (t1 < t0) t1 = t0;
+  if (t0 === t1) return null;
+  return [
+    { time: t0, value: v0 },
+    { time: t1, value: v1 },
+  ];
+}
+
 export function buildTradeLinkLines(
   links: TradeLink[] | null | undefined,
   candles: Candle[],
@@ -216,13 +236,11 @@ export function buildTradeLinkLines(
   for (const raw of scoped) {
     const resolved = resolveTradeLinkEndpoints(raw, markers, candles, timeframe);
     if (!resolved) continue;
-    const { entry, exit } = resolved;
+    const points = tradeLinkLinePoints(resolved.entry, resolved.exit);
+    if (!points) continue;
     out.push({
       color: raw.color || CHART_THEME.linkFallback,
-      points: [
-        { time: entry.time, value: entry.value },
-        { time: exit.time, value: exit.value },
-      ],
+      points,
     });
   }
   return out;

@@ -347,7 +347,7 @@ describe('tradeMap trade links', () => {
     ]);
   });
 
-  it('buildTradeLinkLines keeps same-bar links vertical', () => {
+  it('buildTradeLinkLines skips same-bar snapped links (LWC requires ascending times)', () => {
     const candles = [{ time: 1000, open: 1, high: 1, low: 1, close: 1 }];
     const links = [
       {
@@ -393,9 +393,41 @@ describe('tradeMap trade links', () => {
       gate: false,
     };
     const lines = buildTradeLinkLines(links, candles, layers, 'tpc', '2h', markers);
-    expect(lines[0].points[0].time).toBe(lines[0].points[1].time);
-    expect(lines[0].points[0].value).toBe(1);
-    expect(lines[0].points[1].value).toBe(1);
+    expect(lines).toHaveLength(0);
+  });
+
+  it('buildTradeLinkLines drops chop links when entry and exit snap to one bar', () => {
+    const candles = [
+      { time: 1781316000, open: 59, high: 60, low: 58, close: 59.5 },
+      { time: 1781323200, open: 59.5, high: 61, low: 59, close: 60 },
+    ];
+    const links = [
+      {
+        strategy: 'chop_grid',
+        status: 'closed',
+        entry_time: 1781313412,
+        entry_price: 59.048,
+        exit_time: 1781314933,
+        exit_price: 59.439,
+        entry_marker_id: 'a',
+        exit_marker_id: 'b',
+      },
+    ];
+    const markers = [
+      { id: 'a', time: 1781316000, event: 'entry', side: 'long', scope: 'multi_leg', strategy: 'chop_grid' },
+      { id: 'b', time: 1781316000, event: 'exit', side: 'long', scope: 'multi_leg', strategy: 'chop_grid' },
+    ] as TradeMarker[];
+    const layers = {
+      trend: true,
+      spot: true,
+      multiLeg: true,
+      pending: false,
+      chopGrid: true,
+      prefilter: true,
+      gate: false,
+    };
+    const lines = buildTradeLinkLines(links, candles, layers, 'chop_grid', '2h', markers);
+    expect(lines).toHaveLength(0);
   });
 });
 
