@@ -23,6 +23,8 @@ from src.live_data_stream.constitution_config import (
     spot_strategies_from_constitution,
 )
 from src.order_management.spot_binance_api import SpotBinanceAPI
+from scripts.pipeline.strategy_symbols import resolve_strategy_symbols
+from src.live_data_stream.universe_symbols import read_universe_symbols
 from src.order_management.spot_live_recovery import (
     OPEN_BUY_STATUSES,
     apply_buy_fill_to_position,
@@ -939,11 +941,17 @@ def main() -> int:
         meta.get("strategy") if isinstance(meta.get("strategy"), dict) else {}
     )
     tf = str(strategy_meta.get("timeframe", "120T"))
-    symbols = [
-        str(s).upper()
-        for s in (strategy_meta.get("symbol_include") or [])
-        if str(s).strip()
-    ]
+    universe = os.getenv("MLBOT_LIVE_UNIVERSE", "highcap").strip() or "highcap"
+    try:
+        base_symbols = read_universe_symbols(universe)
+    except FileNotFoundError:
+        base_symbols = []
+    sel = resolve_strategy_symbols(
+        strategy=strategy_name,
+        base_symbols=base_symbols,
+        strategy_config_dir=pkg,
+    )
+    symbols = list(sel.resolved_symbols)
     sym_override = os.getenv("MLBOT_SPOT_SYMBOLS")
     if sym_override:
         symbols = _parse_symbols(sym_override)

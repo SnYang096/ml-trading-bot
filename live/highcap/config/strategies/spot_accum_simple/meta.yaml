@@ -6,7 +6,11 @@ strategy:
   owner: quant_team
   archetype: SpotAccumSimpleLong
   timeframe: "120T"
-  symbol_include: []
+  symbol_include:
+    - BTCUSDT
+    - BNBUSDT
+    - SOLUSDT
+    - ETHUSDT
   symbol_exclude: []
   macro_tp_vwap_anchor:
     enabled: false
