@@ -1,5 +1,5 @@
 import { apiGet } from '@/api/client.ts';
-import type { OrderRow, SymbolRow, TradeLink } from '@/api/types.ts';
+import type { OpenPositionRow, OrderRow, SymbolRow, TradeLink } from '@/api/types.ts';
 import { usePageVisible, visibleRefetchInterval } from '@/hooks/usePageVisible.ts';
 import {
   SCOPE_LABELS,
@@ -30,7 +30,13 @@ interface LayerState {
   multiLeg: boolean;
 }
 
-type ViewMode = 'legs' | 'orders';
+type ViewMode = 'positions' | 'legs' | 'orders';
+
+function viewModeFromParam(raw: string | null): ViewMode {
+  const v = String(raw || '').trim().toLowerCase();
+  if (v === 'orders' || v === 'legs' || v === 'positions') return v;
+  return 'positions';
+}
 
 function scopesFromLayers(layers: LayerState): string {
   return scopesFromLayersLib({ trend: layers.trend, spot: layers.spot, multiLeg: layers.multiLeg });
@@ -41,9 +47,11 @@ const DEFAULT_EXCLUDE_STATUS = 'expired,canceled,rejected';
 
 export function OrdersPage() {
   const pageVisible = usePageVisible();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [symbol, setSym] = useState(() => resolveConsoleSymbol(searchParams.get('symbol')));
-  const [viewMode, setViewMode] = useState<ViewMode>('legs');
+  const [viewMode, setViewMode] = useState<ViewMode>(() =>
+    viewModeFromParam(searchParams.get('view')),
+  );
   const [layers, setLayers] = useState<LayerState>(() => {
     const saved = getScopesDefault();
     return {
@@ -73,6 +81,20 @@ export function OrdersPage() {
   });
 
   const legsEnabled = viewMode === 'legs';
+  const positionsEnabled = viewMode === 'positions';
+
+  const positionsQuery = useQuery({
+    queryKey: ['orders-open-positions', symbol, layers, strategyFilter],
+    queryFn: () =>
+      apiGet<OpenPositionRow[]>('/api/orders/open-positions', {
+        symbol,
+        scopes: scopesFromLayers(layers),
+        strategy: strategyFilter || undefined,
+        limit: 200,
+      }),
+    enabled: positionsEnabled,
+    refetchInterval: visibleRefetchInterval(pageVisible, 15_000),
+  });
 
   const ordersQuery = useQuery({
     queryKey: ['orders', symbol, layers, statusFilter, strategyFilter],
@@ -110,6 +132,13 @@ export function OrdersPage() {
   }, [strategies, strategyFilter]);
 
   useEffect(() => {
+    const next = new URLSearchParams(searchParams);
+    if (viewMode === 'positions') next.delete('view');
+    else next.set('view', viewMode);
+    setSearchParams(next, { replace: true });
+  }, [viewMode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
     if (!isAllSymbols(symbol)) setSymbol(symbol);
     setScopesState({ ...layers, pending: false });
   }, [symbol, layers]);
@@ -121,7 +150,13 @@ export function OrdersPage() {
 
   const orderRows = ordersQuery.data?.data || [];
   const linkRows = linksQuery.data?.data || [];
-  const rows = viewMode === 'legs' ? linkRows : orderRows;
+  const positionRows = positionsQuery.data?.data || [];
+  const rows =
+    viewMode === 'positions'
+      ? positionRows
+      : viewMode === 'legs'
+        ? linkRows
+        : orderRows;
   const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
   const pageOrderRows = useMemo(
@@ -132,10 +167,22 @@ export function OrdersPage() {
     () => linkRows.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE),
     [linkRows, safePage],
   );
+  const pagePositionRows = useMemo(
+    () => positionRows.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE),
+    [positionRows, safePage],
+  );
   const showSymbol = isAllSymbols(symbol);
-  const selectedOrder = viewMode === 'orders' && selectedIdx >= 0 ? orderRows[selectedIdx] : null;
+  const selectedOrder =
+    viewMode === 'orders' && selectedIdx >= 0 ? orderRows[selectedIdx] : null;
   const selectedLink = viewMode === 'legs' && selectedIdx >= 0 ? linkRows[selectedIdx] : null;
-  const isFetching = viewMode === 'legs' ? linksQuery.isFetching : ordersQuery.isFetching;
+  const selectedPosition =
+    viewMode === 'positions' && selectedIdx >= 0 ? positionRows[selectedIdx] : null;
+  const isFetching =
+    viewMode === 'positions'
+      ? positionsQuery.isFetching
+      : viewMode === 'legs'
+        ? linksQuery.isFetching
+        : ordersQuery.isFetching;
 
   return (
     <div className="page">
@@ -147,6 +194,7 @@ export function OrdersPage() {
             value={viewMode}
             onChange={(e) => setViewMode(e.target.value as ViewMode)}
           >
+            <option value="positions">持仓（未平）</option>
             <option value="legs">回合（开平一行）</option>
             <option value="orders">原始订单</option>
           </select>
@@ -211,7 +259,14 @@ export function OrdersPage() {
         ) : null}
         <button
           type="button"
-          onClick={() => (viewMode === 'legs' ? linksQuery : ordersQuery).refetch()}
+          onClick={() =>
+            (viewMode === 'positions'
+              ? positionsQuery
+              : viewMode === 'legs'
+                ? linksQuery
+                : ordersQuery
+            ).refetch()
+          }
         >
           刷新
         </button>
@@ -231,9 +286,14 @@ export function OrdersPage() {
         <Link to={`/account?symbol=${encodeURIComponent(symbol)}`}>账户总览</Link>
       </div>
 
-      {viewMode === 'legs' ? (
+      {viewMode === 'positions' ? (
         <p className="muted" style={{ margin: '0 0 10px', fontSize: '0.85rem' }}>
-          回合视图：同一腿的<strong>开→平</strong>合并为一行（与交易地图连线一致）。挂单、未平仓请切「原始订单」。
+          未平仓位一览：已成交持仓 + 按 mark 估算浮盈。交易所<strong>限价挂单</strong>请切「原始订单」
+          （Status=open/pending）。
+        </p>
+      ) : viewMode === 'legs' ? (
+        <p className="muted" style={{ margin: '0 0 10px', fontSize: '0.85rem' }}>
+          回合视图：同一腿的<strong>开→平</strong>合并为一行（与交易地图连线一致）。挂单、未平仓请切「持仓」或「原始订单」。
         </p>
       ) : (
         <p className="muted" style={{ margin: '0 0 10px', fontSize: '0.85rem' }}>
@@ -241,7 +301,71 @@ export function OrdersPage() {
         </p>
       )}
 
-      {viewMode === 'legs' ? (
+      {viewMode === 'positions' ? (
+        <table className="data-table">
+          <thead>
+            <tr>
+              {showSymbol ? <th>Symbol</th> : null}
+              <th>Scope</th>
+              <th>Strategy</th>
+              <th>方向</th>
+              <th>Qty</th>
+              <th>开仓价</th>
+              <th>Mark</th>
+              <th>浮盈</th>
+              <th>开仓时间</th>
+              <th>平仓挂单</th>
+              <th>地图</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pagePositionRows.length ? (
+              pagePositionRows.map((r, i) => {
+                const globalIdx = safePage * PAGE_SIZE + i;
+                return (
+                  <tr
+                    key={`${r.position_id}-${globalIdx}`}
+                    className={globalIdx === selectedIdx ? 'selected' : undefined}
+                    onClick={() => setSelectedIdx(globalIdx)}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    {showSymbol ? <td>{r.symbol}</td> : null}
+                    <td>{SCOPE_LABELS[r.scope] || r.scope}</td>
+                    <td>{r.strategy || '—'}</td>
+                    <td>{displayPositionSideLabel(r.side)}</td>
+                    <td>{Number.isFinite(Number(r.quantity)) ? String(r.quantity) : '—'}</td>
+                    <td>{Number.isFinite(Number(r.entry_price)) ? String(r.entry_price) : '—'}</td>
+                    <td>{Number.isFinite(Number(r.mark_price)) ? String(r.mark_price) : '—'}</td>
+                    <td className={pnlClass(r.unrealized_pnl_usdt)}>
+                      {r.unrealized_pnl_usdt != null ? fmtPnl(r.unrealized_pnl_usdt) : '—'}
+                    </td>
+                    <td>{formatUnixTs(r.entry_time)}</td>
+                    <td>{Number(r.pending_exit_orders ?? 0) > 0 ? String(r.pending_exit_orders) : '—'}</td>
+                    <td>
+                      {r.entry_marker_id ? (
+                        <Link
+                          to={`/trade-map?symbol=${encodeURIComponent(r.symbol || symbol)}&marker_id=${encodeURIComponent(String(r.entry_marker_id))}`}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          查看
+                        </Link>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                  </tr>
+                );
+              })
+            ) : (
+              <tr>
+                <td colSpan={showSymbol ? 11 : 10} className="muted">
+                  无未平仓位
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      ) : viewMode === 'legs' ? (
         <table className="data-table">
           <thead>
             <tr>
@@ -407,12 +531,52 @@ export function OrdersPage() {
         </section>
       ) : null}
 
+      {selectedPosition ? (
+        <section className="panel">
+          <h3>持仓详情</h3>
+          <dl>
+            <dt>仓位 ID</dt>
+            <dd>{selectedPosition.position_id}</dd>
+            <dt>方向</dt>
+            <dd>{displayPositionSideLabel(selectedPosition.side)}</dd>
+            <dt>开仓</dt>
+            <dd>
+              {selectedPosition.entry_price} × {selectedPosition.quantity} @{' '}
+              {formatUnixTs(selectedPosition.entry_time)}
+            </dd>
+            <dt>浮盈</dt>
+            <dd className={pnlClass(selectedPosition.unrealized_pnl_usdt)}>
+              {selectedPosition.unrealized_pnl_usdt != null
+                ? fmtPnl(selectedPosition.unrealized_pnl_usdt)
+                : '—'}
+            </dd>
+            <dt>地图</dt>
+            <dd>
+              {selectedPosition.entry_marker_id ? (
+                <Link
+                  to={`/trade-map?symbol=${encodeURIComponent(selectedPosition.symbol || symbol)}&marker_id=${encodeURIComponent(String(selectedPosition.entry_marker_id))}`}
+                >
+                  查看开仓标记
+                </Link>
+              ) : (
+                '—'
+              )}
+            </dd>
+          </dl>
+          <pre style={{ fontSize: '0.75rem', overflow: 'auto' }}>
+            {JSON.stringify(selectedPosition, null, 2)}
+          </pre>
+        </section>
+      ) : null}
+
       <p className="status-line">
         {isFetching
           ? '加载中…'
-          : viewMode === 'legs'
-            ? `${linkRows.length} 回合 · ${symbol}${strategyFilter ? ` · ${strategyFilter}` : ''}`
-            : `${orderRows.length} orders · ${symbol}${strategyFilter ? ` · ${strategyFilter}` : ''}`}
+          : viewMode === 'positions'
+            ? `${positionRows.length} 未平仓位 · ${symbol}${strategyFilter ? ` · ${strategyFilter}` : ''}`
+            : viewMode === 'legs'
+              ? `${linkRows.length} 回合 · ${symbol}${strategyFilter ? ` · ${strategyFilter}` : ''}`
+              : `${orderRows.length} orders · ${symbol}${strategyFilter ? ` · ${strategyFilter}` : ''}`}
       </p>
     </div>
   );

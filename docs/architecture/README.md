@@ -34,6 +34,15 @@
 
 ---
 
+## Live 执行 / multileg
+
+| 文档 | 说明 |
+|------|------|
+| [segment-lifecycle.md](segment-lifecycle.md) | 段生命周期问题（2026-06-13 incident）：ghost segment 根因 + 修复 + 重构方案 |
+| [backtest_vs_live_execution.md](backtest_vs_live_execution.md) | 回测与实盘执行差异（必读中包含） |
+
+---
+
 ## Evidence / Gate / 树与标签
 
 | 文档 | 说明 |

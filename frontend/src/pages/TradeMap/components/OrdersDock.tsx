@@ -114,7 +114,7 @@ export function OrdersDock({
           <option value="orders">原始订单</option>
           <option value="legs">回合（开平一行）</option>
         </select>
-        <Link to={`/orders?symbol=${encodeURIComponent(symbol)}`}>完整订单页</Link>
+        <Link to={`/orders?symbol=${encodeURIComponent(symbol)}&view=positions`}>完整订单页</Link>
       </div>
       <div className={styles.scroll}>
         {viewMode === 'orders' ? (

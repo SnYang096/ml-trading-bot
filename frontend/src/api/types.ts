@@ -120,6 +120,22 @@ export interface OrderRow {
   [key: string]: unknown;
 }
 
+export interface OpenPositionRow {
+  position_id: string;
+  symbol: string;
+  scope: string;
+  strategy?: string;
+  side?: string;
+  quantity?: number;
+  entry_price?: number;
+  mark_price?: number | null;
+  unrealized_pnl_usdt?: number | null;
+  entry_time?: number | null;
+  pending_exit_orders?: number;
+  entry_marker_id?: string;
+  leg?: string;
+}
+
 export interface FunnelStrategyStats {
   regime_passed?: number;
   regime_denied?: number;

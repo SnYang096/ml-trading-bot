@@ -79,7 +79,7 @@ export function AccountPage() {
         <button type="button" onClick={refreshAll}>
           刷新
         </button>
-        <a href="/orders">订单列表</a>
+        <a href="/orders?view=positions">订单列表</a>
       </div>
 
       <section className={styles.section}>

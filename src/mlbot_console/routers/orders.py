@@ -6,6 +6,7 @@ from fastapi import APIRouter, Query
 
 from mlbot_console.config import SETTINGS
 from mlbot_console.responses import ok
+from mlbot_console.services.open_positions_list import collect_open_positions
 from mlbot_console.services.orders_list import (
     collect_orders,
     enrich_orders_pnl,
@@ -56,6 +57,31 @@ def orders_list(
         limit=limit,
         feature_bus_root=SETTINGS.feature_bus_root,
         engine_data_root=SETTINGS.engine_data_root,
+        strategy=strategy,
+    )
+    sym_meta = "ALL" if is_all_symbols(symbol) else symbol.upper()
+    return ok(rows, meta={"count": len(rows), "symbol": sym_meta})
+
+
+@router.get("/api/orders/open-positions")
+def orders_open_positions(
+    symbol: str = Query("*"),
+    scopes: str = Query("trend,spot,multi_leg"),
+    strategy: Optional[str] = Query(
+        None,
+        description="Filter by strategy id, e.g. tpc or chop_grid",
+    ),
+    limit: int = Query(200, ge=1, le=500),
+) -> dict:
+    """Open holdings with mark-to-market unrealized PnL (not limit-order book)."""
+    rows = collect_open_positions(
+        trend_db=SETTINGS.trend_order_db,
+        spot_db=SETTINGS.spot_order_db,
+        multi_leg_db=SETTINGS.multi_leg_db,
+        symbol=symbol,
+        scopes=_scopes_list(scopes),
+        limit=limit,
+        feature_bus_root=SETTINGS.feature_bus_root,
         strategy=strategy,
     )
     sym_meta = "ALL" if is_all_symbols(symbol) else symbol.upper()

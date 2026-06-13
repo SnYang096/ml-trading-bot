@@ -20,14 +20,16 @@
 
 ### 1.2 `active=False` 的 4 条路径各自为政
 
-| 路径 | 触发条件 | 清 inventory? | 清 pending? | 通知 gate? |
-|------|---------|-------------|------------|-----------|
-| `_exit_grid()` | regime exit / risk stop | ✅ market_exit | ✅ cancel all | ❌ |
-| `clear_stale_active_if_ghost()` | 4 个条件全满足 | ❌ | ❌ | ✅ |
-| `auto-deactivate` (新) | inventory=[] && pending=[] | ❌ | ❌ | ✅ |
-| trend: 退出逻辑 | regime 不满足 | ✅ | ✅ cancel | ✅ |
+| 路径 | 触发条件 | 清 inventory? | 清 pending? | 通知 gate? | `save_state`? |
+|------|---------|-------------|------------|-----------|--------------|
+| `_exit_grid()` | regime exit / risk stop | ✅ market_exit | ✅ cancel all | ✅ | 否（靠 `on_bar` 尾调用） |
+| `clear_stale_active_if_ghost()` | 4 个条件全满足 | ❌ | ❌ | ✅ | ✅ 立即 |
+| `auto-deactivate` (新) | inventory=[] && pending=[] | ❌ | ❌ | ✅ | 否（靠 `on_bar` 尾调用） |
+| trend: `_exit_all()` | regime 不满足 | ✅ | ✅ cancel | ✅ | 否（靠 `on_bar` 尾调用） |
 
-**没有统一的 `_deactivate()` 入口。** 状态转换散落在 3+ 处，行为不一致。
+**真正的 inconsistency**：`save_state()` 调用时机不一致——`clear_stale_active_if_ghost` 立即持久化，其他三条依赖 `on_bar` 尾部的 `save_state()`。
+
+**没有统一的 `_deactivate()` 入口。** 状态转换散落在 4 处，行为不一致。
 
 ### 1.3 保护单（TP/SL）生命周期独立于段生命周期
 
@@ -101,20 +103,30 @@ def _deactivate(self, reason: str) -> None:
         reason,
     )
     self.state.active = False
-    self.state.current_regime = "idle"
+    if hasattr(self.state, "current_regime"):
+        self.state.current_regime = "idle"
     self.save_state()
     gate = getattr(self, "_concurrency_gate", None)
     if gate is not None:
         gate.notify_deactivation(self.state.symbol, self._engine_name)
 ```
 
-所有 3 个调用点统一走这里：
+所有调用点统一走这里：
 
 ```python
 _exit_grid()          → self._deactivate("regime_exit")
 clear_stale_active()  → self._deactivate("ghost_cleared")
 auto-deactivate       → self._deactivate("fully_closed")
 ```
+
+| Reason | Source |
+|--------|--------|
+| `regime_exit` | `_exit_grid` / `_exit_all` |
+| `ghost_cleared` | `clear_stale_active_if_ghost` |
+| `fully_closed` | auto-deactivate / post-fill check |
+| `risk_stop` | chop `_risk_stop` → `_exit_grid`（可选子 reason） |
+
+> **注意**：两个引擎重复了 ~80 行 ghost + slot + auto-deactivate 逻辑。考虑用 mixin 或基类抽取公共代码。
 
 ### 4.2 段状态机（可选，风险更低但更大改动）
 
@@ -135,21 +147,36 @@ class SegmentState(Enum):
 # ACTIVE → IDLE (ghost detected + no pending)
 ```
 
-### 4.3 保护单与段生命周期绑定
+### 4.3 post-fill 即时 deactivate（替代 `on_bar` 末尾延迟）
+
+**正确 hook**：保护单成交通过 **`on_execution_report`**（user stream）到达，不是 `on_execution_results`：
 
 ```python
-def on_execution_results(self, results):
-    for r in results:
-        ...
-        if r.action == "protection_fill":
-            self._handle_protection_fill(r)
-    
-    # ← 关键：处理完所有成交后统一检查
+# chop_grid_live_engine.py:619
+def on_execution_report(self, report):
+    if self._handle_protection_fill(report):
+        self.save_state()
+        # ← 应该在这里加：self._maybe_deactivate_if_fully_closed()
+        return
+```
+
+```python
+# dual_add_trend_live_engine.py:632
+def on_execution_report(self, report):
+    if self._handle_protection_fill(report):
+        # ← 同上
+        return
+```
+
+**P0 的 timing window**：auto-deactivate 在 `on_bar` **末尾**运行，但 TP/SL fill 在 `on_execution_report` **mid-cycle** 到达。fill 到 next bar 之间，`active=True` + inventory=[] 的 ghost 状态可能持续数秒到一分钟。P0 减少了 ghost **持续**时间（最多一个 bar），P2 关闭的是 **延迟**窗口（fill 后立即清理）。
+
+```python
+def _maybe_deactivate_if_fully_closed(self) -> None:
     if self.state.active and not self.state.inventory and not self.state.pending_orders:
         self._deactivate("fully_closed")
 ```
 
-把检查放在 `on_execution_results` 尾部（而非 `on_bar` 尾部），因为 `on_bar` 只产生 actions，实际成交在 `on_execution_results` 才反映到 inventory。
+调用点：`on_execution_report` 尾部 + `on_bar` 尾部（双保险）。
 
 ### 4.4 消除 `_live_exchange_has_activity` 全局变量
 
@@ -167,21 +194,35 @@ def is_stale_active_ghost(self) -> bool:
 
 简化 ghost 条件：只要本地无仓无挂单就是 ghost。交易所残留由 reconciliation 机制处理，不阻塞 ghost 清理。
 
+**⚠️ Replenishment 交互**：`_maybe_replenish_empty_levels` 使用 `_live_exchange_has_activity` 来避免交易所仍有挂单时的虚假 replenishment：
+
+```python
+# chop_grid_live_engine.py:1651-1658
+if (
+    self._live_exchange_has_activity
+    and not self.state.pending_orders
+    and not self.state.inventory
+):
+    return []
+```
+
+P3 需要额外处理这个路径——否则消除 `_live_exchange_has_activity` 后，exchange 仍有 orphan 单时可能触发不当 replenishment。替代方案：在 replenishment 前直接查询 exchange adapter，而非依赖缓存标记。
+
 ---
 
 ## 5. 实施优先级
 
-| 优先级 | 改动 | 风险 | 工作量 |
-|--------|------|------|--------|
-| **P0** ✅ | auto-deactivate（chop + trend） | 低 | 0.5d（已完成） |
-| **P1** | 统一 `_deactivate()` | 低 | 0.5d |
-| **P2** | `on_execution_results` 尾部检查 | 中 | 0.5d |
-| **P3** | 消除 `_live_exchange_has_activity` | 中 | 1d |
-| **P4** | 状态机重构 | 高 | 3d |
+| 优先级 | 改动 | 风险 | 工作量 | 备注 |
+|--------|------|------|--------|------|
+| **P0** ✅ | auto-deactivate（chop + trend） | 低 | 0.5d（已完成） | 减少 ghost 持续时间至 ≤1 bar |
+| **P1** | 统一 `_deactivate()` | 低 | 0.5d | 消除 4 处重复代码 |
+| **P2** | `on_execution_report` 尾部 post-fill 检查 | 中 | 0.5d | 关闭 fill→bar 延迟窗口 |
+| **P3** | 消除 `_live_exchange_has_activity` | 中 | 1d | 需处理 replenishment 交互 |
+| **P4** | 状态机重构 | 高 | 3d | 长期架构目标 |
 
 ---
 
-## 6. 测试建议
+## 6. 测试清单（P1 合并前必须完成）
 
 - [ ] 单腿 TP 平仓后验证 `active=False`
 - [ ] 多腿逐腿 TP 平完后验证 `active=False`
@@ -190,3 +231,32 @@ def is_stale_active_ghost(self) -> bool:
 - [ ] 并发 gate 验证 ghost 不占 slot
 - [ ] 仿真模式 (`bar_simulation=True`) 回归
 - [ ] 重启后 state 加载正确（`active` 从文件恢复）
+- [ ] TP fill 到下一 bar 之间 `holds_real_grid_slot()` 返回 `False`
+- [ ] replenish 后再次全平 → `active=False`
+
+---
+
+## 7. Out of scope
+
+本方案只覆盖 `chop_grid_live_engine.py` 和 `dual_add_trend_live_engine.py` 的段生命周期问题。
+
+**不在范围内**：
+- 其他 live engine（如 PCM、spot 策略）
+- CMS PnL 配对逻辑（已单独修复）
+- 回测 `ChopGridEngine`（不受影响，见 §2.3）
+- feature bus / regime 信号质量
+- `MultiLegConcurrencyGate` 核心逻辑（仅在 deactivate 时调用其 `notify_deactivation`）
+
+---
+
+## 6. 测试清单（P1 合并前必须完成）
+
+- [ ] 单腿 TP 平仓后验证 `active=False`
+- [ ] 多腿逐腿 TP 平完后验证 `active=False`
+- [ ] SL 全部扫完后验证 `active=False`
+- [ ] regime exit 后验证 `active=False` 且 inventory/pending 已清
+- [ ] 并发 gate 验证 ghost 不占 slot
+- [ ] 仿真模式 (`bar_simulation=True`) 回归
+- [ ] 重启后 state 加载正确（`active` 从文件恢复）
+- [ ] TP fill 到下一 bar 之间 `holds_real_grid_slot()` 返回 `False`
+- [ ] replenish 后再次全平 → `active=False`

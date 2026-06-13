@@ -206,6 +206,7 @@ def compute_spot_order_pnl(
                 "lot_qty": lot.qty,
                 "lot_cost_usdt": lot.cost_usdt,
                 "mark_price": float(mark),
+                "entry_time": lot.entry_ts,
                 "strategy": lot.strategy,
             }
     return out
