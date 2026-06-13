@@ -617,8 +617,29 @@ def multi_leg_markers(
             end_ts=end_ts,
         )
     else:
-        ml_time_clause, ml_time_params = _sql_time_range_expr(
-            start_ts, end_ts, "COALESCE(filled_at, created_at)"
+        # Build time clause handling mixed column types:
+        #   filled_at  = INTEGER (Unix timestamp)
+        #   created_at = TEXT    (ISO 8601 string like "2026-06-13 01:16:26")
+        # Comparing INTEGER against TEXT ISO param in SQLite always fails
+        # (INT < TEXT), silently dropping all filled orders.
+        ml_time_parts: list = []
+        ml_time_params: list = []
+        if start_ts is not None:
+            iso = _iso_from_unix(start_ts)
+            if iso:
+                ml_time_parts.append(
+                    "(filled_at >= ? OR (filled_at IS NULL AND created_at >= ?))"
+                )
+                ml_time_params.extend([start_ts, iso])
+        if end_ts is not None:
+            iso = _iso_from_unix(end_ts)
+            if iso:
+                ml_time_parts.append(
+                    "(filled_at <= ? OR (filled_at IS NULL AND created_at <= ?))"
+                )
+                ml_time_params.extend([end_ts, iso])
+        ml_time_clause = (
+            " AND " + " AND ".join(ml_time_parts) if ml_time_parts else ""
         )
         ord_sql = f"""
             SELECT local_order_id, strategy, symbol, side, purpose, status, order_type,
