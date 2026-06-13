@@ -625,3 +625,55 @@ def test_multileg_pnl_late_fixup_pairs_when_exit_ts_before_entry(multi_leg_db) -
     assert pnl_map[entry_id]["pnl_hint"] == "已实现"
     assert pnl_map[entry_id]["pnl_usdt"] == expected
     assert pnl_map[exit_id]["pnl_usdt"] == expected
+
+
+def test_multileg_pnl_dust_market_exit_uses_partial_fill_qty(multi_leg_db) -> None:
+    """HYPE S3_dust: entry 81.96 @ 59.831, exit fill 0.01 @ 60.007."""
+    from src.order_management.multi_leg_storage import MultiLegStorage
+
+    storage = MultiLegStorage(str(multi_leg_db))
+    segment = "HYPEUSDT_2026-06-13 00:45:00+00:00"
+    entry_id = f"{segment}_S3"
+    exit_id = f"{entry_id}_dust"
+    run_id = storage.create_run(
+        mode="testnet",
+        strategies=["chop_grid"],
+        symbols=["HYPEUSDT"],
+        run_id="ml_dust_pnl",
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": entry_id,
+            "leg_id": entry_id,
+            "symbol": "HYPEUSDT",
+            "side": "SELL",
+            "purpose": "entry",
+            "status": "filled",
+            "filled_quantity": 81.96,
+            "average_price": 59.831,
+            "filled_at": "2026-06-13 01:16:27+00:00",
+        }
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": exit_id,
+            "leg_id": entry_id,
+            "symbol": "HYPEUSDT",
+            "side": "BUY",
+            "position_side": "SHORT",
+            "purpose": "market_exit",
+            "status": "closed",
+            "quantity": 0.01,
+            "filled_quantity": 0.01,
+            "average_price": 60.007,
+            "filled_at": "2026-06-13 14:30:16+00:00",
+        }
+    )
+    pnl_map = multileg_pnl_by_order_id(multi_leg_db, "HYPEUSDT")
+    expected = pytest.approx((59.831 - 60.007) * 0.01, rel=1e-4)
+    assert pnl_map[entry_id]["pnl_usdt"] == expected
+    assert pnl_map[exit_id]["pnl_usdt"] == expected

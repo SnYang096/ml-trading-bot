@@ -230,6 +230,29 @@ def test_link_pnl_usdt_long_and_short() -> None:
     assert _link_pnl_usdt(short_entry, short_exit) == pytest.approx(20.0)
 
 
+def test_link_pnl_usdt_uses_exit_fill_for_dust_market_exit() -> None:
+    """Dust flatten (e.g. S3_dust 0.01 qty) must not multiply by full entry size."""
+    entry = {
+        "side": "SELL",
+        "filled_quantity": 81.96,
+        "average_price": 59.831,
+    }
+    dust_exit = {
+        "side": "BUY",
+        "purpose": "market_exit",
+        "status": "closed",
+        "filled_quantity": 0.01,
+        "average_price": 60.007,
+        "local_order_id": "HYPEUSDT_seg_S3_dust",
+    }
+    assert _link_pnl_usdt(entry, dust_exit) == pytest.approx(
+        (59.831 - 60.007) * 0.01, rel=1e-4
+    )
+    assert _link_pnl_usdt(entry, dust_exit) != pytest.approx(
+        (59.831 - 60.007) * 81.96, rel=1e-4
+    )
+
+
 def test_latest_close_prices_reads_bus(bus_root) -> None:
     marks = latest_close_prices(bus_root, ["ETHUSDT", "MISSING"])
     assert "ETHUSDT" in marks

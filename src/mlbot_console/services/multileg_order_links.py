@@ -278,6 +278,27 @@ def filled_quantity(row: Dict[str, Any]) -> float:
     return float(row.get("quantity") or 0)
 
 
+def link_qty_for_pnl(
+    entry_row: Dict[str, Any], exit_row: Dict[str, Any]
+) -> Optional[float]:
+    """Qty basis for realized PnL: exit fill when present (dust/partial), else entry."""
+    entry_qty = filled_quantity(entry_row)
+    if entry_qty <= 0:
+        return None
+    exit_filled = float(exit_row.get("filled_quantity") or 0.0)
+    if exit_filled > 0:
+        return min(entry_qty, exit_filled)
+    status = str(exit_row.get("status") or "").lower()
+    purpose = str(exit_row.get("purpose") or "").lower()
+    if "market_exit" in purpose and status in {
+        "skipped_no_position",
+        "rejected",
+        "shadow",
+    }:
+        return entry_qty
+    return entry_qty
+
+
 def _is_filled_row(row: Dict[str, Any]) -> bool:
     status = str(row.get("status") or "").lower()
     qty = float(row.get("filled_quantity") or 0)
