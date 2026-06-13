@@ -165,6 +165,22 @@ def leg_label_for_multileg_entry(entry_row: Dict[str, Any]) -> str:
     return leg_suffix(ekey) or leg_suffix(oid) or ""
 
 
+def _stop_loss_matches_entry(
+    row: Dict[str, Any], entry_order_id: str, entry_key: str
+) -> bool:
+    """Per-leg SL must match the entry id — not any same-side hedge stop."""
+    eid = str(entry_order_id or "")
+    ekey = str(entry_key or eid)
+    exit_lid = str(row.get("leg_id") or "").strip()
+    exit_oid = str(row.get("order_id") or row.get("local_order_id") or "")
+    if exit_lid and (exit_lid == ekey or exit_lid == eid):
+        return True
+    if exit_oid in {f"{ekey}_sl", f"{eid}_sl"}:
+        return True
+    base = exit_lid[:-3] if exit_lid.endswith("_sl") else ""
+    return bool(base and base in {ekey, eid})
+
+
 def _chop_grid_exit_for_entry(
     group_rows: List[Dict[str, Any]], entry_row: Dict[str, Any]
 ) -> Optional[Dict[str, Any]]:
@@ -197,7 +213,11 @@ def _chop_grid_exit_for_entry(
         matched = False
         if exit_lid and (exit_lid == ekey or exit_lid == ent_oid):
             matched = True
-        elif market_exit_closing_position_side(row) == ent_side:
+        elif "stop_loss" in purpose and _stop_loss_matches_entry(
+            row, ent_oid, ekey
+        ):
+            matched = True
+        elif "market_exit" in purpose and market_exit_closing_position_side(row) == ent_side:
             # Batch flatten in segment group (legacy chop_grid path).
             matched = True
         elif exit_oid and ent_oid and exit_oid == ent_oid:
@@ -428,6 +448,90 @@ def _filled_exit_row(
     return None
 
 
+def _stop_loss_closes_entry(
+    sl_row: Dict[str, Any], entry_row: Dict[str, Any]
+) -> bool:
+    ent_side = _entry_position_side(entry_row)
+    if ent_side is None:
+        return False
+    return market_exit_closing_position_side(sl_row) == ent_side
+
+
+def _shared_stop_loss_pairs(
+    by_group: Dict[str, List[Dict[str, Any]]],
+    pending: List[Dict[str, Any]],
+    pairs: List[tuple[Dict[str, Any], Dict[str, Any]]],
+) -> List[tuple[Dict[str, Any], Dict[str, Any]]]:
+    """Map hedge-mode SL fills to legs without a dedicated ``{leg}_sl`` order."""
+    paired_entries = {_order_key(entry) for entry, _ in pairs if _order_key(entry)}
+    used_sl = {
+        _order_key(exit_row)
+        for _, exit_row in pairs
+        if "stop_loss" in str(exit_row.get("purpose") or "").lower()
+        and _order_key(exit_row)
+    }
+    extra: List[tuple[Dict[str, Any], Dict[str, Any]]] = []
+    for gk, group_rows in by_group.items():
+        sl_fills = sorted(
+            [
+                row
+                for row in group_rows
+                if "stop_loss" in str(row.get("purpose") or "").lower()
+                and _is_filled_row(row)
+                and _price(row) is not None
+                and _order_key(row)
+                and _order_key(row) not in used_sl
+            ],
+            key=lambda row: (_ts_row(row) or 0, _order_key(row)),
+        )
+        if not sl_fills:
+            continue
+        orphans = [
+            entry
+            for entry in pending
+            if row_group_key(entry) == gk
+            and is_entry_row(entry)
+            and _is_filled_row(entry)
+            and not is_trend_entry_row(entry)
+            and _order_key(entry)
+            and _order_key(entry) not in paired_entries
+        ]
+        if not orphans:
+            continue
+
+        def _orphan_sort_key(entry: Dict[str, Any]) -> tuple:
+            side = _entry_position_side(entry)
+            px = float(_price(entry) or 0.0)
+            ts = _ts_row(entry) or 0
+            if side == "LONG":
+                return (ts, px)
+            return (ts, -px)
+
+        orphans.sort(key=_orphan_sort_key)
+        for entry in orphans:
+            entry_ts = _ts_row(entry) or 0
+            matched_sl: Optional[Dict[str, Any]] = None
+            for sl_row in sl_fills:
+                sl_key = _order_key(sl_row)
+                if not sl_key or sl_key in used_sl:
+                    continue
+                if (_ts_row(sl_row) or 0) < entry_ts:
+                    continue
+                if not _stop_loss_closes_entry(sl_row, entry):
+                    continue
+                matched_sl = sl_row
+                break
+            if matched_sl is None:
+                continue
+            sl_key = _order_key(matched_sl)
+            if not sl_key:
+                continue
+            extra.append((entry, matched_sl))
+            paired_entries.add(_order_key(entry) or "")
+            used_sl.add(sl_key)
+    return extra
+
+
 def pair_multileg_entry_exits(
     rows: List[Dict[str, Any]],
 ) -> List[tuple[Dict[str, Any], Dict[str, Any]]]:
@@ -455,6 +559,7 @@ def pair_multileg_entry_exits(
         )
         if exit_row is not None:
             pairs.append((entry, exit_row))
+    pairs.extend(_shared_stop_loss_pairs(by_group, pending, pairs))
     return pairs
 
 
@@ -483,8 +588,6 @@ def multileg_pnl_by_order_id(
             known.add(key)
 
     by_group = build_leg_link_index(raw)
-    orphan_exits = _orphan_market_exit_rows(raw)
-    used_market_exit_ids: set[str] = set()
     mark = float((mark_prices or {}).get(sym) or 0.0)
     out: Dict[str, Dict[str, Any]] = {}
 
@@ -495,28 +598,22 @@ def multileg_pnl_by_order_id(
                 pending_entries.append(entry)
     pending_entries.sort(key=lambda r: (_ts_row(r) or 0, _order_key(r)))
 
-    for entry in pending_entries:
+    for entry, exit_row in pair_multileg_entry_exits(raw):
         entry_key = _order_key(entry)
-        gk = row_group_key(entry)
-        group_rows = by_group.get(gk or "", [entry])
         if not entry_key:
             continue
-        exit_row = _filled_exit_row(
-            group_rows,
-            entry,
-            orphan_market_exits=orphan_exits,
-            used_market_exit_ids=used_market_exit_ids,
-            all_rows=raw,
-        )
-        if exit_row is not None:
-            pnl = _link_pnl_usdt(entry, exit_row)
-            if pnl is None:
-                continue
-            rec = _pnl_rec(pnl=pnl, hint="已实现")
-            out[entry_key] = rec
-            exit_key = _order_key(exit_row)
-            if exit_key:
-                out[exit_key] = dict(rec)
+        pnl = _link_pnl_usdt(entry, exit_row)
+        if pnl is None:
+            continue
+        rec = _pnl_rec(pnl=pnl, hint="已实现")
+        out[entry_key] = rec
+        exit_key = _order_key(exit_row)
+        if exit_key:
+            out[exit_key] = dict(rec)
+
+    for entry in pending_entries:
+        entry_key = _order_key(entry)
+        if not entry_key or entry_key in out:
             continue
         if mark <= 0:
             continue
