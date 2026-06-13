@@ -331,7 +331,7 @@ def test_foreign_exchange_position_does_not_activate_chop_grid(tmp_path: Path) -
         exchange_orders=[],
     )
     assert engine.state.active is False
-    assert engine._live_exchange_has_activity is False
+    assert engine._exchange_open_orders is False
     assert engine.state.inventory == []
 
 

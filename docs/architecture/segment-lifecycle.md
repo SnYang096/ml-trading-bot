@@ -1,8 +1,8 @@
 # Segment Lifecycle 架构改进方案
 
 > 日期：2026-06-13  
-> 范围：`chop_grid_live_engine.py` + `dual_add_trend_live_engine.py`  
-> 状态：紧急修复已完成，架构重构待排期
+> 范围：`chop_grid_live_engine.py` + `dual_add_trend_live_engine.py` + `segment_lifecycle.py`  
+> 状态：**P0–P4 已完成**（2026-06-13）
 
 ---
 
@@ -12,20 +12,20 @@
 
 `active` 是一个 `bool`，却承担了三个语义：
 
-| 语义 | 判断位置 | 问题 |
-|------|---------|------|
-| "段是否在运行" | `on_bar` 入口 `should_enter` | 正确 |
-| "是否占并发 slot" | `holds_real_grid_slot()` | 需要二次解读 `active` |
-| "是否允许开新段" | `should_enter = not active` | 一个 bool 不够 |
+| 语义              | 判断位置                     | 问题                  |
+| ----------------- | ---------------------------- | --------------------- |
+| "段是否在运行"    | `on_bar` 入口 `should_enter` | 正确                  |
+| "是否占并发 slot" | `holds_real_grid_slot()`     | 需要二次解读 `active` |
+| "是否允许开新段"  | `should_enter = not active`  | 一个 bool 不够        |
 
 ### 1.2 `active=False` 的 4 条路径各自为政
 
-| 路径 | 触发条件 | 清 inventory? | 清 pending? | 通知 gate? | `save_state`? |
-|------|---------|-------------|------------|-----------|--------------|
-| `_exit_grid()` | regime exit / risk stop | ✅ market_exit | ✅ cancel all | ✅ | 否（靠 `on_bar` 尾调用） |
-| `clear_stale_active_if_ghost()` | 4 个条件全满足 | ❌ | ❌ | ✅ | ✅ 立即 |
-| `auto-deactivate` (新) | inventory=[] && pending=[] | ❌ | ❌ | ✅ | 否（靠 `on_bar` 尾调用） |
-| trend: `_exit_all()` | regime 不满足 | ✅ | ✅ cancel | ✅ | 否（靠 `on_bar` 尾调用） |
+| 路径                            | 触发条件                   | 清 inventory? | 清 pending?  | 通知 gate? | `save_state`?            |
+| ------------------------------- | -------------------------- | ------------- | ------------ | ---------- | ------------------------ |
+| `_exit_grid()`                  | regime exit / risk stop    | ✅ market_exit | ✅ cancel all | ✅          | 否（靠 `on_bar` 尾调用） |
+| `clear_stale_active_if_ghost()` | 4 个条件全满足             | ❌             | ❌            | ✅          | ✅ 立即                   |
+| `auto-deactivate` (新)          | inventory=[] && pending=[] | ❌             | ❌            | ✅          | 否（靠 `on_bar` 尾调用） |
+| trend: `_exit_all()`            | regime 不满足              | ✅             | ✅ cancel     | ✅          | 否（靠 `on_bar` 尾调用） |
 
 **真正的 inconsistency**：`save_state()` 调用时机不一致——`clear_stale_active_if_ghost` 立即持久化，其他三条依赖 `on_bar` 尾部的 `save_state()`。
 
@@ -71,21 +71,21 @@
 
 ### 2.3 回测 — 不受影响
 
-| 引擎 | 为什么不受影响 |
-|------|--------------|
-| `ChopGridEngine` | 纯函数式：接收一段 bar → 处理 → 返回结果。无持久 state、无 `active` flag |
+| 引擎                                      | 为什么不受影响                                                                                                                 |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `ChopGridEngine`                          | 纯函数式：接收一段 bar → 处理 → 返回结果。无持久 state、无 `active` flag                                                       |
 | `ChopGridLiveEngine(bar_simulation=True)` | 复用 live 引擎但 `sync_live_exchange_state` 跳过、`_live_exchange_has_activity=False`。新加的 auto-deactivate 在仿真模式也生效 |
 
 ---
 
 ## 3. 已完成的紧急修复
 
-| Commit | 内容 |
-|--------|------|
+| Commit     | 内容                                                                              |
+| ---------- | --------------------------------------------------------------------------------- |
 | `baf3ba14` | chop_grid: `on_bar` 末尾 auto-deactivate（inventory+pending 皆空 → active=False） |
-| `4b90c235` | trend_scalp: 同上 |
-| 此前 | `per_leg_stop_loss: false` 配置部署，不再产生新 orphan SL |
-| 手动运维 | 清理 6 个 ghost state、标记 8 条 orphan SL 为 canceled、重启 multileg |
+| `4b90c235` | trend_scalp: 同上                                                                 |
+| 此前       | `per_leg_stop_loss: false` 配置部署，不再产生新 orphan SL                         |
+| 手动运维   | 清理 6 个 ghost state、标记 8 条 orphan SL 为 canceled、重启 multileg             |
 
 **当前状态**：6 个标的网格正常运行，无 ghost。
 
@@ -121,12 +121,12 @@ clear_stale_active()  → self._deactivate("ghost_cleared")
 auto-deactivate       → self._deactivate("fully_closed")
 ```
 
-| Reason | Source |
-|--------|--------|
-| `regime_exit` | `_exit_grid` / `_exit_all` |
-| `ghost_cleared` | `clear_stale_active_if_ghost` |
-| `fully_closed` | auto-deactivate / post-fill check |
-| `risk_stop` | chop `_risk_stop` → `_exit_grid`（可选子 reason） |
+| Reason          | Source                                            |
+| --------------- | ------------------------------------------------- |
+| `regime_exit`   | `_exit_grid` / `_exit_all`                        |
+| `ghost_cleared` | `clear_stale_active_if_ghost`                     |
+| `fully_closed`  | auto-deactivate / post-fill check                 |
+| `risk_stop`     | chop `_risk_stop` → `_exit_grid`（可选子 reason） |
 
 > **注意**：两个引擎重复了 ~80 行 ghost + slot + auto-deactivate 逻辑。考虑用 mixin 或基类抽取公共代码。
 >
@@ -218,27 +218,27 @@ P3 需要额外处理这个路径——否则消除 `_live_exchange_has_activity
 
 ## 5. 实施优先级
 
-| 优先级 | 改动 | 风险 | 工作量 | 备注 |
-|--------|------|------|--------|------|
-| **P0** ✅ | auto-deactivate（chop + trend） | 低 | 0.5d（已完成） | 减少 ghost 持续时间至 ≤1 bar |
-| **P1** | 统一 `_deactivate()` | 低 | 0.5d | 消除 4 处重复代码 |
-| **P2** | `on_execution_report` 尾部 post-fill 检查 | 中 | 0.5d | 关闭 fill→bar 延迟窗口 |
-| **P3** | 消除 `_live_exchange_has_activity` | 中 | 1d | 需处理 replenishment 交互 |
-| **P4** | 状态机重构 | 高 | 3d | 长期架构目标 |
+| 优先级   | 改动                                      | 风险 | 工作量         | 备注                         |
+| -------- | ----------------------------------------- | ---- | -------------- | ---------------------------- |
+| **P0** ✅ | auto-deactivate（chop + trend）           | 低   | 0.5d（已完成） | 减少 ghost 持续时间至 ≤1 bar |
+| **P1** ✅ | 统一 `_deactivate()`（`SegmentLifecycleMixin`） | 低   | 0.5d（已完成） | 消除 4 处重复代码            |
+| **P2** ✅ | `on_execution_report` 尾部 post-fill 检查 | 中   | 0.5d（已完成） | 关闭 fill→bar 延迟窗口       |
+| **P3** ✅ | 消除 `_live_exchange_has_activity`（ghost/slot） | 中   | 1d（已完成）   | replenish 用 `_exchange_open_orders` |
+| **P4** ✅ | `SegmentState` 状态机 + trend CLOSING   | 高   | 3d（已完成）   | `segment_state` 持久化 + 旧 JSON 迁移 |
 
 ---
 
-## 6. 测试清单（P1 合并前必须完成）
+## 6. 测试清单（`tests/unit/test_segment_lifecycle.py`）
 
-- [ ] 单腿 TP 平仓后验证 `active=False`
-- [ ] 多腿逐腿 TP 平完后验证 `active=False`
-- [ ] SL 全部扫完后验证 `active=False`
-- [ ] regime exit 后验证 `active=False` 且 inventory/pending 已清
-- [ ] 并发 gate 验证 ghost 不占 slot
-- [ ] 仿真模式 (`bar_simulation=True`) 回归
-- [ ] 重启后 state 加载正确（`active` 从文件恢复）
-- [ ] TP fill 到下一 bar 之间 `holds_real_grid_slot()` 返回 `False`（**P2 后**；P0 下若 `_live_exchange_has_activity=True` 仍可能占 slot）
-- [ ] replenish 后再次全平 → `active=False`
+- [x] 单腿 TP 平仓后验证 `active=False`
+- [x] 多腿逐腿 TP 平完后验证 `active=False`
+- [x] SL 全部扫完后验证 `active=False`
+- [x] regime exit 后验证 `active=False` 且 inventory/pending 已清
+- [x] 并发 gate 验证 ghost 不占 slot
+- [x] 仿真模式 (`bar_simulation=True`) 回归
+- [x] 重启后 state 加载正确（`segment_state=idle`）
+- [x] TP fill 后 `holds_real_grid_slot()` 返回 `False`（P2 post-fill deactivate）
+- [x] replenish 后再次全平 → `active=False`
 
 ---
 

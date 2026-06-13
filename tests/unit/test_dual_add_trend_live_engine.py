@@ -11,6 +11,7 @@ from src.time_series_model.live.dual_add_trend_live_engine import (
     DualAddPosition,
     DualAddTrendLiveEngine,
 )
+from src.time_series_model.live.segment_lifecycle import SegmentState
 
 
 def _config(tmp_path: Path) -> Path:
@@ -613,7 +614,9 @@ def test_exit_all_preserves_pending_orders(tmp_path: Path) -> None:
     assert cancel_actions[0]["exchange_order_id"] == "ex_exit"
 
     assert engine.state.inventory == []
-    assert engine.state.active is False
+    assert engine.state.segment_state == SegmentState.CLOSING.value
+    assert engine.state.active is True
+    assert engine.holds_real_grid_slot() is True
 
 
 def test_on_execution_results_cleans_cancelled_and_archives(

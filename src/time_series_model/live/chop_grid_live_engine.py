@@ -30,6 +30,13 @@ from src.order_management.multi_leg_reconciliation import (
 )
 from src.time_series_model.grid.chop_grid_engine import GridEngineConfig
 from src.time_series_model.live.regime_box_prefilter import stable_box_blocks_chop_entry
+from src.time_series_model.live.segment_lifecycle import (
+    SegmentLifecycleMixin,
+    SegmentState,
+    migrate_segment_state_from_legacy,
+    segment_allows_new_entry,
+    segment_occupies_slot,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +75,7 @@ class GridState:
     grid_id: str = ""
     symbol: str = ""
     active: bool = False
+    segment_state: str = SegmentState.IDLE.value
     center: float = 0.0
     spacing: float = 0.0
     realized_pnl: float = 0.0
@@ -271,13 +279,15 @@ def _level_side_key(level: int, side: str) -> str:
     return f"{prefix}{int(level)}"
 
 
-class ChopGridLiveEngine:
+class ChopGridLiveEngine(SegmentLifecycleMixin):
     """Dry-run grid engine that produces place/cancel/market_exit actions.
 
     Deployment packages under ``live/highcap/config/strategies`` intentionally keep
     only ``meta.yaml`` plus ``archetypes/``. Runtime mode, state paths and adapters
     come from the live runner CLI/env, not from research YAML.
     """
+
+    _engine_name = "chop_grid"
 
     def __init__(
         self,
@@ -306,7 +316,14 @@ class ChopGridLiveEngine:
         self._pending_actions: List[Dict[str, Any]] = []
         self.metrics_strategy = str(metrics_strategy or "")
         self.bar_simulation = bool(bar_simulation)
-        self._live_exchange_has_activity = False
+        self._exchange_open_orders = False
+
+    def _log_stale_active_reset(self) -> None:
+        logger.warning(
+            "chop_grid stale active state reset: symbol=%s grid_id=%s",
+            self.state.symbol,
+            self.state.grid_id,
+        )
 
     def _emit_chop_bar_outcome(self, symbol: str, *, outcome: str) -> None:
         from src.order_management.hedge_engine_metrics import (
@@ -326,15 +343,24 @@ class ChopGridLiveEngine:
         if not self.state_path.exists():
             return GridState()
         raw = json.loads(self.state_path.read_text(encoding="utf-8"))
+        active = bool(raw.get("active", False))
+        pending_orders = [GridOrder(**o) for o in raw.get("pending_orders", [])]
+        inventory = [_grid_position_from_state(p) for p in raw.get("inventory", [])]
+        segment_state = migrate_segment_state_from_legacy(
+            active=active,
+            segment_state_raw=raw.get("segment_state"),
+            has_inventory_or_pending=bool(pending_orders or inventory),
+        )
         return GridState(
             grid_id=str(raw.get("grid_id", "")),
             symbol=str(raw.get("symbol", "")),
-            active=bool(raw.get("active", False)),
+            active=active,
+            segment_state=segment_state,
             center=_as_float(raw.get("center")),
             spacing=_as_float(raw.get("spacing")),
             realized_pnl=_as_float(raw.get("realized_pnl")),
-            pending_orders=[GridOrder(**o) for o in raw.get("pending_orders", [])],
-            inventory=[_grid_position_from_state(p) for p in raw.get("inventory", [])],
+            pending_orders=pending_orders,
+            inventory=inventory,
             last_timestamp=str(raw.get("last_timestamp", "")),
             current_regime=str(raw.get("current_regime", "idle")),
             last_reconciliation_ok=bool(raw.get("last_reconciliation_ok", True)),
@@ -351,6 +377,8 @@ class ChopGridLiveEngine:
         )
 
     def save_state(self) -> None:
+        self._reconcile_legacy_active_flag()
+        self._sync_active_from_segment_state()
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         self.state_path.write_text(
             json.dumps(asdict(self.state), ensure_ascii=False, indent=2),
@@ -400,52 +428,6 @@ class ChopGridLiveEngine:
             for p in self.state.inventory
         ]
 
-    def is_stale_active_ghost(self) -> bool:
-        """True when ``active`` is set but nothing real remains on this segment."""
-        return bool(
-            self.state.active
-            and not self.state.pending_orders
-            and not self.state.inventory
-            and not self._live_exchange_has_activity
-        )
-
-    def clear_stale_active_if_ghost(self) -> bool:
-        """Drop a ghost segment so it cannot block the concurrency cap.
-
-        Called from the shared gate before slot accounting so symbols that have
-        not received a bar yet this cycle still release stale ``active`` flags.
-        """
-        if not self.is_stale_active_ghost():
-            return False
-        logger.warning(
-            "chop_grid stale active state reset: symbol=%s grid_id=%s",
-            self.state.symbol,
-            self.state.grid_id,
-        )
-        self.state.active = False
-        self.state.current_regime = "idle"
-        self.save_state()
-        gate = getattr(self, "_concurrency_gate", None)
-        if gate is not None:
-            gate.notify_deactivation(self.state.symbol, "chop_grid")
-        return True
-
-    def holds_real_grid_slot(self) -> bool:
-        """True iff this engine's active segment really occupies a concurrency slot.
-
-        An ``active`` segment carrying no pending orders, no inventory and no live
-        exchange activity is a ghost (cleared via :meth:`clear_stale_active_if_ghost`),
-        so it must not count toward ``max_concurrent_multi_leg_symbols`` and block
-        other symbols from starting.
-        """
-        if not bool(getattr(self.state, "active", False)):
-            return False
-        return bool(
-            self.state.pending_orders
-            or self.state.inventory
-            or self._live_exchange_has_activity
-        )
-
     def on_execution_results(self, results: Iterable[GridExecutionResult]) -> None:
         """Persist exchange/client ids returned by the execution adapter."""
         for result in results:
@@ -486,7 +468,9 @@ class ChopGridLiveEngine:
         self.state.pending_orders = [
             o for o in self.state.pending_orders if o.status != "canceled"
         ]
-        self.save_state()
+        self._maybe_deactivate_if_fully_closed()
+        if self.state.active:
+            self.save_state()
 
     @staticmethod
     def _ghost_pending_ttl_seconds() -> float:
@@ -619,7 +603,9 @@ class ChopGridLiveEngine:
     def on_execution_report(self, report: Dict[str, Any]) -> None:
         """Apply normalized user-stream fill updates to local pending inventory."""
         if self._handle_protection_fill(report):
-            self.save_state()
+            self._maybe_deactivate_if_fully_closed()
+            if self.state.active:
+                self.save_state()
             return
         order = self._find_order(
             exchange_id=str(report.get("order_id") or ""),
@@ -670,6 +656,7 @@ class ChopGridLiveEngine:
             self.state.pending_orders = [
                 o for o in self.state.pending_orders if o.order_id != order.order_id
             ]
+            self._promote_to_active()
         self.save_state()
 
     def _ingest_late_entry_fill(self, report: Dict[str, Any], leg_hint: str) -> bool:
@@ -703,6 +690,7 @@ class ChopGridLiveEngine:
             leg_id=leg_id,
         )
         self.state.inventory.append(pos)
+        self._promote_to_active()
         self._pending_actions.extend(
             self._protection_actions(
                 order_id=leg_id,
@@ -843,7 +831,7 @@ class ChopGridLiveEngine:
         exchange_orders: Iterable[Mapping[str, Any]],
     ) -> None:
         """Use exchange truth to avoid opening a fresh grid over live exposure."""
-        self._live_exchange_has_activity = False
+        self._exchange_open_orders = False
         if self.bar_simulation:
             return
         sym = str(self.state.symbol or "").upper()
@@ -864,12 +852,12 @@ class ChopGridLiveEngine:
         ]
         has_local_chop = bool(self.state.inventory or self.state.pending_orders)
         # Do not treat foreign legs (e.g. trend_scalp) as chop-owned exposure.
-        self._live_exchange_has_activity = bool(open_grid_orders) or (
+        self._exchange_open_orders = bool(open_grid_orders) or (
             bool(positions) and has_local_chop
         )
-        if not self._live_exchange_has_activity:
+        if not self._exchange_open_orders:
             return
-        if not self.state.active:
+        if segment_allows_new_entry(self.state.segment_state):
             if not open_grid_orders:
                 return
             logger.warning(
@@ -879,6 +867,7 @@ class ChopGridLiveEngine:
                 len(open_grid_orders),
                 len(positions),
             )
+            self.state.segment_state = SegmentState.ACTIVE.value
             self.state.active = True
             self.state.current_regime = "chop_grid"
             if not self.state.symbol and positions:
@@ -1284,20 +1273,32 @@ class ChopGridLiveEngine:
         )
         wanted_enter = chop >= self.cfg.entry_chop_min and not is_box
         if self.state.symbol == symbol:
+            self._reconcile_legacy_active_flag()
             self.clear_stale_active_if_ghost()
-        active_at_open = self.state.active and self.state.symbol == symbol
-        should_enter = wanted_enter and not self.state.active
-        should_exit = self.state.active and chop < self.cfg.exit_chop_below
+        active_at_open = (
+            segment_occupies_slot(self.state.segment_state)
+            and self.state.symbol == symbol
+        )
+        should_enter = wanted_enter and segment_allows_new_entry(
+            self.state.segment_state
+        )
+        should_exit = (
+            segment_occupies_slot(self.state.segment_state)
+            and chop < self.cfg.exit_chop_below
+        )
 
         self.state.last_timestamp = timestamp
-        if not self.state.active and should_enter:
+        if segment_allows_new_entry(self.state.segment_state) and should_enter:
             gate = getattr(self, "_concurrency_gate", None)
             if gate is not None and not gate.allow_new_segment(symbol):
                 should_enter = False
             else:
                 actions.extend(self._start_grid(symbol, timestamp, close, atr))
 
-        if self.state.active and self.state.symbol == symbol:
+        if (
+            segment_occupies_slot(self.state.segment_state)
+            and self.state.symbol == symbol
+        ):
             if self.bar_simulation:
                 actions.extend(self._simulate_fills(timestamp, high, low))
                 actions.extend(self._simulate_targets(timestamp, high, low))
@@ -1311,23 +1312,7 @@ class ChopGridLiveEngine:
                 self._exit_grid(timestamp, close, reason="regime_or_risk_exit")
             )
 
-        # Auto-deactivate when the grid has fully wound down (all legs
-        # filled + closed through individual TP/SL without a regime exit).
-        if (
-            self.state.active
-            and not self.state.inventory
-            and not self.state.pending_orders
-        ):
-            logger.info(
-                "chop_grid auto-deactivate: symbol=%s grid_id=%s (empty inventory + no pending)",
-                self.state.symbol,
-                self.state.grid_id,
-            )
-            self.state.active = False
-            self.state.current_regime = "idle"
-            gate = getattr(self, "_concurrency_gate", None)
-            if gate is not None:
-                gate.notify_deactivation(self.state.symbol, "chop_grid")
+        self._maybe_deactivate_if_fully_closed()
 
         from src.time_series_model.live.multileg_funnel import chop_grid_bar_outcome
 
@@ -1361,6 +1346,7 @@ class ChopGridLiveEngine:
             grid_id=f"{symbol}_{timestamp}",
             symbol=symbol,
             active=True,
+            segment_state=SegmentState.ENTERING.value,
             center=close,
             spacing=spacing,
             last_timestamp=timestamp,
@@ -1434,6 +1420,7 @@ class ChopGridLiveEngine:
                     leg_id=order.order_id,
                 )
             )
+            self._promote_to_active()
             actions.append(
                 {
                     "action": "fill",
@@ -1547,11 +1534,7 @@ class ChopGridLiveEngine:
         self.state.pending_orders = []
         self.state.inventory = []
         self.state.level_replenish_count = {}
-        self.state.active = False
-        self.state.current_regime = "idle"
-        gate = getattr(self, "_concurrency_gate", None)
-        if gate is not None:
-            gate.notify_deactivation(self.state.symbol, "chop_grid")
+        self._deactivate("regime_exit")
         return actions
 
     def _may_replenish_level(self, level_key: str) -> bool:
@@ -1648,10 +1631,13 @@ class ChopGridLiveEngine:
         signal, which would otherwise look identical to a post-TP empty level
         and cause phantom duplicate orders.
         """
-        if not self.state.active or self.state.symbol != symbol:
+        if (
+            not segment_occupies_slot(self.state.segment_state)
+            or self.state.symbol != symbol
+        ):
             return []
         if (
-            self._live_exchange_has_activity
+            self._exchange_has_open_activity()
             and not self.state.pending_orders
             and not self.state.inventory
         ):

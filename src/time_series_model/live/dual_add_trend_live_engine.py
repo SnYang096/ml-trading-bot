@@ -18,6 +18,13 @@ from src.features.semantic_chop import as_finite_float, resolve_semantic_chop
 from src.time_series_model.live.regime_box_prefilter import (
     stable_box_blocks_trend_entry,
 )
+from src.time_series_model.live.segment_lifecycle import (
+    SegmentLifecycleMixin,
+    SegmentState,
+    migrate_segment_state_from_legacy,
+    segment_allows_new_entry,
+    segment_occupies_slot,
+)
 from src.config.strategy_layout import resolve_strategy_config_input
 from src.order_management.grid_execution_adapter import GridExecutionResult
 from src.order_management.multi_leg_reconciliation import (
@@ -104,6 +111,7 @@ class DualAddTrendState:
     segment_id: str = ""
     symbol: str = ""
     active: bool = False
+    segment_state: str = SegmentState.IDLE.value
     center: float = 0.0
     atr: float = 0.0
     last_add_long: float = 0.0
@@ -176,8 +184,10 @@ def _load_dual_add_config(path: str | Path) -> DualAddEngineConfig:
     )
 
 
-class DualAddTrendLiveEngine:
+class DualAddTrendLiveEngine(SegmentLifecycleMixin):
     """Bar-driven dual-add engine that implements multi-leg orchestration hooks."""
+
+    _engine_name = "trend_scalp"
 
     def __init__(
         self,
@@ -206,7 +216,14 @@ class DualAddTrendLiveEngine:
         self.state = self.load_state()
         self._pending_actions: List[Dict[str, Any]] = []
         self.metrics_strategy = str(metrics_strategy or "")
-        self._live_exchange_has_activity = False
+        self._exchange_open_orders = False
+
+    def _log_stale_active_reset(self) -> None:
+        logger.warning(
+            "trend_scalp stale active state reset: symbol=%s segment_id=%s",
+            self.state.symbol,
+            self.state.segment_id,
+        )
 
     def _emit_dual_bar_outcome(self, symbol: str, outcome: str) -> None:
         from src.order_management.hedge_engine_metrics import (
@@ -267,10 +284,19 @@ class DualAddTrendLiveEngine:
         if not self.state_path.exists():
             return DualAddTrendState()
         raw = json.loads(self.state_path.read_text(encoding="utf-8"))
+        active = bool(raw.get("active", False))
+        pending_orders = [DualAddOrder(**o) for o in raw.get("pending_orders", [])]
+        inventory = [DualAddPosition(**p) for p in raw.get("inventory", [])]
+        segment_state = migrate_segment_state_from_legacy(
+            active=active,
+            segment_state_raw=raw.get("segment_state"),
+            has_inventory_or_pending=bool(pending_orders or inventory),
+        )
         return DualAddTrendState(
             segment_id=str(raw.get("segment_id", "")),
             symbol=str(raw.get("symbol", "")),
-            active=bool(raw.get("active", False)),
+            active=active,
+            segment_state=segment_state,
             center=_as_float(raw.get("center")),
             atr=_as_float(raw.get("atr")),
             last_add_long=_as_float(raw.get("last_add_long")),
@@ -279,8 +305,8 @@ class DualAddTrendLiveEngine:
             add_short_count=int(raw.get("add_short_count", 0) or 0),
             trend_side=str(raw.get("trend_side", "")),
             realized_pnl=_as_float(raw.get("realized_pnl")),
-            pending_orders=[DualAddOrder(**o) for o in raw.get("pending_orders", [])],
-            inventory=[DualAddPosition(**p) for p in raw.get("inventory", [])],
+            pending_orders=pending_orders,
+            inventory=inventory,
             last_timestamp=str(raw.get("last_timestamp", "")),
             bar_index=int(raw.get("bar_index", 0) or 0),
             last_reconciliation_ok=bool(raw.get("last_reconciliation_ok", True)),
@@ -290,47 +316,14 @@ class DualAddTrendLiveEngine:
         )
 
     def save_state(self) -> None:
+        self._reconcile_legacy_active_flag()
+        self._sync_active_from_segment_state()
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         raw = asdict(self.state)
         raw.pop("_order_history", None)
         self.state_path.write_text(
             json.dumps(raw, ensure_ascii=False, indent=2),
             encoding="utf-8",
-        )
-
-    def is_stale_active_ghost(self) -> bool:
-        """True when ``active`` is set but nothing real remains on this segment."""
-        return bool(
-            self.state.active
-            and not self.state.pending_orders
-            and not self.state.inventory
-            and not self._live_exchange_has_activity
-        )
-
-    def clear_stale_active_if_ghost(self) -> bool:
-        """Drop a ghost segment so it cannot block the shared multi-leg cap."""
-        if not self.is_stale_active_ghost():
-            return False
-        logger.warning(
-            "trend_scalp stale active state reset: symbol=%s segment_id=%s",
-            self.state.symbol,
-            self.state.segment_id,
-        )
-        self.state.active = False
-        self.save_state()
-        gate = getattr(self, "_concurrency_gate", None)
-        if gate is not None:
-            gate.notify_deactivation(self.state.symbol, "trend_scalp")
-        return True
-
-    def holds_real_grid_slot(self) -> bool:
-        """True iff this engine's active segment really occupies a concurrency slot."""
-        if not bool(getattr(self.state, "active", False)):
-            return False
-        return bool(
-            self.state.pending_orders
-            or self.state.inventory
-            or self._live_exchange_has_activity
         )
 
     def sync_live_exchange_state(
@@ -340,7 +333,7 @@ class DualAddTrendLiveEngine:
         exchange_orders: Iterable[Any],
     ) -> None:
         """Use exchange truth so ghost ``active`` flags do not block the shared cap."""
-        self._live_exchange_has_activity = False
+        self._exchange_open_orders = False
         sym = str(self.state.symbol or "").upper()
         if not sym:
             return
@@ -359,7 +352,7 @@ class DualAddTrendLiveEngine:
             if str(p.get("symbol") or "").upper() == sym
             and abs(float(p.get("positionAmt") or p.get("quantity") or 0)) > 0
         ]
-        self._live_exchange_has_activity = bool(open_trend_orders) or (
+        self._exchange_open_orders = bool(open_trend_orders) or (
             bool(positions) and has_local
         )
 
@@ -392,14 +385,21 @@ class DualAddTrendLiveEngine:
         )
         self.state.last_timestamp = timestamp
         if self.state.symbol == symbol:
+            self._reconcile_legacy_active_flag()
             self.clear_stale_active_if_ghost()
-        if self.state.active and self.state.symbol == symbol:
+        if (
+            segment_occupies_slot(self.state.segment_state)
+            and self.state.symbol == symbol
+        ):
             self.state.bar_index += 1
 
-        active_at_open = self.state.active and self.state.symbol == symbol
+        active_at_open = (
+            segment_occupies_slot(self.state.segment_state)
+            and self.state.symbol == symbol
+        )
 
         should_enter = (
-            not self.state.active
+            segment_allows_new_entry(self.state.segment_state)
             and trend_conf >= self.cfg.entry_trend_min
             and chop <= self.cfg.max_entry_chop
             and not (self.cfg.exclude_box_prefilter and is_box)
@@ -428,7 +428,10 @@ class DualAddTrendLiveEngine:
             )
             return actions
 
-        if self.state.active and self.state.symbol == symbol:
+        if (
+            segment_occupies_slot(self.state.segment_state)
+            and self.state.symbol == symbol
+        ):
             actions.extend(self._cancel_stale_pending_orders(timestamp))
             if trend_conf < self.cfg.exit_trend_below or chop > self.cfg.max_hold_chop:
                 actions.extend(self._exit_all(close, timestamp, reason="regime_exit"))
@@ -461,7 +464,11 @@ class DualAddTrendLiveEngine:
                     )
                     return actions
                 actions.extend(self._target_exits(high, low, close, timestamp))
-                if not self.state.active:
+                if (
+                    segment_allows_new_entry(self.state.segment_state)
+                    or self.state.segment_state == SegmentState.CLOSING.value
+                ):
+                    self._maybe_deactivate_if_fully_closed()
                     self.save_state()
                     has_mx = any(
                         str(a.get("action", "") or "").lower() == "market_exit"
@@ -494,22 +501,7 @@ class DualAddTrendLiveEngine:
             trend_side=trend_side,
         )
 
-        # Auto-deactivate when protection (TP/SL) closed the only position
-        # without a regime exit — same pattern as chop_grid ghost segments.
-        if (
-            self.state.active
-            and not self.state.inventory
-            and not self.state.pending_orders
-        ):
-            logger.info(
-                "trend_scalp auto-deactivate: symbol=%s segment_id=%s (empty inventory + no pending)",
-                self.state.symbol,
-                self.state.segment_id,
-            )
-            self.state.active = False
-            gate = getattr(self, "_concurrency_gate", None)
-            if gate is not None:
-                gate.notify_deactivation(self.state.symbol, "trend_scalp")
+        self._maybe_deactivate_if_fully_closed()
 
         self.save_state()
         return actions
@@ -595,7 +587,9 @@ class DualAddTrendLiveEngine:
         self.state.pending_orders = [
             o for o in self.state.pending_orders if o.status != "canceled"
         ]
-        self.save_state()
+        self._maybe_deactivate_if_fully_closed()
+        if self.state.active:
+            self.save_state()
 
     def on_reconciliation_report(self, report: ReconciliationReport) -> None:
         missing_ids = {str(o.order_id) for o in report.missing_exchange_orders}
@@ -650,7 +644,9 @@ class DualAddTrendLiveEngine:
     def on_execution_report(self, report: Dict[str, Any]) -> None:
         """Apply normalized user-stream fill updates to local pending inventory."""
         if self._handle_protection_fill(report):
-            self.save_state()
+            self._maybe_deactivate_if_fully_closed()
+            if self.state.active:
+                self.save_state()
             return
         order = self._find_order(
             exchange_id=str(report.get("order_id") or ""),
@@ -675,6 +671,7 @@ class DualAddTrendLiveEngine:
         order.filled_quantity = new_filled
         order.status = status.lower() if status else order.status
         new_position: DualAddPosition | None = None
+        winding_down = False
         if fill_delta > 0:
             pos_side = "LONG" if order.side == "BUY" else "SHORT"
             new_position = DualAddPosition(
@@ -687,23 +684,22 @@ class DualAddTrendLiveEngine:
                 entry_time=str(report.get("trade_time") or self.state.last_timestamp),
             )
             self.state.inventory.append(new_position)
+            winding_down = self._needs_late_fill_cleanup()
+            if not winding_down:
+                self._promote_to_active()
         terminal = status in {"FILLED", "CANCELED", "EXPIRED", "REJECTED"}
         if new_position is not None:
-            self._pending_actions.extend(
-                self._protection_actions(
-                    pos=new_position,
-                    timestamp=str(
-                        report.get("trade_time") or self.state.last_timestamp
-                    ),
+            if not winding_down:
+                self._pending_actions.extend(
+                    self._protection_actions(
+                        pos=new_position,
+                        timestamp=str(
+                            report.get("trade_time") or self.state.last_timestamp
+                        ),
+                    )
                 )
-            )
             # ── Late-fill guard ──
-            # When _exit_all ran before the fill report arrived, the segment
-            # is already marked inactive but the order was still in
-            # pending_orders (the _exit_all fix keeps it there).  The fill
-            # creates a position that must be immediately unwound, otherwise
-            # the CMS sees a filled entry with no exit.
-            if not self.state.active:
+            if winding_down:
                 logger.warning(
                     "dual_add_trend late fill after segment exit: symbol=%s "
                     "side=%s qty=%s leg=%s — queueing immediate market_exit",
@@ -739,6 +735,7 @@ class DualAddTrendLiveEngine:
             segment_id=f"{symbol}_{timestamp}",
             symbol=symbol,
             active=True,
+            segment_state=SegmentState.ENTERING.value,
             center=close,
             atr=atr,
             last_add_long=close,
@@ -895,10 +892,7 @@ class DualAddTrendLiveEngine:
             )
         # Keep pending_orders intact; on_execution_results will filter them.
         self.state.inventory = []
-        self.state.active = False
-        gate = getattr(self, "_concurrency_gate", None)
-        if gate is not None:
-            gate.notify_deactivation(self.state.symbol, "trend_scalp")
+        self._begin_closing(reason)
         return actions
 
     def _place_order(
