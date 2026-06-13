@@ -233,18 +233,10 @@ _FALLBACK_MULTI_LEG_SYMBOLS = "BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT"
 
 
 def _read_universe_yaml_symbols(universe: str) -> List[str]:
-    """Load symbol keys from ``live/{universe}/universe.yaml`` (same keys as ``start_live.sh``)."""
+    """Load symbol keys from ``live/{universe}/universe.yaml``."""
+    from src.live_data_stream.universe_symbols import read_universe_symbols
 
-    import yaml
-
-    path = PROJECT_ROOT / "live" / str(universe).strip() / "universe.yaml"
-    if not path.is_file():
-        raise FileNotFoundError(str(path))
-    with open(path, "r", encoding="utf-8") as fh:
-        cfg = yaml.safe_load(fh)
-    symbols = sorted((cfg.get("symbols") or {}).keys())
-    out = [str(s).strip().upper() for s in symbols if str(s).strip()]
-    return out
+    return read_universe_symbols(universe, project_root=PROJECT_ROOT)
 
 
 def resolve_multi_leg_base_symbols_csv(args: argparse.Namespace) -> str:

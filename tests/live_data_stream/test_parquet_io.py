@@ -113,7 +113,7 @@ def test_run_auto_gap_fill_once_swallows_top_level_errors(
             mgr,
             _BrokenGapFiller(),  # type: ignore[arg-type]
             ["BTCUSDT"],
-        )
+        ).written_bars
         == 0
     )
 

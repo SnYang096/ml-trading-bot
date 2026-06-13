@@ -10,7 +10,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING, Dict, Iterable, List, Optional
+from typing import TYPE_CHECKING, Dict, FrozenSet, Iterable, List, Optional, Set
 
 import pandas as pd
 
@@ -30,6 +30,14 @@ class BarGap:
     end: pd.Timestamp
     minutes: float
     kind: str = "internal"
+
+
+@dataclass(frozen=True)
+class GapFillRunResult:
+    """Outcome of one auto gap-fill pass."""
+
+    written_bars: int
+    symbols_repaired: FrozenSet[str]
 
 
 def _utc_timestamp(value: pd.Timestamp | str) -> pd.Timestamp:
@@ -393,17 +401,20 @@ def fill_large_bar_gaps(
     max_gaps_per_run: int = 24,
     now: Optional[pd.Timestamp] = None,
     feature_bus_writer: Optional[FeatureBusWriter] = None,
-) -> int:
-    """Fill detected gaps and return written 1m bar count."""
+) -> tuple[int, Set[str]]:
+    """Fill detected gaps and return (written 1m bar count, symbols repaired)."""
     now_ts = _utc_timestamp(now or pd.Timestamp.now(tz="UTC"))
     today = now_ts.normalize()
     written = 0
     filled_by_symbol: Dict[str, List[pd.DataFrame]] = {}
+    symbols_repaired: Set[str] = set()
 
     def _record_filled(sym: str, bars: pd.DataFrame) -> None:
         if bars is None or bars.empty:
             return
-        filled_by_symbol.setdefault(str(sym).upper(), []).append(bars)
+        sym_u = str(sym).upper()
+        filled_by_symbol.setdefault(sym_u, []).append(bars)
+        symbols_repaired.add(sym_u)
 
     for gap in list(gaps)[: int(max_gaps_per_run)]:
         logger.warning(
@@ -482,7 +493,7 @@ def fill_large_bar_gaps(
             merged[sym] = pd.concat(frames, ignore_index=True)
         sync_filled_bars_to_feature_bus(feature_bus_writer, merged)
 
-    return written
+    return written, symbols_repaired
 
 
 def run_auto_gap_fill_once(
@@ -497,7 +508,7 @@ def run_auto_gap_fill_once(
     sparse_min_rows_per_day: int = 1435,
     now: Optional[pd.Timestamp] = None,
     feature_bus_writer: Optional["FeatureBusWriter"] = None,
-) -> int:
+) -> GapFillRunResult:
     """Run one repair pass for pending Vision gaps plus scanned bar/tick gaps."""
     symbol_list = [str(s).upper() for s in symbols]
     sparse_window = (
@@ -520,7 +531,7 @@ def run_auto_gap_fill_once(
         )
     except Exception:
         logger.exception("auto-gap-fill: run failed")
-        return 0
+        return GapFillRunResult(written_bars=0, symbols_repaired=frozenset())
 
 
 def _run_auto_gap_fill_once_impl(
@@ -535,7 +546,7 @@ def _run_auto_gap_fill_once_impl(
     sparse_min_rows_per_day: int,
     now: Optional[pd.Timestamp],
     feature_bus_writer: Optional["FeatureBusWriter"] = None,
-) -> int:
+) -> GapFillRunResult:
     pending_count = len(getattr(gap_filler, "_pending_vision_gaps", []))
     if pending_count:
         logger.warning(
@@ -578,9 +589,9 @@ def _run_auto_gap_fill_once_impl(
             sparse_lookback_hours,
             sparse_min_rows_per_day,
         )
-        return 0
+        return GapFillRunResult(written_bars=0, symbols_repaired=frozenset())
 
-    written = fill_large_bar_gaps(
+    written, symbols_repaired = fill_large_bar_gaps(
         storage,
         gap_filler,
         gaps,
@@ -589,11 +600,15 @@ def _run_auto_gap_fill_once_impl(
         feature_bus_writer=feature_bus_writer,
     )
     logger.warning(
-        "auto-gap-fill: run complete gaps=%d written_bars=%d",
+        "auto-gap-fill: run complete gaps=%d written_bars=%d symbols=%s",
         len(gaps),
         written,
+        ",".join(sorted(symbols_repaired)) or "-",
     )
-    return written
+    return GapFillRunResult(
+        written_bars=written,
+        symbols_repaired=frozenset(symbols_repaired),
+    )
 
 
 async def auto_gap_fill_loop(
@@ -625,7 +640,7 @@ async def auto_gap_fill_loop(
                 else float(lookback_hours)
             )
 
-            def _run_once() -> int:
+            def _run_once() -> GapFillRunResult:
                 return run_auto_gap_fill_once(
                     storage,
                     gap_filler,

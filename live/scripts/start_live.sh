@@ -39,25 +39,17 @@ else
 fi
 echo ""
 
-# 从 universe.yaml 加载默认 symbols（若未通过参数指定）
+# 从 universe.yaml 加载 bus 全集（策略 meta 在 run_live.py 内再过滤）
 if [ -z "$SYMBOLS_ARG" ]; then
-  if [ -f "$LIVE_ROOT/universe.yaml" ]; then
-    SYMBOLS=$(python - << 'PY'
-import yaml
-from pathlib import Path
+  SYMBOLS=$(python - << 'PY'
+from src.live_data_stream.universe_symbols import resolve_symbols_csv
 import os
 
-live_root = os.environ.get("LIVE_ROOT")
-path = Path(live_root) / "universe.yaml"
-with open(path, "r", encoding="utf-8") as f:
-    cfg = yaml.safe_load(f)
-syms = list((cfg.get("symbols") or {}).keys())
-print(",".join(sorted(syms)))
+live_root = os.environ.get("LIVE_ROOT", "live/highcap")
+universe = live_root.rsplit("/", 1)[-1]
+print(resolve_symbols_csv(universe=universe, env_symbols=""))
 PY
-    )
-  else
-    SYMBOLS="BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT"
-  fi
+  )
 else
   SYMBOLS="$SYMBOLS_ARG"
 fi

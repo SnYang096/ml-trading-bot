@@ -1,4 +1,12 @@
-"""Resolve live trading symbols from ``live/{universe}/universe.yaml``."""
+"""Resolve live trading symbols from ``live/{universe}/universe.yaml``.
+
+Design (live production):
+  1. ``universe.yaml`` defines the full symbol set the feature-bus publishes.
+  2. Each strategy filters that set via ``meta.yaml`` ``symbol_include`` /
+     ``symbol_exclude`` (see ``live_symbol_plan.resolve_live_classic_symbol_plan``).
+  3. ``MLBOT_LIVE_SYMBOLS`` is a legacy override for the bus set only; prefer
+     editing ``universe.yaml`` and per-strategy meta.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +16,18 @@ from typing import List, Optional
 import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def parse_symbols_csv(raw: str) -> List[str]:
+    """Parse comma-separated symbols to sorted unique uppercase tokens."""
+    out: List[str] = []
+    seen: set[str] = set()
+    for chunk in str(raw or "").replace("|", ",").replace(";", ",").split(","):
+        token = chunk.strip().upper()
+        if token and token not in seen:
+            seen.add(token)
+            out.append(token)
+    return out
 
 
 def universe_yaml_path(universe: str, *, project_root: Optional[Path] = None) -> Path:
@@ -54,4 +74,35 @@ def resolve_symbols_csv(
         return env
     raise ValueError(
         f"no symbols: pass --symbols or create live/{universe}/universe.yaml"
+    )
+
+
+def resolve_bus_symbols_csv(
+    *,
+    cli_symbols: Optional[str] = None,
+    universe: str = "highcap",
+    project_root: Optional[Path] = None,
+) -> str:
+    """Feature-bus publisher: CLI > universe.yaml only (no env fallback)."""
+    return resolve_symbols_csv(
+        cli_symbols=cli_symbols,
+        universe=universe,
+        env_symbols="",
+        project_root=project_root,
+    )
+
+
+def resolve_bus_symbols(
+    *,
+    cli_symbols: Optional[str] = None,
+    universe: str = "highcap",
+    project_root: Optional[Path] = None,
+) -> List[str]:
+    """Feature-bus publisher symbol list (universe.yaml keys; CLI override only)."""
+    return parse_symbols_csv(
+        resolve_bus_symbols_csv(
+            cli_symbols=cli_symbols,
+            universe=universe,
+            project_root=project_root,
+        )
     )

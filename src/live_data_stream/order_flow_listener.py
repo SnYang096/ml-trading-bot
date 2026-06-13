@@ -709,37 +709,21 @@ class OrderFlowListener:
                 n_files,
             )
 
-        # 1min ticks: 8 天（覆盖 VPIN 7 天滚动窗口）
-        # 如果近期数据有缺口，向前扩展查找（最多100天）
-        tick_lookback_days = 8
-        tick_start = (now - timedelta(days=tick_lookback_days)).strftime("%Y-%m-%d")
-        ticks_disk = self.storage_manager.ticks.load_range(
-            self.symbol, tick_start, bar_end
-        )
+        # 1min ticks: rolling window for VPIN (extend backward in chunks if sparse)
+        from src.live_data_stream.tick_load_policy import load_ticks_for_feature_compute
 
-        # 如果ticks不足（VPIN需要7天×1440×2=20160条），向前查找更多数据
-        # 临时降低阈值以适应周末/假期数据不足的情况
+        ticks_disk, recent_ticks_count = load_ticks_for_feature_compute(
+            self.storage_manager,
+            self.symbol,
+            now=now,
+            bar_end=bar_end,
+        )
+        tick_lookback_days = int(os.getenv("MLBOT_TICK_LOOKBACK_DAYS", "8"))
+
+        # 检测最近几天数据缺口：如果近端窗口不足，但扩展后够，说明中间有缺口
         min_ticks_required = int(
             os.getenv("MLBOT_MIN_TICKS_REQUIRED", "15000")
         )  # 默认15000
-        recent_ticks_count = len(ticks_disk)
-        if recent_ticks_count < min_ticks_required:
-            # 尝试加载更早的数据（从100天前开始）
-            extended_tick_start = (now - timedelta(days=100)).strftime("%Y-%m-%d")
-            ticks_disk_extended = self.storage_manager.ticks.load_range(
-                self.symbol, extended_tick_start, bar_end
-            )
-            if len(ticks_disk_extended) > len(ticks_disk):
-                ticks_disk = ticks_disk_extended
-                logger.info(
-                    "[%s] 扩展tick加载范围: %s ~ %s, 共%d条",
-                    self.symbol,
-                    extended_tick_start,
-                    bar_end,
-                    len(ticks_disk),
-                )
-
-        # 检测最近几天数据缺口：如果近8天数据不足，但100天有足够数据，说明中间有缺口
         if (
             recent_ticks_count < min_ticks_required
             and len(ticks_disk) >= min_ticks_required

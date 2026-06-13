@@ -289,7 +289,7 @@ def test_fill_large_bar_gaps_saves_kline_bars(tmp_path):
         minutes=3.0,
     )
 
-    written = fill_large_bar_gaps(
+    written, symbols_repaired = fill_large_bar_gaps(
         storage,
         FakeGapFiller(),  # type: ignore[arg-type]
         [gap],
@@ -297,6 +297,7 @@ def test_fill_large_bar_gaps_saves_kline_bars(tmp_path):
     )
 
     assert written == 3
+    assert symbols_repaired == {"ETHUSDT"}
     saved = storage.bar_1min.load("ETHUSDT", "2026-05-21")
     assert list(saved["timestamp"]) == list(
         pd.date_range(
@@ -316,7 +317,7 @@ def test_fill_large_bar_gaps_prefers_aggtrades_and_saves_ticks(tmp_path):
         minutes=3.0,
     )
 
-    written = fill_large_bar_gaps(
+    written, symbols_repaired = fill_large_bar_gaps(
         storage,
         FakeAggTradeGapFiller(),  # type: ignore[arg-type]
         [gap],
@@ -324,6 +325,7 @@ def test_fill_large_bar_gaps_prefers_aggtrades_and_saves_ticks(tmp_path):
     )
 
     assert written == 3
+    assert symbols_repaired == {"ETHUSDT"}
     bars = storage.bar_1min.load("ETHUSDT", "2026-05-21")
     ticks = storage.ticks.load("ETHUSDT", "2026-05-21")
     assert len(bars) == 3
@@ -351,7 +353,7 @@ def test_fill_large_bar_gaps_syncs_to_feature_bus(tmp_path):
         minutes=3.0,
     )
 
-    written = fill_large_bar_gaps(
+    written, _symbols = fill_large_bar_gaps(
         storage,
         FakeGapFiller(),  # type: ignore[arg-type]
         [gap],
@@ -500,7 +502,7 @@ def test_run_auto_gap_fill_once_retries_pending_and_scans_deep_history(tmp_path)
         }
     ]
 
-    written = run_auto_gap_fill_once(
+    result = run_auto_gap_fill_once(
         storage,
         gap_filler,  # type: ignore[arg-type]
         ["ETHUSDT"],
@@ -510,6 +512,6 @@ def test_run_auto_gap_fill_once_retries_pending_and_scans_deep_history(tmp_path)
     )
 
     assert gap_filler.retry_calls == 1
-    assert written > 0
+    assert result.written_bars > 0
     saved = storage.bar_1min.load_range("ETHUSDT", "2026-05-18", "2026-05-18")
     assert pd.Timestamp("2026-05-18T00:02:00Z") in set(saved["timestamp"])

@@ -51,6 +51,7 @@ from src.live_data_stream.classic_listener_feature_stack import (
     build_extra_feature_computers_for_symbol,
     make_primary_feature_computer_factory,
 )
+from src.live_data_stream.live_symbol_plan import resolve_live_classic_symbol_plan
 from src.live_data_stream.strategy_runtime_config import (
     load_strategy_timeframe,
     me_enabled_in_allowlist,
@@ -364,11 +365,13 @@ def _open_trend_positions_snapshot_from_manager(
 
 
 def _setup_three_strategies(
-    symbols: List[str],
     storage: StorageManager,
     gap_filler,
     trade_size: float,
     risk_per_trade: float = 0.0,
+    *,
+    universe: str = "highcap",
+    symbol_env_override: Optional[str] = None,
 ):
     """多策略实盘启动 (BPC + ME + SRB + TPC + 可选 LV) — 多时间框架
 
@@ -397,16 +400,31 @@ def _setup_three_strategies(
         or _const_cfg.get("enabled_archetypes")
         or []
     )
+    enabled_archetypes = enabled_archetypes_from_constitution(_const_cfg)
+    symbol_plan = resolve_live_classic_symbol_plan(
+        universe=universe,
+        strategies_root=strategies_root,
+        enabled_archetypes=enabled_archetypes,
+        env_symbols=symbol_env_override,
+    )
+    slot_symbols = symbol_plan.active_union or list(symbol_plan.bus_symbols)
     validate_classic_slot_capacity(
         constitution_cfg=_const_cfg,
-        symbols=symbols,
+        symbols=slot_symbols,
     )
-    enabled_archetypes = enabled_archetypes_from_constitution(_const_cfg)
     logger.info(
         "📋 enabled_archetypes=%s (source=%s)",
         enabled_archetypes,
         "constitution" if _from_const else "default_all",
     )
+    logger.info(
+        "📋 symbol plan: universe=%s bus=%d active_union=%d per_strategy=%s",
+        symbol_plan.universe,
+        len(symbol_plan.bus_symbols),
+        len(symbol_plan.active_union),
+        {k: len(v) for k, v in sorted(symbol_plan.strategy_symbols.items())},
+    )
+    bus_symbols = symbol_plan.listener_symbols
 
     def _tf_to_bar_minutes(tf: str) -> int:
         """'240T' → 240, '60T' → 60"""
@@ -485,7 +503,7 @@ def _setup_three_strategies(
 
     def _open_trend_positions_snapshot() -> List[Dict[str, Any]]:
         return _open_trend_positions_snapshot_from_manager(
-            _manager_ref.get("manager"), symbols
+            _manager_ref.get("manager"), bus_symbols
         )
 
     pcm = LivePCM(
@@ -496,6 +514,7 @@ def _setup_three_strategies(
     )
     for _name, _strat in _strategy_map.items():
         pcm.register(_name, _strat, timeframe=_tf_map[_name])
+    pcm.set_strategy_symbol_universe(symbol_plan.strategy_symbols)
 
     logger.info(f"✅ PCM 仲裁层初始化: 优先级={pcm.archetype_priority}")
 
@@ -553,7 +572,7 @@ def _setup_three_strategies(
 
     # ── 4. MultiSymbolManager (primary FC = PCM 首选 archetype 周期) ──
     manager = MultiSymbolManager(
-        symbols=symbols,
+        symbols=bus_symbols,
         storage_manager=storage,
         feature_computer_factory=primary_fc_factory,
         gap_filler=gap_filler,
@@ -583,18 +602,18 @@ def _setup_three_strategies(
     )
 
     # ── 启动时 slot 同步: 从 Binance 查真实持仓，清理残留 stale slot ──
-    _sync_slots_with_exchange(order_manager, constitution_exec, runtime_st, symbols)
+    _sync_slots_with_exchange(order_manager, constitution_exec, runtime_st, bus_symbols)
     # 恢复重启前的完整持仓执行状态（trailing/breakeven/结构出场等）。
     _restore_position_trackers_from_disk(
         manager=manager,
         order_manager=order_manager,
-        symbols=symbols,
+        symbols=bus_symbols,
     )
     # 进程重启后 PCM 内存槽位为空；用持久化 constitution slot 回填，避免下一信号误当「新开」
     pcm.hydrate_slot_evidence_from_constitution_slots(runtime_st)
 
     logged_extra_timeframes: Optional[List[str]] = None
-    for sym in symbols:
+    for sym in bus_symbols:
         listener = manager.get_listener(sym)
         if listener is None:
             continue
@@ -632,19 +651,19 @@ def _setup_three_strategies(
 
     _ensure_exchange_stop_losses_after_restore(
         manager=manager,
-        symbols=symbols,
+        symbols=bus_symbols,
     )
 
     logger.info(
-        "✅ 多策略实盘启动完成: %s symbols primary=%s/%s extras_tf=%s window=%smin pcm=%s",
-        len(symbols),
+        "✅ 多策略实盘启动完成: %s bus_symbols primary=%s/%s extras_tf=%s window=%smin pcm=%s",
+        len(bus_symbols),
         primary_registry_key,
         tf_primary,
         logged_extra_timeframes or [],
         window_minutes,
         pcm.registered_archetypes,
     )
-    return manager, pcm
+    return manager, pcm, bus_symbols
 
 
 # ====================================================================
@@ -1126,9 +1145,8 @@ async def main() -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    symbols = _parse_symbols(os.getenv("MLBOT_LIVE_SYMBOLS", "BTCUSDT"))
-    if not symbols:
-        raise ValueError("No symbols provided. Set MLBOT_LIVE_SYMBOLS=BTCUSDT,ETHUSDT")
+    universe = os.getenv("MLBOT_LIVE_UNIVERSE", "highcap")
+    symbol_env_override = os.getenv("MLBOT_LIVE_SYMBOLS", "").strip() or None
 
     storage_base = os.getenv("MLBOT_LIVE_STORAGE_BASE", "data/live_storage")
     configure_audit_from_env_defaults(
@@ -1154,9 +1172,6 @@ async def main() -> None:
     storage = StorageManager(base_path=storage_base)
     gap_filler = _build_gap_filler(storage)
 
-    logger.info(f"🚀 Starting live trading: symbols={symbols}")
-
-    # ── Prometheus metrics server ──
     metrics_port = int(os.getenv("MLBOT_METRICS_PORT", "9090"))
     start_metrics_server(port=metrics_port)
     try:
@@ -1164,13 +1179,23 @@ async def main() -> None:
     except Exception:
         logger.debug("initial process health metrics skipped", exc_info=True)
 
-    manager, pcm = _setup_three_strategies(
-        symbols, storage, gap_filler, trade_size, risk_per_trade
+    manager, pcm, bus_symbols = _setup_three_strategies(
+        storage,
+        gap_filler,
+        trade_size,
+        risk_per_trade,
+        universe=universe,
+        symbol_env_override=symbol_env_override,
+    )
+    logger.info(
+        "🚀 Starting live trading: universe=%s bus_symbols=%s",
+        universe,
+        bus_symbols,
     )
     try:
         METRICS.publish_dashboard_catalog(
             strategies=pcm.registered_archetypes,
-            symbols=symbols,
+            symbols=bus_symbols,
         )
     except Exception:
         logger.debug("dashboard catalog publish skipped", exc_info=True)
@@ -1267,7 +1292,7 @@ async def main() -> None:
     await _run_external_feature_bus_mode(
         manager=manager,
         pcm=pcm,
-        symbols=symbols,
+        symbols=bus_symbols,
         bg_gap_task=bg_gap_task,
     )
 

@@ -13,7 +13,8 @@ strategy:
   symbol_include:
     - BTCUSDT
     - ETHUSDT
-    - SOLUSDT
     - BNBUSDT
+    - SOLUSDT
     - XRPUSDT
+    - HYPEUSDT
   symbol_exclude: []

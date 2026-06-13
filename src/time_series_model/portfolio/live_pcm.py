@@ -445,6 +445,7 @@ class LivePCM:
         """
         self._strategies: Dict[str, DecisionHandler] = {}
         self._strategy_timeframes: Dict[str, str] = {}  # archetype → timeframe
+        self._strategy_symbol_sets: Dict[str, frozenset[str]] = {}
         self._get_open_slot_count = get_open_slot_count
         self._get_open_trend_positions = get_open_trend_positions
 
@@ -986,6 +987,17 @@ class LivePCM:
             timeframe or "default",
         )
 
+    def set_strategy_symbol_universe(self, mapping: Dict[str, List[str]]) -> None:
+        """Per-archetype tradable symbols (already filtered from universe via meta.yaml)."""
+        self._strategy_symbol_sets = {
+            str(k): frozenset(str(s).upper().strip() for s in vals if str(s).strip())
+            for k, vals in (mapping or {}).items()
+        }
+        logger.info(
+            "PCM: strategy symbol filters: %s",
+            {k: len(v) for k, v in sorted(self._strategy_symbol_sets.items())},
+        )
+
     def unregister(self, archetype: str) -> None:
         """移除一个 archetype 策略"""
         self._strategies.pop(archetype, None)
@@ -1183,6 +1195,12 @@ class LivePCM:
         _collect_seq = 0
         for arch_name, strategy in self._strategies.items():
             try:
+                allowed = self._strategy_symbol_sets.get(arch_name)
+                if allowed is not None:
+                    sym_u = str(symbol or "").upper().strip()
+                    if sym_u not in allowed:
+                        strategy._last_funnel = {"skip": "symbol_not_in_strategy_meta"}
+                        continue
                 # 多时间框架路由: 使用策略绑定的 timeframe 对应的特征
                 strat_features = features
                 if features_by_timeframe and arch_name in self._strategy_timeframes:

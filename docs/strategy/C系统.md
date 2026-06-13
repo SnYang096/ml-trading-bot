@@ -49,7 +49,7 @@ Portfolio 分工（与 A/B 对照）：
 - `chop_grid`：`max_open_levels_total=4` → 约 800 USDT/symbol gross
 - `trend_scalp`：`max_gross_exposure_units=4` → 约 800 USDT gross footprint
 
-标的：`trend_scalp` 默认 BTC/ETH/SOL/BNB/XRP；`chop_grid` `symbol_include` 为空（沿用全局 universe）。
+标的：`trend_scalp` / `chop_grid` 与 `live/highcap/universe.yaml` 对齐（6 币，含 HYPEUSDT）；`chop_grid` `symbol_include: []` 表示沿用 universe 全集。
 
 ---
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import gc
 import logging
 import os
 import sys
@@ -46,6 +47,7 @@ from src.live_data_stream.feature_publisher_stack import (  # noqa: E402
 )
 from src.live_data_stream.feature_bus import FeatureBusWriter  # noqa: E402
 from src.live_data_stream.auto_gap_fill import (  # noqa: E402
+    GapFillRunResult,
     auto_gap_fill_loop,
     run_auto_gap_fill_once,
 )
@@ -157,15 +159,17 @@ def _parse_symbols(raw: str) -> List[str]:
 
 
 def _resolve_symbols(args: argparse.Namespace) -> List[str]:
-    from src.live_data_stream.universe_symbols import resolve_symbols_csv
+    from src.live_data_stream.universe_symbols import (
+        parse_symbols_csv,
+        resolve_bus_symbols_csv,
+    )
 
-    csv = resolve_symbols_csv(
+    csv = resolve_bus_symbols_csv(
         cli_symbols=args.symbols,
         universe=str(getattr(args, "universe", "highcap") or "highcap"),
-        env_symbols=os.getenv("MLBOT_LIVE_SYMBOLS", ""),
         project_root=PROJECT_ROOT,
     )
-    return _parse_symbols(csv)
+    return parse_symbols_csv(csv)
 
 
 def _resolve_project_path(raw: str) -> Path:
@@ -202,8 +206,8 @@ def parse_args() -> argparse.Namespace:
         "--symbols",
         default=None,
         help=(
-            "Comma-separated symbols. Default: keys from live/{universe}/universe.yaml, "
-            "then MLBOT_LIVE_SYMBOLS."
+            "Comma-separated symbols override. Default: keys from live/{universe}/universe.yaml "
+            "(canonical bus universe; strategies filter via meta.yaml)."
         ),
     )
     p.add_argument(
@@ -451,24 +455,34 @@ def _configure_feature_bus_audit(live_storage_base: Path) -> None:
     )
 
 
-async def _startup_feature_audit(manager: Any) -> None:
-    """One-shot compute after warmup to catch OI/FR gaps before WS goes live."""
-    if os.getenv("MLBOT_FEATURE_BUS_AUDIT_POST_WARMUP", "1").strip().lower() in (
-        "0",
-        "false",
-        "off",
-        "no",
-    ):
+async def _startup_feature_audit(
+    manager: Any,
+    symbols: Iterable[str],
+) -> None:
+    """One-shot compute after warmup for symbols that need a fresh bus snapshot."""
+    audit_symbols = _resolve_post_warmup_audit_symbols(symbols)
+    if not audit_symbols:
+        logger.info(
+            "quant-feature-bus: post-warmup feature audit skipped "
+            "(no gap-fill repairs and all symbols have bus snapshots)"
+        )
         return
     logger.info(
-        "quant-feature-bus: post-warmup feature audit (one compute per symbol)..."
+        "quant-feature-bus: post-warmup feature audit for %s",
+        ",".join(sorted(audit_symbols)),
     )
     loop = asyncio.get_running_loop()
 
     def _run_one(listener: Any) -> None:
         listener._compute_and_save_15min_features()
 
-    for symbol, listener in manager.listeners.items():
+    for symbol in sorted(audit_symbols):
+        listener = manager.listeners.get(symbol)
+        if listener is None:
+            logger.warning(
+                "quant-feature-bus: post-warmup audit skip unknown symbol %s", symbol
+            )
+            continue
         try:
             await loop.run_in_executor(None, _run_one, listener)
         except Exception as exc:
@@ -479,15 +493,78 @@ async def _startup_feature_audit(manager: Any) -> None:
             logger.warning(
                 "quant-feature-bus: post-warmup audit failed for %s: %s", symbol, exc
             )
+        finally:
+            gc.collect()
     logger.info("quant-feature-bus: post-warmup feature audit done")
+
+
+def _post_warmup_audit_mode() -> str:
+    raw = os.getenv("MLBOT_FEATURE_BUS_AUDIT_POST_WARMUP", "gap-fill").strip().lower()
+    if raw in ("0", "false", "off", "no"):
+        return "off"
+    if raw in ("1", "true", "on", "yes", "all"):
+        return "all"
+    return "gap-fill"
+
+
+def _primary_feature_timeframe() -> str:
+    raw = os.getenv("MLBOT_PIPELINE_FEATURE_TFS", "120T").strip()
+    if not raw:
+        return "120T"
+    return raw.split(",")[0].strip() or "120T"
+
+
+def _symbols_missing_bus_latest(
+    feature_bus_root: Path,
+    symbols: Iterable[str],
+    timeframe: str,
+) -> set[str]:
+    latest_dir = feature_bus_root / "latest" / "features" / timeframe
+    missing: set[str] = set()
+    for raw in symbols:
+        sym = str(raw).upper()
+        if not (latest_dir / f"{sym}.json").is_file():
+            missing.add(sym)
+    return missing
+
+
+def _resolve_post_warmup_audit_symbols(
+    all_symbols: Iterable[str],
+) -> set[str]:
+    mode = _post_warmup_audit_mode()
+    symbol_list = [str(s).upper() for s in all_symbols]
+    if mode == "off":
+        return set()
+    if mode == "all":
+        return set(symbol_list)
+
+    gap_filled_raw = os.getenv("MLBOT_FEATURE_BUS_AUDIT_GAP_FILL_SYMBOLS", "").strip()
+    gap_filled = {s.strip().upper() for s in gap_filled_raw.split(",") if s.strip()}
+    bus_root = _resolve_project_path(
+        os.getenv("MLBOT_FEATURE_BUS_ROOT", "live/shared_feature_bus")
+    )
+    missing_bus = _symbols_missing_bus_latest(
+        bus_root,
+        symbol_list,
+        _primary_feature_timeframe(),
+    )
+    scope = gap_filled | missing_bus
+    if scope:
+        logger.info(
+            "quant-feature-bus: audit scope gap_fill=%s missing_bus=%s",
+            ",".join(sorted(gap_filled)) or "-",
+            ",".join(sorted(missing_bus)) or "-",
+        )
+    return scope
 
 
 async def _startup_gap_repair(
     args: argparse.Namespace, manager: Any, symbols: List[str], writer: Any
-) -> None:
+) -> GapFillRunResult:
     """Repair persisted gaps before computing feature-bus snapshots."""
+    empty = GapFillRunResult(written_bars=0, symbols_repaired=frozenset())
     if args.auto_gap_fill_interval_minutes <= 0 or manager.gap_filler is None:
-        return
+        return empty
 
     startup_lookback = float(args.auto_gap_fill_startup_lookback_hours)
     if startup_lookback <= 0:
@@ -503,7 +580,7 @@ async def _startup_gap_repair(
     )
     loop = asyncio.get_running_loop()
 
-    def _run_once() -> int:
+    def _run_once() -> GapFillRunResult:
         return run_auto_gap_fill_once(
             manager.storage_manager,
             manager.gap_filler,
@@ -517,12 +594,22 @@ async def _startup_gap_repair(
         )
 
     try:
-        written = await loop.run_in_executor(None, _run_once)
-        logger.info("auto-gap-fill: startup repair done written_bars=%d", written)
+        result = await loop.run_in_executor(None, _run_once)
+        logger.info(
+            "auto-gap-fill: startup repair done written_bars=%d symbols=%s",
+            result.written_bars,
+            ",".join(sorted(result.symbols_repaired)) or "-",
+        )
+        if result.symbols_repaired:
+            os.environ["MLBOT_FEATURE_BUS_AUDIT_GAP_FILL_SYMBOLS"] = ",".join(
+                sorted(result.symbols_repaired)
+            )
+        return result
     except Exception:
         logger.exception(
             "auto-gap-fill: startup repair failed; continuing to start_all"
         )
+        return empty
 
 
 async def _periodic_process_metrics() -> None:
@@ -588,7 +675,7 @@ async def async_main() -> None:
     if args.warmup_days > 0:
         await manager.warmup_all(days=args.warmup_days, use_gap_filler=True)
         await _startup_gap_repair(args, manager, symbols, writer)
-        await _startup_feature_audit(manager)
+        await _startup_feature_audit(manager, symbols)
     else:
         now = pd.Timestamp.now(tz="UTC")
         for listener in manager.listeners.values():
