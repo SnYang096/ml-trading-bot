@@ -250,12 +250,12 @@ def _multileg_open_rows(
         return []
     from mlbot_console.services.account_summary import _discover_symbols
     from mlbot_console.services.multileg_leg_pnl import (
+        _order_key,
         _unrealized_pnl_usdt,
         pair_multileg_entry_exits,
     )
     from mlbot_console.services.multileg_order_links import (
         _is_filled_row as ml_is_filled,
-        _order_key,
         hydrate_multileg_fill_fields,
     )
 
