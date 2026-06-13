@@ -997,6 +997,7 @@ class Metrics:
             "stale_local_order",
             "position_mismatch",
             "api_error",
+            "open_reconcile_updated",
         ):
             raw = buckets.get(issue, 0)
             try:

@@ -104,6 +104,7 @@ class MultiLegLiveDaemon:
         self.poll_seconds = float(poll_seconds)
         self.reconcile_interval_seconds = max(0.0, float(reconcile_interval_seconds))
         self._last_processed: set[tuple[str, str, str]] = set()
+        self._last_exchange_synced_at: Dict[str, float] = {}
         self._last_reconciled_at: Dict[str, float] = {}
         self._running = False
         # Optional 15min funnel hooks (writes A/C-layer rows to live_monitor.db
@@ -147,7 +148,7 @@ class MultiLegLiveDaemon:
                     exchange_orders, exchange_positions = self._exchange_snapshot(
                         sym, rt, exchange_snapshots
                     )
-                    self._last_reconciled_at[sym] = time.monotonic()
+                    self._last_exchange_synced_at[sym] = time.monotonic()
                     live_sync(
                         exchange_orders=exchange_orders,
                         exchange_positions=exchange_positions,

@@ -39,6 +39,7 @@
 | 文档                                                           | 说明                                                                        |
 | -------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | [segment-lifecycle.md](segment-lifecycle.md)                   | 段生命周期问题（2026-06-13 incident）：ghost segment 根因 + 修复 + 重构方案 |
+| [abc_execution_layer_issues_CN.md](abc_execution_layer_issues_CN.md) | ABC 执行层：近期修复、三源 drift、ExecutionTruthSync 与分账户关系、metrics 缺口 |
 | [backtest_vs_live_execution.md](backtest_vs_live_execution.md) | 回测与实盘执行差异（必读中包含）                                            |
 
 ---

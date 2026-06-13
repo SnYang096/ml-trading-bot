@@ -427,9 +427,11 @@ class OrderManager:
                     found = True
 
                 if not found and order.binance_order_id:
-                    # 获取交易所最终状态
+                    # 获取交易所最终状态（含 client_order_id fallback 查 algo/条件单）
                     binance_order = self.binance_api.get_order(
-                        order.binance_order_id, order.symbol
+                        order.binance_order_id,
+                        order.symbol,
+                        client_order_id=order.client_order_id,
                     )
                     if binance_order:
                         self._apply_binance_order_snapshot(order, binance_order)
