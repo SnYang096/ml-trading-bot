@@ -183,7 +183,13 @@ export function useTradeMapHistory(mainChart: IChartApi | null) {
       if (!range || inFlightRef.current) return;
       const state = useTradeMapStore.getState();
       if (state.historyExhausted || !state.lastCandles.length) return;
-      if (range.from > PREFETCH_THRESHOLD) return;
+      if (range.from > PREFETCH_THRESHOLD) {
+        if (timerRef.current != null) {
+          window.clearTimeout(timerRef.current);
+          timerRef.current = null;
+        }
+        return;
+      }
       if (timerRef.current != null) window.clearTimeout(timerRef.current);
       timerRef.current = window.setTimeout(() => {
         timerRef.current = null;
