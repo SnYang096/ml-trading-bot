@@ -493,6 +493,24 @@ class DualAddTrendLiveEngine:
             is_box=is_box,
             trend_side=trend_side,
         )
+
+        # Auto-deactivate when protection (TP/SL) closed the only position
+        # without a regime exit — same pattern as chop_grid ghost segments.
+        if (
+            self.state.active
+            and not self.state.inventory
+            and not self.state.pending_orders
+        ):
+            logger.info(
+                "trend_scalp auto-deactivate: symbol=%s segment_id=%s (empty inventory + no pending)",
+                self.state.symbol,
+                self.state.segment_id,
+            )
+            self.state.active = False
+            gate = getattr(self, "_concurrency_gate", None)
+            if gate is not None:
+                gate.notify_deactivation(self.state.symbol, "trend_scalp")
+
         self.save_state()
         return actions
 
