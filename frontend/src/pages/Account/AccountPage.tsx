@@ -11,9 +11,8 @@ import {
   fmtUsdt,
   KpiCard,
   ReconciliationPanels,
-  ScopesTable,
+  AccountHierarchyTable,
   SpotHoldingsPanel,
-  StrategiesTable,
   WeeklyPnlChart,
   WeeklyPnlTable,
 } from './accountViews.tsx';
@@ -202,22 +201,18 @@ export function AccountPage() {
           </section>
         ) : null}
 
-        <div className={styles.grid2}>
-          <section className="panel">
-            <h3>账户层汇总</h3>
-            <p className="muted" style={{ margin: '0 0 8px', fontSize: '0.85rem' }}>
-              钱包/权益/交易所浮盈 = 币安 API；已实现/本地浮盈/本地未平 = SQLite 账本（可能滞后）。
-            </p>
-            <ScopesTable scopes={scoped?.scopes || []} symbolFilter={symbol} />
-          </section>
-          <section className="panel">
-            <h3>策略汇总 (本地 DB)</h3>
-            <p className="muted" style={{ margin: '0 0 8px', fontSize: '0.85rem' }}>
-              仅 constitution 启用的 live 策略；无成交时显示 0（灰色行）。
-            </p>
-            <StrategiesTable strategies={scoped?.strategies || []} />
-          </section>
-        </div>
+        <section className="panel">
+          <h3>账户与策略汇总</h3>
+          <p className="muted" style={{ margin: '0 0 8px', fontSize: '0.85rem' }}>
+            主行 = 账户层（币安 API + 本地 SQLite 汇总）；点击 ▶ 展开该账户下各策略的本地 DB
+            明细。交易所列对策略子行不适用（显示 —）。
+          </p>
+          <AccountHierarchyTable
+            scopes={scoped?.scopes || []}
+            strategies={scoped?.strategies || []}
+            symbolFilter={symbol}
+          />
+        </section>
 
         <div className={styles.grid2}>
           <SpotHoldingsPanel scopes={scoped?.scopes || []} />

@@ -159,11 +159,12 @@ def test_account_tables_and_pnl_curve() -> None:
     account = _read("pages/Account/AccountPage.tsx")
     views = _read("pages/Account/accountViews.tsx")
     assert "/api/account/reconciliation/all" in account
-    assert "ScopesTable" in account
+    assert "AccountHierarchyTable" in account
+    assert "AccountHierarchyTable" in views
     assert "EquityCurveChart" in account
     assert "ReconciliationPanels" in account
     assert "类型" in views
-    assert "累计盈利曲线" in account
+    assert "已实现盈亏（本地 DB · 累计）" in account
 
 
 def test_mini_grid_markers_compact_strategy_labels() -> None:

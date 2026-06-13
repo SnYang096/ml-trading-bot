@@ -7,7 +7,7 @@ import type {
   DailyPnlPoint,
 } from '@/api/types.ts';
 import { fmtPnl, pnlClass, SCOPE_LABELS } from '@/lib/shell.ts';
-import type { ReactNode } from 'react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import styles from './AccountPage.module.css';
 
 export function fmtUsdt(n: unknown): string {
@@ -43,6 +43,209 @@ export function KpiCard({
   );
 }
 
+function scopeRowCells(s: AccountScopeBlock, symbolScoped: boolean) {
+  const ex = (s.exchange || {}) as Record<string, unknown>;
+  const label = s.label || SCOPE_LABELS[String(s.scope || '')] || s.scope || '—';
+  const accountUpnl = ex.account_unrealized_pnl_usdt ?? ex.unrealized_pnl_usdt;
+  const symbolUpnl = ex.symbol_unrealized_pnl_usdt;
+  const displayUpnl = symbolScoped ? (symbolUpnl ?? accountUpnl) : accountUpnl;
+  const exOpenCount = ex.exchange_open_position_count;
+  const localOpen = Number(s.open_positions ?? 0);
+  const compareUpnlNum = Number(symbolScoped ? (symbolUpnl ?? 0) : accountUpnl);
+  const localUpnlNum = Number(s.unrealized_pnl ?? 0);
+  const pnlMismatch =
+    Number.isFinite(compareUpnlNum) &&
+    Math.abs(compareUpnlNum) > 0.5 &&
+    localOpen === 0 &&
+    Math.abs(localUpnlNum) < 0.5;
+  return {
+    label,
+    sub: ex.binance_label ? String(ex.binance_label) : undefined,
+    wallet: exCell(ex, 'wallet_balance_usdt'),
+    equity: exCell(ex, 'equity_usdt'),
+    available: exCell(ex, 'available_usdt'),
+    displayUpnl,
+    accountUpnl,
+    exOpenCount,
+    localOpen,
+    pnlMismatch,
+    realized: s.realized_pnl,
+    unrealized: s.unrealized_pnl,
+    closed: s.closed_trades,
+  };
+}
+
+function isSymbolScopedFilter(symbolFilter: string): boolean {
+  const sym = symbolFilter.trim();
+  return sym !== '' && sym !== '*' && sym.toUpperCase() !== 'ALL';
+}
+
+/** Account scope rows with expandable per-strategy breakdown (local DB). */
+export function AccountHierarchyTable({
+  scopes,
+  strategies,
+  symbolFilter = '*',
+}: {
+  scopes: AccountScopeBlock[];
+  strategies: AccountStrategyRow[];
+  symbolFilter?: string;
+}) {
+  const strategiesByScope = useMemo(() => {
+    const map = new Map<string, AccountStrategyRow[]>();
+    for (const row of strategies || []) {
+      const key = String(row.scope || '');
+      const list = map.get(key) || [];
+      list.push(row);
+      map.set(key, list);
+    }
+    return map;
+  }, [strategies]);
+
+  const defaultExpanded = useMemo(
+    () =>
+      new Set(
+        (scopes || [])
+          .map((s) => String(s.scope || ''))
+          .filter((scope) => (strategiesByScope.get(scope)?.length ?? 0) > 0),
+      ),
+    [scopes, strategiesByScope],
+  );
+
+  const [expanded, setExpanded] = useState<Set<string> | null>(null);
+  const effectiveExpanded = expanded ?? defaultExpanded;
+
+  if (!scopes?.length) return <p className="muted">无数据</p>;
+
+  const symbolScoped = isSymbolScopedFilter(symbolFilter);
+  const dash = '—';
+
+  const toggleScope = (scope: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev ?? defaultExpanded);
+      if (next.has(scope)) next.delete(scope);
+      else next.add(scope);
+      return next;
+    });
+  };
+
+  return (
+    <div className={styles.tableWrap}>
+      <table className={`${styles.table} ${styles.hierarchyTable}`}>
+        <thead>
+          <tr>
+            <th className={styles.hierarchyNameCol}>账户 / 策略</th>
+            <th>钱包余额</th>
+            <th>权益</th>
+            <th>可用</th>
+            <th>{symbolScoped ? '品种浮盈' : '交易所浮盈'}</th>
+            {symbolScoped ? <th>全账户浮盈</th> : null}
+            <th>交易所未平</th>
+            <th>已实现</th>
+            <th>本地浮盈</th>
+            <th>已平仓</th>
+            <th>本地未平</th>
+          </tr>
+        </thead>
+        <tbody>
+          {scopes.map((scopeBlock) => {
+            const scopeKey = String(scopeBlock.scope || '');
+            const cells = scopeRowCells(scopeBlock, symbolScoped);
+            const childRows = strategiesByScope.get(scopeKey) || [];
+            const canExpand = childRows.length > 0;
+            const isOpen = canExpand && effectiveExpanded.has(scopeKey);
+            return (
+              <Fragment key={scopeKey}>
+                <tr
+                  className={`${styles.scopeRow} ${cells.pnlMismatch ? styles.rowWarn : ''}`}
+                >
+                  <td>
+                    <div className={styles.hierarchyNameCell}>
+                      {canExpand ? (
+                        <button
+                          type="button"
+                          className={`${styles.expandBtn} ${isOpen ? styles.expandBtnOpen : ''}`}
+                          aria-expanded={isOpen}
+                          aria-label={isOpen ? '收起策略' : '展开策略'}
+                          onClick={() => toggleScope(scopeKey)}
+                        >
+                          ▶
+                        </button>
+                      ) : (
+                        <span className={styles.expandSpacer} aria-hidden="true" />
+                      )}
+                      <div>
+                        <div className={styles.scopeTitle}>{cells.label}</div>
+                        {cells.sub ? (
+                          <div className={`muted ${styles.sub}`}>{cells.sub}</div>
+                        ) : null}
+                        {canExpand ? (
+                          <div className={`muted ${styles.sub}`}>{childRows.length} 个策略</div>
+                        ) : null}
+                      </div>
+                    </div>
+                  </td>
+                  <td>{cells.wallet}</td>
+                  <td>{cells.equity}</td>
+                  <td>{cells.available}</td>
+                  <td className={pnlClass(cells.displayUpnl)}>{fmtUsdt(cells.displayUpnl)}</td>
+                  {symbolScoped ? (
+                    <td className={pnlClass(cells.accountUpnl)}>
+                      {fmtUsdt(cells.accountUpnl)}
+                    </td>
+                  ) : null}
+                  <td>{cells.exOpenCount != null ? String(cells.exOpenCount) : dash}</td>
+                  <td className={pnlClass(cells.realized)}>{fmtPnl(cells.realized)}</td>
+                  <td className={pnlClass(cells.unrealized)}>{fmtPnl(cells.unrealized)}</td>
+                  <td>{String(cells.closed ?? 0)}</td>
+                  <td>
+                    {String(cells.localOpen)}
+                    {cells.pnlMismatch ? (
+                      <div className={`muted ${styles.sub} pnl-neg`}>与交易所不同步</div>
+                    ) : null}
+                  </td>
+                </tr>
+                {isOpen
+                  ? childRows.map((st) => {
+                      const inactive =
+                        (st.realized_pnl ?? 0) === 0 &&
+                        (st.unrealized_pnl ?? 0) === 0 &&
+                        (st.closed_trades ?? 0) === 0 &&
+                        (st.open_positions ?? 0) === 0;
+                      const title = st.strategy_title || st.strategy || dash;
+                      return (
+                        <tr
+                          key={`${scopeKey}-${st.strategy}`}
+                          className={`${styles.strategyRow} ${inactive ? 'muted' : ''}`}
+                        >
+                          <td>
+                            <div className={styles.strategyNameCell}>{title}</div>
+                          </td>
+                          <td className={styles.inheritedDash}>{dash}</td>
+                          <td className={styles.inheritedDash}>{dash}</td>
+                          <td className={styles.inheritedDash}>{dash}</td>
+                          <td className={styles.inheritedDash}>{dash}</td>
+                          {symbolScoped ? <td className={styles.inheritedDash}>{dash}</td> : null}
+                          <td className={styles.inheritedDash}>{dash}</td>
+                          <td className={pnlClass(st.realized_pnl)}>{fmtPnl(st.realized_pnl)}</td>
+                          <td className={pnlClass(st.unrealized_pnl)}>
+                            {fmtPnl(st.unrealized_pnl)}
+                          </td>
+                          <td>{String(st.closed_trades ?? 0)}</td>
+                          <td>{String(st.open_positions ?? 0)}</td>
+                        </tr>
+                      );
+                    })
+                  : null}
+              </Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** @deprecated use AccountHierarchyTable — flat scope-only table */
 export function ScopesTable({
   scopes,
   symbolFilter = '*',
@@ -51,10 +254,7 @@ export function ScopesTable({
   symbolFilter?: string;
 }) {
   if (!scopes?.length) return <p className="muted">无数据</p>;
-  const symbolScoped =
-    symbolFilter.trim() !== '' &&
-    symbolFilter.trim() !== '*' &&
-    symbolFilter.toUpperCase() !== 'ALL';
+  const symbolScoped = isSymbolScopedFilter(symbolFilter);
   return (
     <div className={styles.tableWrap}>
       <table className={styles.table}>
@@ -75,47 +275,30 @@ export function ScopesTable({
         </thead>
         <tbody>
           {scopes.map((s) => {
-            const ex = (s.exchange || {}) as Record<string, unknown>;
-            const label = s.label || SCOPE_LABELS[String(s.scope || '')] || s.scope || '—';
-            const accountUpnl =
-              ex.account_unrealized_pnl_usdt ?? ex.unrealized_pnl_usdt;
-            const symbolUpnl = ex.symbol_unrealized_pnl_usdt;
-            // When filtered by symbol, compare against symbol-level unrealized
-            // (not account-level which includes other symbols' PnL).
-            const displayUpnl = symbolScoped
-              ? (symbolUpnl ?? accountUpnl)
-              : accountUpnl;
-            const exOpenCount = ex.exchange_open_position_count;
-            const localOpen = Number(s.open_positions ?? 0);
-            const compareUpnlNum = Number(symbolScoped ? (symbolUpnl ?? 0) : accountUpnl);
-            const localUpnlNum = Number(s.unrealized_pnl ?? 0);
-            const pnlMismatch =
-              Number.isFinite(compareUpnlNum) &&
-              Math.abs(compareUpnlNum) > 0.5 &&
-              localOpen === 0 &&
-              Math.abs(localUpnlNum) < 0.5;
+            const cells = scopeRowCells(s, symbolScoped);
             return (
-              <tr key={String(s.scope)} className={pnlMismatch ? styles.rowWarn : undefined}>
+              <tr
+                key={String(s.scope)}
+                className={cells.pnlMismatch ? styles.rowWarn : undefined}
+              >
                 <td>
-                  {label}
-                  {ex.binance_label ? (
-                    <div className={`muted ${styles.sub}`}>{String(ex.binance_label)}</div>
-                  ) : null}
+                  {cells.label}
+                  {cells.sub ? <div className={`muted ${styles.sub}`}>{cells.sub}</div> : null}
                 </td>
-                <td>{exCell(ex, 'wallet_balance_usdt')}</td>
-                <td>{exCell(ex, 'equity_usdt')}</td>
-                <td>{exCell(ex, 'available_usdt')}</td>
-                <td className={pnlClass(displayUpnl)}>{fmtUsdt(displayUpnl)}</td>
+                <td>{cells.wallet}</td>
+                <td>{cells.equity}</td>
+                <td>{cells.available}</td>
+                <td className={pnlClass(cells.displayUpnl)}>{fmtUsdt(cells.displayUpnl)}</td>
                 {symbolScoped ? (
-                  <td className={pnlClass(accountUpnl)}>{fmtUsdt(accountUpnl)}</td>
+                  <td className={pnlClass(cells.accountUpnl)}>{fmtUsdt(cells.accountUpnl)}</td>
                 ) : null}
-                <td>{exOpenCount != null ? String(exOpenCount) : '—'}</td>
-                <td className={pnlClass(s.realized_pnl)}>{fmtPnl(s.realized_pnl)}</td>
-                <td className={pnlClass(s.unrealized_pnl)}>{fmtPnl(s.unrealized_pnl)}</td>
-                <td>{String(s.closed_trades ?? 0)}</td>
+                <td>{cells.exOpenCount != null ? String(cells.exOpenCount) : '—'}</td>
+                <td className={pnlClass(cells.realized)}>{fmtPnl(cells.realized)}</td>
+                <td className={pnlClass(cells.unrealized)}>{fmtPnl(cells.unrealized)}</td>
+                <td>{String(cells.closed ?? 0)}</td>
                 <td>
-                  {String(localOpen)}
-                  {pnlMismatch ? (
+                  {String(cells.localOpen)}
+                  {cells.pnlMismatch ? (
                     <div className={`muted ${styles.sub} pnl-neg`}>与交易所不同步</div>
                   ) : null}
                 </td>

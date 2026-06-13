@@ -277,3 +277,65 @@
 .rowWarn {
   background: rgba(255, 80, 80, 0.06);
 }
+
+.hierarchyTable .hierarchyNameCol {
+  min-width: 10rem;
+}
+
+.hierarchyNameCell {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.expandBtn {
+  flex-shrink: 0;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin-top: 1px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--accent-cyan);
+  font-size: 0.55rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.expandBtnOpen {
+  transform: rotate(90deg);
+}
+
+.expandSpacer {
+  display: inline-block;
+  width: 1.25rem;
+  flex-shrink: 0;
+}
+
+.scopeTitle {
+  font-weight: 600;
+}
+
+.scopeRow {
+  background: rgba(0, 255, 65, 0.04);
+}
+
+.strategyRow td {
+  border-bottom-color: rgba(255, 255, 255, 0.04);
+}
+
+.strategyNameCell {
+  padding-left: 1.75rem;
+  font-size: 0.76rem;
+}
+
+.strategyNameCell::before {
+  content: '↳ ';
+  color: var(--text-muted);
+}
+
+.inheritedDash {
+  color: var(--text-dim);
+  text-align: center;
+}
