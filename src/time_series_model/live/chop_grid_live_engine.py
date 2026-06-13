@@ -1311,6 +1311,24 @@ class ChopGridLiveEngine:
                 self._exit_grid(timestamp, close, reason="regime_or_risk_exit")
             )
 
+        # Auto-deactivate when the grid has fully wound down (all legs
+        # filled + closed through individual TP/SL without a regime exit).
+        if (
+            self.state.active
+            and not self.state.inventory
+            and not self.state.pending_orders
+        ):
+            logger.info(
+                "chop_grid auto-deactivate: symbol=%s grid_id=%s (empty inventory + no pending)",
+                self.state.symbol,
+                self.state.grid_id,
+            )
+            self.state.active = False
+            self.state.current_regime = "idle"
+            gate = getattr(self, "_concurrency_gate", None)
+            if gate is not None:
+                gate.notify_deactivation(self.state.symbol, "chop_grid")
+
         from src.time_series_model.live.multileg_funnel import chop_grid_bar_outcome
 
         outcome = chop_grid_bar_outcome(

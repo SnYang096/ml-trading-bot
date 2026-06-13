@@ -41,7 +41,11 @@ import {
   priceRangeForChartAutoscale,
   sanitizeCandlesForLwc,
 } from '@/lib/tradeMap';
-import { isValidLogicalRange, visibleLogicalRange } from '@/lib/tradeMap/candles.ts';
+import {
+  isValidLogicalRange,
+  visibleLogicalRange,
+  type LogicalRange,
+} from '@/lib/tradeMap/candles.ts';
 import type { FeatureOverlays } from '@/lib/tradeMap/types.ts';
 import type { LayerState } from '@/stores/tradeMapStore.ts';
 import { useTradeMapStore } from '@/stores/tradeMapStore.ts';
@@ -128,26 +132,39 @@ export function useTradeMapMainChart(params: MainChartParams) {
   const paramsRef = useRef(params);
   paramsRef.current = params;
 
-  const applyChartViewport = useCallback((chart: IChartApi, barCount: number, fitPending: boolean) => {
-    const scrollAdjust = useTradeMapStore.getState().historyScrollAdjust;
-    if (scrollAdjust && isValidLogicalRange(scrollAdjust, barCount)) {
-      chart.timeScale().setVisibleLogicalRange(scrollAdjust);
-      useTradeMapStore.setState({ historyScrollAdjust: null });
-      return;
-    }
-    if (scrollAdjust) {
-      useTradeMapStore.setState({ historyScrollAdjust: null });
-    }
-    const cur = chart.timeScale().getVisibleLogicalRange();
-    if (!fitPending && isValidLogicalRange(cur, barCount)) return;
-    const lr = visibleLogicalRange(barCount);
-    if (lr && isValidLogicalRange(lr, barCount)) {
-      chart.timeScale().setVisibleLogicalRange(lr);
-      if (fitPending) {
-        useTradeMapStore.getState().setBundlePhase({ chartFitPending: false });
+  const applyChartViewport = useCallback(
+    (
+      chart: IChartApi,
+      barCount: number,
+      fitPending: boolean,
+      rangeBeforeSetData?: LogicalRange | null,
+    ) => {
+      const scrollAdjust = useTradeMapStore.getState().historyScrollAdjust;
+      if (scrollAdjust && isValidLogicalRange(scrollAdjust, barCount)) {
+        chart.timeScale().setVisibleLogicalRange(scrollAdjust);
+        useTradeMapStore.setState({ historyScrollAdjust: null });
+        return;
       }
-    }
-  }, []);
+      if (scrollAdjust) {
+        useTradeMapStore.setState({ historyScrollAdjust: null });
+      }
+      const cur = rangeBeforeSetData ?? chart.timeScale().getVisibleLogicalRange();
+      if (!fitPending && isValidLogicalRange(cur, barCount)) {
+        if (rangeBeforeSetData) {
+          chart.timeScale().setVisibleLogicalRange(cur);
+        }
+        return;
+      }
+      const lr = visibleLogicalRange(barCount);
+      if (lr && isValidLogicalRange(lr, barCount)) {
+        chart.timeScale().setVisibleLogicalRange(lr);
+        if (fitPending) {
+          useTradeMapStore.getState().setBundlePhase({ chartFitPending: false });
+        }
+      }
+    },
+    [],
+  );
 
   const clearOverlaySeries = useCallback((chart: IChartApi) => {
     for (const s of overlaySeriesRef.current) {
@@ -403,8 +420,9 @@ export function useTradeMapMainChart(params: MainChartParams) {
     const p = paramsRef.current;
     const clean = sanitizeCandlesForLwc(p.candles) as CandlestickData<Time>[];
     if (!clean.length) return;
+    const rangeBeforeSetData = chart.timeScale().getVisibleLogicalRange();
     series.setData(clean);
-    applyChartViewport(chart, clean.length, p.chartFitPending);
+    applyChartViewport(chart, clean.length, p.chartFitPending, rangeBeforeSetData);
     applyMainOverlays(chart);
     applyChopLayers(chart, series);
     applyTradeLinks(chart);

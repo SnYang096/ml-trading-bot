@@ -488,17 +488,37 @@ function markerSourcePriority(markerId: string | null | undefined): number {
   return 0;
 }
 
-/** One marker per strategy/event/bar — prefer positions over orders duplicates. */
+function chopGridLegDedupeToken(marker: TradeMarker): string {
+  const strat = String(marker.strategy || '').toLowerCase();
+  if (strat !== 'chop_grid') return '';
+  const leg = String(marker.detail?.leg_label || marker.detail?.leg_id || '').trim();
+  if (!leg) return '';
+  const parts = leg.split('_').filter(Boolean);
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const m = parts[i].toUpperCase().match(/^([LS]\d+)/);
+    if (m) return m[1];
+  }
+  return '';
+}
+
+/** Dedupe key; chop_grid legs on the same 2h bar must not collapse (L2 vs L3). */
+export function markerDedupeKey(marker: TradeMarker): string {
+  const legToken = chopGridLegDedupeToken(marker);
+  return [
+    String(marker.strategy || '').toLowerCase(),
+    String(marker.event || '').toLowerCase(),
+    Number(marker.time),
+    String(marker.side || '').toLowerCase(),
+    String(marker.status || 'filled').toLowerCase(),
+    legToken,
+  ].join('|');
+}
+
+/** One marker per strategy/event/bar/leg — prefer positions over orders duplicates. */
 export function dedupeMarkersForChart(markers: TradeMarker[]): TradeMarker[] {
   const byKey = new Map<string, TradeMarker>();
   for (const m of markers) {
-    const key = [
-      String(m.strategy || '').toLowerCase(),
-      String(m.event || '').toLowerCase(),
-      Number(m.time),
-      String(m.side || '').toLowerCase(),
-      String(m.status || 'filled').toLowerCase(),
-    ].join('|');
+    const key = markerDedupeKey(m);
     const prev = byKey.get(key);
     if (!prev || markerSourcePriority(m.id) > markerSourcePriority(prev.id)) {
       byKey.set(key, m);

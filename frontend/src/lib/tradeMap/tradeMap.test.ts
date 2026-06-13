@@ -286,6 +286,24 @@ describe('tradeMap trade links', () => {
     expect(deduped[0].id).toBe('trend:positions:p1:entry');
   });
 
+  it('dedupeMarkersForChart keeps distinct chop_grid legs on the same bar', () => {
+    const base = {
+      time: 1000,
+      strategy: 'chop_grid',
+      event: 'entry',
+      scope: 'multi_leg',
+      status: 'filled',
+    };
+    const markers = [
+      { ...base, id: 'multi_leg:orders:l2', side: 'long', detail: { leg_label: 'L2' } },
+      { ...base, id: 'multi_leg:orders:l3', side: 'long', detail: { leg_label: 'L3' } },
+      { ...base, id: 'multi_leg:orders:s3', side: 'short', detail: { leg_label: 'S3' } },
+      { ...base, id: 'multi_leg:orders:s1', side: 'short', detail: { leg_label: 'S1' } },
+    ] as TradeMarker[];
+    const deduped = dedupeMarkersForChart(markers);
+    expect(deduped).toHaveLength(4);
+  });
+
   it('buildTradeLinkLines snaps endpoints onto loaded candle bars', () => {
     const candles = [
       { time: 1000, open: 1, high: 1, low: 1, close: 1 },

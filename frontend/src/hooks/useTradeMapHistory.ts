@@ -22,8 +22,10 @@ import {
   useTradeMapStore,
 } from '@/stores/tradeMapStore.ts';
 
-const PREFETCH_THRESHOLD = 25;
-const PREFETCH_DELAY_MS = 600;
+/** Only prefetch when the user has panned near the left edge (not on a tight zoom window). */
+const PREFETCH_THRESHOLD = 8;
+const PREFETCH_MIN_WINDOW_BARS = 48;
+const PREFETCH_DELAY_MS = 1200;
 
 async function fetchBundle(query: string) {
   return apiGet<BundleData>(`/api/trade-map/bundle?${query}`);
@@ -183,7 +185,12 @@ export function useTradeMapHistory(mainChart: IChartApi | null) {
       if (!range || inFlightRef.current) return;
       const state = useTradeMapStore.getState();
       if (state.historyExhausted || !state.lastCandles.length) return;
-      if (range.from > PREFETCH_THRESHOLD) {
+      const windowBars = Number(range.to) - Number(range.from);
+      if (
+        range.from > PREFETCH_THRESHOLD ||
+        !Number.isFinite(windowBars) ||
+        windowBars < PREFETCH_MIN_WINDOW_BARS
+      ) {
         if (timerRef.current != null) {
           window.clearTimeout(timerRef.current);
           timerRef.current = null;
