@@ -34,7 +34,9 @@
 ### 1.3 保护单（TP/SL）生命周期独立于段生命周期
 
 ```
-单腿 TP/SL 成交 → _handle_protection_fill → inventory.remove(pos)
+单腿 TP/SL 成交 → _handle_protection_fill → 更新 inventory
+    trend: inventory.remove(pos)
+    chop:  _after_level_tp_closed（移除该腿，可能同步 replenish → pending_orders 非空）
                                                  ↓
                                          ❌ 没人检查 "全空了没"
                                                  ↓
@@ -127,6 +129,8 @@ auto-deactivate       → self._deactivate("fully_closed")
 | `risk_stop` | chop `_risk_stop` → `_exit_grid`（可选子 reason） |
 
 > **注意**：两个引擎重复了 ~80 行 ghost + slot + auto-deactivate 逻辑。考虑用 mixin 或基类抽取公共代码。
+>
+> 从 `on_bar` 路径（`_exit_grid` / auto-deactivate）调用 `_deactivate()` 时，`on_bar` 尾部仍会再 `save_state()` 一次——重复 persist 无害，也可后续加 `persist=` 参数优化。
 
 ### 4.2 段状态机（可选，风险更低但更大改动）
 
@@ -161,7 +165,7 @@ def on_execution_report(self, report):
 ```
 
 ```python
-# dual_add_trend_live_engine.py:632
+# dual_add_trend_live_engine.py:650
 def on_execution_report(self, report):
     if self._handle_protection_fill(report):
         # ← 同上
@@ -177,6 +181,8 @@ def _maybe_deactivate_if_fully_closed(self) -> None:
 ```
 
 调用点：`on_execution_report` 尾部 + `on_bar` 尾部（双保险）。
+
+**chop_grid replenish**：单腿 TP 后若触发 replenish，`_replenish_actions_for_level` 会同步写入 `pending_orders`，此时 inventory 可能已空但段仍在运行，不应 deactivate。仅当 grid 真正收工（inventory + pending 皆空）时才应 `_deactivate("fully_closed")`。
 
 ### 4.4 消除 `_live_exchange_has_activity` 全局变量
 
@@ -231,7 +237,7 @@ P3 需要额外处理这个路径——否则消除 `_live_exchange_has_activity
 - [ ] 并发 gate 验证 ghost 不占 slot
 - [ ] 仿真模式 (`bar_simulation=True`) 回归
 - [ ] 重启后 state 加载正确（`active` 从文件恢复）
-- [ ] TP fill 到下一 bar 之间 `holds_real_grid_slot()` 返回 `False`
+- [ ] TP fill 到下一 bar 之间 `holds_real_grid_slot()` 返回 `False`（**P2 后**；P0 下若 `_live_exchange_has_activity=True` 仍可能占 slot）
 - [ ] replenish 后再次全平 → `active=False`
 
 ---
@@ -246,17 +252,3 @@ P3 需要额外处理这个路径——否则消除 `_live_exchange_has_activity
 - 回测 `ChopGridEngine`（不受影响，见 §2.3）
 - feature bus / regime 信号质量
 - `MultiLegConcurrencyGate` 核心逻辑（仅在 deactivate 时调用其 `notify_deactivation`）
-
----
-
-## 6. 测试清单（P1 合并前必须完成）
-
-- [ ] 单腿 TP 平仓后验证 `active=False`
-- [ ] 多腿逐腿 TP 平完后验证 `active=False`
-- [ ] SL 全部扫完后验证 `active=False`
-- [ ] regime exit 后验证 `active=False` 且 inventory/pending 已清
-- [ ] 并发 gate 验证 ghost 不占 slot
-- [ ] 仿真模式 (`bar_simulation=True`) 回归
-- [ ] 重启后 state 加载正确（`active` 从文件恢复）
-- [ ] TP fill 到下一 bar 之间 `holds_real_grid_slot()` 返回 `False`
-- [ ] replenish 后再次全平 → `active=False`

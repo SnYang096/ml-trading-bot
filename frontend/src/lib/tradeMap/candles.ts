@@ -1,6 +1,8 @@
 import { DEFAULT_VISIBLE_BARS } from './constants.ts';
 import type { Candle, LogicalRange, OverlayPoint, PriceRange } from './types.ts';
 
+export type { LogicalRange };
+
 /** How many bars to show by default (tail window); avoids fitContent squashing 2k+ bars to 0px. */
 export function defaultVisibleBarCount(barCount: number, cap?: number): number {
   const n = Math.max(0, Number(barCount) || 0);
