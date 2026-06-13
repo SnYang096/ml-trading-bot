@@ -58,7 +58,7 @@ def test_late_entry_fill_ingests_inventory_and_protection(tmp_path: Path) -> Non
     assert leg.quantity == pytest.approx(1.13)
     assert leg.entry_quantity == pytest.approx(1.13)
     follow_ups = engine.pop_pending_actions()
-    assert [a["protection_type"] for a in follow_ups] == ["take_profit", "stop_loss"]
+    assert [a["protection_type"] for a in follow_ups] == ["take_profit"]
 
 
 def test_sl_partial_fill_reduces_inventory_qty(tmp_path: Path) -> None:

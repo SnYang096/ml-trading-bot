@@ -121,7 +121,7 @@ def test_chop_grid_execution_report_moves_filled_order_to_inventory(
     assert positions[0].side == "LONG"
     assert positions[0].quantity == 1.0
     follow_ups = engine.pop_pending_actions()
-    assert [a["protection_type"] for a in follow_ups] == ["take_profit", "stop_loss"]
+    assert [a["protection_type"] for a in follow_ups] == ["take_profit"]
     assert all(a["action"] == "place_protection" for a in follow_ups)
     tp_action = follow_ups[0]
     assert tp_action["order_type"] == "limit"

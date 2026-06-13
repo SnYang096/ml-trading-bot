@@ -540,10 +540,8 @@ def test_ensure_protection_skips_when_hashed_client_ids_on_exchange(
     tp_cid = derive_multileg_client_order_id(
         next(a for a in template if a["protection_type"] == "take_profit")
     )
-    sl_cid = derive_multileg_client_order_id(
-        next(a for a in template if a["protection_type"] == "stop_loss")
-    )
     tp_px = float(template[0]["price"])
+    sl_cid = "cg_legacy_sl_open"
 
     actions = engine.actions_ensure_protection(
         exchange_positions=[
@@ -565,13 +563,15 @@ def test_ensure_protection_skips_when_hashed_client_ids_on_exchange(
             {
                 "symbol": "BNBUSDT",
                 "client_order_id": sl_cid,
+                "type": "STOP_MARKET",
                 "side": "sell",
                 "quantity": 0.31,
                 "info": {"positionSide": "LONG", "clientAlgoId": sl_cid},
             },
         ],
     )
-    assert actions == []
+    assert [a.get("action") for a in actions] == ["cancel"]
+    assert actions[0].get("reason") == "per_leg_stop_loss_disabled"
 
 
 def test_partial_tp_qty_does_not_count_as_full_protection(tmp_path: Path) -> None:
@@ -618,6 +618,4 @@ def test_partial_tp_qty_does_not_count_as_full_protection(tmp_path: Path) -> Non
     sl_actions = [a for a in actions if a.get("protection_type") == "stop_loss"]
     # Partial TP already live under the deterministic cg_* client id — do not duplicate.
     assert len(tp_actions) == 0
-    assert len(sl_actions) == 1
-    assert float(sl_actions[0]["quantity"]) == pytest.approx(0.31, rel=1e-6)
-    assert sl_actions[0]["order_id"].endswith("_S1_sl")
+    assert sl_actions == []

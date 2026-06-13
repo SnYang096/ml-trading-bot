@@ -34,6 +34,12 @@ class GridEngineConfig:
     # None = unlimited replenishes per level per segment (legacy backtest).
     # N = max post-TP replenishes; total fills per level <= 1 + N (N=0 = live one-shot).
     max_replenish_per_level_per_segment: int | None = None
+    # Live structural stop: entry ± spacing * mult (ChopGridLiveEngine uses
+    # max_levels_per_side + 1). None disables per-leg SL in backtest.
+    per_leg_sl_spacing_mult: float | None = None
+    # Exchange-side per-leg STOP (live only). Default off — validated backtest
+    # exits via grid_tp + regime_exit + max_loss_per_grid only.
+    per_leg_stop_loss: bool = False
 
 
 @dataclass(frozen=True)
@@ -152,6 +158,12 @@ class ChopGridEngine:
                 [], {"status": "invalid", "segment_id": segment_id}, []
             )
         tp_distance = spacing * float(self.cfg.tp_spacing_mult or 1.0)
+        sl_distance = (
+            spacing * float(self.cfg.per_leg_sl_spacing_mult)
+            if self.cfg.per_leg_sl_spacing_mult is not None
+            and float(self.cfg.per_leg_sl_spacing_mult) > 0
+            else None
+        )
 
         maker_fee_bps = (
             float(self.cfg.maker_fee_bps)
@@ -208,7 +220,7 @@ class ChopGridEngine:
             )
             exit_fee_bps = maker_fee_bps
             slippage_bps = 0.0
-            if exit_reason in {"regime_exit", "risk_exit"}:
+            if exit_reason in {"regime_exit", "risk_exit", "grid_sl"}:
                 exit_fee_bps = taker_fee_bps
                 slippage_bps = float(self.cfg.forced_exit_slippage_bps or 0.0)
             hold_hours = max(
@@ -254,6 +266,39 @@ class ChopGridEngine:
             close = float(row["close"])
 
             # Target exits before new fills; optionally disallow same-bar entry+exit.
+            # Per-leg SL (live parity) is checked before TP on the same bar.
+            if sl_distance is not None:
+                for level_i, (entry, entry_ts, fill_bar) in list(open_longs.items()):
+                    sl_px = entry - sl_distance
+                    can_exit = self.cfg.same_bar_entry_exit or bar_i > fill_bar
+                    if can_exit and low <= sl_px:
+                        _record(
+                            side="LONG",
+                            level=level_i + 1,
+                            entry_price=entry,
+                            entry_time=entry_ts,
+                            exit_price=sl_px,
+                            exit_time=ts,
+                            exit_reason="grid_sl",
+                        )
+                        completed_long[level_i] = completed_long.get(level_i, 0) + 1
+                        del open_longs[level_i]
+                for level_i, (entry, entry_ts, fill_bar) in list(open_shorts.items()):
+                    sl_px = entry + sl_distance
+                    can_exit = self.cfg.same_bar_entry_exit or bar_i > fill_bar
+                    if can_exit and high >= sl_px:
+                        _record(
+                            side="SHORT",
+                            level=level_i + 1,
+                            entry_price=entry,
+                            entry_time=entry_ts,
+                            exit_price=sl_px,
+                            exit_time=ts,
+                            exit_reason="grid_sl",
+                        )
+                        completed_short[level_i] = completed_short.get(level_i, 0) + 1
+                        del open_shorts[level_i]
+
             for level_i, (entry, entry_ts, fill_bar) in list(open_longs.items()):
                 target = entry + tp_distance
                 can_exit = self.cfg.same_bar_entry_exit or bar_i > fill_bar
@@ -414,6 +459,7 @@ class ChopGridEngine:
             "grid_per_side_span_to_1std": per_side_span_pct / max(close_std_pct, 1e-12),
             "trades": len(trades),
             "grid_tp": sum(1 for t in trades if t.exit_reason == "grid_tp"),
+            "grid_sl": sum(1 for t in trades if t.exit_reason == "grid_sl"),
             "forced_exits": forced,
             "risk_exits": sum(1 for t in trades if t.exit_reason == "risk_exit"),
             "max_open_levels": max_open,

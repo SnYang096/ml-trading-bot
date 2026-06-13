@@ -19,6 +19,7 @@ risk:
   force_exit_on_regime_loss: true
   max_loss_per_grid: 0.03
   max_open_levels_total: 6
+  per_leg_stop_loss: false
   # TP distance = spacing x mult; 2.0 keeps dense 3L entry layout while restoring
   # ~0.66% take-profit (backtest: best Sharpe, cost-robust vs mult=1).
   tp_spacing_mult: 2

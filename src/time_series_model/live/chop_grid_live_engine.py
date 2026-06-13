@@ -253,6 +253,7 @@ def _load_grid_config(path: str | Path) -> GridEngineConfig:
         max_replenish_per_level_per_segment=_parse_max_replenish(
             inv.get("max_replenish_per_level_per_segment")
         ),
+        per_leg_stop_loss=bool(risk.get("per_leg_stop_loss", False)),
     )
 
 
@@ -748,6 +749,10 @@ class ChopGridLiveEngine:
         open_orders = [dict(o) for o in exchange_orders]
         actions: List[Dict[str, Any]] = []
         ts = self.state.last_timestamp or ""
+        if not self.cfg.per_leg_stop_loss:
+            actions.extend(
+                self._actions_cancel_disabled_sl_orders(sym, open_orders, ts)
+            )
         side_remaining = self._exchange_side_qty_map(exchange_positions, symbol=sym)
         for pos in self.state.inventory:
             if str(pos.symbol or "").upper() != sym:
@@ -1175,6 +1180,72 @@ class ChopGridLiveEngine:
         info = order.get("info") or {}
         cid = str(order.get("client_order_id") or info.get("clientOrderId") or "")
         return cid.startswith("cg_")
+
+    def _is_chop_grid_sl_exchange_order(self, order: Mapping[str, Any]) -> bool:
+        """True for open chop-grid STOP / algo protection (not limit TP)."""
+        if not self._is_chop_grid_exchange_order(order):
+            return False
+        info = order.get("info") if isinstance(order.get("info"), dict) else {}
+        otype = str(
+            order.get("type")
+            or order.get("order_type")
+            or info.get("type")
+            or info.get("orderType")
+            or ""
+        ).upper()
+        if otype in {"LIMIT", "POST_ONLY", "POST_ONLY_LIMIT"}:
+            return False
+        if otype in {
+            "STOP",
+            "STOP_MARKET",
+            "STOP_LOSS",
+            "STOP_LOSS_LIMIT",
+            "TRAILING_STOP_MARKET",
+        }:
+            return True
+        if info.get("stopPrice") or info.get("triggerPrice") or order.get("stop_price"):
+            return True
+        return False
+
+    def _actions_cancel_disabled_sl_orders(
+        self,
+        symbol: str,
+        open_orders: List[Dict[str, Any]],
+        timestamp: str,
+    ) -> List[Dict[str, Any]]:
+        """Cancel legacy per-leg SL still open after ``per_leg_stop_loss: false``."""
+        if self.cfg.per_leg_stop_loss:
+            return []
+        sym = str(symbol).upper()
+        actions: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for order in open_orders:
+            if _normalize_symbol(order.get("symbol")) != sym:
+                continue
+            if not self._is_chop_grid_sl_exchange_order(order):
+                continue
+            keys = _exchange_order_keys(order)
+            ex_id = next((k for k in keys if k and not k.startswith("cg_")), "")
+            if not ex_id:
+                ex_id = next(iter(keys), "")
+            if not ex_id or ex_id in seen:
+                continue
+            seen.add(ex_id)
+            actions.append(
+                {
+                    "action": "cancel",
+                    "symbol": sym,
+                    "exchange_order_id": ex_id,
+                    "order_id": str(
+                        order.get("client_order_id")
+                        or order.get("clientOrderId")
+                        or ex_id
+                    ),
+                    "reason": "per_leg_stop_loss_disabled",
+                    "timestamp": timestamp,
+                }
+            )
+        return actions
 
     def _tp_distance(self) -> float:
         """Take-profit distance = grid spacing * tp_spacing_mult (decoupled exit)."""
@@ -1672,15 +1743,9 @@ class ChopGridLiveEngine:
         tp_distance = self._tp_distance()
         if pos.side == "LONG":
             tp = pos.entry_price + tp_distance
-            sl = pos.entry_price - self.state.spacing * (
-                self.cfg.max_levels_per_side + 1
-            )
         else:
             tp = pos.entry_price - tp_distance
-            sl = pos.entry_price + self.state.spacing * (
-                self.cfg.max_levels_per_side + 1
-            )
-        return [
+        actions: List[Dict[str, Any]] = [
             {
                 "action": "place_protection",
                 "order_id": f"{order_id}_tp",
@@ -1697,6 +1762,15 @@ class ChopGridLiveEngine:
                 "time_in_force": "GTC",
                 "timestamp": timestamp,
             },
+        ]
+        if not self.cfg.per_leg_stop_loss:
+            return actions
+        sl_distance = self.state.spacing * (self.cfg.max_levels_per_side + 1)
+        if pos.side == "LONG":
+            sl = pos.entry_price - sl_distance
+        else:
+            sl = pos.entry_price + sl_distance
+        actions.append(
             {
                 "action": "place_protection",
                 "order_id": f"{order_id}_sl",
@@ -1707,8 +1781,9 @@ class ChopGridLiveEngine:
                 "trigger_price": sl,
                 "protection_type": "stop_loss",
                 "timestamp": timestamp,
-            },
-        ]
+            }
+        )
+        return actions
 
     def _maker_fee_bps(self) -> float:
         if self.cfg.maker_fee_bps is not None:
