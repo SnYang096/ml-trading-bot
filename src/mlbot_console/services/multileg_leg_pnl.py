@@ -132,6 +132,8 @@ def exit_kind_for_multileg_row(exit_row: Dict[str, Any]) -> str:
     if "market_exit" in purpose:
         if "regime" in oid or "regime_exit" in oid:
             return "regime_exit"
+        if "basket_tp" in oid or "basket" in oid:
+            return "take_profit"
         if "_market_exit_late_fixup" in oid:
             return "market_exit"
         return "market_exit"

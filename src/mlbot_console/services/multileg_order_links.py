@@ -15,12 +15,32 @@ _TREND_ENTRY_RE = re.compile(
     r"^.+_(?:initial_trend|trend_add)_(?:BUY|SELL)_\d+_\d+$",
     re.I,
 )
+_TREND_INVENTORY_RE = re.compile(
+    r"^.+_(?:initial_trend|trend_add)_(?:BUY|SELL)_\d+_\d+_fill\d+$",
+    re.I,
+)
 _TREND_EXIT_RE = re.compile(
     r"^(.+_(?:initial_trend|trend_add)_(?:BUY|SELL)_\d+_\d+)_fill\d+_exit_",
     re.I,
 )
 _TREND_SEGMENT_RE = re.compile(r"^(.+)_(?:initial_trend|trend_add)_", re.I)
+_TREND_FILL_SUFFIX_RE = re.compile(r"_fill\d+$", re.I)
 _LATE_FIXUP_SUFFIX = "_market_exit_late_fixup"
+
+
+def trend_entry_base_id(order_id: str) -> str:
+    """Normalize trend entry / inventory leg ids (strip ``_fillN`` suffix)."""
+    oid = str(order_id or "").strip()
+    if not oid:
+        return oid
+    if _TREND_FILL_SUFFIX_RE.search(oid):
+        return _TREND_FILL_SUFFIX_RE.sub("", oid)
+    return oid
+
+
+def _matches_trend_entry_id(order_id: str) -> bool:
+    oid = str(order_id or "")
+    return bool(_TREND_ENTRY_RE.match(oid) or _TREND_INVENTORY_RE.match(oid))
 
 
 def trend_segment_key(order_id: str) -> Optional[str]:
@@ -44,7 +64,7 @@ def is_trend_entry_row(row: Dict[str, Any]) -> bool:
     if "take_profit" in purpose or "market_exit" in purpose or "stop_loss" in purpose:
         return False
     for field in ("order_id", "local_order_id", "leg_id"):
-        if _TREND_ENTRY_RE.match(str(row.get(field) or "")):
+        if _matches_trend_entry_id(str(row.get(field) or "")):
             return True
     return False
 
@@ -52,11 +72,12 @@ def is_trend_entry_row(row: Dict[str, Any]) -> bool:
 def trend_entry_position_side(row: Dict[str, Any]) -> Optional[str]:
     for field in ("order_id", "local_order_id", "leg_id"):
         oid = str(row.get(field) or "")
-        if not _TREND_ENTRY_RE.match(oid):
+        if not _matches_trend_entry_id(oid):
             continue
-        if "_BUY_" in oid.upper():
+        base = trend_entry_base_id(oid)
+        if "_BUY_" in base.upper():
             return "LONG"
-        if "_SELL_" in oid.upper():
+        if "_SELL_" in base.upper():
             return "SHORT"
     return None
 
@@ -467,9 +488,17 @@ def is_l_entry_row(row: Dict[str, Any]) -> bool:
 
 def entry_link_id(row: Dict[str, Any]) -> str:
     lid = str(row.get("leg_id") or "").strip()
+    oid = str(row.get("local_order_id") or row.get("order_id") or "").strip()
+    raw = lid or oid
+    if raw and (
+        is_trend_entry_row(row)
+        or _matches_trend_entry_id(raw)
+        or _TREND_SEGMENT_RE.match(raw)
+    ):
+        return trend_entry_base_id(raw)
     if lid:
         return lid
-    return str(row.get("local_order_id") or row.get("order_id") or "")
+    return oid
 
 
 def build_leg_link_index(rows: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:

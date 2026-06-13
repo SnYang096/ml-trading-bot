@@ -118,6 +118,58 @@ def test_trend_scalp_regime_market_exit_link_shows_loss(multi_leg_db):
     assert links[0]["pnl_usdt"] == pytest.approx((1685.0 - 1700.0) * 0.048, rel=1e-4)
 
 
+def test_trend_scalp_regime_exit_pairs_when_entry_leg_id_has_fill_suffix(
+    multi_leg_db,
+) -> None:
+    """Inventory leg_id ``{entry}_fill0`` must still match regime market_exit rows."""
+    from src.order_management.multi_leg_storage import MultiLegStorage
+
+    storage = MultiLegStorage(str(multi_leg_db))
+    segment = "ETHUSDT_2026-06-07 22:19:47.612033+00:00"
+    entry_id = f"{segment}_initial_trend_BUY_0_0"
+    exit_id = f"{entry_id}_fill0_exit_regime_exit_2026-06-08 00:05:00+00:00"
+    run_id = storage.create_run(
+        mode="testnet",
+        strategies=["trend_scalp"],
+        symbols=["ETHUSDT"],
+        run_id="ts_fill_leg",
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "trend_scalp",
+            "local_order_id": entry_id,
+            "leg_id": f"{entry_id}_fill0",
+            "symbol": "ETHUSDT",
+            "side": "BUY",
+            "purpose": "entry",
+            "status": "filled",
+            "filled_quantity": 0.126,
+            "average_price": 1685.77,
+            "filled_at": "2026-06-07 22:19:58+00:00",
+        }
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "trend_scalp",
+            "local_order_id": exit_id,
+            "symbol": "ETHUSDT",
+            "side": "SELL",
+            "position_side": "LONG",
+            "purpose": "market_exit",
+            "status": "filled",
+            "filled_quantity": 0.126,
+            "average_price": 1680.0,
+            "filled_at": "2026-06-08 00:05:00+00:00",
+        }
+    )
+    links, _ = multi_leg_trade_links(multi_leg_db, "ETHUSDT")
+    assert len(links) == 1
+    assert links[0]["exit_kind"] == "regime_exit"
+    assert links[0]["pnl_usdt"] == pytest.approx((1680.0 - 1685.77) * 0.126, rel=1e-4)
+
+
 def test_chop_orphan_market_exit_link_via_unified_pairing(multi_leg_db):
     import json
 
