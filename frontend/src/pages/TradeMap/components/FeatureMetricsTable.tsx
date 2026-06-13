@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import {
   chopRegimeExitBarTimes,
   chopRegimeHysteresisOnBarTimes,
@@ -23,6 +23,28 @@ interface Props {
   onBarClick: (timeSec: number) => void;
 }
 
+function logicalRangeEqual(
+  a: { from: number; to: number } | null,
+  b: { from: number; to: number } | null,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.from === b.from && a.to === b.to;
+}
+
+function syncVisibleLogicalRange(
+  mainChart: IChartApi,
+  pendingRef: MutableRefObject<number | null>,
+  setLogicalRange: Dispatch<SetStateAction<{ from: number; to: number } | null>>,
+) {
+  if (pendingRef.current != null) return;
+  pendingRef.current = window.requestAnimationFrame(() => {
+    pendingRef.current = null;
+    const lr = mainChart.timeScale().getVisibleLogicalRange();
+    setLogicalRange((prev) => (logicalRangeEqual(prev, lr) ? prev : lr));
+  });
+}
+
 export function FeatureMetricsTable({
   strategyId,
   columns,
@@ -33,19 +55,25 @@ export function FeatureMetricsTable({
   onBarClick,
 }: Props) {
   const sid = String(strategyId || 'chop_grid').toLowerCase();
-  const rowSpecs = strategyMetricsRowSpecs(sid, columns, overlays);
+  const rowSpecs = useMemo(
+    () => strategyMetricsRowSpecs(sid, columns, overlays),
+    [sid, columns, overlays],
+  );
   const scrollRef = useRef<HTMLDivElement>(null);
+  const rangeSyncRef = useRef<number | null>(null);
 
   const [logicalRange, setLogicalRange] = useState<{ from: number; to: number } | null>(null);
 
   useEffect(() => {
     if (!mainChart) return;
-    const update = () => setLogicalRange(mainChart.timeScale().getVisibleLogicalRange());
+    const update = () => syncVisibleLogicalRange(mainChart, rangeSyncRef, setLogicalRange);
     update();
-    const raf = requestAnimationFrame(update);
     mainChart.timeScale().subscribeVisibleLogicalRangeChange(update);
     return () => {
-      cancelAnimationFrame(raf);
+      if (rangeSyncRef.current != null) {
+        cancelAnimationFrame(rangeSyncRef.current);
+        rangeSyncRef.current = null;
+      }
       mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(update);
     };
   }, [mainChart, candles.length]);
@@ -55,7 +83,17 @@ export function FeatureMetricsTable({
     [candles, logicalRange],
   );
 
-  const { bars, regimeExitTimes, regimeOnTimes } = useMemo(() => {
+  const regimeExitTimes = useMemo(
+    () => (sid === 'chop_grid' ? chopRegimeExitBarTimes(candles, overlays) : new Set<number>()),
+    [candles, overlays, sid],
+  );
+  const regimeOnTimes = useMemo(
+    () =>
+      sid === 'chop_grid' ? chopRegimeHysteresisOnBarTimes(candles, overlays) : new Set<number>(),
+    [candles, overlays, sid],
+  );
+
+  const bars = useMemo(() => {
     const { from, to } = indexRange;
     const barList: Array<{ time: number; label: string }> = [];
     for (let i = from; i <= to; i++) {
@@ -63,14 +101,8 @@ export function FeatureMetricsTable({
       if (t == null) continue;
       barList.push({ time: t, label: formatMetricsBarHeader(t) });
     }
-    return {
-      bars: barList,
-      regimeExitTimes:
-        sid === 'chop_grid' ? chopRegimeExitBarTimes(candles, overlays) : new Set<number>(),
-      regimeOnTimes:
-        sid === 'chop_grid' ? chopRegimeHysteresisOnBarTimes(candles, overlays) : new Set<number>(),
-    };
-  }, [candles, overlays, sid, indexRange]);
+    return barList;
+  }, [candles, indexRange]);
 
   const atTail =
     candles.length > 0 && indexRange.to >= Math.max(0, candles.length - 2);

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useEffect } from 'react';
+import { useCallback, useEffect } from 'react';
 import { apiGet } from '@/api/client.ts';
 import {
   filterSelectedFeaturesByLayers,
@@ -68,7 +68,7 @@ export function useTradeMapFeatureCatalog(opts?: { catalogEnabled?: boolean }) {
     }
   }, [query.data, selected, setAvailable, setSelected]);
 
-  const applyStrategyFocus = (strategyId: string | null) => {
+  const applyStrategyFocus = useCallback((strategyId: string | null) => {
     const sid = strategyId?.trim() || '';
     setFocus(sid);
     let nextCols = useTradeMapStore.getState().selectedFeatureColumns;
@@ -90,9 +90,9 @@ export function useTradeMapFeatureCatalog(opts?: { catalogEnabled?: boolean }) {
       paneVolume: st.paneVolume,
       ordersDockOpen: st.ordersDockOpen,
     });
-  };
+  }, [setFocus, setSelected]);
 
-  const applyLayerDefaults = () => {
+  const applyLayerDefaults = useCallback(() => {
     const avail = useTradeMapStore.getState().availableFeatureColumns;
     const filtered = filterSelectedFeaturesByLayers(selected, layers);
     if (filtered.length !== selected.length) setSelected(filtered);
@@ -104,7 +104,7 @@ export function useTradeMapFeatureCatalog(opts?: { catalogEnabled?: boolean }) {
     if (!useTradeMapStore.getState().selectedFeatureColumns.length && avail.length) {
       setSelected([avail[0]]);
     }
-  };
+  }, [applyStrategyFocus, layers, selected, setSelected]);
 
   return { query, applyStrategyFocus, applyLayerDefaults };
 }

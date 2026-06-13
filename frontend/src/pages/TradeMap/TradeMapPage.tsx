@@ -148,10 +148,10 @@ export function TradeMapPage() {
   const chopLabelsEnabled = chopGridOverlayEnabled(layers, featureStrategyFocus);
 
   useEffect(() => {
-    if (!featureStrategyFocus) return;
-    if (!strategies.some((s) => s.id === featureStrategyFocus)) {
-      applyStrategyFocus('');
-    }
+    const focus = featureStrategyFocus.trim();
+    if (!focus) return;
+    if (strategies.some((s) => s.id === focus)) return;
+    applyStrategyFocus('');
   }, [strategies, featureStrategyFocus, applyStrategyFocus]);
   const selectedMarker = useMemo(
     () => markers.find((m) => m.id === selectedMarkerId) || null,
