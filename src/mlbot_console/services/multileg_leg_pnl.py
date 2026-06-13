@@ -22,6 +22,7 @@ from mlbot_console.services.multileg_order_links import (
     hydrate_multileg_fill_fields,
     is_entry_row,
     is_l_entry_row,
+    is_pairable_market_exit_row,
     is_s_entry_row,
     is_trend_entry_row,
     leg_group_key,
@@ -208,13 +209,10 @@ def _trend_exit_for_entry(
     best: Optional[Dict[str, Any]] = None
     best_ts = -1
     for row in group_rows:
-        purpose = str(row.get("purpose") or "").lower()
-        if "market_exit" not in purpose or not _is_filled_row(row):
+        if not is_pairable_market_exit_row(row):
             continue
         oid = str(row.get("order_id") or row.get("local_order_id") or "")
         if trend_exit_entry_id(oid) != entry_id:
-            continue
-        if _price(row) is None:
             continue
         exit_ts = _ts_row(row) or 0
         if entry_ts is not None and exit_ts < entry_ts:

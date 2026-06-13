@@ -170,6 +170,63 @@ def test_trend_scalp_regime_exit_pairs_when_entry_leg_id_has_fill_suffix(
     assert links[0]["pnl_usdt"] == pytest.approx((1680.0 - 1685.77) * 0.126, rel=1e-4)
 
 
+def test_trend_scalp_skipped_no_position_regime_exit_still_links_loss(
+    multi_leg_db,
+) -> None:
+    """Exchange already flat (-2022): intent exit must still close the round row."""
+    from src.order_management.multi_leg_storage import MultiLegStorage
+
+    storage = MultiLegStorage(str(multi_leg_db))
+    segment = "SOLUSDT_2026-06-12 15:15:40.123456+00:00"
+    entry_id = f"{segment}_initial_trend_BUY_0_0"
+    exit_id = f"{entry_id}_fill0_exit_regime_exit_2026-06-12 15:31:05+00:00"
+    run_id = storage.create_run(
+        mode="testnet",
+        strategies=["trend_scalp"],
+        symbols=["SOLUSDT"],
+        run_id="ts_skipped_exit",
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "trend_scalp",
+            "local_order_id": entry_id,
+            "leg_id": f"{entry_id}_fill0",
+            "symbol": "SOLUSDT",
+            "side": "BUY",
+            "purpose": "entry",
+            "status": "filled",
+            "filled_quantity": 158.89,
+            "average_price": 68.63,
+            "filled_at": "2026-06-12 15:15:50+00:00",
+        }
+    )
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "trend_scalp",
+            "local_order_id": exit_id,
+            "symbol": "SOLUSDT",
+            "side": "SELL",
+            "position_side": "LONG",
+            "purpose": "market_exit",
+            "status": "skipped_no_position",
+            "quantity": 158.89,
+            "filled_quantity": 0.0,
+            "created_at": "2026-06-12 15:31:05+00:00",
+            "raw": {
+                "exit_price": 66.97,
+                "quantity": 158.89,
+                "reason": "regime_exit",
+            },
+        }
+    )
+    links, _ = multi_leg_trade_links(multi_leg_db, "SOLUSDT")
+    assert len(links) == 1
+    assert links[0]["exit_kind"] == "regime_exit"
+    assert links[0]["pnl_usdt"] == pytest.approx((66.97 - 68.63) * 158.89, rel=1e-4)
+
+
 def test_chop_orphan_market_exit_link_via_unified_pairing(multi_leg_db):
     import json
 

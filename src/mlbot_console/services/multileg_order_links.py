@@ -230,10 +230,44 @@ def _price(row: Dict[str, Any]) -> Optional[float]:
         val = row.get(key)
         if val is not None and val == val:
             try:
-                return float(val)
+                px = float(val)
             except (TypeError, ValueError):
                 continue
+            if px > 0:
+                return px
+    purpose = str(row.get("purpose") or "").lower()
+    status = str(row.get("status") or "").lower()
+    if "market_exit" in purpose and status in {
+        "skipped_no_position",
+        "rejected",
+        "shadow",
+    }:
+        raw = _parse_raw_json_blob(row)
+        for key in ("exit_price", "mark_price", "price", "average_price"):
+            val = raw.get(key)
+            if val is None:
+                continue
+            try:
+                px = float(val)
+            except (TypeError, ValueError):
+                continue
+            if px > 0:
+                return px
     return None
+
+
+def is_pairable_market_exit_row(row: Dict[str, Any]) -> bool:
+    """Filled exit, or a persisted intent row (exchange already flat / -2022)."""
+    purpose = str(row.get("purpose") or "").lower()
+    if "market_exit" not in purpose:
+        return False
+    if _is_filled_row(row) and _price(row) is not None:
+        return True
+    status = str(row.get("status") or "").lower()
+    if status not in {"skipped_no_position", "rejected"}:
+        return False
+    qty = float(row.get("quantity") or 0)
+    return qty > 0 and _price(row) is not None
 
 
 def filled_quantity(row: Dict[str, Any]) -> float:

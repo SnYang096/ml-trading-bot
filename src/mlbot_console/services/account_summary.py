@@ -78,11 +78,17 @@ def _discover_symbols(
 
 
 def _link_pnl_usdt(entry_row: Dict[str, Any], exit_row: Dict[str, Any]) -> Optional[float]:
+    from mlbot_console.services.multileg_order_links import _price
+
     qty = float(entry_row.get("filled_quantity") or entry_row.get("quantity") or 0.0)
     if qty <= 0:
         return None
-    entry_px = float(entry_row.get("average_price") or entry_row.get("price") or 0.0)
-    exit_px = float(exit_row.get("average_price") or exit_row.get("price") or 0.0)
+    entry_px = _price(entry_row)
+    if entry_px is None:
+        entry_px = float(entry_row.get("average_price") or entry_row.get("price") or 0.0)
+    exit_px = _price(exit_row)
+    if exit_px is None:
+        exit_px = float(exit_row.get("average_price") or exit_row.get("price") or 0.0)
     if entry_px <= 0 or exit_px <= 0:
         return None
     side = str(entry_row.get("side") or "").lower()

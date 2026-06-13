@@ -999,6 +999,18 @@ class MultiLegExecutionAdapter:
                 if px > 0:
                     avg_px = px
                     break
+            if avg_px is None and purpose == "market_exit":
+                for key in ("exit_price", "mark_price"):
+                    val = raw.get(key)
+                    if val is None:
+                        continue
+                    try:
+                        px = float(val)
+                    except (TypeError, ValueError):
+                        continue
+                    if px > 0:
+                        avg_px = px
+                        break
             self.storage.upsert_order(
                 {
                     "run_id": self.run_id,
