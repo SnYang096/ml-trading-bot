@@ -118,17 +118,23 @@ export function TradeMapPage() {
     [markers, timeframe, setHighlightBarTime, setSelectedMarkerId],
   );
 
-  const { containerRef, chartRef, candleSeriesRef, labelSpecs } = useTradeMapMainChart({
+  const chopMapData = useMemo(
+    () =>
+      ({
+        chop_grid_overlay: (lastChopMapData || undefined) as import('@/lib/tradeMap/chartOverlay.ts').ChopMapPayload['chop_grid_overlay'],
+        chop_regime_regions: chopRegimeRegions as import('@/lib/tradeMap/chartOverlay.ts').TimeSpan[],
+        strategy_stage_regions: strategyStageRegions as import('@/lib/tradeMap/chartOverlay.ts').ChopMapPayload['strategy_stage_regions'],
+      }) satisfies import('@/lib/tradeMap/chartOverlay.ts').ChopMapPayload,
+    [lastChopMapData, chopRegimeRegions, strategyStageRegions],
+  );
+
+  const { containerRef, chartRef, candleSeries, labelSpecs } = useTradeMapMainChart({
     candles: lastCandles,
     markers,
     tradeLinks: lastTradeLinks,
     overlays: lastOverlays,
     mainOverlays: lastMainOverlays,
-    chopMapData: {
-      chop_grid_overlay: (lastChopMapData || undefined) as import('@/lib/tradeMap/chartOverlay.ts').ChopMapPayload['chop_grid_overlay'],
-      chop_regime_regions: chopRegimeRegions as import('@/lib/tradeMap/chartOverlay.ts').TimeSpan[],
-      strategy_stage_regions: strategyStageRegions as import('@/lib/tradeMap/chartOverlay.ts').ChopMapPayload['strategy_stage_regions'],
-    },
+    chopMapData,
     layers,
     strategyFocus: featureStrategyFocus,
     timeframe,
@@ -436,7 +442,7 @@ export function TradeMapPage() {
               {chartBusy ? <TradeMapBusyHud mode={busyMode} /> : null}
               <ChopGridLabelLayer
                 chart={mainChart}
-                candleSeries={candleSeriesRef.current}
+                candleSeries={candleSeries}
                 candles={lastCandles}
                 specs={labelSpecs}
                 enabled={chopLabelsEnabled}

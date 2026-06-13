@@ -46,6 +46,31 @@ import type { FeatureOverlays } from '@/lib/tradeMap/types.ts';
 import type { LayerState } from '@/stores/tradeMapStore.ts';
 import { useTradeMapStore } from '@/stores/tradeMapStore.ts';
 
+function labelSpecsEqual(a: ChopGridLabelSpec[], b: ChopGridLabelSpec[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (
+      x.price !== y.price ||
+      x.text !== y.text ||
+      x.side !== y.side ||
+      x.kind !== y.kind ||
+      x.color !== y.color
+    ) {
+      return false;
+    }
+    const xs = x.spans;
+    const ys = y.spans;
+    if (xs === ys) continue;
+    if (!xs || !ys || xs.length !== ys.length) return false;
+    for (let j = 0; j < xs.length; j++) {
+      if (xs[j].start !== ys[j].start || xs[j].end !== ys[j].end) return false;
+    }
+  }
+  return true;
+}
+
 const CHART_OPTS = {
   layout: {
     background: { color: CHART_THEME.bg },
@@ -98,6 +123,7 @@ export function useTradeMapMainChart(params: MainChartParams) {
   const mainOverlaySeriesRef = useRef<Map<string, ISeriesApi<'Line'>>>(new Map());
   const tradeLinkSeriesRef = useRef<ISeriesApi<'Line'>[]>([]);
   const [labelSpecs, setLabelSpecs] = useState<ChopGridLabelSpec[]>([]);
+  const [candleSeries, setCandleSeries] = useState<ISeriesApi<'Candlestick'> | null>(null);
   const [chartReadyTick, setChartReadyTick] = useState(0);
   const paramsRef = useRef(params);
   paramsRef.current = params;
@@ -184,7 +210,7 @@ export function useTradeMapMainChart(params: MainChartParams) {
       clearOverlaySeries(chart);
       const labels: ChopGridLabelSpec[] = [];
       if (!candles.length) {
-        setLabelSpecs([]);
+        setLabelSpecs((prev) => (prev.length === 0 ? prev : []));
         return;
       }
 
@@ -250,7 +276,7 @@ export function useTradeMapMainChart(params: MainChartParams) {
           if (spec.label) labels.push(spec.label);
         }
       }
-      setLabelSpecs(labels);
+      setLabelSpecs((prev) => (labelSpecsEqual(prev, labels) ? prev : labels));
       void candleSeries;
       refreshPriceAutoscale();
     },
@@ -321,6 +347,7 @@ export function useTradeMapMainChart(params: MainChartParams) {
     const markerPlugin = createSeriesMarkers(series);
     chartRef.current = chart;
     seriesRef.current = series;
+    setCandleSeries(series);
     markersRef.current = markerPlugin;
     paramsRef.current.onChartReady?.(chart);
     setChartReadyTick((n) => n + 1);
@@ -358,6 +385,7 @@ export function useTradeMapMainChart(params: MainChartParams) {
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
+      setCandleSeries(null);
       markersRef.current = null;
       overlaySeriesRef.current = [];
       chopBandRef.current = null;
@@ -420,5 +448,5 @@ export function useTradeMapMainChart(params: MainChartParams) {
     params.selectedMarkerId,
   ]);
 
-  return { containerRef, chartRef, candleSeriesRef: seriesRef, labelSpecs, refreshPriceAutoscale };
+  return { containerRef, chartRef, candleSeries, labelSpecs, refreshPriceAutoscale };
 }
