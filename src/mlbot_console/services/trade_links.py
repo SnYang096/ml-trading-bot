@@ -6,24 +6,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from mlbot_console.services.multileg_order_links import (
-    _is_filled_row,
-    _pick_filled_tp,
     _price,
-    _protection_tp_rows,
     annotate_leg_group,
-    build_leg_link_index,
     entry_link_id,
     filled_quantity,
     hydrate_multileg_fill_fields,
-    is_entry_row,
-    is_l_entry_row,
-    is_s_entry_row,
-    leg_group_key,
-    leg_suffix,
-    late_fixup_entry_segment_matches,
-    market_exit_closing_position_side,
-    trend_entry_position_side,
-    trend_exit_entry_id,
 )
 from mlbot_console.services.db import query_rows
 from mlbot_console.services.trade_markers import (
@@ -80,15 +67,6 @@ def _order_rows(db_path: Path, symbol: str) -> List[Dict[str, Any]]:
 def _ts_row(row: Dict[str, Any]) -> Optional[int]:
     ts = _parse_ts(row.get("filled_at")) or _parse_ts(row.get("created_at"))
     return int(ts) if ts is not None else None
-
-
-def _leg_position_side(row: Dict[str, Any]) -> str:
-    side = str(row.get("side") or "").upper()
-    if side == "BUY":
-        return "long"
-    if side == "SELL":
-        return "short"
-    return "long"
 
 
 def _closed_link_color(
@@ -191,178 +169,26 @@ def _link_overlaps_window(
     return True
 
 
-def _append_entry_tp_links(
-    links: List[Dict[str, Any]],
-    group_rows: List[Dict[str, Any]],
-    row: Dict[str, Any],
-    seen_entry: set[str],
-) -> None:
-    """Link filled L/S grid entry legs to their TP protection orders."""
-    if not is_entry_row(row) or not _is_filled_row(row):
-        return
-    entry_ts = _ts_row(row)
-    entry_px = _price(row)
-    if entry_ts is None or entry_px is None:
-        return
-    oid = str(row.get("local_order_id") or "")
-    ekey = entry_link_id(row)
-    if ekey in seen_entry:
-        return
-    seen_entry.add(ekey)
+def _side_label_for_entry(entry_row: Dict[str, Any]) -> str:
+    from mlbot_console.services.multileg_leg_pnl import _entry_position_side
 
-    leg_label = leg_suffix(ekey) or leg_suffix(oid) or ""
-    entry_mid = _marker_id("multi_leg", "multi_leg_orders", oid or ekey)
-    tp_rows = _protection_tp_rows(group_rows, ekey)
-    if not tp_rows and oid:
-        tp_rows = _protection_tp_rows(group_rows, oid)
-    filled_tp = _pick_filled_tp(tp_rows)
-    if filled_tp is None:
-        from mlbot_console.services.multileg_repair_tp import pick_repair_filled_tp
-
-        filled_tp = pick_repair_filled_tp(group_rows, ekey)
-    strat = str(row.get("strategy") or "chop_grid")
-    if filled_tp is not None:
-        exit_ts = _ts_row(filled_tp)
-        exit_px = _price(filled_tp)
-        if exit_ts is None or exit_px is None:
-            return
-        exit_mid = _marker_id(
-            "multi_leg",
-            "multi_leg_orders",
-            str(filled_tp.get("local_order_id") or ""),
-        )
-        _append_link(
-            links,
-            strategy=strat,
-            leg=leg_label,
-            entry_time=entry_ts,
-            entry_price=entry_px,
-            exit_time=exit_ts,
-            exit_price=exit_px,
-            entry_marker_id=entry_mid,
-            exit_marker_id=exit_mid,
-            status="closed",
-            exit_kind="take_profit",
-            side=_leg_position_side(row),
-            pnl_usdt=_multileg_link_pnl_usdt(row, filled_tp),
-            qty=filled_quantity(row),
-        )
-        return
+    ps = _entry_position_side(entry_row)
+    if ps == "SHORT":
+        return "short"
+    return "long"
 
 
-def _entry_position_side(row: Dict[str, Any]) -> Optional[str]:
-    if is_l_entry_row(row):
-        return "LONG"
-    if is_s_entry_row(row):
-        return "SHORT"
-    return trend_entry_position_side(row)
-
-
-def _entry_marker_key(row: Dict[str, Any]) -> str:
-    oid = str(row.get("local_order_id") or "")
-    ekey = entry_link_id(row)
-    return _marker_id("multi_leg", "multi_leg_orders", oid or ekey)
-
-
-def _append_orphan_market_exit_links(
-    links: List[Dict[str, Any]],
-    rows: List[Dict[str, Any]],
-    by_group: Dict[str, List[Dict[str, Any]]],
-) -> None:
-    """Match cg_* market_exit rows (no grid batch id) to open legs FIFO by qty."""
-    linked_entries = {str(lk.get("entry_marker_id") or "") for lk in links}
-    linked_exits = {str(lk.get("exit_marker_id") or "") for lk in links}
-
-    pending_entries: List[Dict[str, Any]] = []
-    for group_rows in by_group.values():
-        for ent in group_rows:
-            if not is_entry_row(ent) or not _is_filled_row(ent):
-                continue
-            entry_mid = _entry_marker_key(ent)
-            if entry_mid in linked_entries:
-                continue
-            entry_ts = _ts_row(ent)
-            entry_px = _price(ent)
-            if entry_ts is None or entry_px is None:
-                continue
-            pending_entries.append(ent)
-    pending_entries.sort(key=lambda r: (_ts_row(r) or 0, str(r.get("local_order_id") or "")))
-
-    orphan_exits: List[Dict[str, Any]] = []
-    for row in rows:
-        purpose = str(row.get("purpose") or "").lower()
-        if "market_exit" not in purpose or not _is_filled_row(row):
-            continue
-        oid = str(row.get("local_order_id") or "")
-        if leg_group_key(oid):
-            continue
-        if trend_exit_entry_id(oid):
-            continue
-        exit_ts = _ts_row(row)
-        exit_px = _price(row)
-        if exit_ts is None or exit_px is None:
-            continue
-        exit_mid = _marker_id(
-            "multi_leg", "multi_leg_orders", str(row.get("local_order_id") or "")
-        )
-        if exit_mid in linked_exits:
-            continue
-        orphan_exits.append(row)
-    orphan_exits.sort(key=lambda r: (_ts_row(r) or 0, str(r.get("local_order_id") or "")))
-
-    for mex in orphan_exits:
-        exit_ts = _ts_row(mex)
-        exit_px = _price(mex)
-        if exit_ts is None or exit_px is None:
-            continue
-        exit_mid = _marker_id(
-            "multi_leg", "multi_leg_orders", str(mex.get("local_order_id") or "")
-        )
-        mex_side = market_exit_closing_position_side(mex)
-        remaining = filled_quantity(mex)
-        if remaining <= 0:
-            continue
-        for ent in list(pending_entries):
-            if remaining <= 0:
-                break
-            entry_ts = _ts_row(ent)
-            if entry_ts is None or exit_ts < entry_ts:
-                continue
-            if _entry_position_side(ent) != mex_side:
-                continue
-            eoid = str(ent.get("local_order_id") or "")
-            if not late_fixup_entry_segment_matches(
-                str(mex.get("local_order_id") or ""), eoid
-            ):
-                continue
-            ent_qty = filled_quantity(ent)
-            if ent_qty <= 0 or ent_qty > remaining * 1.02:
-                continue
-            ekey = entry_link_id(ent)
-            entry_mid = _entry_marker_key(ent)
-            if entry_mid in linked_entries:
-                pending_entries.remove(ent)
-                continue
-            _append_link(
-                links,
-                strategy=str(ent.get("strategy") or "chop_grid"),
-                leg=leg_suffix(ekey) or leg_suffix(eoid) or "L",
-                entry_time=entry_ts,
-                entry_price=float(_price(ent) or 0),
-                exit_time=exit_ts,
-                exit_price=float(exit_px),
-                entry_marker_id=entry_mid,
-                exit_marker_id=exit_mid,
-                status="closed",
-                exit_kind="market_exit",
-                side=_leg_position_side(ent),
-                pnl_usdt=_multileg_link_pnl_usdt(ent, mex),
-                qty=ent_qty,
-            )
-            linked_entries.add(entry_mid)
-            linked_exits.add(exit_mid)
-            remaining -= ent_qty
-            pending_entries.remove(ent)
+def _trend_exit_kind_from_reason(exit_reason: Any) -> str:
+    reason = str(exit_reason or "").lower()
+    if "regime" in reason:
+        return "regime_exit"
+    if "stop" in reason or reason.endswith("_sl") or "sl_" in reason:
+        return "stop_loss"
+    if "take_profit" in reason or "tp" in reason:
+        return "take_profit"
+    if "market" in reason or "manual" in reason or "flatten" in reason:
+        return "market_exit"
+    return "exit"
 
 
 def multi_leg_trade_links(
@@ -377,62 +203,47 @@ def multi_leg_trade_links(
     if not db_path.is_file():
         return [], []
 
+    from mlbot_console.services.multileg_leg_pnl import (
+        exit_kind_for_multileg_row,
+        leg_label_for_multileg_entry,
+        pair_multileg_entry_exits,
+    )
+
     sym = symbol.upper()
     rows = _order_rows(db_path, sym)
-    by_group = build_leg_link_index(rows)
     links: List[Dict[str, Any]] = []
-    seen_entry: set[str] = set()
 
-    for group_rows in by_group.values():
-        for row in group_rows:
-            _append_entry_tp_links(links, group_rows, row, seen_entry)
-
-        # Grid flatten: market_exit rows close remaining longs at same timestamp.
-        for row in group_rows:
-            purpose = str(row.get("purpose") or "").lower()
-            if "market_exit" not in purpose or not _is_filled_row(row):
-                continue
-            exit_ts = _ts_row(row)
-            exit_px = _price(row)
-            if exit_ts is None or exit_px is None:
-                continue
-            exit_mid = _marker_id(
-                "multi_leg", "multi_leg_orders", str(row.get("local_order_id") or "")
-            )
-            for ent in group_rows:
-                if not is_l_entry_row(ent) or not _is_filled_row(ent):
-                    continue
-                eoid = str(ent.get("local_order_id") or "")
-                ekey = entry_link_id(ent)
-                if "take_profit" in str(ent.get("purpose") or "").lower():
-                    continue
-                entry_ts = _ts_row(ent)
-                entry_px = _price(ent)
-                if entry_ts is None or entry_px is None or exit_ts < entry_ts:
-                    continue
-                entry_mid = _marker_id("multi_leg", "multi_leg_orders", eoid or ekey)
-                if any(lk.get("entry_marker_id") == entry_mid for lk in links):
-                    continue
-                _append_link(
-                    links,
-                    strategy=str(ent.get("strategy") or "chop_grid"),
-                    leg=leg_suffix(ekey) or leg_suffix(eoid) or "L",
-                    entry_time=entry_ts,
-                    entry_price=entry_px,
-                    exit_time=exit_ts,
-                    exit_price=exit_px,
-                    entry_marker_id=_marker_id(
-                        "multi_leg", "multi_leg_orders", eoid or ekey
-                    ),
-                    exit_marker_id=exit_mid,
-                    status="closed",
-                    exit_kind="market_exit",
-                    side=_leg_position_side(ent),
-                    pnl_usdt=_multileg_link_pnl_usdt(ent, row),
-                    qty=filled_quantity(ent),
-                )
-
-    _append_orphan_market_exit_links(links, rows, by_group)
+    for ent, exit_row in pair_multileg_entry_exits(rows):
+        entry_ts = _ts_row(ent)
+        entry_px = _price(ent)
+        exit_ts = _ts_row(exit_row)
+        exit_px = _price(exit_row)
+        if entry_ts is None or entry_px is None or exit_ts is None or exit_px is None:
+            continue
+        eoid = str(ent.get("local_order_id") or "")
+        ekey = entry_link_id(ent)
+        entry_mid = _marker_id("multi_leg", "multi_leg_orders", eoid or ekey)
+        exit_mid = _marker_id(
+            "multi_leg",
+            "multi_leg_orders",
+            str(exit_row.get("local_order_id") or exit_row.get("order_id") or ""),
+        )
+        _append_link(
+            links,
+            strategy=str(ent.get("strategy") or "multi_leg"),
+            leg=leg_label_for_multileg_entry(ent),
+            entry_time=entry_ts,
+            entry_price=entry_px,
+            exit_time=exit_ts,
+            exit_price=exit_px,
+            entry_marker_id=entry_mid,
+            exit_marker_id=exit_mid,
+            status="closed",
+            exit_kind=exit_kind_for_multileg_row(exit_row),
+            side=_side_label_for_entry(ent),
+            pnl_usdt=_multileg_link_pnl_usdt(ent, exit_row),
+            qty=filled_quantity(ent),
+        )
 
     links = [
         lk
@@ -507,7 +318,7 @@ def trend_trade_links(
             entry_marker_id=entry_mid,
             exit_marker_id=exit_mid,
             status="closed",
-            exit_kind="exit",
+            exit_kind=_trend_exit_kind_from_reason(row.get("exit_reason")),
             side=side,
             pnl_usdt=float(pnl) if pnl is not None else None,
             qty=qty,
@@ -551,7 +362,7 @@ def trend_trade_links(
             entry_marker_id=_marker_id("trend", "position_operations", op_id),
             exit_marker_id=exit_mid,
             status="closed",
-            exit_kind="exit",
+            exit_kind=_trend_exit_kind_from_reason(row.get("exit_reason")),
             side=side,
         )
     return [

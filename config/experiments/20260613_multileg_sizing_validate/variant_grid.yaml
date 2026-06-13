@@ -1,0 +1,49 @@
+# 多腿联合回测 — chop_grid + trend_scalp 同一账户 timeline
+#
+#   python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260613_multileg_sizing_validate/variant_grid.yaml
+#
+# 自动：4 segments × (chop + trend) → 逐段独立回测 → 联合账户模拟
+
+engine: multileg_joint
+experiment_id: multileg_sizing_072_20260613
+
+chop_config: config/experiments/20260613_multileg_sizing_validate/variants/chop_prod/meta.yaml
+trend_config: config/experiments/20260613_multileg_sizing_validate/variants/trend_prod/meta.yaml
+
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - BNBUSDT
+  - XRPUSDT
+  # HYPEUSDT: trend_scalp 支持；chop_grid 缺 FeatureStore layer，待 compute
+
+timeframe: 2h
+execution_timeframe: 1min
+initial_capital: 10000
+equity: 10000
+
+market_segment_path: config/market_segment.yaml
+constitution_yaml: live/highcap/config/constitution/constitution.yaml
+
+segments:
+  - bear_2022
+  - bull_2023_2024
+  - recent_range_to_bear
+  - recent_6m_oos
+
+max_concurrent_multi_leg_symbols: 6
+
+trend_extra_argv:
+  - --scale-max-loser-hold-to-signal
+  - --take-profit-mode
+  - basket
+  - --no-reseed-on-flip
+  - --risk-stop-mode
+  - regime_only
+  - --no-maps
+  - --max-loss-per-segment
+  - "0.02"
+
+output_dir: results/multileg_joint/sizing_072_20260613

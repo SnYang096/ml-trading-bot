@@ -285,6 +285,29 @@ def _pick_filled_tp(tp_rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _protection_sl_rows(
+    legs: List[Dict[str, Any]], entry_order_id: str
+) -> List[Dict[str, Any]]:
+    eid = str(entry_order_id or "")
+    out: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in legs:
+        oid = str(row.get("order_id") or row.get("local_order_id") or "")
+        purpose = str(row.get("purpose") or "").lower()
+        leg = str(row.get("leg_id") or "")
+        if oid.startswith(f"{eid}_sl") or (
+            "stop_loss" in purpose and leg == eid
+        ):
+            if oid not in seen:
+                seen.add(oid)
+                out.append(row)
+    return out
+
+
+def _pick_filled_sl(sl_rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    return _pick_filled_tp(sl_rows)
+
+
 def is_s_entry_row(row: Dict[str, Any]) -> bool:
     purpose = str(row.get("purpose") or "").lower()
     if "take_profit" in purpose or "market_exit" in purpose or "stop_loss" in purpose:

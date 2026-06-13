@@ -582,6 +582,43 @@ def resolve_multi_leg_risk_limits_from_constitution(
     }
 
 
+def resolve_multileg_sim_limits(cfg: Dict[str, Any]) -> Dict[str, Optional[float]]:
+    """Flatten constitution YAML into kwargs for ``simulate_account_with_constitution``."""
+    ks = cfg.get("kill_switch") or {}
+    if not isinstance(ks, dict):
+        ks = {}
+    ml = multi_leg_section(cfg)
+    rs = ml.get("risk_limits") or {}
+    if not isinstance(rs, dict):
+        rs = {}
+    acct_rs = ml.get("account_risk_limits") or {}
+    if not isinstance(acct_rs, dict):
+        acct_rs = {}
+
+    ml_dd = resolve_multi_leg_risk_limits_from_constitution(cfg).get("max_drawdown_pct")
+    ks_dd = _float_or_none(ks.get("max_dd"))
+    if ml_dd is not None and ks_dd is not None:
+        max_dd = min(float(ml_dd), float(ks_dd))
+    else:
+        max_dd = ml_dd if ml_dd is not None else ks_dd
+
+    return {
+        "max_drawdown_pct": max_dd,
+        "daily_loss_limit_pct": _float_or_none(ks.get("daily_loss_limit")),
+        "weekly_loss_limit_pct": _float_or_none(ks.get("weekly_loss_limit")),
+        "monthly_loss_limit_pct": _float_or_none(ks.get("monthly_loss_limit")),
+        "max_gross_notional_pct": _float_or_none(rs.get("max_gross_notional_pct")),
+        "max_net_notional_pct": _float_or_none(rs.get("max_net_notional_pct")),
+        "max_symbol_gross_notional_pct": _float_or_none(
+            rs.get("max_symbol_gross_notional_pct")
+        ),
+        "max_symbol_net_notional_pct": _float_or_none(
+            rs.get("max_symbol_net_notional_pct")
+        ),
+        "max_gross_leverage": _float_or_none(acct_rs.get("max_gross_leverage")),
+    }
+
+
 def pcm_resolve_registry_key(
     archetype_token: str, _me_logical: str, me_enabled_in_allowlist_fn
 ) -> str:

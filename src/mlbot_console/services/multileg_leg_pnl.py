@@ -10,9 +10,11 @@ from mlbot_console.services.db import query_rows
 from mlbot_console.services.multileg_order_links import (
     _LATE_FIXUP_SUFFIX,
     _is_filled_row,
+    _pick_filled_sl,
     _pick_filled_tp,
     _pick_planned_tp,
     _price,
+    _protection_sl_rows,
     _protection_tp_rows,
     build_leg_link_index,
     entry_link_id,
@@ -23,6 +25,7 @@ from mlbot_console.services.multileg_order_links import (
     is_s_entry_row,
     is_trend_entry_row,
     leg_group_key,
+    leg_suffix,
     row_group_key,
     late_fixup_entry_segment_matches,
     market_exit_closing_position_side,
@@ -116,6 +119,79 @@ def _ts_row(row: Dict[str, Any]) -> Optional[int]:
 
     ts = _parse_ts(row.get("filled_at")) or _parse_ts(row.get("created_at"))
     return int(ts) if ts is not None else None
+
+
+def exit_kind_for_multileg_row(exit_row: Dict[str, Any]) -> str:
+    """Map a filled exit order to a console ``exit_kind`` label."""
+    purpose = str(exit_row.get("purpose") or "").lower()
+    oid = _order_key(exit_row).lower()
+    if "take_profit" in purpose or "_tp" in oid:
+        return "take_profit"
+    if "stop_loss" in purpose or "_sl" in oid:
+        return "stop_loss"
+    if "market_exit" in purpose:
+        if "regime" in oid or "regime_exit" in oid:
+            return "regime_exit"
+        if "_market_exit_late_fixup" in oid:
+            return "market_exit"
+        return "market_exit"
+    return "exit"
+
+
+def leg_label_for_multileg_entry(entry_row: Dict[str, Any]) -> str:
+    oid = _order_key(entry_row)
+    ekey = entry_link_id(entry_row)
+    if is_trend_entry_row(entry_row):
+        if "trend_add" in oid:
+            return "add"
+        if "initial_trend" in oid:
+            return "init"
+    return leg_suffix(ekey) or leg_suffix(oid) or ""
+
+
+def _chop_grid_exit_for_entry(
+    group_rows: List[Dict[str, Any]], entry_row: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
+    """In-group chop_grid market_exit / stop_loss (L/S legs), excluding basket TP."""
+    if is_trend_entry_row(entry_row) or not is_entry_row(entry_row):
+        return None
+    entry_ts = _ts_row(entry_row)
+    if entry_ts is None:
+        return None
+    ent_side = _entry_position_side(entry_row)
+    if ent_side is None:
+        return None
+    ekey = entry_link_id(entry_row)
+    ent_oid = _order_key(entry_row)
+    best: Optional[Dict[str, Any]] = None
+    best_ts = -1
+    for row in group_rows:
+        purpose = str(row.get("purpose") or "").lower()
+        if "take_profit" in purpose:
+            continue
+        if "market_exit" not in purpose and "stop_loss" not in purpose:
+            continue
+        if not _is_filled_row(row) or _price(row) is None:
+            continue
+        exit_ts = _ts_row(row) or 0
+        if exit_ts < entry_ts:
+            continue
+        exit_lid = str(row.get("leg_id") or "").strip()
+        exit_oid = _order_key(row)
+        matched = False
+        if exit_lid and (exit_lid == ekey or exit_lid == ent_oid):
+            matched = True
+        elif market_exit_closing_position_side(row) == ent_side:
+            # Batch flatten in segment group (legacy chop_grid path).
+            matched = True
+        elif exit_oid and ent_oid and exit_oid == ent_oid:
+            matched = True
+        if not matched:
+            continue
+        if exit_ts >= best_ts:
+            best = row
+            best_ts = exit_ts
+    return best
 
 
 def _trend_exit_for_entry(
@@ -218,6 +294,17 @@ def _filled_exit_row(
     if exit_row is not None:
         return exit_row
 
+    sl_rows = _protection_sl_rows(group_rows, eid)
+    if not sl_rows and oid and oid != eid:
+        sl_rows = _protection_sl_rows(group_rows, oid)
+    exit_row = _pick_filled_sl(sl_rows)
+    if exit_row is not None:
+        return exit_row
+
+    exit_row = _chop_grid_exit_for_entry(group_rows, entry_row)
+    if exit_row is not None:
+        return exit_row
+
     exit_row = _trend_exit_for_entry(group_rows, entry_row)
     if exit_row is not None:
         return exit_row
@@ -256,6 +343,36 @@ def _filled_exit_row(
         used.add(mex_id)
         return mex
     return None
+
+
+def pair_multileg_entry_exits(
+    rows: List[Dict[str, Any]],
+) -> List[tuple[Dict[str, Any], Dict[str, Any]]]:
+    """Closed entry→exit pairs for chop_grid + trend_scalp (shared by links and PnL)."""
+    by_group = build_leg_link_index(rows)
+    orphan_exits = _orphan_market_exit_rows(rows)
+    used_market_exit_ids: set[str] = set()
+    pending: List[Dict[str, Any]] = []
+    for group_rows in by_group.values():
+        for entry in group_rows:
+            if is_entry_row(entry) and _is_filled_row(entry) and _order_key(entry):
+                pending.append(entry)
+    pending.sort(key=lambda r: (_ts_row(r) or 0, _order_key(r)))
+
+    pairs: List[tuple[Dict[str, Any], Dict[str, Any]]] = []
+    for entry in pending:
+        gk = row_group_key(entry)
+        group_rows = by_group.get(gk or "", [entry])
+        exit_row = _filled_exit_row(
+            group_rows,
+            entry,
+            orphan_market_exits=orphan_exits,
+            used_market_exit_ids=used_market_exit_ids,
+            all_rows=rows,
+        )
+        if exit_row is not None:
+            pairs.append((entry, exit_row))
+    return pairs
 
 
 def multileg_pnl_by_order_id(

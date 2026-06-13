@@ -1,0 +1,10 @@
+variant,label,fuse_mode,max_dd,net_cap,daily_loss,ret_pct,max_dd_pct,max_dd_peak_pct,peak_gross_pct,halted,halted_day,halted_reason,n_trades,n_rejected,n_reject_daily,n_reject_net,n_reject_max_dd,n_derated
+prod,prod baseline,hard,0.2,1.8,0.06,6652.76,-63.66,-11.67,270.0,False,,,32,21496,302,21191,0,0
+max_dd_half,max_dd 20%→10% (both paths),hard,0.1,1.8,0.06,6652.76,-63.66,-11.67,270.0,True,2022-01-20,max_drawdown 10% at 2022-01-20 22:01:00+00:00,32,21496,0,164,1,0
+max_dd_15,max_dd 20%→15%,hard,0.15,1.8,0.06,6652.76,-63.66,-11.67,270.0,False,,,32,21496,302,21191,0,0
+net_cap_100,max_symbol_net 1.80→1.00,hard,0.2,1.0,0.06,6652.76,-63.66,-11.67,270.0,False,,,30,21498,302,21194,0,0
+net_cap_120,max_symbol_net 1.80→1.20,hard,0.2,1.2,0.06,6652.76,-63.66,-11.67,270.0,False,,,30,21498,302,21194,0,0
+fuse_derate,"prod + tier_derate (soft@50% max_dd, size×0.5)",tier_derate,0.2,1.8,0.06,6652.76,-63.66,-11.67,270.0,False,,,32,21496,302,21191,0,8
+fuse_daily_scaled,prod + tier_daily_scaled (daily loss ∝ gross),tier_daily_scaled,0.2,1.8,0.06,6652.76,-63.66,-11.67,270.0,False,,,32,21496,434,21059,0,0
+max_dd_half_fuse_derate,max_dd 10% + tier_derate,tier_derate,0.1,1.8,0.06,6652.76,-63.66,-11.67,270.0,True,2022-01-20,max_drawdown 10% at 2022-01-20 22:01:00+00:00,32,21496,0,164,1,4
+max_dd_half_fuse_daily,max_dd 10% + tier_daily_scaled,tier_daily_scaled,0.1,1.8,0.06,6652.76,-63.66,-11.67,270.0,True,2022-01-20,max_drawdown 10% at 2022-01-20 22:01:00+00:00,32,21496,0,164,1,0

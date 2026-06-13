@@ -1,0 +1,8 @@
+# trend_scalp — prod variant (live archetypes via symlink)
+strategy:
+  name: trend-scalp-120T
+  archetype: TrendScalp
+  timeframe: "120T"
+  bidirectional: true
+  symbol_include: [BTCUSDT, ETHUSDT, BNBUSDT, SOLUSDT, XRPUSDT, HYPEUSDT]
+  symbol_exclude: []

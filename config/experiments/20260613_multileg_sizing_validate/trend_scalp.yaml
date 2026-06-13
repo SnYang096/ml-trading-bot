@@ -1,0 +1,45 @@
+# trend_scalp 独立回测 grid（单策略 variant grid）
+#
+#   python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260613_multileg_sizing_validate/trend_scalp.yaml
+
+engine: trend_scalp
+strategy: trend_scalp
+experiment_id: trend_scalp_sizing_072_20260613
+
+config: config/experiments/20260613_multileg_sizing_validate/variants/trend_prod/meta.yaml
+
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - BNBUSDT
+  - XRPUSDT
+  - HYPEUSDT
+
+timeframe: 2h
+execution_timeframe: 1min
+initial_capital: 10000
+
+extra_argv:
+  - --scale-max-loser-hold-to-signal
+  - --take-profit-mode
+  - basket
+  - --no-reseed-on-flip
+  - --risk-stop-mode
+  - regime_only
+  - --no-maps
+  - --max-loss-per-segment
+  - "0.02"
+
+market_segment_path: config/market_segment.yaml
+
+segment_matrix:
+  segments:
+    - bear_2022
+    - bull_2023_2024
+    - recent_range_to_bear
+    - recent_6m_oos
+  variants:
+    - suffix: prod
+      output_dir: results/trend_scalp/experiments/sizing_072_20260613/prod

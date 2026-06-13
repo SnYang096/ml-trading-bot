@@ -39,6 +39,7 @@ from src.config.multileg_sizing import (
 from src.live_data_stream.constitution_config import (
     load_constitution_dict,
     multi_leg_section,
+    resolve_multileg_sim_limits,
 )
 from src.sim.multileg_account_sim import (
     apply_multileg_segment_gates,
@@ -48,15 +49,22 @@ from src.sim.multileg_account_sim import (
     load_trend_segments,
     load_trend_trades,
     simulate_account_trades,
+    simulate_account_with_constitution,
 )
 
 
 def _print_metrics(title: str, m: Dict[str, float], *, extra: str = "") -> None:
     suffix = f"  {extra}" if extra else ""
+    peak_dd = m.get("max_dd_peak_pct")
+    dd_str = (
+        f"maxDD={m['max_dd_pct']:.3f}%"
+        if peak_dd is None
+        else f"maxDD={m['max_dd_pct']:.1f}%(init) / {peak_dd:.1f}%(peak)"
+    )
     print(
         f"{title}: ret={m['ret_pct']:.2f}% pnl={m['pnl_usd']:.0f} "
         f"peakGross={m['peak_gross_pct']:.1f}% peakSym={m['peak_sym_pct']:.1f}% "
-        f"maxDD={m['max_dd_pct']:.3f}% trades={int(m['n_trades'])}{suffix}"
+        f"{dd_str} trades={int(m['n_trades'])}{suffix}"
     )
 
 
@@ -192,6 +200,20 @@ def main() -> None:
     ap.add_argument("--max-gross-exposure-units", type=int, default=4)
     ap.add_argument("--max-concurrent-multi-leg-symbols", type=int, default=0)
     ap.add_argument("--unit-notional", type=float, default=None)
+    ap.add_argument(
+        "--with-constitution",
+        action="store_true",
+        default=False,
+        help="Apply constitution risk limits (max_gross, max_dd, daily_loss_limit)",
+    )
+    ap.add_argument(
+        "--fuse-mode",
+        choices=("hard", "tier_derate", "tier_daily_scaled"),
+        default="hard",
+        help="Graded fuse mode when --with-constitution (default: hard halt)",
+    )
+    ap.add_argument("--fuse-soft-dd-ratio", type=float, default=0.5)
+    ap.add_argument("--fuse-derate-factor", type=float, default=0.5)
     args = ap.parse_args()
 
     if args.chop_root is None and args.trend_root is None:
@@ -249,11 +271,60 @@ def main() -> None:
     u_trend = units.get("trend_scalp", units.get("chop_grid", 556.0))
     unit_by = {"chop_grid": u_chop, "trend_scalp": u_trend}
 
+    # ── Resolve constitution risk limits ──
+    const_limits: Dict[str, object] = {}
+    if args.with_constitution and args.constitution_yaml:
+        const = load_constitution_dict(str(args.constitution_yaml))
+        const_limits = resolve_multileg_sim_limits(const)
+        const_limits["fuse_mode"] = args.fuse_mode
+        const_limits["fuse_soft_dd_ratio"] = float(args.fuse_soft_dd_ratio)
+        const_limits["fuse_derate_factor"] = float(args.fuse_derate_factor)
+        print("=== Constitution risk limits ===")
+        for k, v in const_limits.items():
+            if v is not None:
+                print(f"  {k}: {v}")
+        print()
+
+    def _sim(trades_df, eq, unit, unit_by_strat=None):
+        if const_limits:
+            sim_kw = {
+                k: const_limits[k]
+                for k in (
+                    "max_drawdown_pct",
+                    "daily_loss_limit_pct",
+                    "max_gross_notional_pct",
+                    "max_net_notional_pct",
+                    "max_symbol_gross_notional_pct",
+                    "max_symbol_net_notional_pct",
+                    "max_gross_leverage",
+                    "fuse_mode",
+                    "fuse_soft_dd_ratio",
+                    "fuse_derate_factor",
+                )
+                if const_limits.get(k) is not None
+            }
+            m = simulate_account_with_constitution(
+                trades_df,
+                equity=eq,
+                unit_notional=unit,
+                unit_by_strategy=unit_by_strat,
+                **sim_kw,
+            )
+            extra = f" halted={m.get('halted')} rejected={int(m.get('n_rejected',0))}"
+            if m.get("halted_reason"):
+                extra += f" [{m['halted_reason']}]"
+        else:
+            m = simulate_account_trades(
+                trades_df, equity=eq, unit_notional=unit, unit_by_strategy=unit_by_strat
+            )
+            extra = ""
+        return m, extra
+
     if not chop_tr.empty:
-        m = simulate_account_trades(chop_tr, equity=args.equity, unit_notional=u_chop)
+        m, _ = _sim(chop_tr, args.equity, u_chop)
         _print_metrics("chop_grid alone", m)
     if not trend_tr.empty:
-        m = simulate_account_trades(trend_tr, equity=args.equity, unit_notional=u_trend)
+        m, _ = _sim(trend_tr, args.equity, u_trend)
         _print_metrics("trend_scalp alone", m)
     print()
 
@@ -286,14 +357,10 @@ def main() -> None:
         )
 
     if not chop_allowed.empty:
-        m = simulate_account_trades(
-            chop_allowed, equity=args.equity, unit_notional=u_chop
-        )
+        m, _ = _sim(chop_allowed, args.equity, u_chop)
         _print_metrics("  chop_grid", m)
     if not trend_allowed.empty:
-        m = simulate_account_trades(
-            trend_allowed, equity=args.equity, unit_notional=u_trend
-        )
+        m, _ = _sim(trend_allowed, args.equity, u_trend)
         _print_metrics("  trend_scalp", m)
 
     combined_allowed = pd.concat(
@@ -301,17 +368,12 @@ def main() -> None:
         ignore_index=True,
     )
     if not combined_allowed.empty:
-        m = simulate_account_trades(
-            combined_allowed,
-            equity=args.equity,
-            unit_notional=0.0,
-            unit_by_strategy=unit_by,
-        )
-        _print_metrics("  COMBINED account", m)
+        m, extra = _sim(combined_allowed, args.equity, 0.0, unit_by_strat=unit_by)
+        _print_metrics("  COMBINED account", m, extra=extra)
         if "strategy" in combined_allowed.columns:
             for strat, grp in combined_allowed.groupby("strategy"):
                 u = unit_by.get(str(strat), u_chop)
-                sm = simulate_account_trades(grp, equity=args.equity, unit_notional=u)
+                sm, _ = _sim(grp, args.equity, u)
                 _print_metrics(f"    └─ {strat} contribution", sm)
     print()
 

@@ -1,0 +1,34 @@
+# chop_grid 独立回测 grid（单策略 variant grid）
+#
+#   python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260613_multileg_sizing_validate/chop_grid.yaml
+
+engine: chop_grid
+strategy: chop_grid
+experiment_id: chop_grid_sizing_072_20260613
+
+config: config/experiments/20260613_multileg_sizing_validate/variants/chop_prod/meta.yaml
+
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - BNBUSDT
+  - XRPUSDT
+  # - HYPEUSDT  # TODO: 缺 FeatureStore layer (features_chop_grid_120T)，待 feature-bus compute
+
+timeframe: 2h
+execution_timeframe: 1min
+initial_capital: 10000
+
+market_segment_path: config/market_segment.yaml
+
+segment_matrix:
+  segments:
+    - bear_2022
+    - bull_2023_2024
+    - recent_range_to_bear
+    - recent_6m_oos
+  variants:
+    - suffix: prod
+      output_dir: results/chop_grid/experiments/sizing_072_20260613/prod

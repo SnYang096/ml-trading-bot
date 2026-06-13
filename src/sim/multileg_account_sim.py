@@ -9,6 +9,7 @@ from typing import Dict, List, Literal, Optional, Set, Tuple
 import pandas as pd
 
 StrategyName = Literal["chop_grid", "trend_scalp"]
+FuseMode = Literal["hard", "tier_derate", "tier_daily_scaled"]
 
 
 @dataclass
@@ -225,4 +226,237 @@ def simulate_account_trades(
         "peak_sym_pct": peak_sym / equity * 100.0,
         "max_dd_pct": max_dd / equity * 100.0,
         "n_trades": float(len(trades)),
+    }
+
+
+def _side_sign(row: pd.Series) -> float:
+    side = str(row.get("side", "") or row.get("direction", "") or "LONG").upper()
+    if side in ("SHORT", "SELL", "DOWN"):
+        return -1.0
+    return 1.0
+
+
+def simulate_account_with_constitution(
+    trades: pd.DataFrame,
+    *,
+    equity: float,
+    unit_notional: float,
+    unit_by_strategy: Optional[Dict[str, float]] = None,
+    max_gross_notional_pct: Optional[float] = None,
+    max_net_notional_pct: Optional[float] = None,
+    max_symbol_gross_notional_pct: Optional[float] = None,
+    max_symbol_net_notional_pct: Optional[float] = None,
+    max_gross_leverage: Optional[float] = None,
+    daily_loss_limit_pct: Optional[float] = None,
+    max_drawdown_pct: Optional[float] = None,
+    fuse_mode: FuseMode = "hard",
+    fuse_soft_dd_ratio: float = 0.5,
+    fuse_derate_factor: float = 0.5,
+) -> Dict[str, float]:
+    """Replay with constitution risk limits enforced.
+
+    - *max_gross_notional_pct* / *max_net_notional_pct*: portfolio caps vs equity anchor.
+    - *max_symbol_*: per-symbol gross/net caps (``max_symbol_net_notional_pct`` = net cap).
+    - *max_gross_leverage*: ultimate gross/equity ceiling (usually 3.0 on Binance).
+    - *daily_loss_limit_pct*: reject new risk for rest of UTC day after daily loss.
+    - *max_drawdown_pct*: global halt after peak-to-trough DD exceeds threshold.
+    - *fuse_mode* ``tier_derate``: scale leg size after soft DD; ``tier_daily_scaled``:
+      scale daily loss budget with gross exposure (position-aware).
+    """
+    events: List[tuple] = []
+    for _, r in trades.iterrows():
+        sym = str(r.get("symbol", "") or "")
+        strat = str(r.get("strategy", "") or "")
+        if unit_by_strategy and strat in unit_by_strategy:
+            unit = float(unit_by_strategy[strat])
+        else:
+            unit = float(unit_notional)
+        side_sign = _side_sign(r)
+        events.append(
+            (
+                pd.Timestamp(r["entry_time"]),
+                "open",
+                sym,
+                r.get("segment_id", ""),
+                0.0,
+                unit,
+                side_sign,
+            )
+        )
+        events.append(
+            (
+                pd.Timestamp(r["exit_time"]),
+                "close",
+                sym,
+                r.get("segment_id", ""),
+                float(r["pnl_pct"]) * unit,
+                unit,
+                side_sign,
+            )
+        )
+    events.sort(key=lambda e: (e[0], 0 if e[1] == "close" else 1))
+
+    gross = 0.0
+    net = 0.0
+    peak_gross = 0.0
+    sym_gross: Dict[str, float] = {}
+    sym_net: Dict[str, float] = {}
+    peak_sym = 0.0
+    cum_pnl = 0.0
+    peak_eq = float(equity)
+    max_dd = 0.0
+    max_dd_peak_pct = 0.0
+    daily_pnl = 0.0
+    current_day = None
+    halted = False
+    halted_day = None
+    n_rejected = 0
+    n_accepted = 0
+    n_derated = 0
+    n_reject_halted = 0
+    n_reject_max_dd = 0
+    n_reject_daily = 0
+    n_reject_gross = 0
+    n_reject_net = 0
+    n_reject_leverage = 0
+    halted_reason = ""
+
+    def _current_equity() -> float:
+        return equity + cum_pnl
+
+    def _drawdown_frac(current_eq: float) -> float:
+        if peak_eq <= 0:
+            return 0.0
+        return max(0.0, (peak_eq - current_eq) / peak_eq)
+
+    def _effective_unit(base_unit: float, current_eq: float) -> float:
+        if fuse_mode != "tier_derate" or max_drawdown_pct is None:
+            return base_unit
+        dd = _drawdown_frac(current_eq)
+        soft = float(max_drawdown_pct) * float(fuse_soft_dd_ratio)
+        if dd >= soft:
+            return base_unit * float(fuse_derate_factor)
+        return base_unit
+
+    for ts, kind, _sym, _seg_id, pnl, unit, side_sign in events:
+        day_key = ts.strftime("%Y-%m-%d")
+        if current_day is not None and day_key != current_day:
+            daily_pnl = 0.0
+        current_day = day_key
+
+        if kind == "close":
+            gross = max(0.0, gross - unit)
+            sym_gross[_sym] = max(0.0, sym_gross.get(_sym, 0.0) - unit)
+            net -= side_sign * unit
+            sym_net[_sym] = sym_net.get(_sym, 0.0) - side_sign * unit
+            cum_pnl += pnl
+            daily_pnl += pnl
+            peak_eq = max(peak_eq, _current_equity())
+            max_dd = min(max_dd, _current_equity() - peak_eq)
+            if peak_eq > 0:
+                dd_peak = (_current_equity() - peak_eq) / peak_eq
+                max_dd_peak_pct = min(max_dd_peak_pct, dd_peak)
+            continue
+
+        if halted:
+            n_rejected += 1
+            n_reject_halted += 1
+            continue
+
+        current_eq = _current_equity()
+        open_unit = _effective_unit(unit, current_eq)
+        if open_unit < unit:
+            n_derated += 1
+
+        projected_gross = gross + open_unit
+        projected_net = net + side_sign * open_unit
+        projected_sym_gross = sym_gross.get(_sym, 0.0) + open_unit
+        projected_sym_net = sym_net.get(_sym, 0.0) + side_sign * open_unit
+
+        if max_drawdown_pct is not None and _drawdown_frac(current_eq) >= float(
+            max_drawdown_pct
+        ):
+            halted = True
+            halted_day = day_key
+            halted_reason = f"max_drawdown {max_drawdown_pct * 100:.0f}% at {ts}"
+            n_rejected += 1
+            n_reject_max_dd += 1
+            continue
+
+        if daily_loss_limit_pct is not None:
+            exposure_scale = 1.0
+            if fuse_mode == "tier_daily_scaled":
+                exposure_scale = max(projected_gross / float(equity), 0.05)
+            daily_limit = float(equity) * float(daily_loss_limit_pct) * exposure_scale
+            if daily_pnl <= -daily_limit:
+                n_rejected += 1
+                n_reject_daily += 1
+                continue
+
+        if max_gross_leverage is not None and projected_gross > current_eq * max_gross_leverage:
+            n_rejected += 1
+            n_reject_leverage += 1
+            continue
+
+        if (
+            max_gross_notional_pct is not None
+            and projected_gross > equity * max_gross_notional_pct
+        ):
+            n_rejected += 1
+            n_reject_gross += 1
+            continue
+
+        if (
+            max_net_notional_pct is not None
+            and abs(projected_net) > equity * max_net_notional_pct
+        ):
+            n_rejected += 1
+            n_reject_net += 1
+            continue
+
+        if (
+            max_symbol_gross_notional_pct is not None
+            and projected_sym_gross > equity * max_symbol_gross_notional_pct
+        ):
+            n_rejected += 1
+            n_reject_gross += 1
+            continue
+
+        if (
+            max_symbol_net_notional_pct is not None
+            and abs(projected_sym_net) > equity * max_symbol_net_notional_pct
+        ):
+            n_rejected += 1
+            n_reject_net += 1
+            continue
+
+        gross = projected_gross
+        net = projected_net
+        sym_gross[_sym] = projected_sym_gross
+        sym_net[_sym] = projected_sym_net
+        n_accepted += 1
+        peak_gross = max(peak_gross, gross)
+        if sym_gross:
+            peak_sym = max(peak_sym, max(sym_gross.values()))
+
+    return {
+        "ret_pct": cum_pnl / equity * 100.0,
+        "pnl_usd": cum_pnl,
+        "peak_gross_pct": peak_gross / equity * 100.0,
+        "peak_sym_pct": peak_sym / equity * 100.0,
+        "max_dd_pct": max_dd / equity * 100.0,
+        "max_dd_peak_pct": max_dd_peak_pct * 100.0,
+        "n_trades": float(n_accepted),
+        "n_rejected": float(n_rejected),
+        "n_derated": float(n_derated),
+        "n_reject_halted": float(n_reject_halted),
+        "n_reject_max_dd": float(n_reject_max_dd),
+        "n_reject_daily": float(n_reject_daily),
+        "n_reject_gross": float(n_reject_gross),
+        "n_reject_net": float(n_reject_net),
+        "n_reject_leverage": float(n_reject_leverage),
+        "halted": halted,
+        "halted_reason": halted_reason,
+        "halted_day": str(halted_day) if halted_day else "",
+        "fuse_mode": fuse_mode,
     }
