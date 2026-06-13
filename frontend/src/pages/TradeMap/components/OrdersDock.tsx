@@ -1,10 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
-import { useMemo, useState } from 'react';
 import { apiGet } from '@/api/client.ts';
-import { usePageVisible, visibleRefetchInterval } from '@/hooks/usePageVisible.ts';
 import type { OrderRow, TradeLink } from '@/api/types.ts';
-import { barSecForTimeframe, orderOnBar } from '@/lib/tradeMap/orderTime.ts';
+import { usePageVisible, visibleRefetchInterval } from '@/hooks/usePageVisible.ts';
 import {
   SCOPE_LABELS,
   displayExitKind,
@@ -14,7 +10,11 @@ import {
   formatUnixTs,
   pnlClass,
 } from '@/lib/shell.ts';
+import { barSecForTimeframe, orderOnBar } from '@/lib/tradeMap/orderTime.ts';
 import { scopesFromLayers, type LayerState } from '@/stores/tradeMapStore.ts';
+import { useQuery } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import styles from './OrdersDock.module.css';
 
 interface Props {

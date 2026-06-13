@@ -1,5 +1,3 @@
-import { useCallback, useEffect, useRef } from 'react';
-import type { IChartApi } from 'lightweight-charts';
 import { apiGet, apiQuery } from '@/api/client.ts';
 import type { BundleData, Candle } from '@/api/types.ts';
 import {
@@ -14,13 +12,15 @@ import {
   stageRegionsQueryParam,
   tradeMapHistoryChunkDays,
 } from '@/lib/tradeMap';
-import { logicalRangeAfterHistoryPrepend } from '@/lib/tradeMap/candles.ts';
 import { buildMarkersOnlyQuery, bundleFeatureColumns } from '@/lib/tradeMap/bundleQuery.ts';
+import { logicalRangeAfterHistoryPrepend } from '@/lib/tradeMap/candles.ts';
 import {
   resetHistoryState,
   scopesFromLayers,
   useTradeMapStore,
 } from '@/stores/tradeMapStore.ts';
+import type { IChartApi } from 'lightweight-charts';
+import { useCallback, useEffect, useRef } from 'react';
 
 /** Only prefetch when the user has panned near the left edge (not on a tight zoom window). */
 const PREFETCH_THRESHOLD = 8;

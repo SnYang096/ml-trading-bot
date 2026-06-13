@@ -13,7 +13,17 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Protocol, runtime_checkable
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Protocol,
+    runtime_checkable,
+)
 
 from src.order_management.grid_execution_adapter import (
     MultiLegExecutionAdapter,
@@ -55,9 +65,7 @@ class MultiLegEngineProtocol(Protocol):
     def local_position_snapshots(self) -> Iterable[LocalPositionSnapshot]:
         """Return strategy-owned inventory state."""
 
-    def on_execution_results(
-        self, results: Iterable[MultiLegExecutionResult]
-    ) -> None:
+    def on_execution_results(self, results: Iterable[MultiLegExecutionResult]) -> None:
         """Receive adapter execution results for persisted id mapping."""
 
     def on_reconciliation_report(self, report: ReconciliationReport) -> None:
@@ -174,7 +182,9 @@ class MultiLegLiveOrchestrator:
             reconcile_orders = orders
             reconcile_positions = positions
             if execution_results:
-                reconcile_symbol = self.symbol or _first_action_symbol(action_list) or None
+                reconcile_symbol = (
+                    self.symbol or _first_action_symbol(action_list) or None
+                )
                 reconcile_orders = self.adapter.sync_open_orders(reconcile_symbol)
                 reconcile_positions = self.adapter.sync_positions(reconcile_symbol)
             reconciliation, reconciliation_results = self.reconcile(
@@ -244,7 +254,10 @@ class MultiLegLiveOrchestrator:
         if not report.ok:
             cooldown = _reconcile_not_ok_warn_cooldown_s()
             now = time.monotonic()
-            if cooldown <= 0.0 or (now - self._last_reconcile_not_ok_warn_at) >= cooldown:
+            if (
+                cooldown <= 0.0
+                or (now - self._last_reconcile_not_ok_warn_at) >= cooldown
+            ):
                 logger.warning(
                     "multi-leg reconcile not ok: strategy=%s symbol=%s "
                     "missing_exchange_orders=%d orphan_exchange_orders=%d "
@@ -312,9 +325,7 @@ class MultiLegLiveOrchestrator:
         if not callable(getter):
             return merged
 
-        db_rows = (
-            getter(strategy=self.strategy_name, symbol=self.symbol or None) or []
-        )
+        db_rows = getter(strategy=self.strategy_name, symbol=self.symbol or None) or []
 
         def _keys(snap: LocalOrderSnapshot) -> set[str]:
             out: set[str] = set()
@@ -357,7 +368,8 @@ class MultiLegLiveOrchestrator:
                     side=old.side or db_snap.side,
                     quantity=old.quantity if old.quantity else db_snap.quantity,
                     price=old.price if old.price else db_snap.price,
-                    exchange_order_id=old.exchange_order_id or db_snap.exchange_order_id,
+                    exchange_order_id=old.exchange_order_id
+                    or db_snap.exchange_order_id,
                     client_order_id=old.client_order_id or db_snap.client_order_id,
                 )
             else:
@@ -383,7 +395,9 @@ class MultiLegLiveOrchestrator:
             return report
         storage = self.storage
         lookup = (
-            getattr(storage, "lookup_order_purpose", None) if storage is not None else None
+            getattr(storage, "lookup_order_purpose", None)
+            if storage is not None
+            else None
         )
         if callable(lookup):
             purpose = lookup(
@@ -469,7 +483,8 @@ class MultiLegLiveOrchestrator:
         active_leg_ids = []
         for idx, pos in enumerate(inventory):
             leg_id = str(
-                getattr(pos, "leg_id", "") or f"{self.strategy_name}_{self.symbol}_{idx}"
+                getattr(pos, "leg_id", "")
+                or f"{self.strategy_name}_{self.symbol}_{idx}"
             )
             active_leg_ids.append(leg_id)
             self.storage.upsert_position(

@@ -638,9 +638,7 @@ def multi_leg_markers(
                     "(filled_at <= ? OR (filled_at IS NULL AND created_at <= ?))"
                 )
                 ml_time_params.extend([end_ts, iso])
-        ml_time_clause = (
-            " AND " + " AND ".join(ml_time_parts) if ml_time_parts else ""
-        )
+        ml_time_clause = " AND " + " AND ".join(ml_time_parts) if ml_time_parts else ""
         ord_sql = f"""
             SELECT local_order_id, strategy, symbol, side, purpose, status, order_type,
                    filled_quantity, average_price, filled_at, created_at, price, quantity,
@@ -944,9 +942,7 @@ def collect_markers(
         allowed = {str(s).strip().lower() for s in strategies if str(s).strip()}
         if allowed:
             merged = [
-                m
-                for m in merged
-                if str(m.get("strategy") or "").lower() in allowed
+                m for m in merged if str(m.get("strategy") or "").lower() in allowed
             ]
     return merged
 

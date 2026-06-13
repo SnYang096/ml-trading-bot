@@ -65,7 +65,9 @@ def _first_positive_price(*values: Any) -> Optional[float]:
     return None
 
 
-def _resolve_display_price(item: Dict[str, Any], row: Dict[str, Any]) -> Optional[float]:
+def _resolve_display_price(
+    item: Dict[str, Any], row: Dict[str, Any]
+) -> Optional[float]:
     """Fill/limit/trigger price for console tables (algo SL/TP store trigger in stop_price)."""
     status = str(row.get("status") or item.get("status") or "").lower()
     otype = str(
@@ -130,7 +132,9 @@ def _resolve_order_position_side(scope: str, row: Dict[str, Any]) -> Optional[st
         side = str(row.get("side") or "").upper()
         purpose = str(row.get("purpose") or row.get("order_type") or "").lower()
         if side in {"LONG", "SHORT"} and (
-            "entry" in purpose or "place" in purpose or purpose in {"", "limit", "market"}
+            "entry" in purpose
+            or "place" in purpose
+            or purpose in {"", "limit", "market"}
         ):
             return side
     if scope == "trend":
@@ -194,7 +198,9 @@ def _resolve_filled_quantity(row: Dict[str, Any], status: str) -> float:
     return filled
 
 
-def _trend_entry_qty_by_position(db_path: Path, symbol: Optional[str]) -> Dict[str, float]:
+def _trend_entry_qty_by_position(
+    db_path: Path, symbol: Optional[str]
+) -> Dict[str, float]:
     """Entry size per position_id from filled trend orders (for closed positions)."""
     if not db_path.is_file():
         return {}
@@ -314,9 +320,12 @@ def _normalize(
         "average_price": row.get("average_price"),
         "stop_price": row.get("stop_price"),
         "stop_loss_price": _first_positive_price(
-            row.get("stop_price")
-            if "stop" in str(row.get("order_type") or "").lower() or "stop" in str(row.get("purpose") or "").lower()
-            else None,
+            (
+                row.get("stop_price")
+                if "stop" in str(row.get("order_type") or "").lower()
+                or "stop" in str(row.get("purpose") or "").lower()
+                else None
+            ),
             row.get("stop_loss_price"),
         ),
         "take_profit_price": _first_positive_price(row.get("take_profit_price")),
@@ -339,14 +348,16 @@ def _normalize(
         # 如果是 SL 行，只设置 stop_loss_price，不走 resolve_take_profit_display
         purpose = str(row.get("purpose") or "").lower()
         if "stop_loss" in purpose or oid.endswith("_sl") or "_sl_" in oid:
-            item["stop_loss_price"] = _first_positive_price(row.get("stop_price"), row.get("price"))
+            item["stop_loss_price"] = _first_positive_price(
+                row.get("stop_price"), row.get("price")
+            )
             item["take_profit_price"] = None
             item["take_profit_hint"] = ""
         else:
             tp_px, tp_hint = resolve_take_profit_display(row)
             item["take_profit_price"] = tp_px
             item["take_profit_hint"] = tp_hint
-            
+
         if row.get("_link_exit_price") is not None:
             item["exit_price"] = row.get("_link_exit_price")
             item["exit_order_id"] = row.get("_link_exit_leg")
@@ -555,9 +566,7 @@ def _entry_leg_ids_in_rows(rows: List[Dict[str, Any]]) -> Set[str]:
     return out
 
 
-def _query_open_multileg_positions(
-    db_path: Path, symbol: str
-) -> List[Dict[str, Any]]:
+def _query_open_multileg_positions(db_path: Path, symbol: str) -> List[Dict[str, Any]]:
     if is_all_symbols(symbol):
         sql = """
             SELECT leg_id, strategy, symbol, side, entry_price, quantity, status,
@@ -867,26 +876,20 @@ def _spot_orders_select_clause(db_path: Path) -> tuple[str, str]:
     if not cols:
         return "", ""
     filled_qty = (
-        "filled_quantity"
-        if "filled_quantity" in cols
-        else "0 AS filled_quantity"
+        "filled_quantity" if "filled_quantity" in cols else "0 AS filled_quantity"
     )
     filled_quote = (
         "filled_quote_usdt"
         if "filled_quote_usdt" in cols
         else "NULL AS filled_quote_usdt"
     )
-    updated_at = (
-        "updated_at" if "updated_at" in cols else "created_at AS updated_at"
-    )
+    updated_at = "updated_at" if "updated_at" in cols else "created_at AS updated_at"
     select = (
         "order_id, symbol, side, status, order_type, quantity, price, "
         f"{filled_qty}, {filled_quote}, created_at, {updated_at}"
     )
     order_ts = (
-        "COALESCE(updated_at, created_at)"
-        if "updated_at" in cols
-        else "created_at"
+        "COALESCE(updated_at, created_at)" if "updated_at" in cols else "created_at"
     )
     return select, order_ts
 
@@ -920,9 +923,7 @@ def spot_orders_list(
             ORDER BY {order_ts} DESC
             LIMIT ?
         """
-        rows = query_rows(
-            db_path, sql, (*status_params, *match_params, int(limit))
-        )
+        rows = query_rows(db_path, sql, (*status_params, *match_params, int(limit)))
     else:
         sym = symbol.upper()
         sql = f"""
@@ -1091,11 +1092,11 @@ def _attach_pnl_fields(
         rec = (
             trend_map.get(oid)
             if scope == "trend"
-            else spot_map.get(oid)
-            if scope == "spot"
-            else multileg_map.get(oid)
-            if scope == "multi_leg"
-            else None
+            else (
+                spot_map.get(oid)
+                if scope == "spot"
+                else multileg_map.get(oid) if scope == "multi_leg" else None
+            )
         )
         if not rec:
             continue
@@ -1122,7 +1123,11 @@ def enrich_orders_pnl(
     if not scope_set:
         scope_set = {"trend", "spot", "multi_leg"}
 
-    bus = feature_bus_root if feature_bus_root is not None and feature_bus_root.is_dir() else None
+    bus = (
+        feature_bus_root
+        if feature_bus_root is not None and feature_bus_root.is_dir()
+        else None
+    )
 
     trend_map, spot_map, multileg_map = build_order_pnl_maps(
         trend_db=trend_db,
@@ -1211,7 +1216,7 @@ def collect_orders(
 
     if strategy:
         merged = [r for r in merged if _row_matches_strategy(r, strategy)]
-    
+
     merged = merged[: int(limit)]
     enrich_orders_pnl(
         merged,
