@@ -14,6 +14,7 @@ class SegmentState(str, Enum):
     ENTERING = "entering"
     ACTIVE = "active"
     CLOSING = "closing"
+    # Reserved for audit trails; transitions today go CLOSING → IDLE via _deactivate().
     CLOSED = "closed"
 
 
@@ -33,14 +34,13 @@ def migrate_segment_state_from_legacy(
     *,
     active: bool,
     segment_state_raw: str | None,
-    has_inventory_or_pending: bool,
 ) -> str:
     if segment_state_raw:
         return str(segment_state_raw)
     if not active:
         return SegmentState.IDLE.value
-    if has_inventory_or_pending:
-        return SegmentState.ACTIVE.value
+    # active=True without persisted segment_state: treat as ACTIVE; ghost segments
+    # (active with empty local state) are cleared by the concurrency gate.
     return SegmentState.ACTIVE.value
 
 
@@ -75,6 +75,7 @@ class SegmentLifecycleMixin:
         self.state.active = segment_occupies_slot(self.state.segment_state)
 
     def _needs_late_fill_cleanup(self) -> bool:
+        """True when segment is winding down (trend: skip promote/protection on late fills)."""
         return (
             not self.state.active
             or self.state.segment_state == SegmentState.CLOSING.value
@@ -155,6 +156,3 @@ class SegmentLifecycleMixin:
 
     def _exchange_has_open_activity(self) -> bool:
         return bool(self._exchange_open_orders)
-
-    def _segment_winding_down(self) -> bool:
-        return self._needs_late_fill_cleanup()

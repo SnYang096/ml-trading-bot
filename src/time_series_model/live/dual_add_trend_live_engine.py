@@ -290,7 +290,6 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
         segment_state = migrate_segment_state_from_legacy(
             active=active,
             segment_state_raw=raw.get("segment_state"),
-            has_inventory_or_pending=bool(pending_orders or inventory),
         )
         return DualAddTrendState(
             segment_id=str(raw.get("segment_id", "")),
@@ -352,6 +351,8 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
             if str(p.get("symbol") or "").upper() == sym
             and abs(float(p.get("positionAmt") or p.get("quantity") or 0)) > 0
         ]
+        # Positions on the book only count when local trend state agrees — same guard
+        # as chop_grid: do not treat unrelated exchange exposure as this segment.
         self._exchange_open_orders = bool(open_trend_orders) or (
             bool(positions) and has_local
         )

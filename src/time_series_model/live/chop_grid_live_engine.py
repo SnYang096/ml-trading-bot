@@ -349,7 +349,6 @@ class ChopGridLiveEngine(SegmentLifecycleMixin):
         segment_state = migrate_segment_state_from_legacy(
             active=active,
             segment_state_raw=raw.get("segment_state"),
-            has_inventory_or_pending=bool(pending_orders or inventory),
         )
         return GridState(
             grid_id=str(raw.get("grid_id", "")),
@@ -851,7 +850,9 @@ class ChopGridLiveEngine(SegmentLifecycleMixin):
             and _exchange_position_quantity(p) > 0
         ]
         has_local_chop = bool(self.state.inventory or self.state.pending_orders)
-        # Do not treat foreign legs (e.g. trend_scalp) as chop-owned exposure.
+        # Exchange positions count as activity only when we already have local chop
+        # inventory/pending — avoids foreign legs (e.g. trend_scalp) or stale book
+        # snapshots blocking ghost clear / replenishment on an idle chop segment.
         self._exchange_open_orders = bool(open_grid_orders) or (
             bool(positions) and has_local_chop
         )

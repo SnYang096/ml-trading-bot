@@ -23,7 +23,7 @@
 | 路径                            | 触发条件                   | 清 inventory? | 清 pending?  | 通知 gate? | `save_state`?            |
 | ------------------------------- | -------------------------- | ------------- | ------------ | ---------- | ------------------------ |
 | `_exit_grid()`                  | regime exit / risk stop    | ✅ market_exit | ✅ cancel all | ✅          | 否（靠 `on_bar` 尾调用） |
-| `clear_stale_active_if_ghost()` | 4 个条件全满足             | ❌             | ❌            | ✅          | ✅ 立即                   |
+| `clear_stale_active_if_ghost()` | active + 本地 inventory/pending 皆空 + **无 exchange open activity** | ❌             | ❌            | ✅          | ✅ 立即                   |
 | `auto-deactivate` (新)          | inventory=[] && pending=[] | ❌             | ❌            | ✅          | 否（靠 `on_bar` 尾调用） |
 | trend: `_exit_all()`            | regime 不满足              | ✅             | ✅ cancel     | ✅          | 否（靠 `on_bar` 尾调用） |
 
@@ -45,12 +45,12 @@
 
 这是 chop_grid 6 个 ghost + trend_scalp 同类问题的根本原因。
 
-### 1.4 `_live_exchange_has_activity` 是跨 tick 的全局可变状态
+### 1.4 `_exchange_open_orders`（原 `_live_exchange_has_activity`）
 
-- 在 `sync_live_exchange_state` 设一次
-- `is_stale_active_ghost` / `holds_real_grid_slot` / `on_bar` 都依赖它
-- 网络抖动、API 限流、临时残留单都可能导致误判
-- DB 的 `status=new` 记录 ≠ 交易所实有挂单，但容易被混淆
+- 在 `sync_live_exchange_state` 每 tick 设一次（bool，非 Callable）
+- **ghost / slot**：本地 inventory + pending 为主；exchange 仅作 **guard**（见 §4.4）
+- **replenish**：`_maybe_replenish_empty_levels` 用同一 flag 避免 orphan 单触发虚假补单
+- 网络抖动、API 限流、临时残留单仍可能让 guard 短暂为 True，延迟 ghost 清理（有意为之，避免误清）
 
 ---
 
@@ -74,7 +74,7 @@
 | 引擎                                      | 为什么不受影响                                                                                                                 |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `ChopGridEngine`                          | 纯函数式：接收一段 bar → 处理 → 返回结果。无持久 state、无 `active` flag                                                       |
-| `ChopGridLiveEngine(bar_simulation=True)` | 复用 live 引擎但 `sync_live_exchange_state` 跳过、`_live_exchange_has_activity=False`。新加的 auto-deactivate 在仿真模式也生效 |
+| `ChopGridLiveEngine(bar_simulation=True)` | 复用 live 引擎但 `sync_live_exchange_state` 跳过、`_exchange_open_orders=False`。post-fill deactivate 在仿真模式也生效 |
 
 ---
 
@@ -139,17 +139,29 @@ class SegmentState(Enum):
     IDLE = "idle"           # 无活动段
     ENTERING = "entering"   # 正在挂单
     ACTIVE = "active"       # 有仓/挂单
-    CLOSING = "closing"     # 正在平仓
-    CLOSED = "closed"       # 已平完，待清理
+    CLOSING = "closing"     # 正在平仓（trend cancel 在途）
+    CLOSED = "closed"       # 预留；当前实现 CLOSING → IDLE，不经 CLOSED
 
-# 状态转换：
-# IDLE → ENTERING (start_grid)
-# ENTERING → ACTIVE (first fill)
-# ACTIVE → CLOSING (exit_grid / last leg closed)
-# CLOSING → CLOSED (all fills confirmed)
-# CLOSED → IDLE (cleanup done)
-# ACTIVE → IDLE (ghost detected + no pending)
+# 状态转换（已实现）：
+# IDLE → ENTERING (_enter_segment)
+# ENTERING → ACTIVE (_promote_to_active，首笔 fill)
+# ACTIVE → CLOSING (_begin_closing，trend regime exit)
+# CLOSING → IDLE (_deactivate，pending/inventory 皆空)
+# * → IDLE (_deactivate：ghost / fully_closed / regime_exit)
 ```
+
+> **`CLOSED`**：enum 保留供日后审计；`_deactivate()` 直接写 `IDLE`，不持久化 CLOSED。
+
+### 4.2.1 `save_state()` 与 `active` 同步
+
+两引擎 `save_state()` 在 persist 前调用：
+
+```python
+self._reconcile_legacy_active_flag()   # 旧 JSON 仅 active=True → segment_state=ACTIVE
+self._sync_active_from_segment_state() # active ← segment_occupies_slot(segment_state)
+```
+
+**含义**：`active` 是 `segment_state` 的派生字段。若将来代码直接改 `state.active` 而不走 mixin（`_enter_segment` / `_deactivate` / `_begin_closing` 等），下次 `save_state()` 会被覆盖。**所有生命周期变更必须走 mixin。**
 
 ### 4.3 post-fill 即时 deactivate（替代 `on_bar` 末尾延迟）
 
@@ -184,35 +196,43 @@ def _maybe_deactivate_if_fully_closed(self) -> None:
 
 **chop_grid replenish**：单腿 TP 后若触发 replenish，`_replenish_actions_for_level` 会同步写入 `pending_orders`，此时 inventory 可能已空但段仍在运行，不应 deactivate。仅当 grid 真正收工（inventory + pending 皆空）时才应 `_deactivate("fully_closed")`。
 
-### 4.4 消除 `_live_exchange_has_activity` 全局变量
+### 4.4 P3：decouple exchange activity from ghost/slot（实际实现）
 
-改为每次查询时**直接问 exchange adapter**，不做跨 tick 缓存：
+**目标**：`holds_real_grid_slot()` 与 ghost 检测不再把 exchange activity 当作「占 slot」条件；replenish 仍 consult exchange。
+
+**实现**（`segment_lifecycle.py` + `sync_live_exchange_state`）：
+
+| 路径 | exchange 角色 |
+| ---- | ------------- |
+| `holds_real_grid_slot()` | **不用** exchange；只看 `segment_state` + 本地 pending/inventory |
+| `is_stale_active_ghost()` | 本地空 **且** `not _exchange_has_open_activity()` 才判 ghost |
+| `_maybe_deactivate_if_fully_closed()` | 同上 guard，避免 exchange 仍有挂单时 deactivate |
+| `_maybe_replenish_empty_levels` | `if self._exchange_open_orders: return []` |
+
+与原 P3 草案的差异：**ghost 仍保留 exchange guard**——比「纯本地空即 ghost」更安全，避免交易所有 chop 挂单/仓位时误清段状态。orphan 单由 reconciliation + replenish guard 处理，不单独阻塞 slot 计数。
 
 ```python
 def is_stale_active_ghost(self) -> bool:
-    return (
+    if self._exchange_has_open_activity():
+        return False
+    return bool(
         self.state.active
         and not self.state.pending_orders
         and not self.state.inventory
-        # ← 不再依赖 _live_exchange_has_activity
     )
 ```
 
-简化 ghost 条件：只要本地无仓无挂单就是 ghost。交易所残留由 reconciliation 机制处理，不阻塞 ghost 清理。
-
-**⚠️ Replenishment 交互**：`_maybe_replenish_empty_levels` 使用 `_live_exchange_has_activity` 来避免交易所仍有挂单时的虚假 replenishment：
+`_exchange_open_orders` 在 `sync_live_exchange_state` 中赋值：
 
 ```python
-# chop_grid_live_engine.py:1651-1658
-if (
-    self._live_exchange_has_activity
-    and not self.state.pending_orders
-    and not self.state.inventory
-):
-    return []
+# chop_grid：exchange 仓位仅当本地已有 chop inventory/pending 时才算 activity
+# （避免 trend 残仓或行情推送误导 ghost / replenish）
+self._exchange_open_orders = bool(open_grid_orders) or (
+    bool(positions) and has_local_chop
+)
 ```
 
-P3 需要额外处理这个路径——否则消除 `_live_exchange_has_activity` 后，exchange 仍有 orphan 单时可能触发不当 replenishment。替代方案：在 replenishment 前直接查询 exchange adapter，而非依赖缓存标记。
+trend 引擎同理：`bool(open_trend_orders) or (bool(positions) and has_local)`。
 
 ---
 
@@ -223,7 +243,7 @@ P3 需要额外处理这个路径——否则消除 `_live_exchange_has_activity
 | **P0** ✅ | auto-deactivate（chop + trend）           | 低   | 0.5d（已完成） | 减少 ghost 持续时间至 ≤1 bar |
 | **P1** ✅ | 统一 `_deactivate()`（`SegmentLifecycleMixin`） | 低   | 0.5d（已完成） | 消除 4 处重复代码            |
 | **P2** ✅ | `on_execution_report` 尾部 post-fill 检查 | 中   | 0.5d（已完成） | 关闭 fill→bar 延迟窗口       |
-| **P3** ✅ | 消除 `_live_exchange_has_activity`（ghost/slot） | 中   | 1d（已完成）   | replenish 用 `_exchange_open_orders` |
+| **P3** ✅ | decouple exchange from **slot**；ghost 保留 exchange **guard** | 中   | 1d（已完成）   | `_exchange_open_orders`；replenish + ghost guard |
 | **P4** ✅ | `SegmentState` 状态机 + trend CLOSING   | 高   | 3d（已完成）   | `segment_state` 持久化 + 旧 JSON 迁移 |
 
 ---
@@ -239,6 +259,8 @@ P3 需要额外处理这个路径——否则消除 `_live_exchange_has_activity
 - [x] 重启后 state 加载正确（`segment_state=idle`）
 - [x] TP fill 后 `holds_real_grid_slot()` 返回 `False`（P2 post-fill deactivate）
 - [x] replenish 后再次全平 → `active=False`
+
+**Live 验证（待 paper/prod 观察）**：TP/SL fill 后 concurrency slot 是否在 `on_execution_report` 内立即释放（不靠下一根 bar）。
 
 ---
 
