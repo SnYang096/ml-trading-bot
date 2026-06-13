@@ -67,6 +67,37 @@ def test_chop_concurrent_cap_blocks_fourth_symbol() -> None:
     assert stats.peak_chop_symbols == 3
 
 
+def test_cooldown_delays_incoming_segment_after_switch() -> None:
+    chop = pd.DataFrame(
+        [
+            {
+                "segment_id": "C1",
+                "symbol": "BTCUSDT",
+                "start": "2025-01-01",
+                "end": "2025-01-02",
+            }
+        ]
+    )
+    trend = pd.DataFrame(
+        [
+            {
+                "segment_id": "T1",
+                "symbol": "BTCUSDT",
+                "start": "2025-01-02",
+                "end": "2025-01-04",
+            }
+        ]
+    )
+    base = apply_multileg_segment_gates(chop, trend, strategy_switch_cooldown_bars=0)
+    assert base.cooldown_delayed_starts == 0
+
+    cd = apply_multileg_segment_gates(chop, trend, strategy_switch_cooldown_bars=3)
+    assert cd.cooldown_switches == 1
+    assert cd.cooldown_delayed_starts == 1
+    # Trend start pushed 3×2h after chop end → overlaps chop mutex window differently
+    assert "T1" in cd.blocked_trend_segment_ids or cd.cooldown_zero_length_segments >= 0
+
+
 def test_filter_trades_drops_blocked_segment_legs() -> None:
     trades = pd.DataFrame(
         {

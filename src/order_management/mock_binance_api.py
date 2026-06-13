@@ -75,6 +75,7 @@ class MockBinanceAPI:
         reduce_only: bool = False,
         close_position: bool = False,
         client_order_id: Optional[str] = None,
+        time_in_force: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Simulate placing an order — instant fill at current price."""
         fill_price = price or self._last_prices.get(symbol, 0.0)
@@ -112,6 +113,11 @@ class MockBinanceAPI:
 
     def cancel_order(self, order_id: str, symbol: str) -> bool:
         """Simulate canceling an order."""
+        self._open_orders.pop(order_id, None)
+        return True
+
+    def cancel_algo_order(self, order_id: str, symbol: str) -> bool:
+        """Simulate canceling an algo (stop/tp) order."""
         self._open_orders.pop(order_id, None)
         return True
 
@@ -184,3 +190,19 @@ class MockBinanceAPI:
     def get_balance(self) -> Dict[str, Any]:
         """Mock balance."""
         return {"total": 10000.0, "available": 10000.0}
+
+    def get_symbol_info(self, symbol: str) -> Dict[str, Any]:
+        """Mock symbol info with reasonable defaults."""
+        return {
+            "symbol": symbol,
+            "price_precision": 2,
+            "quantity_precision": 3,
+            "min_notional": 5.0,
+            "min_qty": 0.001,
+            "step_size": 0.001,
+            "tick_size": 0.01,
+        }
+
+    def get_open_orders_for_sl_cleanup(self, symbol: str) -> List[Dict[str, Any]]:
+        """Mock: no open algo orders to clean up."""
+        return []

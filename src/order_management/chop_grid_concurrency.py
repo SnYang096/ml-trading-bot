@@ -141,6 +141,18 @@ class MultiLegConcurrencyGate:
             )
             return False
 
+        # Per-symbol mutex (aligns with apply_multileg_segment_gates replay):
+        # same symbol may only be held by one strategy at a time.
+        owner = self._active_strategy(sym)
+        if owner is not None and owner != strat:
+            logger.info(
+                "multi-leg per-symbol mutex: reject %s/%s (held by %s)",
+                sym,
+                strat,
+                owner,
+            )
+            return False
+
         # Concurrent symbol cap (shared across both strategies).
         active = self._all_active_symbols()
         if sym in active:

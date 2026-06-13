@@ -117,14 +117,11 @@ class MultiLegLiveDaemon:
         # Contract: at most one multi-leg strategy may hold/open on one symbol.
         symbol_owner: Dict[str, str] = {}
         for rt in self.runtimes:
-            try:
-                has_pos = bool(list(rt.engine.local_position_snapshots()))
-            except Exception:
-                has_pos = False
-            if has_pos:
-                sym = str(rt.symbol or "").upper().strip()
-                if sym and sym not in symbol_owner:
-                    symbol_owner[sym] = str(rt.name or "")
+            if not self._runtime_holds_symbol(rt):
+                continue
+            sym = str(rt.symbol or "").upper().strip()
+            if sym and sym not in symbol_owner:
+                symbol_owner[sym] = str(rt.name or "")
         action_count = 0
         rejected_count = 0
         execution_count = 0
@@ -407,6 +404,31 @@ class MultiLegLiveDaemon:
                 sc.record_order_placed(rt.symbol, rt.name)
         except Exception:
             logger.debug("multi-leg funnel record skipped", exc_info=True)
+
+    @staticmethod
+    def _runtime_holds_symbol(rt: StrategyRuntime) -> bool:
+        """True when this engine occupies the symbol (not just filled inventory)."""
+        holds = getattr(rt.engine, "holds_real_grid_slot", None)
+        if callable(holds):
+            try:
+                if bool(holds()):
+                    return True
+            except Exception:
+                logger.debug(
+                    "multi-leg daemon: holds_real_grid_slot raised for %s",
+                    rt.name,
+                    exc_info=True,
+                )
+        try:
+            if bool(list(rt.engine.local_position_snapshots())):
+                return True
+        except Exception:
+            logger.debug(
+                "multi-leg daemon: local_position_snapshots raised for %s",
+                rt.name,
+                exc_info=True,
+            )
+        return False
 
     def _reconcile_due(self, symbol: str) -> bool:
         if self.reconcile_interval_seconds <= 0:

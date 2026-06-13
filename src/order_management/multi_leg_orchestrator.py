@@ -142,6 +142,28 @@ class MultiLegLiveOrchestrator:
             else []
         )
         _call_optional(self.engine, "on_execution_results", execution_results)
+
+        # ── Drain follow-up actions (e.g. stop-loss / take-profit after entry fills) ──
+        # The engine queues protection orders in _pending_actions during
+        # on_execution_results.  In the user-stream path they are drained by
+        # on_execution_report → pop_pending_actions; in the sync
+        # (run_actions / backtest) path we must drain them here, otherwise
+        # stop-loss orders are never sent to the exchange.
+        max_follow_up_rounds = 8
+        for _ in range(max_follow_up_rounds):
+            follow_ups = _call_snapshot(self.engine, "pop_pending_actions")
+            if not follow_ups:
+                break
+            fu_results = self.adapter.execute_actions(follow_ups)
+            _call_optional(self.engine, "on_execution_results", fu_results)
+            # Extend the outer execution_results so callers see the full
+            # set of placed orders (including protection orders).
+            if fu_results:
+                if isinstance(execution_results, list):
+                    execution_results.extend(fu_results)
+                else:
+                    execution_results = list(fu_results)
+
         reconciliation = None
         reconciliation_results: List[MultiLegExecutionResult] = []
         if reconcile:

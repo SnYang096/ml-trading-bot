@@ -199,6 +199,12 @@ def main() -> None:
     ap.add_argument("--max-loss-per-segment", type=float, default=0.02)
     ap.add_argument("--max-gross-exposure-units", type=int, default=4)
     ap.add_argument("--max-concurrent-multi-leg-symbols", type=int, default=0)
+    ap.add_argument(
+        "--strategy-switch-cooldown-bars",
+        type=int,
+        default=None,
+        help="chop↔trend switch delay in 2h bars (default: from constitution or 0)",
+    )
     ap.add_argument("--unit-notional", type=float, default=None)
     ap.add_argument(
         "--with-constitution",
@@ -328,12 +334,23 @@ def main() -> None:
         _print_metrics("trend_scalp alone", m)
     print()
 
+    cooldown_bars = args.strategy_switch_cooldown_bars
+    if cooldown_bars is None and args.constitution_yaml:
+        ml = multi_leg_section(load_constitution_dict(Path(args.constitution_yaml)))
+        rs = ml.get("risk_limits") or {}
+        cd = rs.get("strategy_switch_cooldown_bars")
+        if cd is not None:
+            cooldown_bars = int(cd)
+    if cooldown_bars is None:
+        cooldown_bars = 0
+
     gate_stats = apply_multileg_segment_gates(
         chop_seg,
         trend_seg,
         max_concurrent_multi_leg_symbols=int(
             args.max_concurrent_multi_leg_symbols or 0
         ),
+        strategy_switch_cooldown_bars=int(cooldown_bars or 0),
     )
     chop_allowed = filter_trades_by_segment_blocks(
         chop_tr, gate_stats.blocked_chop_segment_ids
@@ -351,6 +368,12 @@ def main() -> None:
         f"  trend blocked segments: {gate_stats.blocked_trend_segments} "
         f"(symbol conflicts={gate_stats.peak_symbol_conflicts})"
     )
+    if int(cooldown_bars or 0) > 0:
+        print(
+            f"  cooldown {cooldown_bars} bars: switches={gate_stats.cooldown_switches} "
+            f"delayed={gate_stats.cooldown_delayed_starts} "
+            f"zero_len={gate_stats.cooldown_zero_length_segments}"
+        )
     if args.max_concurrent_multi_leg_symbols > 0:
         print(
             f"  max_concurrent_multi_leg_symbols={args.max_concurrent_multi_leg_symbols}"

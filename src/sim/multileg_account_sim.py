@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Set, Tuple
 
@@ -10,6 +11,7 @@ import pandas as pd
 
 StrategyName = Literal["chop_grid", "trend_scalp"]
 FuseMode = Literal["hard", "tier_derate", "tier_daily_scaled"]
+BAR_MINUTES = 120  # 2h bars; matches MultiLegConcurrencyGate
 
 
 @dataclass
@@ -20,6 +22,9 @@ class MultilegGateStats:
     peak_symbol_conflicts: int = 0
     blocked_chop_segment_ids: Set[str] = field(default_factory=set)
     blocked_trend_segment_ids: Set[str] = field(default_factory=set)
+    cooldown_switches: int = 0
+    cooldown_delayed_starts: int = 0
+    cooldown_zero_length_segments: int = 0
 
 
 def _prep_segments(df: pd.DataFrame) -> pd.DataFrame:
@@ -35,11 +40,77 @@ def _prep_segments(df: pd.DataFrame) -> pd.DataFrame:
     return out.dropna(subset=["start", "end", "segment_id", "symbol"])
 
 
+def _shift_segment_starts_after_switch(
+    chop: pd.DataFrame,
+    trend: pd.DataFrame,
+    *,
+    cooldown_bars: int,
+) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, int]]:
+    """Delay segment starts that flip strategy too soon after the prior segment ended.
+
+    Segment-level replay cannot express live ``MultiLegConcurrencyGate`` cooldown
+    exactly (live allows immediate takeover; cooldown only blocks the deactivated
+    strategy while the other holds — already covered by per-symbol mutex here).
+    This shift approximates switch friction for offline account replay and matches
+    ``scripts/sim_chop_grid_cooldown_ablation.py``.
+    """
+    meta = {"switches": 0, "delayed": 0, "blocked": 0}
+    if cooldown_bars <= 0 or chop.empty or trend.empty:
+        return chop, trend, meta
+
+    dup_chop = chop.copy()
+    dup_trend = trend.copy()
+    cooldown = timedelta(minutes=int(cooldown_bars) * BAR_MINUTES)
+
+    for sym in sorted(set(dup_chop["symbol"].unique()) & set(dup_trend["symbol"].unique())):
+        timeline: List[tuple] = []
+        for _, row in dup_chop[dup_chop["symbol"] == sym].sort_values("start").iterrows():
+            timeline.append(
+                (row["start"], row["end"], "chop_grid", str(row["segment_id"]))
+            )
+        for _, row in dup_trend[dup_trend["symbol"] == sym].sort_values("start").iterrows():
+            timeline.append(
+                (row["start"], row["end"], "trend_scalp", str(row["segment_id"]))
+            )
+        timeline.sort(key=lambda x: x[0])
+
+        prev_end: Optional[pd.Timestamp] = None
+        prev_strategy: Optional[StrategyName] = None
+        for start, end, strat, seg_id in timeline:
+            if (
+                prev_end is not None
+                and prev_strategy is not None
+                and prev_strategy != strat
+            ):
+                meta["switches"] += 1
+                earliest = prev_end + cooldown
+                if start < earliest:
+                    meta["delayed"] += 1
+                    new_start = earliest
+                    if new_start >= end:
+                        meta["blocked"] += 1
+                        if strat == "chop_grid":
+                            dup_chop.loc[dup_chop["segment_id"] == seg_id, "start"] = end
+                        else:
+                            dup_trend.loc[dup_trend["segment_id"] == seg_id, "start"] = end
+                    elif strat == "chop_grid":
+                        dup_chop.loc[dup_chop["segment_id"] == seg_id, "start"] = new_start
+                    else:
+                        dup_trend.loc[dup_trend["segment_id"] == seg_id, "start"] = new_start
+            prev_end = end
+            prev_strategy = strat
+
+    dup_chop = dup_chop[dup_chop["start"] < dup_chop["end"]].copy()
+    dup_trend = dup_trend[dup_trend["start"] < dup_trend["end"]].copy()
+    return dup_chop, dup_trend, meta
+
+
 def apply_multileg_segment_gates(
     chop_segments: pd.DataFrame,
     trend_segments: pd.DataFrame,
     *,
     max_concurrent_multi_leg_symbols: int = 0,
+    strategy_switch_cooldown_bars: int = 0,
     strategy_priority: Tuple[StrategyName, ...] = ("chop_grid", "trend_scalp"),
 ) -> MultilegGateStats:
     """Replay segment starts/ends on one account timeline.
@@ -48,6 +119,8 @@ def apply_multileg_segment_gates(
       across both chop_grid + trend_scalp (0 = unlimited).
     - Per-symbol mutex: if a symbol is owned by one strategy, the other cannot
       start a new segment on that symbol until the owner segment ends.
+    - ``strategy_switch_cooldown_bars``: after chop↔trend switch on a symbol,
+      delay the incoming segment's ``start`` by N×2h (segment-level anti-thrash).
     - Same-timestamp tie-break: ends before starts; starts follow ``strategy_priority``.
     """
     stats = MultilegGateStats()
@@ -55,6 +128,14 @@ def apply_multileg_segment_gates(
     trend = _prep_segments(trend_segments)
     if chop.empty and trend.empty:
         return stats
+
+    if strategy_switch_cooldown_bars > 0:
+        chop, trend, cd_meta = _shift_segment_starts_after_switch(
+            chop, trend, cooldown_bars=strategy_switch_cooldown_bars
+        )
+        stats.cooldown_switches = int(cd_meta["switches"])
+        stats.cooldown_delayed_starts = int(cd_meta["delayed"])
+        stats.cooldown_zero_length_segments = int(cd_meta["blocked"])
 
     pri = {name: i for i, name in enumerate(strategy_priority)}
     events: List[tuple] = []

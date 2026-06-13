@@ -29,6 +29,16 @@ from src.order_management.multi_leg_reconciliation import (
 logger = logging.getLogger(__name__)
 
 
+def _normalize_entry_leg_id(leg_hint: str) -> str:
+    """Strip _sl / _tp suffix from leg hints that refer to protection orders."""
+    text = str(leg_hint or "").strip()
+    if text.endswith("_tp"):
+        return text[: -len("_tp")]
+    if text.endswith("_sl"):
+        return text[: -len("_sl")]
+    return text
+
+
 @dataclass(frozen=True)
 class DualAddEngineConfig:
     entry_trend_min: float = 0.80
@@ -620,6 +630,10 @@ class DualAddTrendLiveEngine:
         self.save_state()
 
     def on_execution_report(self, report: Dict[str, Any]) -> None:
+        """Apply normalized user-stream fill updates to local pending inventory."""
+        if self._handle_protection_fill(report):
+            self.save_state()
+            return
         order = self._find_order(
             exchange_id=str(report.get("order_id") or ""),
             client_id=str(report.get("client_order_id") or ""),
@@ -957,6 +971,88 @@ class DualAddTrendLiveEngine:
             "reason": reason,
             "timestamp": timestamp,
         }
+
+    def _handle_protection_fill(self, report: Dict[str, Any]) -> bool:
+        """Detect SL/TP protection fills and remove the position from inventory.
+
+        Matches by:
+          1. ``report.order_id`` (exchange id) against ``pos.protection_order_ids``
+             — populated by ``on_execution_results(action="place_protection")``.
+          2. ``report.client_order_id`` against the same id list.
+          3. ``report.leg_id`` (or ``local_order_id``) — orchestrator-provided
+             hint of the entry order id, with optional ``_sl`` / ``_tp`` suffix.
+        """
+        status = str(report.get("status") or "").upper()
+        if status != "FILLED":
+            return False
+        ex_id = str(report.get("order_id") or "")
+        cid = str(report.get("client_order_id") or "")
+        leg_hint = _normalize_entry_leg_id(
+            str(report.get("leg_id") or report.get("local_order_id") or "")
+        )
+        filled_qty = _as_float(report.get("filled_qty"), 0.0)
+        kind = str(report.get("protection_type") or "").lower()
+        if not kind:
+            order_type = str(report.get("order_type") or "").strip().upper()
+            if order_type in {
+                "STOP",
+                "STOP_MARKET",
+                "STOP_LOSS",
+                "STOP_LOSS_LIMIT",
+                "TRAILING_STOP_MARKET",
+            }:
+                kind = "stop_loss"
+            elif order_type in {
+                "TAKE_PROFIT",
+                "TAKE_PROFIT_MARKET",
+                "TAKE_PROFIT_LIMIT",
+            }:
+                kind = "take_profit"
+
+        for pos in list(self.state.inventory):
+            prot_ids = {str(x) for x in pos.protection_order_ids if str(x)}
+            if (ex_id and ex_id in prot_ids) or (cid and cid in prot_ids):
+                close_qty = filled_qty if filled_qty > 0 else float(pos.quantity or 0.0)
+                remaining = max(0.0, float(pos.quantity or 0.0) - close_qty)
+                if remaining > 1e-8:
+                    # Partial fill: shrink the position but keep it alive
+                    pos.quantity = remaining
+                    if ex_id:
+                        pos.protection_order_ids = [
+                            pid for pid in pos.protection_order_ids if str(pid) != ex_id
+                        ]
+                    logger.info(
+                        "dual_add_trend partial %s fill: leg_id=%s closed_qty=%.8f "
+                        "remaining=%.8f",
+                        kind,
+                        pos.leg_id,
+                        close_qty,
+                        remaining,
+                    )
+                else:
+                    # Full close: remove the position entirely
+                    self.state.inventory.remove(pos)
+                    logger.info(
+                        "dual_add_trend %s closed position: leg_id=%s side=%s qty=%.8f",
+                        kind,
+                        pos.leg_id,
+                        pos.side,
+                        close_qty,
+                    )
+                return True
+
+        # Fallback: match by leg_id hint (strip _sl/_tp suffix from order_id)
+        if leg_hint:
+            for pos in list(self.state.inventory):
+                if str(pos.leg_id) == leg_hint:
+                    self.state.inventory.remove(pos)
+                    logger.info(
+                        "dual_add_trend protection fill by leg_hint: leg_id=%s side=%s",
+                        pos.leg_id,
+                        pos.side,
+                    )
+                    return True
+        return False
 
     def _protection_actions(
         self, *, pos: DualAddPosition, timestamp: str

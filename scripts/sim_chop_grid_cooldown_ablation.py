@@ -15,9 +15,8 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict
 
 import pandas as pd
 
@@ -34,101 +33,6 @@ from src.sim.multileg_account_sim import (
     load_trend_trades,
     simulate_account_trades,
 )
-from src.config.multileg_sizing import resolve_multi_leg_unit_notionals
-from src.live_data_stream.constitution_config import (
-    load_constitution_dict,
-    multi_leg_section,
-)
-
-BAR_MINUTES = 120  # 2h bars
-
-CooldownMode = str  # "none" | "after_end" | "from_last_start"
-
-
-def _add_timedelta(timestamp, bars: int):
-    ts = pd.Timestamp(timestamp)
-    return ts + timedelta(minutes=int(bars) * BAR_MINUTES)
-
-
-def apply_cooldown_to_segments(
-    chop: pd.DataFrame,
-    trend: pd.DataFrame,
-    *,
-    cooldown_bars: int = 0,
-) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, int]]:
-    """Delay segment starts that switch strategy too soon after previous end."""
-    if cooldown_bars <= 0:
-        return chop, trend, {"switches": 0, "delayed": 0, "blocked": 0}
-    if trend.empty:
-        return chop, trend, {"switches": 0, "delayed": 0, "blocked": 0}
-
-    dup_chop = chop.copy()
-    dup_trend = trend.copy()
-    dup_chop["start"] = pd.to_datetime(dup_chop["start"])
-    dup_chop["end"] = pd.to_datetime(dup_chop["end"])
-    dup_trend["start"] = pd.to_datetime(dup_trend["start"])
-    dup_trend["end"] = pd.to_datetime(dup_trend["end"])
-
-    stats: Dict[str, int] = {"switches": 0, "delayed": 0, "blocked": 0}
-
-    for sym in sorted(
-        set(dup_chop["symbol"].unique()) & set(dup_trend["symbol"].unique())
-    ):
-        chop_sym = dup_chop[dup_chop["symbol"] == sym].sort_values("start")
-        trend_sym = dup_trend[dup_trend["symbol"] == sym].sort_values("start")
-
-        # Build timeline: interleave chop/trend segments.
-        timeline: list = []
-        for _, row in chop_sym.iterrows():
-            timeline.append((row["start"], row["end"], "chop_grid", row["segment_id"]))
-        for _, row in trend_sym.iterrows():
-            timeline.append(
-                (row["start"], row["end"], "trend_scalp", row["segment_id"])
-            )
-        timeline.sort(key=lambda x: x[0])
-
-        prev_end = None
-        prev_strategy = None
-
-        for i, (start, end, strat, seg_id) in enumerate(timeline):
-            if (
-                prev_end is not None
-                and prev_strategy is not None
-                and prev_strategy != strat
-            ):
-                stats["switches"] += 1
-                earliest = _add_timedelta(prev_end, cooldown_bars)
-                if start < earliest:
-                    stats["delayed"] += 1
-                    new_start = earliest
-                    if new_start >= end:
-                        # Segment entirely blocked by cooldown.
-                        stats["blocked"] += 1
-                        if strat == "chop_grid":
-                            dup_chop.loc[dup_chop["segment_id"] == seg_id, "start"] = (
-                                end  # collapse to zero-length → filtered later
-                            )
-                        else:
-                            dup_trend.loc[
-                                dup_trend["segment_id"] == seg_id, "start"
-                            ] = end
-                    else:
-                        # Shift start, keep end.
-                        if strat == "chop_grid":
-                            dup_chop.loc[dup_chop["segment_id"] == seg_id, "start"] = (
-                                new_start
-                            )
-                        else:
-                            dup_trend.loc[
-                                dup_trend["segment_id"] == seg_id, "start"
-                            ] = new_start
-            prev_end = end
-            prev_strategy = strat
-
-    # Drop zero-length segments.
-    dup_chop = dup_chop[dup_chop["start"] < dup_chop["end"]].copy()
-    dup_trend = dup_trend[dup_trend["start"] < dup_trend["end"]].copy()
-    return dup_chop, dup_trend, stats
 
 
 def _print_metrics(title: str, m: Dict[str, float], *, extra: str = "") -> None:
@@ -206,15 +110,13 @@ def main() -> None:
     )
     print()
 
-    # Cooldown variants
+    # Cooldown variants (integrated in apply_multileg_segment_gates)
     for cb in [3, 5, 8]:
-        c_chop, c_trend, cd_stats = apply_cooldown_to_segments(
-            chop_seg.copy(), trend_seg.copy(), cooldown_bars=cb
-        )
         c_gate = apply_multileg_segment_gates(
-            c_chop,
-            c_trend,
+            chop_seg,
+            trend_seg,
             max_concurrent_multi_leg_symbols=args.max_concurrent_multi_leg_symbols,
+            strategy_switch_cooldown_bars=cb,
         )
         c_chop_t = filter_trades_by_segment_blocks(
             chop_raw_trades, c_gate.blocked_chop_segment_ids
@@ -228,7 +130,9 @@ def main() -> None:
         )
         print(f"=== Cooldown {cb} bars ===")
         print(
-            f"  switches={cd_stats['switches']} delayed={cd_stats['delayed']} blocked={cd_stats['blocked']}"
+            f"  switches={c_gate.cooldown_switches} "
+            f"delayed={c_gate.cooldown_delayed_starts} "
+            f"zero_len={c_gate.cooldown_zero_length_segments}"
         )
         _print_metrics("COMBINED", c_result)
         print(

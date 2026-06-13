@@ -229,20 +229,46 @@ def test_trend_ghost_active_engine_does_not_occupy_a_slot() -> None:
 # ── cooldown tests ──────────────────────────────────────────────────────────
 
 
+def test_gate_blocks_cross_strategy_when_symbol_held() -> None:
+    """chop_grid active on SOL must block trend_scalp entry (per-symbol mutex)."""
+    gate = MultiLegConcurrencyGate(6, cooldown_bars=0)
+    chop_eng = _FakeEngine(True, holds=True)
+    trend_eng = _FakeEngine(False)
+    gate.register("SOLUSDT", chop_eng, strategy="chop_grid")
+    gate.register("SOLUSDT", trend_eng, strategy="trend_scalp")
+
+    assert gate.allow_new_segment("SOLUSDT", strategy="chop_grid") is True
+    assert gate.allow_new_segment("SOLUSDT", strategy="trend_scalp") is False
+
+
+def test_gate_blocks_chop_when_trend_holds_symbol() -> None:
+    gate = MultiLegConcurrencyGate(6, cooldown_bars=0)
+    chop_eng = _FakeEngine(False)
+    trend_eng = _FakeEngine(True, holds=True)
+    gate.register("BTCUSDT", chop_eng, strategy="chop_grid")
+    gate.register("BTCUSDT", trend_eng, strategy="trend_scalp")
+
+    assert gate.allow_new_segment("BTCUSDT", strategy="trend_scalp") is True
+    assert gate.allow_new_segment("BTCUSDT", strategy="chop_grid") is False
+
+
 def test_cooldown_zero_means_no_cooldown() -> None:
-    """cooldown_bars=0 disables cooldown entirely."""
+    """cooldown_bars=0 disables cooldown entirely (mutex still applies)."""
     gate = MultiLegConcurrencyGate(6, cooldown_bars=0)
     chop_eng = _FakeEngine(True)
     trend_eng = _FakeEngine(False)
     gate.register("BTCUSDT", chop_eng, strategy="chop_grid")
     gate.register("BTCUSDT", trend_eng, strategy="trend_scalp")
 
-    # chop deactivates, trend takes over
+    # chop deactivates, trend takes over → per-symbol mutex blocks chop
     chop_eng.state.active = False
     gate.notify_deactivation("BTCUSDT", "chop_grid")
     trend_eng.state.active = True
+    assert gate.allow_new_segment("BTCUSDT", strategy="chop_grid") is False
 
-    # chop should be allowed immediately (no cooldown)
+    # trend also exits; with cooldown=0 chop may re-enter immediately
+    trend_eng.state.active = False
+    gate.notify_deactivation("BTCUSDT", "trend_scalp")
     assert gate.allow_new_segment("BTCUSDT", strategy="chop_grid") is True
 
 
@@ -267,23 +293,24 @@ def test_cooldown_blocks_reactivation_within_window() -> None:
 
 
 def test_cooldown_allows_reactivation_after_expiry() -> None:
-    """After cooldown expires, the deactivated strategy can re-activate."""
+    """After cooldown expires and the slot is free, chop can re-activate."""
     gate = MultiLegConcurrencyGate(6, cooldown_bars=3)
     chop_eng = _FakeEngine(True)
     trend_eng = _FakeEngine(False)
     gate.register("BTCUSDT", chop_eng, strategy="chop_grid")
     gate.register("BTCUSDT", trend_eng, strategy="trend_scalp")
 
-    # Simulate: chop deactivates, trend takes over
+    # Simulate: chop deactivates, trend takes over, then trend also exits
     chop_eng.state.active = False
     gate.notify_deactivation("BTCUSDT", "chop_grid")
     trend_eng.state.active = True
+    trend_eng.state.active = False
+    gate.notify_deactivation("BTCUSDT", "trend_scalp")
 
     # Fake time passing beyond cooldown (3 bars × 120 min × 60 s = 21600 s)
     import src.order_management.chop_grid_concurrency as mod
 
     original_monotonic = mod.time.monotonic
-    # Shift monotonic clock forward by cooldown + 1 second
     offset = gate._cooldown_seconds + 1
     mod.time.monotonic = lambda: original_monotonic() + offset
 

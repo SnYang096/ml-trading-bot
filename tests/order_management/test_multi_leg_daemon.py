@@ -367,6 +367,37 @@ def test_daemon_skips_exchange_sync_for_empty_actions_until_reconcile_due() -> N
     adapter.execute_actions.assert_not_called()
 
 
+def test_daemon_blocks_trend_when_chop_holds_slot_without_inventory() -> None:
+    """Pending-only chop segment must still block trend opens on the same symbol."""
+    bar = MultiLegBarEvent(
+        symbol="BTCUSDT",
+        timestamp="2026-01-01 00:00:00+00:00",
+        high=101.0,
+        low=99.0,
+        close=100.0,
+        atr=2.0,
+        features={},
+    )
+    engine_a = FakeEngine()
+    engine_b = FakeEngine()
+    engine_a.holds_real_grid_slot = lambda: True
+    engine_a.local_position_snapshots = lambda: []
+    adapter_a = _adapter()
+    adapter_b = _adapter()
+    daemon = MultiLegLiveDaemon(
+        bar_provider=FakeProvider([bar]),
+        runtimes=[
+            _runtime("chop_grid", "BTCUSDT", engine_a, adapter_a),
+            _runtime("dual_add_trend", "BTCUSDT", engine_b, adapter_b),
+        ],
+    )
+
+    report = daemon.run_once()
+
+    assert report.rejected_count >= 1
+    adapter_b.execute_actions.assert_not_called()
+
+
 def test_daemon_blocks_opening_actions_when_other_strategy_already_owns_symbol() -> (
     None
 ):
