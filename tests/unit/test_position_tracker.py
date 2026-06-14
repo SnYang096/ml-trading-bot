@@ -19,6 +19,7 @@ import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, call, patch
 
+from src.order_management.models import Position, PositionSide
 from src.order_management.position_tracker import PositionTracker
 from src.time_series_model.core.trade_intent import TradeIntent
 from src.time_series_model.live.position_logic import build_position_dict
@@ -243,6 +244,83 @@ class TestAddAndRetrieve:
             state_path=state_path,
         )
         assert restored_again.restore_from_disk(live_symbols={"BTCUSDT"}) == 0
+
+
+class TestBootstrapFromExchange:
+
+    def test_bootstrap_sets_conservative_sl_and_tp(self, tmp_path):
+        state_path = tmp_path / "BNBUSDT.json"
+        tracker = PositionTracker(
+            order_manager=_make_om(),
+            symbol="BNBUSDT",
+            default_bar_minutes=120,
+            state_path=state_path,
+        )
+        pid = tracker.bootstrap_from_exchange_position(
+            symbol="BNBUSDT",
+            side="long",
+            entry_price=630.68,
+            qty=0.31,
+        )
+        assert pid is not None
+        pos = tracker.get(pid)
+        assert pos is not None
+        assert pos["stop_loss_price"] == pytest.approx(621.2198, abs=1e-4)
+        assert pos["take_profit_price"] == pytest.approx(649.6004, abs=1e-4)
+        assert pos["stop_loss_price"] < pos["entry_price"]
+        assert pos["take_profit_price"] > pos["entry_price"]
+
+    def test_bootstrap_merge_close_uses_canonical_sqlite_row(self, tmp_path):
+        """Bootstrap merge must not leave exchange_sync row open after close()."""
+        from src.order_management.models import PositionStatus
+        from src.order_management.storage import Storage
+
+        db_path = tmp_path / "order_management.db"
+        storage = Storage(str(db_path))
+        om = _make_om()
+        om.storage = storage
+        state_path = tmp_path / "BNBUSDT.json"
+
+        existing_id = "BNB:exchange_sync_old"
+        storage.create_position(
+            Position(
+                position_id=existing_id,
+                symbol="BNBUSDT",
+                side=PositionSide.LONG,
+                entry_time=datetime.now(timezone.utc),
+                entry_price=630.68,
+                initial_size=0.31,
+                current_size=0.31,
+                total_cost=630.68 * 0.31,
+                status=PositionStatus.OPEN,
+                strategy_id="tpc",
+            )
+        )
+
+        tracker = PositionTracker(
+            order_manager=om,
+            symbol="BNBUSDT",
+            default_bar_minutes=120,
+            state_path=state_path,
+        )
+        pid = tracker.bootstrap_from_exchange_position(
+            symbol="BNBUSDT",
+            side="long",
+            entry_price=630.68,
+            qty=0.31,
+        )
+        assert pid == existing_id
+        assert tracker.get(existing_id) is not None
+        assert "bootstrap_" not in pid
+
+        tracker.close(existing_id, qty=0.31, reason="stop_loss")
+
+        open_rows = storage.get_open_positions("BNBUSDT")
+        assert open_rows == []
+        row = storage.get_position(existing_id)
+        assert row is not None
+        assert row.status == PositionStatus.CLOSED
+        assert row.exit_reason == "stop_loss"
 
 
 class TestEnforceAll:

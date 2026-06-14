@@ -455,6 +455,29 @@ def collect_open_positions(
                 # else: exchange shows 0 → drop as stale/closed
             merged = filtered
 
+    # ── Deduplicate: same (scope, symbol, side) with identical qty → keep
+    #     most recent entry_time (fixes exchange-sync + bootstrap dupes). ──
+    dedup: Dict[tuple, Dict[str, Any]] = {}
+    for row in merged:
+        scope = str(row.get("scope") or "")
+        # spot: batch-level; multi_leg: leg-level — trust upstream dedup.
+        if scope not in ("trend",):
+            continue
+        sym = str(row.get("symbol") or "").upper()
+        side = str(row.get("side") or "long")
+        dedup_key = (scope, sym, side)
+        ts = int(row.get("entry_time") or 0)
+        existing = dedup.get(dedup_key)
+        if existing is None or ts > int(existing.get("entry_time") or 0):
+            dedup[dedup_key] = row
+    if dedup:
+        keep_ids = {str(r.get("position_id") or "") for r in dedup.values()}
+        merged = [
+            r for r in merged
+            if str(r.get("scope") or "") != "trend"
+            or str(r.get("position_id") or "") in keep_ids
+        ]
+
     merged.sort(
         key=lambda r: (
             int(r.get("entry_time") or 0),

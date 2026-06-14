@@ -1,6 +1,6 @@
 # 架构文档索引（工程专题）
 
-**最后更新**: 2026-04-07  
+**最后更新**: 2026-06-14  
 **相关文档**: [主文档索引](../README.md) · [系统架构（统一版）](../ARCHITECTURE.md)
 
 > **主线**：当前产品叙述以 **BPC 纯规则** 为主（见根目录 `ARCHITECTURE.md`）。长篇随笔、NN/Router 哲学对比等已迁至 **[docs/archive/architecture/](../archive/architecture/README.md)**。
@@ -40,6 +40,7 @@
 | -------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | [segment-lifecycle.md](segment-lifecycle.md)                   | C multileg **段生命周期专题**（ghost 根因 + P0–P4 实现 + 单测）；可观测性见 abc 文档 |
 | [abc_execution_layer_issues_CN.md](abc_execution_layer_issues_CN.md) | ABC **执行层总账**：近期修复、TruthSync 术语、对账 metrics Phase 0–6、Live 观察 |
+| [trend_position_state_and_truth_sync_CN.md](trend_position_state_and_truth_sync_CN.md) | **B·Trend 持仓三份状态**、2026-06 BNB 事故、补丁与 TrendPositionTruthSync 改进提案 |
 | [backtest_vs_live_execution.md](backtest_vs_live_execution.md) | 回测与实盘执行差异（必读中包含）                                            |
 
 ---

@@ -228,6 +228,71 @@ def _exchange_live_symbols(order_manager) -> Optional[set[str]]:
     return live_symbols
 
 
+def _bootstrap_missing_position_trackers(
+    *,
+    manager,
+    order_manager,
+    symbols: List[str],
+) -> int:
+    """Auto-bootstrap PositionTracker from exchange when JSON snapshots are missing.
+
+    Returns count of successfully bootstrapped symbols.
+    """
+    if order_manager is None:
+        return 0
+    api = getattr(order_manager, "binance_api", None)
+    if api is None:
+        return 0
+    try:
+        exchange_positions = api.get_positions()
+    except Exception as e:
+        logger.warning("auto-bootstrap: 查询 Binance 持仓失败: %s", e)
+        return 0
+
+    ex_by_symbol: dict[str, list] = {}
+    for p in exchange_positions:
+        raw_sym = _ccxt_symbol_to_raw(p.get("symbol", ""))
+        if raw_sym:
+            ex_by_symbol.setdefault(raw_sym, []).append(p)
+
+    bootstrapped = 0
+    for sym in symbols:
+        legs = ex_by_symbol.get(sym.upper(), [])
+        if not legs:
+            continue
+        try:
+            listener = manager.get_listener(sym)
+        except Exception:
+            continue
+        if listener is None:
+            continue
+        tracker = getattr(listener, "_position_tracker", None)
+        if tracker is None or not hasattr(tracker, "bootstrap_from_exchange_position"):
+            continue
+        for leg in legs:
+            qty = abs(float(leg.get("size") or leg.get("contracts") or 0))
+            if qty <= 0:
+                continue
+            side = "short" if str(leg.get("side", "")).lower() == "short" else "long"
+            entry = float(leg.get("entry_price") or 0.0)
+            if entry <= 0:
+                continue
+            pid = tracker.bootstrap_from_exchange_position(
+                symbol=sym.upper(),
+                side=side,
+                entry_price=entry,
+                qty=qty,
+            )
+            if pid:
+                bootstrapped += 1
+    if bootstrapped:
+        logger.warning(
+            "auto-bootstrap: 为 %d 个缺失快照的 symbol 从交易所重建了 PositionTracker",
+            bootstrapped,
+        )
+    return bootstrapped
+
+
 def _restore_position_trackers_from_disk(
     *,
     manager,
@@ -271,6 +336,12 @@ def _restore_position_trackers_from_disk(
             "PositionTracker 恢复: 交易所有仓但无本地执行快照，软件 trailing/结构出场"
             "无法完整恢复: %s",
             missing_snapshots,
+        )
+        # ── Auto-bootstrap: create minimal tracker entries from exchange data ──
+        _bootstrap_missing_position_trackers(
+            manager=manager,
+            order_manager=order_manager,
+            symbols=missing_snapshots,
         )
     logger.info(
         "PositionTracker 恢复完成: restored=%d live_symbols=%s",

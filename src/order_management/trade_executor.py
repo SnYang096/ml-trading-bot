@@ -267,6 +267,7 @@ class TradeExecutor:
 
         # ── 6. 保护挂单（SL / TP）──
         close_side = OrderSide.SELL if side == OrderSide.BUY else OrderSide.BUY
+        position_side = "LONG" if side == OrderSide.BUY else "SHORT"
         if take_profit_price is not None:
             try:
                 tp_order = self.order_manager.place_order(
@@ -280,6 +281,7 @@ class TradeExecutor:
                     # closePosition GTE conditional per symbol+positionSide (SL or TP).
                     close_position=False,
                     position_id=position_id,
+                    position_side=position_side,
                 )
                 pos["_exchange_tp_order_id"] = tp_order.order_id
             except Exception:
@@ -305,6 +307,7 @@ class TradeExecutor:
                         reduce_only=True,
                         close_position=True,
                         position_id=position_id,
+                        position_side=position_side,
                     )
                     pos["_exchange_sl_order_id"] = sl_order.order_id
                     pos["_exchange_sl_price"] = stop_loss_price

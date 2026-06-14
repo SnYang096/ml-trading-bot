@@ -7,6 +7,8 @@
 
 **与 segment-lifecycle 的分工**：后者讲 **ghost / slot / `_deactivate` 状态机**（代码已合并）；本文讲 **执行层总账 + 对账 metrics + TruthSync 路线图**。Live 验收项两篇交叉引用（segment §6 ↔ 本文 Phase 5）。
 
+**B·Trend 持仓专题**（JSON / SQLite / CMS 分叉、BNB 2026-06 事故）：见 [trend_position_state_and_truth_sync_CN.md](trend_position_state_and_truth_sync_CN.md)。
+
 ---
 
 ## 1. 近期重大修复（执行相关）

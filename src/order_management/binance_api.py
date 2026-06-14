@@ -1068,6 +1068,15 @@ class BinanceAPI:
             }:
                 raise ValueError(f"position_side must be LONG/SHORT: {position_side}")
             if self.hedge_mode:
+                # P0 defense-in-depth: MARKET + closePosition=True triggers -4136 on Binance.
+                # STOP_MARKET / TAKE_PROFIT_MARKET conditional orders may use closePosition
+                # with positionSide; MARKET (immediate-fill) orders must use qty+reduceOnly.
+                _immediate_fill_types = {OrderType.MARKET, OrderType.LIMIT}
+                if close_position and order_type in _immediate_fill_types:
+                    raise ValueError(
+                        f"Hedge Mode 下 {order_type.value} 平仓不能使用 closePosition=True "
+                        f"(Binance -4136); 应使用 positionSide + qty 或 reduceOnly + qty"
+                    )
                 # Hedge Mode 下必须指定 positionSide，且不能使用 reduceOnly
                 # 开仓: BUY→LONG, SELL→SHORT
                 # 平仓(reduce_only): BUY→SHORT, SELL→LONG
@@ -1079,7 +1088,8 @@ class BinanceAPI:
                 else:
                     # 开仓：方向与 side 一致
                     params["positionSide"] = "LONG" if ccxt_side == "buy" else "SHORT"
-                # Hedge Mode 下 closePosition 仍然有效，reduceOnly 无效（已用 positionSide 代替）
+                # Hedge Mode 下 conditional closePosition 有效 (STOP_MARKET / TP_MARKET);
+                # reduceOnly 无效（已用 positionSide 代替）
                 if close_position:
                     params["closePosition"] = True
             else:

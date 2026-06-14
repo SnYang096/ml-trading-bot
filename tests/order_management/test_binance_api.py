@@ -570,6 +570,72 @@ def test_place_stop_order_no_stop_price(binance_api):
         )
 
 
+# P0: -4136 defense-in-depth
+
+def test_hedge_mode_market_with_close_position_raises(binance_api):
+    """Hedge Mode 下 MARKET + closePosition=True 触发 -4136，应提前拦截"""
+    binance_api.hedge_mode = True
+
+    with pytest.raises(ValueError, match="-4136"):
+        binance_api.place_order(
+            symbol="BTCUSDT",
+            side=OrderSide.SELL,
+            order_type=OrderType.MARKET,
+            quantity=0.1,
+            close_position=True,
+        )
+
+
+def test_hedge_mode_limit_with_close_position_raises(binance_api):
+    """Hedge Mode 下 LIMIT + closePosition=True 触发 -4136，应提前拦截"""
+    binance_api.hedge_mode = True
+
+    with pytest.raises(ValueError, match="-4136"):
+        binance_api.place_order(
+            symbol="BTCUSDT",
+            side=OrderSide.SELL,
+            order_type=OrderType.LIMIT,
+            quantity=0.1,
+            price=50000.0,
+            close_position=True,
+        )
+
+
+def test_hedge_mode_stop_market_with_close_position_ok(binance_api):
+    """Hedge Mode 下 STOP_MARKET + closePosition=True 是合法的"""
+    binance_api.hedge_mode = True
+
+    binance_api.place_order(
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.STOP_MARKET,
+        quantity=0.1,
+        stop_price=49000.0,
+        close_position=True,
+    )
+
+    params = binance_api.exchange.create_order.call_args.kwargs["params"]
+    assert params["closePosition"] is True
+    assert params["positionSide"] == "LONG"
+
+
+def test_non_hedge_mode_market_with_close_position_ok(binance_api):
+    """非 Hedge Mode 下 MARKET + closePosition=True 是合法的"""
+    binance_api.hedge_mode = False
+
+    binance_api.place_order(
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        quantity=0.1,
+        close_position=True,
+    )
+
+    params = binance_api.exchange.create_market_order.call_args.kwargs["params"]
+    assert params["closePosition"] is True
+    assert "positionSide" not in params
+
+
 def test_place_order_reduce_only(binance_api):
     """测试只减仓订单"""
     order = binance_api.place_order(

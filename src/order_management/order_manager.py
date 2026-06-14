@@ -57,6 +57,7 @@ class OrderManager:
         position_id: Optional[str] = None,
         reduce_only: bool = False,
         close_position: bool = False,
+        position_side: Optional[str] = None,
     ) -> Order:
         """
         下单
@@ -71,6 +72,7 @@ class OrderManager:
             position_id: 关联的仓位ID
             reduce_only: 是否只减仓
             close_position: 是否平仓
+            position_side: Hedge Mode 持仓方向（LONG/SHORT），None 表示自动推断
 
         Returns:
             订单对象
@@ -98,7 +100,7 @@ class OrderManager:
                 logger.info(
                     "🔇 trend/shadow order: internal_id=%s symbol=%s side=%s type=%s "
                     "qty=%s price=%s stop_price=%s client_order_id=%s position_id=%s "
-                    "reduce_only=%s close_position=%s",
+                    "reduce_only=%s close_position=%s position_side=%s",
                     order_id,
                     symbol,
                     side.value,
@@ -110,6 +112,7 @@ class OrderManager:
                     position_id,
                     reduce_only,
                     close_position,
+                    position_side,
                 )
                 return order
 
@@ -125,6 +128,7 @@ class OrderManager:
                     reduce_only=reduce_only,
                     close_position=close_position,
                     client_order_id=client_order_id,
+                    position_side=position_side,
                 )
             except Exception as e:
                 logger.error(f"Binance API下单失败: {e}")
@@ -205,7 +209,7 @@ class OrderManager:
                 logger.info(
                     "trend/live place OK: internal_id=%s symbol=%s side=%s type=%s "
                     "qty=%s price=%s client_order_id=%s binance_order_id=%s "
-                    "position_id=%s reduce_only=%s close_position=%s filled=%s",
+                    "position_id=%s reduce_only=%s close_position=%s position_side=%s filled=%s",
                     order_id,
                     symbol,
                     side.value,
@@ -217,6 +221,7 @@ class OrderManager:
                     position_id,
                     reduce_only,
                     close_position,
+                    position_side,
                     order.filled_quantity,
                 )
                 return order

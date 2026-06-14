@@ -126,6 +126,75 @@ class PositionTracker:
                 self._persist_position_record(pid, pos)
         return len(restored)
 
+    def bootstrap_from_exchange_position(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        entry_price: float,
+        qty: float,
+    ) -> Optional[str]:
+        """Create a PositionTracker entry from exchange data when JSON snapshot is missing.
+
+        Used on ``run_live`` restart when the exchange still has a leg but
+        ``restore_from_disk()`` returned 0.  Applies conservative defaults
+        (1% ATR estimate, 1.5R stop / 3R target) so ``enforce_position`` and
+        ``ensure_exchange_stop_losses`` can manage the leg immediately.
+
+        If SQLite already has an open row for the same symbol+side, merges into
+        that canonical ``position_id`` (memory + JSON re-keyed to match).
+
+        Returns the canonical position_id, or None if bootstrap is not possible.
+        """
+        if not symbol or qty <= 0 or entry_price <= 0:
+            return None
+        sym_base = symbol.upper().rstrip("USDT") if symbol.upper().endswith("USDT") else symbol.upper()
+        now = datetime.now(timezone.utc)
+        pid = f"{sym_base}:bootstrap_{int(now.timestamp() * 1e6)}"
+        side_norm = side.upper()
+        action = "SHORT" if side_norm in {"SHORT", "SELL"} else "LONG"
+        entry = float(entry_price)
+        qty_f = float(qty)
+        # Conservative ATR estimate (1% of entry) and default RR (1.5R stop)
+        atr_est = entry * 0.01
+        stop_r = 1.5
+        sl_price = entry - (stop_r * atr_est) if action == "LONG" else entry + (stop_r * atr_est)
+        tp_price = entry + (2.0 * stop_r * atr_est) if action == "LONG" else entry - (2.0 * stop_r * atr_est)
+        pos: Dict[str, Any] = {
+            "position_id": pid,
+            "symbol": symbol.upper(),
+            "side": action,
+            "entry_price": entry,
+            "qty": qty_f,
+            "entry_time": now.isoformat(),
+            "archetype": "tpc",
+            "status": "open",
+            "atr_at_entry": atr_est,
+            "stop_loss_r": stop_r,
+            "bar_minutes": 120,
+            "stop_loss_price": round(sl_price, 4),
+            "take_profit_price": round(tp_price, 4),
+            "high_water_mark": entry if action == "LONG" else None,
+            "low_water_mark": entry if action == "SHORT" else None,
+            "_bootstrap_missing_snapshot": True,
+        }
+        self._positions[pid] = pos
+        self._persist_state()
+        canonical = self._persist_position_record(pid, pos)
+        pid = self._rekey_in_memory(pid, canonical, pos)
+        self._persist_state()
+        logger.warning(
+            "[%s] bootstrapped from exchange: pid=%s side=%s qty=%.4f entry=%.4f"
+            " sl=%.4f (conservative 1%% ATR, 1.5R stop)",
+            self.symbol,
+            pid,
+            action,
+            qty_f,
+            entry,
+            sl_price,
+        )
+        return pid
+
     def ensure_exchange_stop_losses(self) -> int:
         """Place exchange STOP_MARKET for positions that have software SL but no exchange SL."""
         placed = 0
@@ -328,8 +397,9 @@ class PositionTracker:
                 reason,
                 qty,
             )
+            storage_pid = self._storage_position_id(position_id, pos)
             self._persist_position_record(
-                position_id,
+                storage_pid,
                 pos,
                 status=PositionStatus.CLOSED,
                 exit_reason=reason,
@@ -396,8 +466,9 @@ class PositionTracker:
         pos["_exchange_close_reason"] = reason
         if exit_price is not None:
             pos["_exchange_exit_price"] = float(exit_price)
+        storage_pid = self._storage_position_id(position_id, pos)
         self._persist_position_record(
-            position_id,
+            storage_pid,
             pos,
             status=PositionStatus.CLOSED,
             exit_price=exit_price,
@@ -793,6 +864,7 @@ class PositionTracker:
                     reduce_only=True,
                     close_position=True,
                     position_id=pid,
+                    position_side=position_side,
                 )
                 break
             except Exception as exc:
@@ -910,6 +982,38 @@ class PositionTracker:
                 pass
         return datetime.now(timezone.utc)
 
+    def _rekey_in_memory(
+        self, old_pid: str, canonical_pid: str, pos: Dict[str, Any]
+    ) -> str:
+        """Align in-memory tracker key with SQLite canonical position_id after merge."""
+        canonical = str(canonical_pid or old_pid).strip() or old_pid
+        if canonical == old_pid:
+            return old_pid
+        self._positions.pop(old_pid, None)
+        pos["position_id"] = canonical
+        self._positions[canonical] = pos
+        return canonical
+
+    def _storage_position_id(self, position_id: str, pos: Dict[str, Any]) -> str:
+        """Resolve SQLite row id (handles bootstrap merge vs in-memory bootstrap pid)."""
+        storage = self._storage()
+        if storage is None:
+            return position_id
+        try:
+            if storage.get_position(position_id) is not None:
+                return position_id
+        except Exception:
+            pass
+        side_raw = str(pos.get("side") or "").upper()
+        side = PositionSide.LONG if side_raw in {"LONG", "BUY"} else PositionSide.SHORT
+        try:
+            for row in storage.get_open_positions(self.symbol) or []:
+                if row.side == side and row.status == PositionStatus.OPEN:
+                    return str(row.position_id or position_id)
+        except Exception:
+            pass
+        return position_id
+
     def _persist_position_record(
         self,
         position_id: str,
@@ -918,11 +1022,14 @@ class PositionTracker:
         status: PositionStatus = PositionStatus.OPEN,
         exit_price: Optional[float] = None,
         exit_reason: Optional[str] = None,
-    ) -> None:
-        """Best-effort mirror of the in-memory software stop into SQLite."""
+    ) -> str:
+        """Best-effort mirror of the in-memory software stop into SQLite.
+
+        Returns the canonical ``position_id`` written (may differ after dedup merge).
+        """
         storage = self._storage()
         if storage is None:
-            return
+            return position_id
         side_raw = str(pos.get("side") or "").upper()
         side = PositionSide.LONG if side_raw in {"LONG", "BUY"} else PositionSide.SHORT
         try:
@@ -934,11 +1041,29 @@ class PositionTracker:
         except (TypeError, ValueError):
             qty = 0.0
         if not position_id or qty <= 0:
-            return
+            return position_id
         try:
             existing = storage.get_position(position_id)
         except Exception:
             existing = None
+        # ── Dedup: if another OPEN position already exists for the same symbol+side
+        #     (e.g. exchange_sync created before bootstrap JSON loaded), reuse it
+        #     instead of creating a duplicate row. ──
+        if existing is None and status == PositionStatus.OPEN:
+            try:
+                for p in storage.get_open_positions(self.symbol) or []:
+                    if p.side == side and p.status == PositionStatus.OPEN:
+                        logger.info(
+                            "[%s] merged duplicate position %s → existing %s",
+                            self.symbol,
+                            position_id,
+                            p.position_id,
+                        )
+                        existing = p
+                        position_id = str(p.position_id or position_id)
+                        break
+            except Exception:
+                pass
         record = existing or Position(
             position_id=position_id,
             symbol=self.symbol,
@@ -974,6 +1099,7 @@ class PositionTracker:
                 position_id,
                 exc_info=True,
             )
+        return position_id
 
     @staticmethod
     def _resolve_now(features: Dict[str, Any]) -> datetime:
