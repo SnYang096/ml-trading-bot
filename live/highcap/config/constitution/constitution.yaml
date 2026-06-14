@@ -174,9 +174,9 @@ resource_allocation:
     # - After unlock_on condition is met on an existing symbol, allow controlled expansion.
     trend_pool_guard:
       enabled: true # Cap concurrent symbols until at least one position is risk-reduced.
-      max_unprotected_symbols: 1 # Max symbols with open trend risk before any has breakeven/stop protection.
+      max_unprotected_symbols: 3 # G3_be3_6 (pool_guard sweep): up to 3 bare symbols; bear_2022 canonical +14R vs G0 1/2.
       unlock_on: breakeven_locked # Condition to widen symbol cap: breakeven_locked | stop_risk_nonnegative.
-      max_symbols_after_unlock: 2 # Max concurrent trend symbols after unlock_on satisfied on one position.
+      max_symbols_after_unlock: 6 # Max concurrent trend symbols (was prod 1/2 → 2026-06-14 live).
       symbol_correlation_guard:
         enabled: true # Block new same-direction trend symbols that are effectively the same crypto beta.
         threshold: 0.8

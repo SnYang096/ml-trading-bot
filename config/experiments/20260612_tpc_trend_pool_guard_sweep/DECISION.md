@@ -1,5 +1,17 @@
 # DECISION — TPC trend_pool_guard sweep (2026-06-12)
 
+## Live 部署（2026-06-14）
+
+**决策**：`live/highcap` TPC `trend_pool_guard` 由 **G0 1/2 → G3 3/6**（`max_unprotected_symbols: 3`, `max_symbols_after_unlock: 6`）。
+
+**依据（interim）**：canonical **bear_2022** G3 **18.11R / -19.5%** vs G0 **3.73R / -16.8%**（+14.4R）；当前 regime 偏 bear，先放宽并发抓信号。
+
+**风险**：canonical 9/9 未跑完；smoke 显示 G3≈G2、G1 DD 更浅。canonical 完成后若 recent/bull 反转结论，可回滚或改 G1。
+
+**配置**：`live/highcap/config/constitution/constitution.yaml` + `config/constitution/constitution.yaml`（研究镜像）
+
+---
+
 ## 预结论（2026-06-14 smoke + 分析，canonical 待跑完）
 
 **假设**：生产 `1/2` 过严，改 `3/6`（G3）可多抓并发信号、提升 total R。
