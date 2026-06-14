@@ -35,6 +35,7 @@ if str(_SRC) not in sys.path:
 from src.order_management.binance_api import BinanceAPI
 from src.order_management.models import Position, PositionSide, PositionStatus
 from src.order_management.storage import Storage
+from src.order_management.trend_position_truth_sync import TrendPositionTruthSync
 
 logger = logging.getLogger("sync_trend_positions_from_exchange")
 
@@ -184,6 +185,16 @@ def sync_trend_positions(
     close_stale: bool = True,
 ) -> Dict[str, Any]:
     storage = Storage(str(db_path))
+
+    # ── Per-symbol TTS: SQLite 投影唯一写入口 ──
+    _tts_by_symbol: Dict[str, TrendPositionTruthSync] = {}
+
+    def _tts_for(sym: str) -> TrendPositionTruthSync:
+        return _tts_by_symbol.setdefault(
+            sym,
+            TrendPositionTruthSync(symbol=sym, storage_factory=lambda: storage),
+        )
+
     exchange = _exchange_legs(api)
     local_rows = _local_open_rows(storage)
     local = _group_local(local_rows)
@@ -218,9 +229,8 @@ def sync_trend_positions(
             }
             report["inserted"].append(action)
             if not dry_run:
-                storage.create_position(
-                    _make_open_position(leg=leg, strategy_id=strategy_id)
-                )
+                new_pos = _make_open_position(leg=leg, strategy_id=strategy_id)
+                _tts_for(sym).project_position_object(new_pos)
             continue
 
         if abs(loc_qty - qty_ex) <= tol:
@@ -251,7 +261,7 @@ def sync_trend_positions(
                 leg["entry_price"] or primary.entry_price or 0.0
             )
             primary.unrealized_pnl = float(leg.get("unrealized_pnl_usdt") or 0.0)
-            storage.update_position(primary)
+            _tts_for(sym).project_position_object(primary)
 
         extras = [p for p in locals_for_key if p.position_id != primary.position_id]
         if extras and close_stale:
@@ -269,12 +279,16 @@ def sync_trend_positions(
                 }
                 report["closed"].append(closed)
                 if not dry_run:
-                    storage.update_position(
-                        _close_position_row(
-                            row,
-                            reason="exchange_sync_duplicate",
-                            closing_price=dup_mark,
-                        )
+                    closed_row = _close_position_row(
+                        row,
+                        reason="exchange_sync_duplicate",
+                        closing_price=dup_mark,
+                    )
+                    _tts_for(sym).project_position_object(
+                        closed_row,
+                        status=PositionStatus.CLOSED,
+                        exit_price=closed_row.exit_price,
+                        exit_reason=closed_row.exit_reason,
                     )
 
     if close_stale:
@@ -303,12 +317,16 @@ def sync_trend_positions(
                 }
                 report["closed"].append(closed)
                 if not dry_run:
-                    storage.update_position(
-                        _close_position_row(
-                            row,
-                            reason="exchange_sync_flat",
-                            closing_price=stale_mark,
-                        )
+                    closed_row = _close_position_row(
+                        row,
+                        reason="exchange_sync_flat",
+                        closing_price=stale_mark,
+                    )
+                    _tts_for(str(row.symbol or "").upper()).project_position_object(
+                        closed_row,
+                        status=PositionStatus.CLOSED,
+                        exit_price=closed_row.exit_price,
+                        exit_reason=closed_row.exit_reason,
                     )
 
     report["summary"] = {

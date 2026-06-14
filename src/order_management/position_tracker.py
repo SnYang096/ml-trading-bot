@@ -47,12 +47,14 @@ class PositionTracker:
         symbol: str,
         default_bar_minutes: int = 240,
         state_path: Optional[str | Path] = None,
+        truth_sync: Any = None,
     ) -> None:
         self.order_manager = order_manager
         self.symbol = symbol
         self.default_bar_minutes = default_bar_minutes
         self._positions: Dict[str, Dict[str, Any]] = {}
         self.state_path = Path(state_path) if state_path else None
+        self._truth_sync = truth_sync
 
     # ------------------------------------------------------------------
     # 公共接口
@@ -148,7 +150,11 @@ class PositionTracker:
         """
         if not symbol or qty <= 0 or entry_price <= 0:
             return None
-        sym_base = symbol.upper().rstrip("USDT") if symbol.upper().endswith("USDT") else symbol.upper()
+        sym_base = (
+            symbol.upper().rstrip("USDT")
+            if symbol.upper().endswith("USDT")
+            else symbol.upper()
+        )
         now = datetime.now(timezone.utc)
         pid = f"{sym_base}:bootstrap_{int(now.timestamp() * 1e6)}"
         side_norm = side.upper()
@@ -158,8 +164,16 @@ class PositionTracker:
         # Conservative ATR estimate (1% of entry) and default RR (1.5R stop)
         atr_est = entry * 0.01
         stop_r = 1.5
-        sl_price = entry - (stop_r * atr_est) if action == "LONG" else entry + (stop_r * atr_est)
-        tp_price = entry + (2.0 * stop_r * atr_est) if action == "LONG" else entry - (2.0 * stop_r * atr_est)
+        sl_price = (
+            entry - (stop_r * atr_est)
+            if action == "LONG"
+            else entry + (stop_r * atr_est)
+        )
+        tp_price = (
+            entry + (2.0 * stop_r * atr_est)
+            if action == "LONG"
+            else entry - (2.0 * stop_r * atr_est)
+        )
         pos: Dict[str, Any] = {
             "position_id": pid,
             "symbol": symbol.upper(),
@@ -555,7 +569,11 @@ class PositionTracker:
 
     def _fetch_mark_price(self, position_side: str) -> Optional[float]:
         """Best-effort mark/last for -2021 guard before exchange SL sync."""
-        api = getattr(self.order_manager, "binance_api", None) if self.order_manager else None
+        api = (
+            getattr(self.order_manager, "binance_api", None)
+            if self.order_manager
+            else None
+        )
         if api is None:
             return None
         get_ticker = getattr(api, "get_ticker_price", None)
@@ -736,9 +754,7 @@ class PositionTracker:
     ) -> None:
         """Rate-limit repeated -4130 / place SL errors (enforce_all runs often)."""
         try:
-            interval = float(
-                os.getenv("MLBOT_EXCHANGE_SL_FAIL_LOG_SECONDS", "300")
-            )
+            interval = float(os.getenv("MLBOT_EXCHANGE_SL_FAIL_LOG_SECONDS", "300"))
         except ValueError:
             interval = 300.0
         interval = max(30.0, interval)
@@ -895,7 +911,9 @@ class PositionTracker:
                 # -4509: closePosition STOP requires an open position. If the
                 # exchange is actually flat on this side, the local position is a
                 # ghost; clear it so we stop retrying (and log spamming) forever.
-                if "-4509" in str(exc) and self._reconcile_local_position_if_exchange_flat(
+                if "-4509" in str(
+                    exc
+                ) and self._reconcile_local_position_if_exchange_flat(
                     pid, position_side
                 ):
                     return True
@@ -1025,8 +1043,21 @@ class PositionTracker:
     ) -> str:
         """Best-effort mirror of the in-memory software stop into SQLite.
 
+        Delegates to ``TrendPositionTruthSync.project_to_sqlite()`` if
+        a truth_sync instance is available; otherwise falls back to the
+        legacy in-place logic.
+
         Returns the canonical ``position_id`` written (may differ after dedup merge).
         """
+        if self._truth_sync is not None:
+            return self._truth_sync.project_to_sqlite(
+                position_id,
+                pos,
+                status=status,
+                exit_price=exit_price,
+                exit_reason=exit_reason,
+            )
+        # ── Legacy fallback (no truth_sync injected) ──
         storage = self._storage()
         if storage is None:
             return position_id
@@ -1046,15 +1077,13 @@ class PositionTracker:
             existing = storage.get_position(position_id)
         except Exception:
             existing = None
-        # ── Dedup: if another OPEN position already exists for the same symbol+side
-        #     (e.g. exchange_sync created before bootstrap JSON loaded), reuse it
-        #     instead of creating a duplicate row. ──
+        # ── Dedup: if another OPEN position already exists for the same symbol+side ──
         if existing is None and status == PositionStatus.OPEN:
             try:
                 for p in storage.get_open_positions(self.symbol) or []:
                     if p.side == side and p.status == PositionStatus.OPEN:
                         logger.info(
-                            "[%s] merged duplicate position %s → existing %s",
+                            "[%s] merged duplicate position %s -> existing %s",
                             self.symbol,
                             position_id,
                             p.position_id,

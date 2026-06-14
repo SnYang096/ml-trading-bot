@@ -166,11 +166,28 @@ class OrderFlowListener:
                 "position_tracker",
             ),
         )
+        # ── TrendPositionTruthSync: SQLite 投影唯一写入口 (P1) ──
+        from src.order_management.trend_position_truth_sync import (
+            TrendPositionTruthSync,
+        )
+
+        def _tts_storage_factory():
+            """Storage factory for TrendPositionTruthSync."""
+            attrs = getattr(order_manager, "__dict__", {})
+            if isinstance(attrs, dict) and "storage" in attrs:
+                return attrs.get("storage")
+            return None
+
+        tts = TrendPositionTruthSync(
+            symbol=symbol,
+            storage_factory=_tts_storage_factory,
+        )
         self._position_tracker = PositionTracker(
             order_manager=order_manager,
             symbol=symbol,
             default_bar_minutes=feature_4h_interval_hours * 60,
             state_path=os.path.join(position_state_dir, f"{symbol.upper()}.json"),
+            truth_sync=tts,
         )
         self._trade_executor: TradeExecutor | None = (
             None  # 延迟建立，等 risk_per_slot 注入完成
@@ -897,9 +914,7 @@ class OrderFlowListener:
 
             if isinstance(audit_exc, FeatureBusAuditError):
                 raise
-            logger.warning(
-                "[%s] feature-bus audit skipped: %s", self.symbol, audit_exc
-            )
+            logger.warning("[%s] feature-bus audit skipped: %s", self.symbol, audit_exc)
 
         # ── 6. 保存 + 决策 ──
         all_features = dict(features_by_timeframe[primary_tf])
@@ -1107,9 +1122,7 @@ class OrderFlowListener:
 
         if not intents:
             if chain_debug_enabled("trend"):
-                log_trend_no_intent(
-                    self.symbol, self.decision_handler, all_features
-                )
+                log_trend_no_intent(self.symbol, self.decision_handler, all_features)
             else:
                 logger.info("[%s] 无交易信号", self.symbol)
         elif trading_enabled:
