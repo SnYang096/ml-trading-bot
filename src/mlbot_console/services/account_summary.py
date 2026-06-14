@@ -335,7 +335,8 @@ def _trend_stats(
             continue
         strat = str(row.get("strategy_id") or "trend").lower()
         st = str(row.get("status") or "").lower()
-        if st != "open" and row.get("exit_time") and _is_exchange_sync_stat_exclude(row):
+        # Exclude exchange_sync_duplicate positions even when status still "open"
+        if row.get("exit_time") and _is_exchange_sync_stat_exclude(row):
             sync_cleanup_closed += 1
             continue
         if st == "open" or not row.get("exit_time"):

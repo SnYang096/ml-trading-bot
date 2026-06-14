@@ -80,13 +80,15 @@ flowchart LR
 
 ### T2 — 调仓告警 【P0】
 
-**现状**：`exchange_balances.py` 已分 `trend` / `multi_leg` / `spot`；`regime_watchdog_baseline.json`、TPC `allowed_regimes` 有 bull 语义；**无跨账户 NAV 占比告警**。
+**设计稿**：[CMS调仓告警与Regime看板设计_CN.md](CMS调仓告警与Regime看板设计_CN.md)（三层 regime 并列展示 + `rebalance_policy` 合成告警）
+
+**现状**：`exchange_balances.py` 已分 `trend` / `multi_leg` / `spot`；`regime_watchdog_baseline.json`、TPC `allowed_regimes` 有 bull 语义；**无跨账户 NAV 占比告警**；`/regime` 页仅静态配置表。
 
 **目标**：
-- [ ] 定义目标带（见 [牛市Beta账本调仓](牛市Beta账本调仓与币本位取舍_CN.md) §5.2，可配置 yaml）
-- [ ] 定时任务：拉各账户 equity → 算占比 → 对比 `abc_macro_regime_score` 或 TPC bull_share
-- [ ] 告警：`WATCH`（偏离目标带）/ `REBALANCE_SUGGEST`（超阈值）→ CMS + 可选 TG
-- [ ] **只告警不自动划转**（MVP）；人工或脚本划转
+- [x] **T2a** `GET /api/regime/cockpit`：A 周线成本区 / B bull-bear-neutral / C chop·动量 三层 live 卡片
+- [x] **T2b** `config/monitoring/rebalance_targets.yaml` + composite risk-on + NAV 占比告警
+- [x] **T2c** CMS `/regime` 升级为看板（告警条 + 占比条 + 三层卡片 + 保留 Ops 底表）
+- [x] **T2d** 定时持久化 + 可选 TG；`rebalance_4h` timer；**只告警不自动划转**
 
 **工作量**：小（约 1 周）  
 **风险**：低；注意勿与宪法 kill-switch 混淆

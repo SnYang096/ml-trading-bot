@@ -15,10 +15,28 @@ def _read(rel: str) -> str:
 
 def test_regime_page_uses_vertical_table_layout() -> None:
     tsx = _read("pages/Regime/RegimePage.tsx")
-    assert "Regime Ops" in tsx
+    assert "Regime Cockpit" in tsx
     assert "data-table" in tsx
     assert "regime_path" in tsx
+    assert "regime-cockpit" in tsx
     assert tsx.index("data-table") < tsx.index("regime_path")
+
+
+def test_regime_page_has_layer_cards() -> None:
+    tsx = _read("pages/Regime/RegimePage.tsx")
+    css = _read("pages/Regime/RegimePage.module.css")
+    assert "A·Beta" in tsx
+    assert "B·Swing" in tsx
+    assert "C·Micro" in tsx
+    assert "layerGrid" in css
+
+
+def test_regime_page_has_composite_explainer() -> None:
+    tsx = _read("pages/Regime/RegimePage.tsx")
+    assert "composite 与 A/B/C 的区别" in tsx
+    assert "risk-on（偏多 beta）" in tsx
+    assert "total_score" in tsx
+    assert "compositePanel" in _read("pages/Regime/RegimePage.module.css")
 
 
 def test_global_css_does_not_apply_bare_main_flex_row() -> None:

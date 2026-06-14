@@ -1,0 +1,212 @@
+.regimePage {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.toolbarRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.alertBanner {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+
+.alertOk {
+  border-color: var(--accent);
+  background: rgba(0, 255, 65, 0.06);
+}
+
+.alertWatch {
+  border-color: #e6b800;
+  background: rgba(230, 184, 0, 0.08);
+}
+
+.alertSuggest {
+  border-color: #ff5555;
+  background: rgba(255, 85, 85, 0.08);
+}
+
+.navBar {
+  display: flex;
+  height: 28px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.navSegment {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  min-width: 48px;
+  padding: 0 6px;
+  white-space: nowrap;
+}
+
+.navSpot {
+  background: rgba(0, 200, 255, 0.25);
+}
+
+.navRolling {
+  background: rgba(0, 200, 255, 0.12);
+  color: var(--text-muted);
+}
+
+.navTrend {
+  background: rgba(0, 255, 65, 0.2);
+}
+
+.navMultileg {
+  background: rgba(200, 120, 255, 0.2);
+}
+
+.navLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  font-size: 12px;
+}
+
+.layerGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 960px) {
+  .layerGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.layerCard {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--bg-elevated);
+}
+
+.layerTitle {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--accent-cyan);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+}
+
+.badgeBull {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.badgeBear {
+  color: #ff7777;
+  border-color: #ff7777;
+}
+
+.badgeNeutral {
+  color: var(--text-muted);
+}
+
+.kv {
+  margin: 4px 0;
+  font-size: 12px;
+}
+
+.suggestions {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+}
+
+.opsSection {
+  margin-top: 8px;
+}
+
+.sectionNote {
+  font-size: 12px;
+}
+
+.explainer {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-size: 12px;
+  background: var(--bg-elevated);
+}
+
+.explainer summary {
+  cursor: pointer;
+  color: var(--accent-cyan);
+  font-weight: 600;
+}
+
+.explainerBody {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.explainerBody ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.compositePanel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--bg-elevated);
+}
+
+.compositeMap {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.compositeMap th,
+.compositeMap td {
+  border: 1px solid var(--border);
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.compositeMap th {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.compositeMapActive {
+  background: rgba(0, 200, 255, 0.1);
+}
+
+.compositeBreakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+.compositeChip {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+}

@@ -221,6 +221,86 @@ export interface RegimeOpsRow {
   config_reference_at?: string;
 }
 
+export interface RegimeCockpitLayerA {
+  weekly_ema_200_position?: number | null;
+  deploy_state?: string;
+  deploy_allowed?: boolean;
+  abc_macro_regime_score?: number | null;
+  macro_label?: string;
+  hint?: string;
+}
+
+export interface RegimeCockpitLayerB {
+  current_label?: string;
+  bull_share_7d?: number;
+  baseline_bull_share?: number;
+  drift_alert?: boolean;
+  features?: Record<string, number | null | undefined>;
+  divergence?: { symbol?: string; label?: string } | null;
+  hint?: string;
+}
+
+export interface RegimeCockpitLayerC {
+  chop_grid?: Record<string, unknown>;
+  trend_scalp?: Record<string, unknown>;
+  router_hint?: string;
+  hint?: string;
+}
+
+export interface RegimeAllocationScope {
+  scope?: string;
+  label?: string;
+  nav_pct?: number | null;
+  equity_usdt?: number | null;
+  status?: string;
+  band?: { min?: number; target?: number; max?: number } | null;
+  optional?: boolean;
+  configured?: boolean;
+}
+
+export interface RegimeCockpitData {
+  as_of?: string;
+  symbol?: string;
+  feature_bus?: {
+    stale?: boolean;
+    age_minutes?: number | null;
+    as_of?: string;
+  };
+  layers?: {
+    a_spot?: RegimeCockpitLayerA;
+    b_trend?: RegimeCockpitLayerB;
+    c_multileg?: RegimeCockpitLayerC;
+  };
+  composite?: {
+    label?: string;
+    label_title?: string;
+    total_score?: number;
+    breakdown?: Array<{
+      id?: string;
+      score?: number;
+      weight?: number;
+      weighted?: number;
+    }>;
+  };
+  allocation?: {
+    total_nav_usdt?: number;
+    alert?: string;
+    composite?: string;
+    scopes?: RegimeAllocationScope[];
+    suggestions?: string[];
+  };
+  ops?: RegimeOpsRow[];
+  last_scheduled?: {
+    ts?: string;
+    run_ts?: string;
+    status?: string;
+    detail?: {
+      alert?: string;
+      suggestions?: string[];
+    };
+  };
+}
+
 export interface AccountCurvePoint {
   date?: string;
   value_usdt?: number | null;

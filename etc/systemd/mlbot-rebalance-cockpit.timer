@@ -1,0 +1,9 @@
+[Unit]
+Description=mlbot rebalance cockpit — every 4h at :15 UTC
+
+[Timer]
+OnCalendar=*-*-* 00,04,08,12,16,20:15:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

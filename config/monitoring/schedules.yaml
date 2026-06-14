@@ -8,6 +8,7 @@ staleness_hours:
   daily: 36
   weekly: 192
   weekly_c: 192
+  rebalance_4h: 12
   monthly: 840
   monthly_c: 840
   quarterly: 2400
@@ -23,6 +24,9 @@ schedules:
   weekly_c:
     manifest: config/monitoring/weekly_c_regime.yaml
     description: C multileg entry pass_rate on 7d bus (chop_grid, trend_scalp)
+  rebalance_4h:
+    manifest: scripts/monitoring/rebalance_cockpit_check.py
+    description: Regime Cockpit NAV bands + composite risk-on (CMS / TG)
   monthly:
     manifest: config/monitoring/monthly_drift.yaml
     description: Regime plateau on ~30d bus window
@@ -41,6 +45,7 @@ timers:
   daily: "*-*-* 06:30:00"
   weekly: "Sun *-*-* 08:00:00"
   weekly_c: "Sun *-*-* 08:30:00"
+  rebalance_4h: "*-*-* 00,04,08,12,16,20:15:00"
   monthly: "*-*-01 09:00:00"
   monthly_c: "*-*-01 09:30:00"
   quarterly: "*-01,04,07,10-01 10:00:00"

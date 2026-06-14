@@ -74,6 +74,19 @@ def orders_open_positions(
     limit: int = Query(200, ge=1, le=500),
 ) -> dict:
     """Open holdings with mark-to-market unrealized PnL (not limit-order book)."""
+    # ── Fetch exchange positions for cross-validation ──
+    exchange_ledger = None
+    try:
+        from mlbot_console.services.exchange_balances import build_exchange_ledger
+
+        exchange_ledger = build_exchange_ledger(
+            mark_prices=None,
+            scopes=_scopes_list(scopes),
+            symbol=symbol,
+        )
+    except Exception:
+        pass
+
     rows = collect_open_positions(
         trend_db=SETTINGS.trend_order_db,
         spot_db=SETTINGS.spot_order_db,
@@ -83,6 +96,7 @@ def orders_open_positions(
         limit=limit,
         feature_bus_root=SETTINGS.feature_bus_root,
         strategy=strategy,
+        exchange_ledger=exchange_ledger,
     )
     sym_meta = "ALL" if is_all_symbols(symbol) else symbol.upper()
     return ok(rows, meta={"count": len(rows), "symbol": sym_meta})

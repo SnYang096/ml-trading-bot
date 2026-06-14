@@ -1,0 +1,11 @@
+[Unit]
+Description=mlbot Regime Cockpit rebalance check (NAV bands + TG)
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/quant-engine/deploy/systemd/mlbot-rebalance-docker-run.sh
+
+[Install]
+WantedBy=multi-user.target

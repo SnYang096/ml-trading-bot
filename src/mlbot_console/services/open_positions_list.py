@@ -125,7 +125,10 @@ def _trend_open_rows(
 ) -> List[Dict[str, Any]]:
     if not db_path.is_file():
         return []
-    where = " WHERE (lower(trim(coalesce(status, ''))) = 'open' OR exit_time IS NULL)"
+    where = """
+        WHERE (lower(trim(coalesce(status, ''))) = 'open' OR exit_time IS NULL)
+          AND coalesce(trim(exit_reason), '') != 'exchange_sync_duplicate'
+    """
     params: tuple[Any, ...] = ()
     if symbol and not is_all_symbols(symbol):
         where += " AND symbol = ?"
@@ -339,6 +342,37 @@ def _multileg_open_rows(
     return out
 
 
+def _exchange_position_map(
+    exchange_ledger: Optional[Dict[str, Any]],
+) -> Dict[tuple, float]:
+    """Extract per-(symbol, side) net position from exchange ledger.
+
+    Returns {(symbol_upper, 'long'|'short'): abs(positionAmt)}
+    """
+    out: Dict[tuple, float] = {}
+    if not exchange_ledger:
+        return out
+    for acct in exchange_ledger.get("accounts") or []:
+        for pos in acct.get("exchange_open_positions") or []:
+            sym = str(pos.get("symbol") or "").upper()
+            side = "long" if float(pos.get("position_amt") or 0) > 0 else "short"
+            qty = abs(float(pos.get("position_amt") or 0))
+            if sym and qty > 0:
+                key = (sym, side)
+                out[key] = out.get(key, 0.0) + qty
+    return out
+
+
+def _exchange_has_position(
+    ex_map: Dict[tuple, float],
+    symbol: str,
+    side: str,
+    min_qty: float = 0.0001,
+) -> bool:
+    """True when exchange reports a non-dust position for (symbol, side)."""
+    return ex_map.get((symbol.upper(), side.lower()), 0.0) >= min_qty
+
+
 def collect_open_positions(
     *,
     trend_db: Path,
@@ -349,6 +383,7 @@ def collect_open_positions(
     limit: int = 200,
     feature_bus_root: Optional[Path] = None,
     strategy: Optional[str] = None,
+    exchange_ledger: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     scope_set = {s.strip().lower() for s in scopes if s.strip()}
     if not scope_set:
@@ -400,6 +435,25 @@ def collect_open_positions(
 
     if strategy:
         merged = [r for r in merged if _row_matches_strategy(r, strategy)]
+
+    # ── Cross-reference with exchange: drop local entries for symbols that
+    #     have zero exchange position (stale / fully-closed but unpaired). ──
+    if exchange_ledger:
+        ex_map = _exchange_position_map(exchange_ledger)
+        if ex_map:
+            filtered: List[Dict[str, Any]] = []
+            for row in merged:
+                scope = str(row.get("scope") or "")
+                if scope == "spot":
+                    # Spot holdings are always real; trust local computation.
+                    filtered.append(row)
+                    continue
+                sym = str(row.get("symbol") or "")
+                side = str(row.get("side") or "long")
+                if _exchange_has_position(ex_map, sym, side):
+                    filtered.append(row)
+                # else: exchange shows 0 → drop as stale/closed
+            merged = filtered
 
     merged.sort(
         key=lambda r: (

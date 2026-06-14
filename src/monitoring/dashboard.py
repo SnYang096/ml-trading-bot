@@ -12,6 +12,7 @@ from src.monitoring.store import load_monitoring_index, load_schedules
 
 CADENCE_DISPLAY_ORDER = (
     "daily",
+    "rebalance_4h",
     "weekly",
     "weekly_c",
     "monthly",
@@ -68,6 +69,18 @@ def messages_from_monitor_detail(
                 parts = ", ".join(f"{k}={float(v):.1%}" for k, v in sorted(cur.items()))
                 lines.append(f"regime mix: {parts}")
 
+    if strategy == "_portfolio" and source == "rebalance_cockpit":
+        alert = body.get("alert")
+        if alert:
+            lines.append(f"alert: {alert}")
+        comp = body.get("composite") or {}
+        if isinstance(comp, dict) and comp.get("label"):
+            lines.append(f"composite: {comp.get('label')}")
+        for sug in body.get("suggestions") or []:
+            if sug:
+                lines.append(str(sug))
+        return lines
+
     if strategy == "_factor_health":
         for it in body.get("items") or []:
             if not isinstance(it, dict):
@@ -114,6 +127,8 @@ def enrich_cards_with_details(
         if not msgs:
             continue
         label = strategy if strategy != "_factor_health" else "因子健康 (PSI/IC)"
+        if strategy == "_portfolio" and source == "rebalance_cockpit":
+            label = "调仓 Cockpit"
         prefixed = [f"[{label}] {m}" for m in msgs]
         if status == "ALERT":
             alert_lines[cad].extend(prefixed)

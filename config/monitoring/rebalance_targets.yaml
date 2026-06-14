@@ -1,0 +1,82 @@
+version: 1
+description: >
+  Cross-account NAV target bands keyed by composite risk-on label.
+  Used by CMS Regime Cockpit rebalance advisor (read-only alerts).
+
+scopes:
+  spot:
+    label: "A·Spot"
+    layer: a
+  rolling:
+    label: "A·Rolling"
+    layer: a
+    optional: true
+  trend:
+    label: "B·Trend"
+    layer: b
+  multi_leg:
+    label: "C·Multi-leg"
+    layer: c
+
+bands:
+  risk_on:
+    spot: { min: 0.15, target: 0.25, max: 0.35 }
+    rolling: { min: 0.10, target: 0.20, max: 0.30 }
+    trend: { min: 0.25, target: 0.35, max: 0.45 }
+    multi_leg: { min: 0.08, target: 0.15, max: 0.22 }
+  neutral:
+    spot: { min: 0.20, target: 0.30, max: 0.40 }
+    rolling: { min: 0.05, target: 0.10, max: 0.20 }
+    trend: { min: 0.30, target: 0.40, max: 0.50 }
+    multi_leg: { min: 0.10, target: 0.18, max: 0.25 }
+  risk_off:
+    spot: { min: 0.05, target: 0.12, max: 0.20 }
+    rolling: { min: 0.00, target: 0.05, max: 0.10 }
+    trend: { min: 0.35, target: 0.45, max: 0.55 }
+    multi_leg: { min: 0.12, target: 0.20, max: 0.28 }
+
+tolerance_pct: 0.05
+hard_tolerance_pct: 0.12
+feature_bus_stale_minutes: 240
+
+composite:
+  inputs:
+    - id: a_macro
+      weight: 2
+      rules:
+        - when: "abc_macro_regime_score >= 4"
+          score: 2
+        - when: "abc_macro_regime_score >= 3"
+          score: 1
+        - when: "abc_macro_regime_score <= 2"
+          score: 0
+    - id: a_weekly_not_deep_bear
+      weight: 1
+      rules:
+        - when: "weekly_ema_200_position >= 0"
+          score: 2
+        - when: "weekly_ema_200_position < -0.05"
+          score: 0
+    - id: b_bull_share_7d
+      weight: 2
+      rules:
+        - when: "tpc_bull_share_7d >= 0.25"
+          score: 2
+        - when: "tpc_bull_share_7d >= 0.10"
+          score: 1
+        - when: "tpc_bull_label == bull"
+          score: 1
+    - id: c_chop_dominant
+      weight: 1
+      rules:
+        - when: "chop_semantic >= 0.52 and trend_confidence < 0.5"
+          score: 0
+        - when: "trend_confidence >= 0.7"
+          score: 1
+  map:
+    - max_total: 3
+      label: risk_off
+    - max_total: 6
+      label: neutral
+    - max_total: 11
+      label: risk_on

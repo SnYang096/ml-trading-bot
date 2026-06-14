@@ -8170,6 +8170,21 @@ def monitor_schedule(
     sys.exit(run_script("scripts/monitoring/monitor_scheduler.py", args))
 
 
+@monitor.command("rebalance-check")
+@click.option("--symbol", default="BTCUSDT", show_default=True)
+@click.option("--window-days", default=7, show_default=True, type=int)
+@click.option("--dry-run", is_flag=True)
+@click.option("--skip-telegram", is_flag=True)
+def monitor_rebalance_check(symbol: str, window_days: int, dry_run: bool, skip_telegram: bool):
+    """Regime Cockpit NAV rebalance check → monitor_event + optional TG (T2d)."""
+    args = ["--symbol", symbol, "--window-days", str(window_days)]
+    if dry_run:
+        args.append("--dry-run")
+    if skip_telegram:
+        args.append("--skip-telegram")
+    sys.exit(run_script("scripts/monitoring/rebalance_cockpit_check.py", args))
+
+
 @monitor.command("check-staleness")
 @click.option(
     "--schedules",
