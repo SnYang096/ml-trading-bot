@@ -180,12 +180,19 @@ def spot_symbol_holdings_value(
     return total
 
 
-def parse_futures_account(data: Mapping[str, Any]) -> Dict[str, float]:
+def parse_futures_account(data: Mapping[str, Any]) -> Dict[str, Any]:
+    margin_bal = float(data.get("totalMarginBalance") or 0.0)
+    maint_margin = float(data.get("totalMaintMargin") or 0.0)
+    margin_ratio: Optional[float] = None
+    if margin_bal > 0:
+        margin_ratio = round(maint_margin / margin_bal, 6)
     return {
         "wallet_balance_usdt": float(data.get("totalWalletBalance") or 0.0),
-        "equity_usdt": float(data.get("totalMarginBalance") or 0.0),
+        "equity_usdt": margin_bal,
         "available_usdt": float(data.get("availableBalance") or 0.0),
         "unrealized_pnl_usdt": float(data.get("totalUnrealizedProfit") or 0.0),
+        "maint_margin_usdt": maint_margin,
+        "margin_ratio": margin_ratio,
     }
 
 
@@ -273,12 +280,16 @@ def _fetch_spot_equity(
             })
         
     equity = total_usdt + holdings_value_usdt
-    
+    cash_ratio: Optional[float] = None
+    if equity > 0:
+        cash_ratio = round(free_usdt / equity, 6)
+
     return {
         "wallet_balance_usdt": equity,  # Total equity in USDT
         "equity_usdt": equity,
         "available_usdt": free_usdt,
         "unrealized_pnl_usdt": 0.0,
+        "cash_ratio": cash_ratio,
         "usdt_cash": total_usdt,
         "holdings": sorted(holdings, key=lambda x: x["value_usdt"], reverse=True),
         "holdings_value_usdt": holdings_value_usdt,
@@ -300,6 +311,9 @@ def _snapshot_shell(scope: str) -> Dict[str, Any]:
         "equity_usdt": None,
         "available_usdt": None,
         "unrealized_pnl_usdt": None,
+        "maint_margin_usdt": None,
+        "margin_ratio": None,
+        "cash_ratio": None,
         "fetched_at": None,
     }
 

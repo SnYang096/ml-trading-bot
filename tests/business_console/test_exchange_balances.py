@@ -115,12 +115,28 @@ def test_parse_futures_account() -> None:
             "totalMarginBalance": "1008.2",
             "availableBalance": "900.1",
             "totalUnrealizedProfit": "7.7",
+            "totalMaintMargin": "120.4",
         }
     )
     assert parsed["wallet_balance_usdt"] == pytest.approx(1000.5)
     assert parsed["equity_usdt"] == pytest.approx(1008.2)
     assert parsed["available_usdt"] == pytest.approx(900.1)
     assert parsed["unrealized_pnl_usdt"] == pytest.approx(7.7)
+    assert parsed["maint_margin_usdt"] == pytest.approx(120.4)
+    assert parsed["margin_ratio"] == pytest.approx(0.119421, abs=1e-6)
+
+
+def test_parse_futures_account_zero_equity_no_ratio() -> None:
+    parsed = parse_futures_account(
+        {
+            "totalWalletBalance": "0",
+            "totalMarginBalance": "0",
+            "availableBalance": "0",
+            "totalUnrealizedProfit": "0",
+            "totalMaintMargin": "0",
+        }
+    )
+    assert parsed["margin_ratio"] is None
 
 
 def test_fetch_scope_unconfigured(monkeypatch: pytest.MonkeyPatch) -> None:

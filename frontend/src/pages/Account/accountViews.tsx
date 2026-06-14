@@ -16,6 +16,49 @@ export function fmtUsdt(n: unknown): string {
   return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+export function fmtPct(ratio: unknown): string {
+  const v = Number(ratio);
+  if (!Number.isFinite(v)) return '—';
+  return `${(v * 100).toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
+}
+
+function marginRiskClass(ratio: unknown): string {
+  const v = Number(ratio);
+  if (!Number.isFinite(v)) return '';
+  if (v >= 0.7) return styles.riskHigh;
+  if (v >= 0.5) return styles.riskWarn;
+  return styles.riskOk;
+}
+
+function scopeRiskDisplay(scope: string, ex: Record<string, unknown>): {
+  primary: string;
+  hint: string;
+  valueClass: string;
+} {
+  if (!ex?.ok) {
+    return { primary: '—', hint: String(ex?.error || '交易所不可用'), valueClass: '' };
+  }
+  if (scope === 'spot') {
+    const cash = ex.cash_ratio;
+    return {
+      primary: fmtPct(cash),
+      hint: '现金占比（可用/权益）· 现货无强平',
+      valueClass: '',
+    };
+  }
+  const ratio = ex.margin_ratio;
+  const maint = ex.maint_margin_usdt;
+  const hint =
+    maint != null && Number.isFinite(Number(maint))
+      ? `维持 ${fmtUsdt(maint)} / 权益 ${fmtUsdt(ex.equity_usdt)}`
+      : '维持保证金 / 权益';
+  return {
+    primary: fmtPct(ratio),
+    hint,
+    valueClass: marginRiskClass(ratio),
+  };
+}
+
 function exCell(ex: Record<string, unknown> | undefined, field: string): string {
   if (!ex?.ok) {
     return '—';
@@ -58,12 +101,14 @@ function scopeRowCells(s: AccountScopeBlock, symbolScoped: boolean) {
     Math.abs(compareUpnlNum) > 0.5 &&
     localOpen === 0 &&
     Math.abs(localUpnlNum) < 0.5;
+  const risk = scopeRiskDisplay(String(s.scope || ''), ex);
   return {
     label,
     sub: ex.binance_label ? String(ex.binance_label) : undefined,
     wallet: exCell(ex, 'wallet_balance_usdt'),
     equity: exCell(ex, 'equity_usdt'),
     available: exCell(ex, 'available_usdt'),
+    risk,
     displayUpnl,
     accountUpnl,
     exOpenCount,
@@ -78,6 +123,39 @@ function scopeRowCells(s: AccountScopeBlock, symbolScoped: boolean) {
 function isSymbolScopedFilter(symbolFilter: string): boolean {
   const sym = symbolFilter.trim();
   return sym !== '' && sym !== '*' && sym.toUpperCase() !== 'ALL';
+}
+
+const RISK_SCOPE_ORDER = ['spot', 'trend', 'multi_leg'] as const;
+
+/** At-a-glance A/B/C account risk (margin ratio or spot cash ratio). */
+export function AccountRiskStrip({ scopes }: { scopes: AccountScopeBlock[] }) {
+  if (!scopes?.length) return null;
+  const byScope = new Map(scopes.map((s) => [String(s.scope || ''), s]));
+  const ordered = RISK_SCOPE_ORDER.map((key) => byScope.get(key)).filter(
+    (s): s is AccountScopeBlock => Boolean(s),
+  );
+  if (!ordered.length) return null;
+
+  return (
+    <div className={styles.riskStrip}>
+      {ordered.map((scopeBlock) => {
+        const scopeKey = String(scopeBlock.scope || '');
+        const ex = (scopeBlock.exchange || {}) as Record<string, unknown>;
+        const label = scopeBlock.label || SCOPE_LABELS[scopeKey] || scopeKey;
+        const risk = scopeRiskDisplay(scopeKey, ex);
+        const cardLabel = scopeKey === 'spot' ? '现金占比' : '维持保证金比';
+        return (
+          <KpiCard
+            key={scopeKey}
+            label={`${label} · ${cardLabel}`}
+            value={risk.primary}
+            hint={risk.hint}
+            valueClass={risk.valueClass}
+          />
+        );
+      })}
+    </div>
+  );
 }
 
 /** Account scope rows with expandable per-strategy breakdown (local DB). */
@@ -137,6 +215,7 @@ export function AccountHierarchyTable({
             <th>钱包余额</th>
             <th>权益</th>
             <th>可用</th>
+            <th>风险</th>
             <th>{symbolScoped ? '品种浮盈' : '交易所浮盈'}</th>
             {symbolScoped ? <th>全账户浮盈</th> : null}
             <th>交易所未平</th>
@@ -187,6 +266,10 @@ export function AccountHierarchyTable({
                   <td>{cells.wallet}</td>
                   <td>{cells.equity}</td>
                   <td>{cells.available}</td>
+                  <td className={cells.risk.valueClass}>
+                    <div>{cells.risk.primary}</div>
+                    <div className={`muted ${styles.sub}`}>{cells.risk.hint}</div>
+                  </td>
                   <td className={pnlClass(cells.displayUpnl)}>{fmtUsdt(cells.displayUpnl)}</td>
                   {symbolScoped ? (
                     <td className={pnlClass(cells.accountUpnl)}>
@@ -220,6 +303,7 @@ export function AccountHierarchyTable({
                           <td>
                             <div className={styles.strategyNameCell}>{title}</div>
                           </td>
+                          <td className={styles.inheritedDash}>{dash}</td>
                           <td className={styles.inheritedDash}>{dash}</td>
                           <td className={styles.inheritedDash}>{dash}</td>
                           <td className={styles.inheritedDash}>{dash}</td>
@@ -264,6 +348,7 @@ export function ScopesTable({
             <th>钱包余额</th>
             <th>权益</th>
             <th>可用</th>
+            <th>风险</th>
             <th>{symbolScoped ? '品种浮盈' : '交易所浮盈'}</th>
             {symbolScoped ? <th>全账户浮盈</th> : null}
             <th>交易所未平</th>
@@ -288,6 +373,10 @@ export function ScopesTable({
                 <td>{cells.wallet}</td>
                 <td>{cells.equity}</td>
                 <td>{cells.available}</td>
+                <td className={cells.risk.valueClass}>
+                  <div>{cells.risk.primary}</div>
+                  <div className={`muted ${styles.sub}`}>{cells.risk.hint}</div>
+                </td>
                 <td className={pnlClass(cells.displayUpnl)}>{fmtUsdt(cells.displayUpnl)}</td>
                 {symbolScoped ? (
                   <td className={pnlClass(cells.accountUpnl)}>{fmtUsdt(cells.accountUpnl)}</td>

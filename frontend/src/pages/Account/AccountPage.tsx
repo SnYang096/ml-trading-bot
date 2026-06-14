@@ -12,6 +12,7 @@ import {
   KpiCard,
   ReconciliationPanels,
   AccountHierarchyTable,
+  AccountRiskStrip,
   SpotHoldingsPanel,
   WeeklyPnlChart,
   WeeklyPnlTable,
@@ -112,6 +113,7 @@ export function AccountPage() {
             hint="交易所"
           />
         </div>
+        <AccountRiskStrip scopes={global?.scopes || []} />
         {global?.exchange_ledger ? (
           <div className={styles.ledgerStrip}>
             <span>

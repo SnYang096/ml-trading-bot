@@ -278,6 +278,26 @@
   background: rgba(255, 80, 80, 0.06);
 }
 
+.riskStrip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.riskOk {
+  color: var(--accent);
+}
+
+.riskWarn {
+  color: #e6b800;
+}
+
+.riskHigh {
+  color: #ff5050;
+  font-weight: 600;
+}
+
 .hierarchyTable .hierarchyNameCol {
   min-width: 10rem;
 }
