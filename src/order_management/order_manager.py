@@ -492,7 +492,9 @@ class OrderManager:
         stale_grace_seconds = float(
             max(
                 0,
-                int(os.getenv("MLBOT_TERMINAL_STALE_OPEN_GRACE_SECONDS", str(6 * 3600))),
+                int(
+                    os.getenv("MLBOT_TERMINAL_STALE_OPEN_GRACE_SECONDS", str(6 * 3600))
+                ),
             )
         )
         updated: List[Order] = []
@@ -539,10 +541,14 @@ class OrderManager:
                 )
                 continue
             if not snap:
-                order_status = str(getattr(order.status, "value", order.status) or "").lower()
+                order_status = str(
+                    getattr(order.status, "value", order.status) or ""
+                ).lower()
                 if order_status in {"pending", "partially_filled"}:
                     age_seconds = (
-                        (datetime.now() - (order.updated_at or order.created_at)).total_seconds()
+                        (
+                            datetime.now() - (order.updated_at or order.created_at)
+                        ).total_seconds()
                         if (order.updated_at or order.created_at) is not None
                         else 0.0
                     )
@@ -646,7 +652,9 @@ class OrderManager:
             OrderStatus.EXPIRED,
         ):
             order.canceled_at = order.canceled_at or dt or datetime.now()
-            err = binance_order.get("error_message") or binance_order.get("reject_reason")
+            err = binance_order.get("error_message") or binance_order.get(
+                "reject_reason"
+            )
             if err:
                 order.error_message = str(err)
 
@@ -747,11 +755,20 @@ class OrderManager:
                     filled_at=_fa_miss,
                     canceled_at=(
                         datetime.now()
-                        if _st in (OrderStatus.CANCELED, OrderStatus.REJECTED, OrderStatus.EXPIRED)
+                        if _st
+                        in (
+                            OrderStatus.CANCELED,
+                            OrderStatus.REJECTED,
+                            OrderStatus.EXPIRED,
+                        )
                         else None
                     ),
                     error_message=(
-                        str(report.get("error_message") or report.get("reject_reason") or "")
+                        str(
+                            report.get("error_message")
+                            or report.get("reject_reason")
+                            or ""
+                        )
                         or None
                     ),
                     created_at=datetime.now(),

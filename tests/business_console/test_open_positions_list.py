@@ -18,25 +18,21 @@ def test_collect_open_positions_trend_and_multileg(
     trend_db, spot_db, multi_leg_db, bus_root
 ) -> None:
     conn = sqlite3.connect(trend_db)
-    conn.execute(
-        """
+    conn.execute("""
         INSERT INTO positions VALUES (
             'p_open', 'ETHUSDT', 'long',
             '2024-01-02T10:00:00+00:00', NULL,
             100.0, NULL, NULL, 'open', 'tpc', 98.5, 106.0, 0.5, NULL
         )
-        """
-    )
-    conn.execute(
-        """
+        """)
+    conn.execute("""
         INSERT INTO orders VALUES (
             'ord_tp', 'ETHUSDT', 'SELL', 'open', 'limit',
             0.5, 106.0, NULL,
             NULL, '2024-01-02T11:00:00+00:00', '2024-01-02T11:00:00+00:00',
             NULL, 0.0, 'p_open'
         )
-        """
-    )
+        """)
     conn.commit()
     conn.close()
 
@@ -85,15 +81,13 @@ def test_collect_open_positions_spot_lot(
 
 def test_open_positions_api(client, trend_db, bus_root) -> None:
     conn = sqlite3.connect(trend_db)
-    conn.execute(
-        """
+    conn.execute("""
         INSERT INTO positions VALUES (
             'p_api', 'ETHUSDT', 'short',
             '2024-01-03T08:00:00+00:00', NULL,
             105.0, NULL, NULL, 'open', 'tpc', 108.0, 102.0, 0.2, NULL
         )
-        """
-    )
+        """)
     conn.commit()
     conn.close()
 
@@ -109,6 +103,7 @@ def test_open_positions_api(client, trend_db, bus_root) -> None:
 
 
 # ── Exchange cross-reference helpers ──────────────────────────
+
 
 def test_exchange_position_map_from_ledger():
     ledger = {
@@ -144,9 +139,16 @@ def test_exchange_position_map_empty_or_broken():
     assert _exchange_position_map({"accounts": []}) == {}
     assert _exchange_position_map({"accounts": [{}]}) == {}
     # position_amt missing
-    assert _exchange_position_map({
-        "accounts": [{"exchange_open_positions": [{"symbol": "X", "position_amt": 0.0}]}]
-    }) == {}
+    assert (
+        _exchange_position_map(
+            {
+                "accounts": [
+                    {"exchange_open_positions": [{"symbol": "X", "position_amt": 0.0}]}
+                ]
+            }
+        )
+        == {}
+    )
 
 
 def test_exchange_has_position_threshold():
@@ -163,6 +165,7 @@ def test_exchange_has_position_threshold():
 
 
 # ── Trend dedup ──────────────────────────────────────────────
+
 
 def test_trend_dedup_keeps_most_recent(trend_db, spot_db, multi_leg_db, bus_root):
     """Two entries for same (symbol, side) → only most recent survives."""
@@ -209,7 +212,9 @@ def test_trend_dedup_keeps_most_recent(trend_db, spot_db, multi_leg_db, bus_root
     assert bnb_rows[0]["position_id"] == "BNB:bootstrap_2"
 
 
-def test_trend_dedup_preserves_non_trend_scopes(trend_db, spot_db, multi_leg_db, bus_root):
+def test_trend_dedup_preserves_non_trend_scopes(
+    trend_db, spot_db, multi_leg_db, bus_root
+):
     """Multi-leg entries must survive trend dedup untouched."""
     conn = sqlite3.connect(trend_db)
     ts = datetime(2026, 6, 12, 2, 21, 53, tzinfo=timezone.utc).isoformat()
@@ -248,12 +253,17 @@ def test_trend_dedup_preserves_non_trend_scopes(trend_db, spot_db, multi_leg_db,
     )
     # Multi-leg rows must still be present (trend dedup only targets trend scope)
     ml = [r for r in rows if r["scope"] == "multi_leg" and r["symbol"] == "ETHUSDT"]
-    assert len(ml) >= 1, f"multi_leg ETHUSDT entries should survive dedup, got {len(ml)}"
+    assert (
+        len(ml) >= 1
+    ), f"multi_leg ETHUSDT entries should survive dedup, got {len(ml)}"
 
 
 # ── Exchange-ledger cross-ref filter ─────────────────────────
 
-def test_exchange_cross_ref_drops_stale_symbols(trend_db, spot_db, multi_leg_db, bus_root):
+
+def test_exchange_cross_ref_drops_stale_symbols(
+    trend_db, spot_db, multi_leg_db, bus_root
+):
     """BNBUSDT in local DB but NOT on exchange → filter drops it."""
     import sqlite3
     from datetime import datetime, timezone
@@ -289,9 +299,7 @@ def test_exchange_cross_ref_drops_stale_symbols(trend_db, spot_db, multi_leg_db,
     # Exchange ledger: only ETHUSDT, no SOLUSDT
     exchange_ledger = {
         "accounts": [
-            {"exchange_open_positions": [
-                {"symbol": "ETHUSDT", "position_amt": 2.884}
-            ]}
+            {"exchange_open_positions": [{"symbol": "ETHUSDT", "position_amt": 2.884}]}
         ]
     }
 
@@ -305,7 +313,9 @@ def test_exchange_cross_ref_drops_stale_symbols(trend_db, spot_db, multi_leg_db,
         exchange_ledger=exchange_ledger,
     )
     sol = [r for r in rows if r["symbol"] == "SOLUSDT"]
-    assert len(sol) == 0, f"SOLUSDT should be filtered (exchange shows 0), got {len(sol)}"
+    assert (
+        len(sol) == 0
+    ), f"SOLUSDT should be filtered (exchange shows 0), got {len(sol)}"
 
     eth = [r for r in rows if r["symbol"] == "ETHUSDT"]
     assert len(eth) >= 1, f"ETHUSDT should survive (exchange has it), got {len(eth)}"

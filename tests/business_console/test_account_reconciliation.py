@@ -87,15 +87,13 @@ def test_reconcile_account_trend_symbol_filter_ignores_other_symbols(
     import sqlite3
 
     conn = sqlite3.connect(trend_db)
-    conn.execute(
-        """
+    conn.execute("""
         INSERT INTO positions VALUES (
             'p_bnb', 'BNBUSDT', 'long',
             '2026-06-10T08:00:00+00:00', NULL,
-            1.0, NULL, NULL, 'open', 'tpc', 700.0, NULL, NULL
+            1.0, NULL, NULL, 'open', 'tpc', 700.0, NULL, NULL, NULL
         )
-        """
-    )
+        """)
     conn.commit()
     conn.close()
 
@@ -125,15 +123,13 @@ def test_local_trend_open_positions_skips_zero_qty_without_entry(
     )
 
     conn = sqlite3.connect(trend_db)
-    conn.execute(
-        """
+    conn.execute("""
         INSERT INTO positions VALUES (
             'p_ghost', 'ETHUSDT', 'long',
             '2026-06-10T08:00:00+00:00', NULL,
-            0.0, NULL, NULL, 'open', 'tpc', 2100.0, NULL, NULL
+            0.0, NULL, NULL, 'open', 'tpc', 2100.0, NULL, NULL, NULL
         )
-        """
-    )
+        """)
     conn.commit()
     conn.close()
 

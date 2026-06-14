@@ -1071,7 +1071,7 @@ class PositionTracker:
             qty = float(pos.get("qty") or 0.0)
         except (TypeError, ValueError):
             qty = 0.0
-        if not position_id or qty <= 0:
+        if not position_id or (status == PositionStatus.OPEN and qty <= 0):
             return position_id
         try:
             existing = storage.get_position(position_id)

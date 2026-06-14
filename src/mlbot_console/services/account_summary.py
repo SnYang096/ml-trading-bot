@@ -10,7 +10,10 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 import pandas as pd
 
 from mlbot_console.services.db import query_rows
-from mlbot_console.services.spot_pnl import compute_spot_order_pnl, spot_holdings_from_orders
+from mlbot_console.services.spot_pnl import (
+    compute_spot_order_pnl,
+    spot_holdings_from_orders,
+)
 from mlbot_console.services.strategy_registry import (
     default_spot_strategy_id,
     get_console_strategies,
@@ -67,7 +70,8 @@ def _discover_symbols(
             continue
         try:
             for row in query_rows(
-                db, f"SELECT DISTINCT {col} AS symbol FROM {table} WHERE {col} IS NOT NULL"
+                db,
+                f"SELECT DISTINCT {col} AS symbol FROM {table} WHERE {col} IS NOT NULL",
             ):
                 sym = str(row.get("symbol") or "").upper()
                 if sym:
@@ -77,7 +81,9 @@ def _discover_symbols(
     return sorted(found)
 
 
-def _link_pnl_usdt(entry_row: Dict[str, Any], exit_row: Dict[str, Any]) -> Optional[float]:
+def _link_pnl_usdt(
+    entry_row: Dict[str, Any], exit_row: Dict[str, Any]
+) -> Optional[float]:
     from mlbot_console.services.multileg_order_links import _price, link_qty_for_pnl
 
     qty = link_qty_for_pnl(entry_row, exit_row)
@@ -85,7 +91,9 @@ def _link_pnl_usdt(entry_row: Dict[str, Any], exit_row: Dict[str, Any]) -> Optio
         return None
     entry_px = _price(entry_row)
     if entry_px is None:
-        entry_px = float(entry_row.get("average_price") or entry_row.get("price") or 0.0)
+        entry_px = float(
+            entry_row.get("average_price") or entry_row.get("price") or 0.0
+        )
     exit_px = _price(exit_row)
     if exit_px is None:
         exit_px = float(exit_row.get("average_price") or exit_row.get("price") or 0.0)
@@ -97,7 +105,9 @@ def _link_pnl_usdt(entry_row: Dict[str, Any], exit_row: Dict[str, Any]) -> Optio
     return (entry_px - exit_px) * qty
 
 
-def _trend_entry_qty_by_position(trend_db: Path, sym: Optional[str]) -> Dict[str, float]:
+def _trend_entry_qty_by_position(
+    trend_db: Path, sym: Optional[str]
+) -> Dict[str, float]:
     """Best-effort entry size for PnL when positions.current_size is zero after close."""
     if not trend_db.is_file():
         return {}
@@ -121,7 +131,9 @@ def _trend_entry_qty_by_position(trend_db: Path, sym: Optional[str]) -> Dict[str
         pos_side = str(row.get("pos_side") or "long").lower()
         o_side = str(row.get("side") or "").lower()
         is_entry = (
-            o_side in {"buy", "long"} if pos_side == "long" else o_side in {"sell", "short"}
+            o_side in {"buy", "long"}
+            if pos_side == "long"
+            else o_side in {"sell", "short"}
         )
         if not is_entry:
             continue
@@ -279,7 +291,9 @@ def _multileg_realized_rows(db_path: Path, symbol: str) -> List[Dict[str, Any]]:
         pnl = float(rec["realized_pnl"])
         exit_ts = int(exit_ts_by_entry.get(oid) or 0)
         if exit_ts <= 0:
-            exit_ts = int(_parse_ts(row.get("filled_at")) or _parse_ts(row.get("created_at")) or 0)
+            exit_ts = int(
+                _parse_ts(row.get("filled_at")) or _parse_ts(row.get("created_at")) or 0
+            )
         out.append(
             {
                 "strategy": str(row.get("strategy") or "multi_leg").lower(),
@@ -325,7 +339,12 @@ def _trend_stats(
     closed_count = 0
     sync_cleanup_closed = 0
     by_strategy: Dict[str, Dict[str, float]] = defaultdict(
-        lambda: {"realized_pnl": 0.0, "unrealized_pnl": 0.0, "closed_trades": 0.0, "open_positions": 0.0}
+        lambda: {
+            "realized_pnl": 0.0,
+            "unrealized_pnl": 0.0,
+            "closed_trades": 0.0,
+            "open_positions": 0.0,
+        }
     )
     daily: Dict[str, float] = defaultdict(float)
 
@@ -397,7 +416,12 @@ def _spot_stats(
     closed = 0
     open_lots = 0
     by_strategy: Dict[str, Dict[str, float]] = defaultdict(
-        lambda: {"realized_pnl": 0.0, "unrealized_pnl": 0.0, "closed_trades": 0.0, "open_lots": 0.0}
+        lambda: {
+            "realized_pnl": 0.0,
+            "unrealized_pnl": 0.0,
+            "closed_trades": 0.0,
+            "open_lots": 0.0,
+        }
     )
     daily: Dict[str, float] = defaultdict(float)
     allowed = _constitution_spot_strategy_ids() or set(spot_strategy_ids())
@@ -451,7 +475,9 @@ def _multileg_stats(
 ) -> Dict[str, Any]:
     if not multi_leg_db.is_file():
         return _empty_scope_stats("multi_leg")
-    symbols = _discover_symbols(trend_db=Path("/dev/null"), spot_db=Path("/dev/null"), multi_leg_db=multi_leg_db)
+    symbols = _discover_symbols(
+        trend_db=Path("/dev/null"), spot_db=Path("/dev/null"), multi_leg_db=multi_leg_db
+    )
     if symbol and not is_all_symbols(symbol):
         symbols = [symbol.upper()]
     realized = 0.0
@@ -459,7 +485,12 @@ def _multileg_stats(
     closed = 0
     open_positions = 0
     by_strategy: Dict[str, Dict[str, float]] = defaultdict(
-        lambda: {"realized_pnl": 0.0, "unrealized_pnl": 0.0, "closed_trades": 0.0, "open_positions": 0.0}
+        lambda: {
+            "realized_pnl": 0.0,
+            "unrealized_pnl": 0.0,
+            "closed_trades": 0.0,
+            "open_positions": 0.0,
+        }
     )
     daily: Dict[str, float] = defaultdict(float)
 
@@ -467,14 +498,18 @@ def _multileg_stats(
     from mlbot_console.services.db import query_rows
 
     for sym in symbols:
-        pnl_map = multileg_pnl_by_order_id(multi_leg_db, sym, mark_prices=dict(mark_prices))
+        pnl_map = multileg_pnl_by_order_id(
+            multi_leg_db, sym, mark_prices=dict(mark_prices)
+        )
 
         rows = query_rows(
             multi_leg_db,
             "SELECT local_order_id, strategy, filled_at FROM multi_leg_orders WHERE symbol = ?",
             (sym,),
         )
-        order_meta = {str(r["local_order_id"]): r for r in rows if r.get("local_order_id")}
+        order_meta = {
+            str(r["local_order_id"]): r for r in rows if r.get("local_order_id")
+        }
 
         entry_meta_rows = query_rows(
             multi_leg_db,
@@ -517,14 +552,16 @@ def _multileg_stats(
             by_strategy[strat]["realized_pnl"] += pnl
             by_strategy[strat]["closed_trades"] += 1
             if exit_ts:
-                day = datetime.fromtimestamp(exit_ts, tz=timezone.utc).strftime("%Y-%m-%d")
+                day = datetime.fromtimestamp(exit_ts, tz=timezone.utc).strftime(
+                    "%Y-%m-%d"
+                )
                 daily[day] += pnl
-                
+
         # Get open positions count
         open_rows = query_rows(
             multi_leg_db,
             "SELECT strategy, COUNT(*) as cnt FROM multi_leg_positions WHERE status = 'open' AND symbol = ? GROUP BY strategy",
-            (sym,)
+            (sym,),
         )
         for r in open_rows:
             strat = str(r.get("strategy") or "multi_leg").lower()
@@ -570,7 +607,9 @@ def _constitution_spot_strategy_ids() -> set[str]:
     }
 
 
-def _empty_strategy_row(scope: str, strategy_id: str, *, title: str = "") -> Dict[str, Any]:
+def _empty_strategy_row(
+    scope: str, strategy_id: str, *, title: str = ""
+) -> Dict[str, Any]:
     return {
         "scope": scope,
         "strategy": strategy_id,
@@ -819,16 +858,17 @@ def build_account_summary(
     symbols = _discover_symbols(
         trend_db=trend_db, spot_db=spot_db, multi_leg_db=multi_leg_db
     )
-    
+
     from mlbot_console.services.mark_prices import fetch_mark_prices
+
     marks = fetch_mark_prices(feature_bus_root, symbols)
 
     sym_arg = None if is_all_symbols(symbol) else symbol
     trend = _trend_stats(trend_db, symbol=sym_arg, mark_prices=marks, since_ts=since_ts)
-    spot = _spot_stats(
-        spot_db, symbol=sym_arg, mark_prices=marks, since_ts=since_ts
+    spot = _spot_stats(spot_db, symbol=sym_arg, mark_prices=marks, since_ts=since_ts)
+    multileg = _multileg_stats(
+        multi_leg_db, symbol=sym_arg, mark_prices=marks, since_ts=since_ts
     )
-    multileg = _multileg_stats(multi_leg_db, symbol=sym_arg, mark_prices=marks, since_ts=since_ts)
 
     all_scopes = [trend, spot, multileg]
     allowed = {str(s).strip().lower() for s in (scopes or [])}
@@ -881,8 +921,9 @@ def build_account_summary(
 
     ledger = build_exchange_ledger(mark_prices=marks, symbol=symbol)
     exchange_by_scope = {str(a["scope"]): a for a in ledger.get("accounts") or []}
-    
+
     from mlbot_console.services.spot_ledger_book import fetch_spot_ledger_holdings
+
     spot_ledger_data = fetch_spot_ledger_holdings(spot_ledger_db, marks)
     fifo_holdings = spot_holdings_from_orders(spot_db, mark_prices=marks)
     ledger_by_asset = {h["asset"]: h for h in spot_ledger_data.get("holdings") or []}
@@ -893,13 +934,17 @@ def build_account_summary(
         if ex:
             if scope_block["scope"] == "spot":
                 ex["ledger_holdings"] = spot_ledger_data["holdings"]
-                ex["ledger_holdings_value_usdt"] = spot_ledger_data["holdings_value_usdt"]
+                ex["ledger_holdings_value_usdt"] = spot_ledger_data[
+                    "holdings_value_usdt"
+                ]
                 for h in ex.get("holdings") or []:
                     asset = str(h.get("asset") or "")
                     led = ledger_by_asset.get(asset) or fifo_by_asset.get(asset)
                     if not led:
                         continue
-                    avg = float(led.get("cost_basis") or led.get("avg_entry_usdt") or 0.0)
+                    avg = float(
+                        led.get("cost_basis") or led.get("avg_entry_usdt") or 0.0
+                    )
                     if avg > 0:
                         h["avg_entry_usdt"] = avg
                         h["cost_notional_usdt"] = float(
@@ -1012,7 +1057,9 @@ def build_order_pnl_maps(
     symbol: str = "*",
     mark_prices: Optional[Dict[str, float]] = None,
     scopes: Optional[Tuple[str, ...]] = None,
-) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+) -> Tuple[
+    Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]
+]:
     """Return (trend_by_order_id, spot_by_order_id, multileg_by_order_id) enrichment maps."""
     scope_set = {str(s).strip().lower() for s in (scopes or ()) if str(s).strip()}
     if not scope_set:
@@ -1087,8 +1134,12 @@ def build_order_pnl_maps(
             pos_side = str(row.get("pos_side") or "long").lower()
             o_side = str(row.get("side") or "").lower()
             is_long = pos_side == "long"
-            is_entry = o_side in {"buy", "long"} if is_long else o_side in {"sell", "short"}
-            is_exit = o_side in {"sell", "short"} if is_long else o_side in {"buy", "long"}
+            is_entry = (
+                o_side in {"buy", "long"} if is_long else o_side in {"sell", "short"}
+            )
+            is_exit = (
+                o_side in {"sell", "short"} if is_long else o_side in {"buy", "long"}
+            )
             if row.get("exit_time"):
                 if not is_exit:
                     continue
@@ -1130,9 +1181,7 @@ def build_order_pnl_maps(
                 multi_leg_db=multi_leg_db,
             ):
                 multileg_map.update(
-                    multileg_pnl_by_order_id(
-                        multi_leg_db, s, mark_prices=marks
-                    )
+                    multileg_pnl_by_order_id(multi_leg_db, s, mark_prices=marks)
                 )
 
     return trend_map, spot_map, multileg_map

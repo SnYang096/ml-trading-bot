@@ -34,13 +34,17 @@ def migrate_segment_state_from_legacy(
     *,
     active: bool,
     segment_state_raw: str | None,
+    has_inventory_or_pending: bool = False,
 ) -> str:
     if segment_state_raw:
         return str(segment_state_raw)
     if not active:
         return SegmentState.IDLE.value
-    # active=True without persisted segment_state: treat as ACTIVE; ghost segments
-    # (active with empty local state) are cleared by the concurrency gate.
+    # Legacy active=True: only preserve as ACTIVE if there's real inventory or
+    # pending orders.  Ghost segments (stale active with empty local state) go
+    # to IDLE so the concurrency gate can recycle the slot.
+    if not has_inventory_or_pending:
+        return SegmentState.IDLE.value
     return SegmentState.ACTIVE.value
 
 
@@ -68,11 +72,25 @@ class SegmentLifecycleMixin:
         raise NotImplementedError
 
     def _reconcile_legacy_active_flag(self) -> None:
-        if self.state.active and self.state.segment_state == SegmentState.IDLE.value:
+        if not (self.state.active and self.state.segment_state == SegmentState.IDLE.value):
+            return
+        # Legacy state: active=True but segment_state was never persisted.
+        # Only preserve as ACTIVE when real inventory/pending exists; otherwise
+        # clear the stale active flag so the slot can be recycled.
+        if self.state.inventory or self.state.pending_orders:
             self.state.segment_state = SegmentState.ACTIVE.value
+        else:
+            self.state.active = False
 
     def _sync_active_from_segment_state(self) -> None:
         self.state.active = segment_occupies_slot(self.state.segment_state)
+
+    def _segment_winding_down(self) -> bool:
+        """True when segment is winding down (inactive or closing)."""
+        return (
+            not self.state.active
+            or self.state.segment_state == SegmentState.CLOSING.value
+        )
 
     def _needs_late_fill_cleanup(self) -> bool:
         """True when segment is winding down (trend: skip promote/protection on late fills)."""

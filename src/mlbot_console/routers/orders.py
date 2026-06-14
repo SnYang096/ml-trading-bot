@@ -115,6 +115,7 @@ def orders_trade_links(
 
     if is_all_symbols(symbol):
         from mlbot_console.services.universe import load_universe_symbols
+
         syms = load_universe_symbols(SETTINGS.universe_yaml)
         per_symbol_cap = 50
         effective_limit = min(500, max(int(limit), len(syms) * per_symbol_cap))
@@ -128,7 +129,10 @@ def orders_trade_links(
                 scopes=scope_list,
             )
             for raw in links:
-                if strat_filter and str(raw.get("strategy") or "").lower() != strat_filter:
+                if (
+                    strat_filter
+                    and str(raw.get("strategy") or "").lower() != strat_filter
+                ):
                     continue
                 strat = str(raw.get("strategy") or "")
                 item = dict(raw)
@@ -159,7 +163,9 @@ def orders_trade_links(
         item["symbol"] = sym
         item["scope"] = strategy_account_layer(strat) if strat else ""
         out.append(item)
-    out.sort(key=lambda r: int(r.get("exit_time") or r.get("entry_time") or 0), reverse=True)
+    out.sort(
+        key=lambda r: int(r.get("exit_time") or r.get("entry_time") or 0), reverse=True
+    )
     out = out[: int(limit)]
     return ok(out, meta={"count": len(out), "symbol": sym})
 
@@ -202,7 +208,9 @@ def trend_orders_api(
 def trend_funnel_api(
     symbol: str = Query("", description="Empty or * = all symbols in snapshot"),
     account_layer: str = Query("", description="trend | spot | multi_leg"),
-    strategy: str = Query("", description="Specific strategy id, e.g. bpc or chop_grid"),
+    strategy: str = Query(
+        "", description="Specific strategy id, e.g. bpc or chop_grid"
+    ),
     limit: int = Query(96, ge=1, le=500, description="Recent 15min windows"),
 ) -> dict:
     rows = fetch_funnel_snapshots(
@@ -257,9 +265,7 @@ def spot_orders_api(
     from mlbot_console.services.orders_list import _effective_fetch_limit
 
     fetch_limit = (
-        _effective_fetch_limit(limit, exclude_statuses)
-        if exclude_statuses
-        else limit
+        _effective_fetch_limit(limit, exclude_statuses) if exclude_statuses else limit
     )
     rows = spot_orders_list(
         SETTINGS.spot_order_db,
@@ -293,9 +299,7 @@ def multileg_orders_api(
     from mlbot_console.services.orders_list import _effective_fetch_limit
 
     fetch_limit = (
-        _effective_fetch_limit(limit, exclude_statuses)
-        if exclude_statuses
-        else limit
+        _effective_fetch_limit(limit, exclude_statuses) if exclude_statuses else limit
     )
     rows = multi_leg_orders_list(
         SETTINGS.multi_leg_db,

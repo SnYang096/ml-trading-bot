@@ -44,9 +44,7 @@ def _row_matches_strategy(row: Dict[str, Any], strategy: Optional[str]) -> bool:
     return got == want
 
 
-def _trend_pending_exit_counts(
-    db_path: Path, symbol: Optional[str]
-) -> Dict[str, int]:
+def _trend_pending_exit_counts(db_path: Path, symbol: Optional[str]) -> Dict[str, int]:
     if not db_path.is_file():
         return {}
     where = " WHERE o.position_id IS NOT NULL AND lower(o.status) IN ({})".format(
@@ -318,7 +316,9 @@ def _multileg_open_rows(
             else:
                 side = _normalize_side(row.get("side"))
             leg_key = str(row.get("leg_id") or oid)
-            entry_ts = _parse_ts(row.get("filled_at")) or _parse_ts(row.get("created_at"))
+            entry_ts = _parse_ts(row.get("filled_at")) or _parse_ts(
+                row.get("created_at")
+            )
             strat = str(row.get("strategy") or "multi_leg").lower()
             out.append(
                 {
@@ -334,9 +334,7 @@ def _multileg_open_rows(
                     "unrealized_pnl_usdt": upnl,
                     "entry_time": entry_ts,
                     "pending_exit_orders": int(pending_exits.get(leg_key) or 0),
-                    "entry_marker_id": _marker_id(
-                        "multi_leg", "multi_leg_orders", oid
-                    ),
+                    "entry_marker_id": _marker_id("multi_leg", "multi_leg_orders", oid),
                 }
             )
     return out
@@ -419,9 +417,7 @@ def collect_open_positions(
             )
         )
     if "spot" in scope_set:
-        merged.extend(
-            _spot_open_rows(spot_db, symbol=sym_filter, mark_prices=marks)
-        )
+        merged.extend(_spot_open_rows(spot_db, symbol=sym_filter, mark_prices=marks))
     if "multi_leg" in scope_set:
         pending = _multileg_pending_exit_counts(multi_leg_db, sym_filter)
         merged.extend(
@@ -473,7 +469,8 @@ def collect_open_positions(
     if dedup:
         keep_ids = {str(r.get("position_id") or "") for r in dedup.values()}
         merged = [
-            r for r in merged
+            r
+            for r in merged
             if str(r.get("scope") or "") != "trend"
             or str(r.get("position_id") or "") in keep_ids
         ]

@@ -290,6 +290,7 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
         segment_state = migrate_segment_state_from_legacy(
             active=active,
             segment_state_raw=raw.get("segment_state"),
+            has_inventory_or_pending=bool(pending_orders or inventory),
         )
         return DualAddTrendState(
             segment_id=str(raw.get("segment_id", "")),
@@ -315,7 +316,6 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
         )
 
     def save_state(self) -> None:
-        self._reconcile_legacy_active_flag()
         self._sync_active_from_segment_state()
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         raw = asdict(self.state)
@@ -351,8 +351,6 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
             if str(p.get("symbol") or "").upper() == sym
             and abs(float(p.get("positionAmt") or p.get("quantity") or 0)) > 0
         ]
-        # Positions on the book only count when local trend state agrees — same guard
-        # as chop_grid: do not treat unrelated exchange exposure as this segment.
         self._exchange_open_orders = bool(open_trend_orders) or (
             bool(positions) and has_local
         )
@@ -583,20 +581,29 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
                 if pos is not None and result.order_id:
                     pos.protection_order_ids.append(result.order_id)
             elif result.action == "market_exit":
+                # Late-fill cleanup or forced exit — remove the position.
                 raw = result.raw or {}
-                leg_id = str(raw.get("leg_id") or "")
-                if not leg_id:
+                exit_leg_id = str(raw.get("leg_id") or "")
+                if not exit_leg_id:
                     order_id = str(
                         raw.get("local_order_id") or raw.get("order_id") or ""
                     )
                     if "_exit_" in order_id:
-                        leg_id = order_id.split("_exit_", 1)[0]
+                        exit_leg_id = order_id.split("_exit_", 1)[0]
+                    else:
+                        exit_leg_id = order_id
                 status = str(result.status or "").lower()
-                if status in {"skipped_no_position", "filled", "closed"}:
-                    pos = self._find_position(leg_id)
+                if status in {"filled", "closed", "skipped_no_position"}:
+                    pos = self._find_position(exit_leg_id)
                     if pos is not None:
                         self.state.inventory.remove(pos)
                         inventory_changed = True
+                        logger.info(
+                            "dual_add_trend market_exit result: leg_id=%s status=%s inventory_remaining=%d",
+                            exit_leg_id,
+                            status,
+                            len(self.state.inventory),
+                        )
         # Archive cancelled orders so backfill late-fill lookups still work.
         for o in self.state.pending_orders:
             if o.status == "canceled":
@@ -688,7 +695,6 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
         order.filled_quantity = new_filled
         order.status = status.lower() if status else order.status
         new_position: DualAddPosition | None = None
-        winding_down = False
         if fill_delta > 0:
             pos_side = "LONG" if order.side == "BUY" else "SHORT"
             new_position = DualAddPosition(
@@ -701,21 +707,24 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
                 entry_time=str(report.get("trade_time") or self.state.last_timestamp),
             )
             self.state.inventory.append(new_position)
-            winding_down = self._needs_late_fill_cleanup()
-            if not winding_down:
-                self._promote_to_active()
+            winding_down = self._segment_winding_down()
+            self._promote_to_active()
         terminal = status in {"FILLED", "CANCELED", "EXPIRED", "REJECTED"}
         if new_position is not None:
-            if not winding_down:
-                self._pending_actions.extend(
-                    self._protection_actions(
-                        pos=new_position,
-                        timestamp=str(
-                            report.get("trade_time") or self.state.last_timestamp
-                        ),
-                    )
+            self._pending_actions.extend(
+                self._protection_actions(
+                    pos=new_position,
+                    timestamp=str(
+                        report.get("trade_time") or self.state.last_timestamp
+                    ),
                 )
+            )
             # ── Late-fill guard ──
+            # When _exit_all ran before the fill report arrived, the segment
+            # is already marked inactive but the order was still in
+            # pending_orders (the _exit_all fix keeps it there).  The fill
+            # creates a position that must be immediately unwound, otherwise
+            # the CMS sees a filled entry with no exit.
             if winding_down:
                 logger.warning(
                     "dual_add_trend late fill after segment exit: symbol=%s "
@@ -993,7 +1002,6 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
         return {
             "action": "market_exit",
             "order_id": f"{pos.leg_id}_exit_{reason}_{timestamp}",
-            "leg_id": pos.leg_id,
             "symbol": pos.symbol,
             "side": pos.side,
             "quantity": pos.quantity,

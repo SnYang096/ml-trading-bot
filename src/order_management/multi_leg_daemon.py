@@ -128,8 +128,12 @@ class MultiLegLiveDaemon:
         execution_count = 0
         reconciliation_issue_count = 0
         bars_seen = 0
-        reconcile_due_symbols = {str(sym).upper(): self._reconcile_due(sym) for sym in symbols}
-        exchange_snapshots: Dict[str, tuple[List[Dict[str, Any]], List[Dict[str, Any]]]] = {}
+        reconcile_due_symbols = {
+            str(sym).upper(): self._reconcile_due(sym) for sym in symbols
+        }
+        exchange_snapshots: Dict[
+            str, tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
+        ] = {}
 
         for bar in bars:
             for rt in self.runtimes:
@@ -173,8 +177,7 @@ class MultiLegLiveDaemon:
                         actions = [
                             a
                             for a in actions
-                            if str((a or {}).get("action", "") or "").lower()
-                            != "place"
+                            if str((a or {}).get("action", "") or "").lower() != "place"
                         ]
                         rejected_count += len(dropped)
                         logger.info(
@@ -292,7 +295,9 @@ class MultiLegLiveDaemon:
                             symbol=rt.symbol,
                             event=evt,
                             side=side,
-                            price=price if isinstance(price, (int, float, str)) else None,
+                            price=(
+                                price if isinstance(price, (int, float, str)) else None
+                            ),
                         )
                     for rej in report.risk.rejected or []:
                         rejected_action: Dict[str, Any]
@@ -346,7 +351,9 @@ class MultiLegLiveDaemon:
                             symbol=rt.symbol,
                             event=evt.lower(),
                             side=side,
-                            price=price if isinstance(price, (int, float, str)) else None,
+                            price=(
+                                price if isinstance(price, (int, float, str)) else None
+                            ),
                         )
                     if exchange_positions is not None:
                         METRICS.update_position_metrics(
