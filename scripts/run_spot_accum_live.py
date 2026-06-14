@@ -47,6 +47,7 @@ from src.order_management.spot_live_recovery import (
     iso_now,
 )
 from src.order_management.spot_order_manager import SpotOrderManager
+from src.order_management.execution_truth_sync import publish_reconciliation_metrics
 from src.time_series_model.live.metrics_exporter import METRICS, start_metrics_server
 from src.time_series_model.live.decision_chain_debug import (
     chain_debug_enabled,
@@ -836,13 +837,12 @@ def _publish_spot_reconciliation_metrics(
         except Exception:
             issue_counts["api_error"] += 1.0
             logger.warning("spot reconcile: balance check failed", exc_info=True)
-    ok = all(float(v or 0.0) <= 0.0 for v in issue_counts.values())
-    METRICS.update_reconciliation_metrics(
+    publish_reconciliation_metrics(
         scope="spot",
         strategy=strategy_name,
         symbol="ALL",
-        ok=ok,
         issue_counts=issue_counts,
+        source="spot_accum_live",
     )
 
 

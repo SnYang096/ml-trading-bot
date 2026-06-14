@@ -20,7 +20,7 @@ import os
 from functools import partial
 from typing import Any
 
-from src.time_series_model.live.metrics_exporter import METRICS
+from src.order_management.execution_truth_sync import publish_reconciliation_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -139,16 +139,16 @@ async def periodic_terminal_order_backfill(
             stale_marked = int(stats.get("stale_marked", 0) or 0)
             api_error = int(stats.get("api_error", 0) or 0)
             try:
-                METRICS.update_reconciliation_metrics(
+                publish_reconciliation_metrics(
                     scope="trend",
                     strategy="all",
                     symbol="ALL",
-                    ok=(stale_marked == 0 and api_error == 0),
                     issue_counts={
                         "stale_local_order": stale_marked,
                         "api_error": api_error,
                         "open_reconcile_updated": len(open_updated),
                     },
+                    source="terminal_order_backfill",
                 )
             except Exception:
                 logger.debug("terminal backfill reconciliation metrics skipped", exc_info=True)

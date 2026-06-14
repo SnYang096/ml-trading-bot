@@ -1,0 +1,45 @@
+# G0 (prod 1/2) vs G1 (1/3) vs G3 (3/6) — canonical 三阶段 × 6 币 highcap
+# 晋升对照：config/experiments/LAYER_PROMOTION_CRITERIA.md
+#
+# 跑法：
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260612_tpc_trend_pool_guard_sweep/tpc_pool_guard_canonical_grid.yaml \
+#     --quiet-signal-logs
+#
+# 汇总：
+#   python3 scripts/research/summarize_pool_guard_grid.py \
+#     results/tpc/experiments/pool_guard_20260612/canonical
+
+experiment_id: tpc_trend_pool_guard_canonical_20260614
+decision_doc: config/experiments/20260612_tpc_trend_pool_guard_sweep/DECISION.md
+strategy: tpc
+market_segment_path: config/market_segment.yaml
+data_path: data/parquet_data
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - BNBUSDT
+  - XRPUSDT
+  - ADAUSDT
+
+segment_matrix:
+  segments:
+    - bear_2022
+    - bull_2023_2024
+    - recent_range_to_bear
+  variants:
+    - suffix: G0_prod_1_2
+      strategies_root: config/strategies
+      constitution_yaml: config/experiments/20260612_tpc_trend_pool_guard_sweep/constitution/G0_prod_1_2.yaml
+      output_dir: results/tpc/experiments/pool_guard_20260612/canonical/G0_prod_1_2
+
+    - suffix: G1_be1_3
+      strategies_root: config/strategies
+      constitution_yaml: config/experiments/20260612_tpc_trend_pool_guard_sweep/constitution/G1_be1_3.yaml
+      output_dir: results/tpc/experiments/pool_guard_20260612/canonical/G1_be1_3
+
+    - suffix: G3_be3_6
+      strategies_root: config/strategies
+      constitution_yaml: config/experiments/20260612_tpc_trend_pool_guard_sweep/constitution/G3_be3_6.yaml
+      output_dir: results/tpc/experiments/pool_guard_20260612/canonical/G3_be3_6

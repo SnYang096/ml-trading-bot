@@ -504,3 +504,147 @@ def test_legacy_active_json_migrates_on_load(tmp_path: Path) -> None:
     )
     assert engine.state.segment_state == SegmentState.ACTIVE.value
     assert engine.state.active is True
+
+
+def test_deactivate_records_segment_strategy_event(tmp_path: Path, monkeypatch) -> None:
+    calls: list[dict[str, str]] = []
+
+    class _FakeMetrics:
+        def record_strategy_event(self, **kwargs) -> None:
+            calls.append(kwargs)
+
+    monkeypatch.setattr(
+        "src.time_series_model.live.metrics_exporter.METRICS",
+        _FakeMetrics(),
+    )
+
+    engine = DualAddTrendLiveEngine(
+        config_path=_trend_config(tmp_path),
+        state_path=tmp_path / "event.json",
+        unit_notional=100.0,
+    )
+    engine.state.symbol = "BTCUSDT"
+    engine.state.active = True
+    engine.state.segment_state = SegmentState.ACTIVE.value
+    engine.state.inventory = []
+    engine.state.pending_orders = []
+
+    engine._deactivate("ghost_cleared")
+
+    assert engine.state.active is False
+    assert len(calls) == 1
+    assert calls[0]["event"] == "segment_ghost_cleared"
+    assert calls[0]["scope"] == "hedge"
+    assert calls[0]["symbol"] == "BTCUSDT"
+
+
+@pytest.mark.parametrize(
+    ("reason", "event"),
+    [
+        ("ghost_cleared", "segment_ghost_cleared"),
+        ("fully_closed", "segment_fully_closed"),
+        ("regime_exit", "segment_regime_exit"),
+    ],
+)
+def test_deactivate_records_reason_specific_segment_event(
+    tmp_path: Path,
+    monkeypatch,
+    reason: str,
+    event: str,
+) -> None:
+    calls: list[dict[str, str]] = []
+
+    class _FakeMetrics:
+        def record_strategy_event(self, **kwargs) -> None:
+            calls.append(kwargs)
+
+    monkeypatch.setattr(
+        "src.time_series_model.live.metrics_exporter.METRICS",
+        _FakeMetrics(),
+    )
+
+    engine = DualAddTrendLiveEngine(
+        config_path=_trend_config(tmp_path),
+        state_path=tmp_path / f"event_{reason}.json",
+        unit_notional=100.0,
+    )
+    engine.state.symbol = "BTCUSDT"
+    engine.state.active = True
+    engine.state.segment_state = SegmentState.ACTIVE.value
+
+    engine._deactivate(reason)
+
+    assert calls[0]["event"] == event
+
+
+def test_deactivate_still_runs_when_metrics_fail(tmp_path: Path, monkeypatch) -> None:
+    gate = MultiLegConcurrencyGate(1)
+
+    class _BrokenMetrics:
+        def record_strategy_event(self, **kwargs) -> None:
+            raise RuntimeError("metrics down")
+
+    monkeypatch.setattr(
+        "src.time_series_model.live.metrics_exporter.METRICS",
+        _BrokenMetrics(),
+    )
+
+    engine = ChopGridLiveEngine(
+        config_path=_chop_config(tmp_path),
+        state_path=tmp_path / "metrics_fail.json",
+        level_notional=100.0,
+    )
+    engine.state.symbol = "BTCUSDT"
+    engine.state.active = True
+    engine.state.segment_state = SegmentState.ACTIVE.value
+    gate.register("BTCUSDT", engine)
+
+    engine._deactivate("ghost_cleared")
+
+    assert engine.state.active is False
+    assert engine.state.segment_state == SegmentState.IDLE.value
+    assert gate.allow_new_segment("ETHUSDT") is True
+
+
+def test_chop_market_exit_shadow_does_not_clear_inventory(
+    tmp_path: Path,
+) -> None:
+    """shadow=True 时 GridExecutionAdapter 不发实单，chop_grid 不应清本地状态。"""
+    engine = ChopGridLiveEngine(
+        config_path=_chop_config(tmp_path),
+        state_path=tmp_path / "shadow_exit.json",
+        level_notional=100.0,
+    )
+    # Simulate a position that would produce a dust exit
+    pos = GridPosition(
+        symbol="BTCUSDT",
+        side="LONG",
+        level=1,
+        entry_price=100.0,
+        quantity=0.001,
+        entry_time="2026-01-01T02:00:00Z",
+        leg_id="shadow_leg",
+    )
+    engine.state.inventory = [pos]
+    engine.state.active = True
+    engine.state.segment_state = SegmentState.ACTIVE.value
+    engine.state.symbol = "BTCUSDT"
+
+    engine.on_execution_results(
+        [
+            GridExecutionResult(
+                action="market_exit",
+                status="shadow",
+                symbol="BTCUSDT",
+                order_id="ex_shadow",
+                client_order_id="cl_shadow",
+                raw={
+                    "leg_id": pos.leg_id,
+                    "reason": "dust_exit",
+                },
+            )
+        ]
+    )
+
+    # shadow = paper mode, no real fill → inventory must remain
+    assert engine.state.inventory == [pos]

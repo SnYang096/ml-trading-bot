@@ -507,3 +507,58 @@ def test_reconcile_enriches_engine_row_missing_exchange_id(tmp_path) -> None:
 
     assert report.ok
     assert not report.orphan_exchange_orders
+
+
+def test_reconcile_publishes_unified_reconciliation_metrics(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def _capture(**kwargs) -> None:
+        calls.append(kwargs)
+
+    monkeypatch.setattr(
+        "src.order_management.multi_leg_orchestrator.publish_reconciliation_metrics",
+        _capture,
+    )
+
+    engine = FakeEngine(
+        orders=[
+            LocalOrderSnapshot(
+                order_id="local_1",
+                symbol="BTCUSDT",
+                side="BUY",
+                quantity=0.01,
+                price=50_000.0,
+                exchange_order_id="ex_missing",
+                client_order_id="dat_local_1",
+            )
+        ]
+    )
+    adapter = _adapter()
+    adapter.sync_open_orders.return_value = []
+    orchestrator = MultiLegLiveOrchestrator(
+        engine=engine,
+        governor=MultiLegPortfolioRiskGovernor(
+            MultiLegRiskLimits(max_gross_notional=1_000.0, max_net_notional=1_000.0)
+        ),
+        adapter=adapter,
+        reconciler=MultiLegReconciler(
+            ReconciliationPolicy(client_id_prefixes={"dat_", "cg_"})
+        ),
+        strategy_name="dual_add_trend",
+        symbol="BTCUSDT",
+    )
+
+    report, _ = orchestrator.reconcile()
+
+    assert not report.ok
+    assert len(calls) == 1
+    assert calls[0]["scope"] == "hedge"
+    assert calls[0]["strategy"] == "dual_add_trend"
+    assert calls[0]["symbol"] == "BTCUSDT"
+    assert calls[0]["ok"] is False
+    assert calls[0]["issue_counts"] == {
+        "missing_exchange_order": 1,
+        "orphan_exchange_order": 0,
+        "position_mismatch": 0,
+    }
+    assert calls[0]["source"] == "multi_leg_orchestrator"

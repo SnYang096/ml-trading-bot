@@ -529,6 +529,7 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
         ]
 
     def on_execution_results(self, results: Iterable[GridExecutionResult]) -> None:
+        inventory_changed = False
         for result in results:
             raw = result.raw or {}
             local_id = str(raw.get("local_order_id") or raw.get("order_id") or "")
@@ -581,6 +582,21 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
                 pos = self._find_position(str(raw.get("leg_id") or ""))
                 if pos is not None and result.order_id:
                     pos.protection_order_ids.append(result.order_id)
+            elif result.action == "market_exit":
+                raw = result.raw or {}
+                leg_id = str(raw.get("leg_id") or "")
+                if not leg_id:
+                    order_id = str(
+                        raw.get("local_order_id") or raw.get("order_id") or ""
+                    )
+                    if "_exit_" in order_id:
+                        leg_id = order_id.split("_exit_", 1)[0]
+                status = str(result.status or "").lower()
+                if status in {"skipped_no_position", "filled", "closed"}:
+                    pos = self._find_position(leg_id)
+                    if pos is not None:
+                        self.state.inventory.remove(pos)
+                        inventory_changed = True
         # Archive cancelled orders so backfill late-fill lookups still work.
         for o in self.state.pending_orders:
             if o.status == "canceled":
@@ -589,7 +605,7 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
             o for o in self.state.pending_orders if o.status != "canceled"
         ]
         self._maybe_deactivate_if_fully_closed()
-        if self.state.active:
+        if self.state.active or inventory_changed:
             self.save_state()
 
     def on_reconciliation_report(self, report: ReconciliationReport) -> None:
@@ -977,6 +993,7 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
         return {
             "action": "market_exit",
             "order_id": f"{pos.leg_id}_exit_{reason}_{timestamp}",
+            "leg_id": pos.leg_id,
             "symbol": pos.symbol,
             "side": pos.side,
             "quantity": pos.quantity,

@@ -96,6 +96,24 @@ class SegmentLifecycleMixin:
         gate = getattr(self, "_concurrency_gate", None)
         if gate is not None:
             gate.notify_deactivation(self.state.symbol, self._engine_name)
+        try:
+            from src.time_series_model.live.metrics_exporter import METRICS
+
+            METRICS.record_strategy_event(
+                scope="hedge",
+                strategy=self._engine_name,
+                symbol=self.state.symbol,
+                event=f"segment_{reason}",
+                side="na",
+            )
+        except Exception:
+            logger.debug(
+                "%s segment event metrics skipped: symbol=%s reason=%s",
+                self._engine_name,
+                self.state.symbol,
+                reason,
+                exc_info=True,
+            )
 
     def _enter_segment(self) -> None:
         self.state.segment_state = SegmentState.ENTERING.value

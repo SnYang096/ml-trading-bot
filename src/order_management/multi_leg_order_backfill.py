@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from functools import partial
 from typing import Any
 
-from src.time_series_model.live.metrics_exporter import METRICS
+from src.order_management.execution_truth_sync import publish_reconciliation_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -370,15 +370,15 @@ def run_multi_leg_backfill_once(
                     exc_info=True,
                 )
     try:
-        METRICS.update_reconciliation_metrics(
+        publish_reconciliation_metrics(
             scope="hedge",
             strategy="all",
             symbol="ALL",
-            ok=(stale_marked == 0 and api_error_count == 0),
             issue_counts={
                 "stale_local_order": stale_marked,
                 "api_error": api_error_count,
             },
+            source="multi_leg_order_backfill",
             ts_seconds=now_ts,
         )
     except Exception:

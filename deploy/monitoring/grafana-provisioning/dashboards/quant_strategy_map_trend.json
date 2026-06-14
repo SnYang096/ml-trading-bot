@@ -698,6 +698,41 @@
           "placement": "bottom"
         }
       }
+    },
+    {
+      "type": "timeseries",
+      "title": "Trend · open reconcile 自愈（issue=open_reconcile_updated）",
+      "description": "``open_reconcile_updated`` 为本次 reconcile 修复的 pending 行数；单独 >0 不应把 reconciliation_ok 打红。",
+      "id": 909,
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 0,
+        "y": 79
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(mlbot_reconciliation_issue_count{job=~\"$job\",scope=\"trend\",issue=\"open_reconcile_updated\"})",
+          "legendFormat": "open_reconcile_updated"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
     }
   ],
   "schemaVersion": 39,

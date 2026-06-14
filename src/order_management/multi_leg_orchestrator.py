@@ -41,7 +41,7 @@ from src.order_management.multi_leg_risk_governor import (
     MultiLegPortfolioRiskGovernor,
     RiskCheckResult,
 )
-from src.time_series_model.live.metrics_exporter import METRICS
+from src.order_management.execution_truth_sync import publish_reconciliation_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -238,7 +238,7 @@ class MultiLegLiveOrchestrator:
             exchange_positions=positions,
         )
         try:
-            METRICS.update_reconciliation_metrics(
+            publish_reconciliation_metrics(
                 scope="hedge",
                 strategy=self.strategy_name or "all",
                 symbol=self.symbol or "ALL",
@@ -248,6 +248,7 @@ class MultiLegLiveOrchestrator:
                     "orphan_exchange_order": len(report.orphan_exchange_orders),
                     "position_mismatch": len(report.position_mismatches),
                 },
+                source="multi_leg_orchestrator",
             )
         except Exception:
             logger.debug("multi-leg reconcile metrics update skipped", exc_info=True)

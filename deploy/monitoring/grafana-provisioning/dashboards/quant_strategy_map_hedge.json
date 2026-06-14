@@ -998,6 +998,41 @@
           "placement": "bottom"
         }
       }
+    },
+    {
+      "type": "timeseries",
+      "title": "Hedge · 段生命周期事件（segment_*）",
+      "description": "``segment_ghost_cleared`` / ``segment_fully_closed`` / ``segment_regime_exit`` 来自 ``SegmentLifecycleMixin._deactivate``。",
+      "id": 909,
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 106
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-monitoring"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (strategy, symbol, event) (increase(mlbot_strategy_event_total{job=~\"$job\",scope=\"hedge\",event=~\"segment_.*\",strategy=~\"${strategy:regex}\",symbol=~\"${symbol:regex}\"}[$__rate_interval]))",
+          "legendFormat": "{{strategy}}/{{symbol}} {{event}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      }
     }
   ],
   "schemaVersion": 39,

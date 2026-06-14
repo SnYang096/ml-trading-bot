@@ -687,3 +687,215 @@ def test_save_state_excludes_order_history(tmp_path: Path) -> None:
     raw = __import__("json").loads((tmp_path / "state.json").read_text())
     assert "_order_history" not in raw
     assert raw.get("symbol") == ""
+
+
+def test_on_execution_results_market_exit_clears_late_fill_inventory(
+    tmp_path: Path,
+) -> None:
+    engine = DualAddTrendLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        unit_notional=100.0,
+    )
+    pos = DualAddPosition(
+        leg_id="local_active_fill0",
+        symbol="BTCUSDT",
+        side="LONG",
+        entry_price=100.0,
+        quantity=1.0,
+        seq=0,
+        entry_time="2026-01-01T02:00:00Z",
+    )
+    engine.state.inventory = [pos]
+    engine.state.active = False
+    engine.state.symbol = "BTCUSDT"
+
+    engine.on_execution_results(
+        [
+            GridExecutionResult(
+                action="market_exit",
+                status="filled",
+                symbol="BTCUSDT",
+                order_id="ex_cleanup",
+                client_order_id="cl_cleanup",
+                raw={
+                    "leg_id": pos.leg_id,
+                    "order_id": f"{pos.leg_id}_exit_late_fill_cleanup_2026-01-01T02:00:01Z",
+                    "reason": "late_fill_cleanup",
+                },
+            )
+        ]
+    )
+
+    assert engine.state.inventory == []
+    assert engine.local_position_snapshots() == []
+
+
+def test_on_execution_results_market_exit_persists_when_segment_inactive(
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / "state.json"
+    engine = DualAddTrendLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=state_path,
+        unit_notional=100.0,
+    )
+    pos = DualAddPosition(
+        leg_id="local_active_fill0",
+        symbol="BTCUSDT",
+        side="LONG",
+        entry_price=100.0,
+        quantity=1.0,
+        seq=0,
+        entry_time="2026-01-01T02:00:00Z",
+    )
+    engine.state.inventory = [pos]
+    engine.state.active = False
+    engine.state.symbol = "BTCUSDT"
+    engine.save_state()
+
+    engine.on_execution_results(
+        [
+            GridExecutionResult(
+                action="market_exit",
+                status="filled",
+                symbol="BTCUSDT",
+                order_id="ex_cleanup",
+                client_order_id="cl_cleanup",
+                raw={
+                    "leg_id": pos.leg_id,
+                    "order_id": f"{pos.leg_id}_exit_late_fill_cleanup_2026-01-01T02:00:01Z",
+                    "reason": "late_fill_cleanup",
+                },
+            )
+        ]
+    )
+
+    reloaded = DualAddTrendLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=state_path,
+        unit_notional=100.0,
+    )
+    assert reloaded.state.inventory == []
+
+
+def test_on_execution_results_market_exit_parses_leg_id_from_order_id(
+    tmp_path: Path,
+) -> None:
+    engine = DualAddTrendLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        unit_notional=100.0,
+    )
+    pos = DualAddPosition(
+        leg_id="local_active_fill0",
+        symbol="BTCUSDT",
+        side="LONG",
+        entry_price=100.0,
+        quantity=1.0,
+        seq=0,
+        entry_time="2026-01-01T02:00:00Z",
+    )
+    engine.state.inventory = [pos]
+    engine.state.active = False
+    engine.state.symbol = "BTCUSDT"
+
+    engine.on_execution_results(
+        [
+            GridExecutionResult(
+                action="market_exit",
+                status="skipped_no_position",
+                symbol="BTCUSDT",
+                order_id="ex_cleanup",
+                client_order_id="cl_cleanup",
+                raw={
+                    "order_id": f"{pos.leg_id}_exit_late_fill_cleanup_2026-01-01T02:00:01Z",
+                    "reason": "late_fill_cleanup",
+                },
+            )
+        ]
+    )
+
+    assert engine.state.inventory == []
+
+
+def test_on_execution_results_market_exit_rejected_keeps_inventory(
+    tmp_path: Path,
+) -> None:
+    engine = DualAddTrendLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        unit_notional=100.0,
+    )
+    pos = DualAddPosition(
+        leg_id="local_active_fill0",
+        symbol="BTCUSDT",
+        side="LONG",
+        entry_price=100.0,
+        quantity=1.0,
+        seq=0,
+        entry_time="2026-01-01T02:00:00Z",
+    )
+    engine.state.inventory = [pos]
+    engine.state.active = True
+    engine.state.symbol = "BTCUSDT"
+
+    engine.on_execution_results(
+        [
+            GridExecutionResult(
+                action="market_exit",
+                status="rejected",
+                symbol="BTCUSDT",
+                order_id="ex_cleanup",
+                client_order_id="cl_cleanup",
+                raw={
+                    "leg_id": pos.leg_id,
+                    "reason": "late_fill_cleanup",
+                },
+            )
+        ]
+    )
+
+    assert engine.state.inventory == [pos]
+
+
+def test_on_execution_results_market_exit_shadow_does_not_clear_inventory(
+    tmp_path: Path,
+) -> None:
+    """shadow=True 时 GridExecutionAdapter 不发实单，不应清本地 inventory。"""
+    engine = DualAddTrendLiveEngine(
+        config_path=_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        unit_notional=100.0,
+    )
+    pos = DualAddPosition(
+        leg_id="local_active_fill0",
+        symbol="BTCUSDT",
+        side="LONG",
+        entry_price=100.0,
+        quantity=1.0,
+        seq=0,
+        entry_time="2026-01-01T02:00:00Z",
+    )
+    engine.state.inventory = [pos]
+    engine.state.active = False
+    engine.state.symbol = "BTCUSDT"
+
+    engine.on_execution_results(
+        [
+            GridExecutionResult(
+                action="market_exit",
+                status="shadow",
+                symbol="BTCUSDT",
+                order_id="ex_shadow",
+                client_order_id="cl_shadow",
+                raw={
+                    "leg_id": pos.leg_id,
+                    "reason": "late_fill_cleanup",
+                },
+            )
+        ]
+    )
+
+    # shadow = paper mode, no real fill → inventory must remain
+    assert engine.state.inventory == [pos]

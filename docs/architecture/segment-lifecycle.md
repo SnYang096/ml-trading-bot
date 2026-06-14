@@ -1,8 +1,11 @@
 # Segment Lifecycle 架构改进方案
 
-> 日期：2026-06-13  
+> 日期：2026-06-13（snippet 对齐 2026-06-14）  
 > 范围：`chop_grid_live_engine.py` + `dual_add_trend_live_engine.py` + `segment_lifecycle.py`  
-> 状态：**P0–P4 已完成**（2026-06-13）
+> 状态：**P0–P4 代码已完成**（2026-06-13） · doc snippet 已与实现对齐  
+> 相关：[abc_execution_layer_issues_CN.md](abc_execution_layer_issues_CN.md)（执行层总账、对账 metrics Phase 1–5、Live 观察挂钩）
+
+**分工**：本文 = **段状态机专题**（ghost 根因 → P0–P4 实现 → 单测 §6）。对账 metrics、`open_reconcile_updated`、Grafana、`ExecutionTruthSync` helper 见 abc 文档，不在此重复。
 
 ---
 
@@ -24,7 +27,7 @@
 | ------------------------------- | -------------------------- | ------------- | ------------ | ---------- | ------------------------ |
 | `_exit_grid()`                  | regime exit / risk stop    | ✅ market_exit | ✅ cancel all | ✅          | 否（靠 `on_bar` 尾调用） |
 | `clear_stale_active_if_ghost()` | active + 本地 inventory/pending 皆空 + **无 exchange open activity** | ❌             | ❌            | ✅          | ✅ 立即                   |
-| `auto-deactivate` (新)          | inventory=[] && pending=[] | ❌             | ❌            | ✅          | 否（靠 `on_bar` 尾调用） |
+| `auto-deactivate` (新)          | inventory=[] && pending=[] + **无 exchange open activity** | ❌             | ❌            | ✅          | 否（靠 `on_bar` 尾调用） |
 | trend: `_exit_all()`            | regime 不满足              | ✅             | ✅ cancel     | ✅          | 否（靠 `on_bar` 尾调用） |
 
 **真正的 inconsistency**：`save_state()` 调用时机不一致——`clear_stale_active_if_ghost` 立即持久化，其他三条依赖 `on_bar` 尾部的 `save_state()`。
@@ -188,6 +191,8 @@ def on_execution_report(self, report):
 
 ```python
 def _maybe_deactivate_if_fully_closed(self) -> None:
+    if self._exchange_has_open_activity():
+        return
     if self.state.active and not self.state.inventory and not self.state.pending_orders:
         self._deactivate("fully_closed")
 ```
@@ -260,7 +265,9 @@ trend 引擎同理：`bool(open_trend_orders) or (bool(positions) and has_local)
 - [x] TP fill 后 `holds_real_grid_slot()` 返回 `False`（P2 post-fill deactivate）
 - [x] replenish 后再次全平 → `active=False`
 
-**Live 验证（待 paper/prod 观察）**：TP/SL fill 后 concurrency slot 是否在 `on_execution_report` 内立即释放（不靠下一根 bar）。
+**Live 验证（待 paper/prod 观察）**：TP/SL fill 后 concurrency slot 是否在 `on_execution_report` 内立即释放（不靠下一根 bar）。验收脚本：`scripts/ops/check_execution_truth_sync_acceptance.sh`。
+
+**可观测性（Phase 2–3 ✅）**：`_deactivate` 上报 `mlbot_strategy_event_total{event="segment_*"}`；Hedge Grafana panel id 909。Live 通过标准见 [abc_execution_layer_issues_CN.md §7 Phase 5](abc_execution_layer_issues_CN.md)。
 
 ---
 

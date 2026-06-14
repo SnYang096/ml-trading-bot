@@ -25,6 +25,8 @@ import time
 from pathlib import Path
 from typing import Any, Iterable, Mapping, List, Optional, Set, Tuple
 
+from src.order_management.execution_truth_sync import RECONCILIATION_ISSUE_BUCKETS
+
 logger = logging.getLogger(__name__)
 
 # ── 延迟导入: prometheus_client 可选依赖 ──────────────────────
@@ -991,14 +993,7 @@ class Metrics:
             ).set(now_ts)
 
         buckets = dict(issue_counts or {})
-        for issue in (
-            "missing_exchange_order",
-            "orphan_exchange_order",
-            "stale_local_order",
-            "position_mismatch",
-            "api_error",
-            "open_reconcile_updated",
-        ):
+        for issue in RECONCILIATION_ISSUE_BUCKETS:
             raw = buckets.get(issue, 0)
             try:
                 count = float(raw or 0)

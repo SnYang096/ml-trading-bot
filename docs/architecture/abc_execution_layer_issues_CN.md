@@ -1,9 +1,11 @@
 # ABC 执行层：近期修复、结构性问题与建议
 
-> 日期：2026-06-14  
+> 日期：2026-06-14（末次修订 2026-06-14 Phase 1–4 代码合并）  
 > 范围：A/B/C 战略分层下的 **live 执行与对账**（非 R&D Phase 1 scan）  
-> 状态：**Review 稿** — §5–§9 为详细实现计划，待确认后按 Phase 0 起执行  
-> 相关：[segment-lifecycle.md](segment-lifecycle.md) · [ABC三层收益结构_战略框架_CN.md](../strategy/ABC三层收益结构_战略框架_CN.md) · [漂移监控_mlbot_monitor_CN.md](../strategy/漂移监控_mlbot_monitor_CN.md)
+> 状态：**实施中** — Phase 0–4 ✅ · Phase 5 自动化 ✅ / Live 观察 ⏳ · 进度见 §7 末表  
+> 相关：[segment-lifecycle.md](segment-lifecycle.md)（C multileg 段生命周期专题，P0–P4 已实现） · [ABC三层收益结构_战略框架_CN.md](../strategy/ABC三层收益结构_战略框架_CN.md) · [漂移监控_mlbot_monitor_CN.md](../strategy/漂移监控_mlbot_monitor_CN.md)
+
+**与 segment-lifecycle 的分工**：后者讲 **ghost / slot / `_deactivate` 状态机**（代码已合并）；本文讲 **执行层总账 + 对账 metrics + TruthSync 路线图**。Live 验收项两篇交叉引用（segment §6 ↔ 本文 Phase 5）。
 
 ---
 
@@ -41,6 +43,16 @@
 ### 1.4 B 层（信号/研究，执行间接）
 
 TPC direction band 对齐、fast_scalp dual-head、ME CompressionBreakout rework 等——影响 **是否触发**，不替代 C 的 multileg 段生命周期。
+
+### 1.5 2026-06-14 对账 follow-up（`f80f32d3`）
+
+| 问题 | 修复 |
+| ---- | ---- |
+| daemon `sync_live_exchange_state` 误更新 `_last_reconciled_at`，低频 bar symbol 长期 skip 全量 reconcile | 拆出 `_last_exchange_synced_at`；全量 reconcile 仍走 `_last_reconciled_at` |
+| `reconcile_open_orders` 查 algo/条件单时 `get_order` 缺 `client_order_id` fallback | `order_manager` 传入 `client_order_id=order.client_order_id` |
+| `open_reconcile_updated` 传入 metrics 但被 allowlist 丢弃 | `metrics_exporter` 增加第 6 个 bucket（Phase 1 部分完成，见 §3） |
+
+> **注意**：`f80f32d3` commit message 提及 dual_add late-fill `market_exit` 在 `on_execution_results` 的处理，**该 diff 未进同 commit**；已于 2026-06-14 单独补齐（见 §5.1）。
 
 ---
 
@@ -91,63 +103,66 @@ TPC direction band 对齐、fast_scalp dual-head、ME CompressionBreakout rework
 
 ---
 
-## 3. 监控缺口（修正版）
+## 3. 监控缺口（2026-06-14 同步代码）
 
-### 3.1 `fb4e6b85` 与 metrics 的真实状态
+### 3.1 `open_reconcile_updated` 与 metrics 状态
 
-`terminal_order_backfill.py` 在调用 `reconcile_open_orders` 后 **有** 调用：
+`terminal_order_backfill.py` 经 `execution_truth_sync.publish_reconciliation_metrics` 写入：
 
 ```python
-METRICS.update_reconciliation_metrics(
+publish_reconciliation_metrics(
+    scope="trend",
     issue_counts={
         "stale_local_order": stale_marked,
         "api_error": api_error,
-        "open_reconcile_updated": len(open_updated),  # ← 传入
+        "open_reconcile_updated": len(open_updated),
     },
+    source="terminal_order_backfill",
 )
 ```
 
-但 `metrics_exporter.update_reconciliation_metrics` **只写入固定 bucket**：
+`metrics_exporter.update_reconciliation_metrics` 使用 `RECONCILIATION_ISSUE_BUCKETS`（定义于 `execution_truth_sync.py`）：
 
 ```python
-for issue in (
-    "missing_exchange_order",
-    "orphan_exchange_order",
-    "stale_local_order",
-    "position_mismatch",
-    "api_error",
-):
+for issue in RECONCILIATION_ISSUE_BUCKETS:
     ...
 ```
 
-**`open_reconcile_updated` 不在 allowlist 内，会被静默丢弃。** 因此：
+| 项 | 状态 |
+| -- | ---- |
+| Prometheus gauge 写入 | ✅ |
+| 单测断言 `open_reconcile_updated` | ✅ `test_metrics_reconciliation_scope.py` |
+| Grafana 面板 | ✅ Trend dashboard panel id 909 |
+| `RECONCILIATION_ISSUE_BUCKETS` 常量提取 | ✅ `execution_truth_sync.py` |
+| `ok=` 语义（自愈不计入 unresolved） | ✅ `reconciliation_ok_from_issues` |
 
-- ❌ 不能说「已暴露 Prometheus 指标」  
-- ✅ 仅有 log + `issue_counts` 传参意图；**要告警需补 bucket 或 `record_strategy_event`**
+**语义**：`open_reconcile_updated > 0` 表示**本次 reconcile 修了多少单**，是自愈动作，**不应**单独把 `reconciliation_ok` 永久打红（见 §8.6）。
 
 ### 3.2 其他未覆盖项
 
 | 信号 | 现状 | 告警可用？ |
 | ---- | ---- | ---------- |
-| `open_reconcile_updated` | 传入但被丢弃 | ❌ |
-| `ghost_cleared`（segment lifecycle） | `_deactivate` 仅 logger | ❌ |
-| multileg daemon reconcile issues | `multi_leg_reconciliation_issues_total` | ⚠️ 部分 |
+| `open_reconcile_updated` | gauge + 单测 + Grafana panel 909 | ⚠️ 面板观察；无 hard alert |
+| `segment_*`（segment lifecycle） | `_deactivate` → `record_strategy_event` | ⚠️ Grafana Hedge panel 909 |
+| multileg daemon reconcile issues | `multi_leg_reconciliation_issues_total` + orchestrator `publish_reconciliation_metrics` | ⚠️ 部分 |
 | slot 占用 / ghost 检测 | `update_slot_metrics`（PCM 路径） | ⚠️ C multileg 未统一 |
 
 ### 3.3 与 `mlbot monitor` manifest 的关系
 
 [漂移监控_mlbot_monitor_CN.md](../strategy/漂移监控_mlbot_monitor_CN.md) 中 C 执行层仍以 **`multileg monitor` 月报** 为主，未纳入：
 
-- reconcile issue 时间序列  
+- reconcile issue 时间序列（含 `open_reconcile_updated`）  
 - ghost clear 计数  
 - open reconcile 更新行数  
 
-**待办（非阻塞，但要准确）**：
+**待办（按 Phase）**：
 
-1. `update_reconciliation_metrics` 增加 bucket `open_reconcile_updated`（或改用 counter + `inc`）  
-2. `SegmentLifecycleMixin._deactivate("ghost_cleared")` → `METRICS.record_strategy_event(...)`  
-3. monitor manifest / Grafana 面板引用上述 series  
-4. §6 segment-lifecycle live 验证项与 prod 观察挂钩  
+1. ~~allowlist 加 `open_reconcile_updated`~~ ✅  
+2. ~~`_deactivate` → `record_strategy_event(segment_*)`~~ ✅ Phase 2  
+3. ~~Grafana + provisioning tests~~ ✅ Phase 3  
+4. ~~`execution_truth_sync.py` helper~~ ✅ Phase 4（legacy `monitoring.py` 仍待迁移）  
+5. segment-lifecycle §6 Live 项 + 本文 Phase 5 prod 观察 → ⏳  
+6. `mlbot monitor` manifest 纳入 reconcile / segment 事件 → 登记
 
 ---
 
@@ -187,18 +202,29 @@ for issue in (
 
 ## 5. Review 结论（2026-06-14）
 
-近期重大修复集中在 **C 层 live 执行**：ghost segment、orphan 保护单、stale pending、symbol 冲突、CMS 对账可见性。代码侧 P0–P4（segment lifecycle）与 `fb4e6b85`（open reconcile 调用）已合并；**监控与文档仍落后**。
+近期重大修复集中在 **C 层 live 执行**：ghost segment、orphan 保护单、stale pending、symbol 冲突、CMS 对账可见性。代码侧 P0–P4（segment lifecycle）与 `fb4e6b85`（open reconcile 调用）、`f80f32d3`（daemon reconcile 周期 / algo 查单 / metrics bucket）已合并；**Phase 1–4 可观测性与 TruthSync helper 已于 2026-06-14 补齐**；Phase 5 Live 观察仍待 prod/paper。
 
 | 维度 | 状态 |
 | ---- | ---- |
 | 段生命周期 refactor | ✅ 已合并（`643deb9c` 等） |
 | stale pending reconcile | ✅ 已调用 `reconcile_open_orders` |
-| `open_reconcile_updated` Prometheus | ❌ 传参后被 allowlist 丢弃 |
-| `ghost_cleared` 可观测 | ❌ 仅 logger |
-| ExecutionTruthSync 表述 | ⚠️ 易误解为新进程 → 本文 §2.3 / §8 已澄清 |
-| segment-lifecycle §4.3 代码片段 | ⚠️ `_maybe_deactivate_if_fully_closed` 缺 exchange guard → Phase 0 修 doc |
+| daemon 全量 reconcile 周期 | ✅ `_last_exchange_synced_at` 分离（`f80f32d3`） |
+| algo/条件单 open reconcile 查单 | ✅ `get_order` + `client_order_id`（`f80f32d3`） |
+| `open_reconcile_updated` Prometheus | ✅ 常量 + 单测 + Grafana panel 909 |
+| `segment_*` 可观测 | ✅ `_deactivate` → `strategy_event_total` + Hedge panel 909 |
+| ExecutionTruthSync helper | ✅ `execution_truth_sync.py`；trend/hedge/spot 主路径已迁移 |
+| ExecutionTruthSync 表述 | ✅ 本文 §2.3 / §8 已澄清（非新进程） |
+| segment-lifecycle doc snippet | ✅ §1.2 / §4.3 已与实现对齐（2026-06-14） |
 
 **第一实施目标**：C hedge runtime（`quant-hedge-multileg`）+ trend backfill（`quant-trend-fattail`）的 metrics 与 issue 命名统一；**不**在本迭代新增进程。
+
+### 5.1 代码 follow-up（非 metrics Phase 主线）
+
+| 项 | 状态 | 说明 |
+| -- | ---- | ---- |
+| dual_add late-fill `market_exit` | ✅ | `on_execution_results` 处理 `market_exit` + 单测 |
+| `reconcile_open_orders` open 列表 | ⚠️ 部分 | 仍用 `get_open_orders`；本地不在 open 列表时靠 `get_order` fallback（已加强）。全量 algo open snapshot 未做 |
+| Phase 5 Live | ⏳ | 与 [segment-lifecycle.md §6](segment-lifecycle.md) 最后一项并行观察；自动化见 `scripts/ops/check_execution_truth_sync_acceptance.sh` |
 
 ---
 
@@ -234,34 +260,31 @@ flowchart LR
 
 ## 7. 详细实现计划
 
-### Phase 0：文档对齐（本文件 + segment-lifecycle）
+### Phase 0：文档对齐（本文件 + segment-lifecycle）✅
 
-**目的**：避免后续代码 review 时再次误解「新进程 / 中央服务」。
+**目的**：避免后续 code review 误解「新进程 / 中央服务」或「实现缺 exchange guard」。
 
-| 任务 | 文件 | 内容 |
+| 任务 | 文件 | 状态 |
 | ---- | ---- | ---- |
-| 0.1 | 本文 §2.3 | 已写明：非 systemd 服务、非跨账户同步器 |
-| 0.2 | [segment-lifecycle.md](segment-lifecycle.md) §4.3 | `_maybe_deactivate_if_fully_closed`  snippet 补上 `if self._exchange_has_open_activity(): return` |
-| 0.3 | [segment-lifecycle.md](segment-lifecycle.md) §1.2 | `auto-deactivate` 行与 ghost 行统一：均含 exchange guard |
-| 0.4 | 本文 §7 变更记录 | 实施完成后勾选各 Phase |
+| 0.1 | 本文 §2.3 | ✅ 非 systemd 服务、非跨账户同步器 |
+| 0.2 | [segment-lifecycle.md](segment-lifecycle.md) §4.3 | ✅ snippet 含 `_exchange_has_open_activity` guard |
+| 0.3 | [segment-lifecycle.md](segment-lifecycle.md) §1.2 | ✅ `auto-deactivate` 与 ghost 行均含 exchange guard |
+| 0.4 | 本文 §7 进度表 + §11 变更记录 | ✅ 本修订起维护 |
 
 **验收**：文档自洽；无「纯本地空即 ghost」与 §4.4 实现矛盾的表述。
 
-**工作量**：~0.5d
-
 ---
 
-### Phase 1：Metrics 缺口修复（`open_reconcile_updated`）
+### Phase 1：Metrics 缺口修复（`open_reconcile_updated`）✅
 
-**问题**：`terminal_order_backfill.py` 传入 `open_reconcile_updated`，但 `metrics_exporter.update_reconciliation_metrics` 固定 5 个 bucket，该值被静默丢弃。
+**背景**：`fb4e6b85` 起 backfill 传入 `open_reconcile_updated`；`f80f32d3` 已将 bucket 加入 allowlist；2026-06-14 补齐常量、单测、`ok` 语义。
 
-**改动**：
-
-| 文件 | 改动 |
-| ---- | ---- |
-| `src/time_series_model/live/metrics_exporter.py` | 增加常量 `RECONCILIATION_ISSUE_BUCKETS`；allowlist 加入 `open_reconcile_updated` |
-| `src/live_data_stream/terminal_order_backfill.py` | 无需改逻辑；确认 `ok=` 语义：`open_reconcile_updated > 0` **不应**单独置 `reconciliation_ok=0`（这是修复动作，不是持续错误） |
-| 新/扩测试 | 断言 `mlbot_reconciliation_issue_count{issue="open_reconcile_updated"}` 被写入 |
+| 文件 | 改动 | 状态 |
+| ---- | ---- | ---- |
+| `src/order_management/execution_truth_sync.py` | `RECONCILIATION_ISSUE_BUCKETS` + `reconciliation_ok_from_issues` | ✅ |
+| `src/time_series_model/live/metrics_exporter.py` | 引用 `RECONCILIATION_ISSUE_BUCKETS` | ✅ |
+| `src/live_data_stream/terminal_order_backfill.py` | `publish_reconciliation_metrics`；`open_reconcile_updated` 不计入 unresolved | ✅ |
+| 新/扩测试 | `tests/unit/test_metrics_reconciliation_scope.py` | ✅ |
 
 **预期 PromQL**：
 
@@ -273,14 +296,14 @@ mlbot_reconciliation_issue_count{scope="trend", issue="open_reconcile_updated"}
 
 **验收**：
 
-- 单元测试：`update_reconciliation_metrics(issue_counts={"open_reconcile_updated": 3})` → gauge 为 3  
-- prod scrape 后 Trend dashboard 可见该 series
+- 单元测试：`update_reconciliation_metrics(issue_counts={"open_reconcile_updated": 3})` → gauge 为 3 ✅  
+- prod scrape 后 Trend dashboard panel 909 可见该 series ⏳（需部署后目视）
 
-**工作量**：~0.5d
+**工作量**：~0.5d（已完成）
 
 ---
 
-### Phase 2：段生命周期事件 metrics（`ghost_cleared` 等）
+### Phase 2：段生命周期事件 metrics（`ghost_cleared` 等）✅
 
 **问题**：`SegmentLifecycleMixin._deactivate` 仅 logger；prod 无法回答「是否发生过 ghost 清理 / 段是否正常收工」。
 
@@ -297,35 +320,37 @@ mlbot_reconciliation_issue_count{scope="trend", issue="open_reconcile_updated"}
 
 **验收**：
 
-- 单元测试：mock METRICS，触发 `_deactivate("ghost_cleared")` → `record_strategy_event` 被调用一次  
-- Grafana：`increase(mlbot_strategy_event_total{event="segment_ghost_cleared"}[1h])`
+- 单元测试：mock METRICS，触发 `_deactivate("ghost_cleared")` → `record_strategy_event` 被调用一次 ✅  
+- Grafana：`increase(mlbot_strategy_event_total{event="segment_ghost_cleared"}[1h])` ⏳（panel 909 已 provision）
 
-**工作量**：~0.5d
+**工作量**：~0.5d（已完成）
 
 ---
 
-### Phase 3：Grafana / 告警接线
+### Phase 3：Grafana / 告警接线 ✅
 
 **原则**：复用现有 `mlbot_reconciliation_*` 与 `mlbot_strategy_event_total`；**不**为 `open_reconcile_updated` 立即加 hard alert（先面板观察阈值）。
 
-| 文件 | 改动 |
-| ---- | ---- |
-| `deploy/monitoring/grafana-provisioning/dashboards/quant_strategy_map_trend.json` | Trend 对账区增加 `open_reconcile_updated` 分 issue 展示 |
-| `deploy/monitoring/grafana-provisioning/dashboards/quant_strategy_map_hedge.json` | 增加 `segment_ghost_cleared` / `segment_fully_closed` event rate 或累计 |
-| `deploy/monitoring/grafana-provisioning/alerting/quant_ops.yaml` | **保持**现有 `QuantTrendReconciliationManualCheck` / `QuantHedgeReconciliationManualCheck`；Phase 3 不新增 alert，除非 prod 观察后定阈值 |
-| `tests/deploy/test_monitoring_provisioning.py` | 断言新 PromQL 出现在 dashboard JSON；alert YAML 仍合法 |
+**前置**：`quant_strategy_map_trend.json` / `quant_strategy_map_hedge.json` 已在 `deploy/monitoring/grafana-provisioning/dashboards/`；动手前先确认现有 reconciliation 区块的 panel id 与布局，再插入新 PromQL。
 
-**验收**：`pytest tests/deploy/test_monitoring_provisioning.py` 通过；CMS/Grafana 手动看一眼新 panel。
+| 文件 | 改动 | 状态 |
+| ---- | ---- | ---- |
+| `deploy/monitoring/grafana-provisioning/dashboards/quant_strategy_map_trend.json` | Trend 对账区 panel 909：`open_reconcile_updated` | ✅ |
+| `deploy/monitoring/grafana-provisioning/dashboards/quant_strategy_map_hedge.json` | panel 909：`segment_*` event rate | ✅ |
+| `deploy/monitoring/grafana-provisioning/alerting/quant_ops.yaml` | 保持现有 manual-check alerts | ✅ |
+| `tests/deploy/test_monitoring_provisioning.py` | 断言新 PromQL | ✅ |
 
-**工作量**：~1d
+**验收**：`pytest tests/deploy/test_monitoring_provisioning.py` 通过 ✅；CMS/Grafana 手动看一眼新 panel ⏳
+
+**工作量**：~1d（已完成）
 
 ---
 
-### Phase 4：进程内 Truth Sync Helper（代码模块，非新进程）
+### Phase 4：进程内 Truth Sync Helper（代码模块，非新进程）✅
 
 **前置**：Phase 1–3 稳定后再做，避免 helper 封装错误 metrics。
 
-**候选模块**：`src/order_management/execution_truth_sync.py`
+**候选模块**：`src/order_management/execution_truth_sync.py`（与现有 `multi_leg_reconciliation.py` / `reconcile_open_orders` 同层；若 helper 仅 metrics 发布，也可扩 `order_management/monitoring.py`，不必新建 `src/reconciliation/` 包）
 
 | 职责 | 非职责 |
 | ---- | ------ |
@@ -336,29 +361,34 @@ mlbot_reconciliation_issue_count{scope="trend", issue="open_reconcile_updated"}
 
 **迁移顺序**：
 
-1. `terminal_order_backfill.py` metrics 发布 → 走 helper  
-2. `multi_leg_daemon.py` / orchestrator reconcile metrics → 走 helper  
-3. legacy `order_management/monitoring.py` → 最后或标记 deprecated  
+1. `terminal_order_backfill.py` metrics 发布 → 走 helper ✅  
+2. `multi_leg_orchestrator.py` reconcile metrics → 走 helper ✅（daemon 经 orchestrator）  
+3. `multi_leg_order_backfill.py` / `run_spot_accum_live.py` → 走 helper ✅  
+4. legacy `order_management/monitoring.py` → 仍待迁移或 deprecated ⏳  
 
-**验收**：各入口 issue 名称一致；无 duplicate/conflicting gauge 写入；**仍只有两个（或三个）现有 systemd 进程**。
+**验收**：各入口 issue 名称一致 ✅；无 duplicate gauge 写入 ✅；仍只有现有 systemd 进程 ✅
 
-**工作量**：~1–2d
+**工作量**：~1–2d（主路径已完成）
 
 ---
 
-### Phase 5：测试与 Live 验证
+### Phase 5：测试与 Live 验证 ⏳
 
 **自动化**（CI / 本地）：
 
 ```bash
+./scripts/ops/check_execution_truth_sync_acceptance.sh
+# 或等价：
 pytest tests/unit/test_segment_lifecycle.py \
        tests/unit/test_dual_add_trend_live_engine.py \
        tests/order_management/test_order_manager.py::test_reconcile_open_orders_syncs_canceled_pending
-# + 新增 metrics_exporter 测试
+pytest tests/unit/test_metrics_reconciliation_scope.py tests/unit/test_execution_truth_sync.py
 pytest tests/deploy/test_monitoring_provisioning.py
 ```
 
-**Live / paper（segment-lifecycle §6 最后一项）**：
+**代码 follow-up（§5.1）**：~~补 `dual_add_trend_live_engine.on_execution_results` 对 `market_exit` 的处理 + 单测~~ ✅
+
+**Live / paper**（[segment-lifecycle §6](segment-lifecycle.md) + 下表）：
 
 | 观察项 | 通过标准 |
 | ------ | -------- |
@@ -395,14 +425,20 @@ pytest tests/deploy/test_monitoring_provisioning.py
 
 ## 9. 实施顺序总览
 
+| Phase | 内容 | 状态 | 估时 |
+| ----- | ---- | ---- | ---- |
+| 0 | 文档对齐（segment-lifecycle snippet + 本文术语） | ✅ | ~0.5d |
+| 1 | `open_reconcile_updated` 单测 + 常量 + `ok` 语义 | ✅ | ~0.5d |
+| 2 | `segment_*` → `strategy_event_total` | ✅ | ~0.5d |
+| 3 | Grafana panels + provisioning tests | ✅ | ~1d |
+| 4 | `execution_truth_sync.py`（进程内 helper） | ✅ 主路径；legacy monitoring 待迁 | ~1–2d |
+| 5 | 自动化 + Live（含 §5.1 dual_add） | 自动化 ✅ / Live ⏳ | ~0.5d + 1–3 交易日 |
+| 6 | Regime verb / ledger / 子账户 | 登记 | 单独立项 |
+
 ```text
-Phase 0  文档对齐（segment-lifecycle snippet + 本文术语）     ~0.5d
-Phase 1  open_reconcile_updated → Prometheus allowlist        ~0.5d
-Phase 2  segment_* events → strategy_event_total               ~0.5d
-Phase 3  Grafana panels + provisioning tests                    ~1d
-Phase 4  execution_truth_sync.py（进程内 helper）             ~1–2d
-Phase 5  自动化测试 + Live 观察                                 ~0.5d + 1–3 交易日
-Phase 6  Regime verb / ledger / 子账户（中期，单独立项）
+Phase 0–4 ✅ → Phase 5 Live ⏳
+                    ↑
+          segment-lifecycle §6 Live 项并行
 ```
 
 ---
@@ -420,5 +456,8 @@ Phase 6  Regime verb / ledger / 子账户（中期，单独立项）
 
 | 日期 | 说明 |
 | ---- | ---- |
-| 2026-06-14 | 初版：近期修复清单、ABC vs ExecutionTruthSync 澄清、metrics 修正 |
-| 2026-06-14 | 增补 §5–§9：Review 结论、目标架构、Phase 0–6 详细实现计划（中文） |
+| 2026-06-14 | 初版：近期修复清单、ABC vs ExecutionTruthSync 澄清、metrics 缺口分析 |
+| 2026-06-14 | 增补 §5–§9：Review 结论、目标架构、Phase 0–6 详细实现计划 |
+| 2026-06-14 | `f80f32d3`：daemon reconcile 周期、algo `get_order` fallback、`open_reconcile_updated` bucket |
+| 2026-06-14 | 文档修订：与代码同步 §3/§5；Phase 0 ✅；segment-lifecycle snippet 对齐；新增 §5.1 follow-up、§9 进度表 |
+| 2026-06-14 | Phase 1–4 代码合并：`execution_truth_sync.py`、segment metrics、Grafana panels、dual_add `market_exit`；§7/§9 进度表更新 |

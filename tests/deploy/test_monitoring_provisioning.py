@@ -217,3 +217,19 @@ def test_patch_scripts_idempotent_guard():
     src = (REPO / "scripts/patch_grafana_ops_monitoring.py").read_text(encoding="utf-8")
     assert "legacy_overview" in src
     assert "1100" in src
+
+
+def test_strategy_map_trend_dashboard_includes_open_reconcile_updated_panel():
+    dash = _load_dashboard("quant_strategy_map_trend.json")
+    exprs: list[str] = []
+    _collect_exprs(dash, exprs)
+    assert any(
+        'issue="open_reconcile_updated"' in e and 'scope="trend"' in e for e in exprs
+    )
+
+
+def test_strategy_map_hedge_dashboard_includes_segment_lifecycle_events():
+    dash = _load_dashboard("quant_strategy_map_hedge.json")
+    exprs: list[str] = []
+    _collect_exprs(dash, exprs)
+    assert any('event=~"segment_.*"' in e and 'scope="hedge"' in e for e in exprs)
