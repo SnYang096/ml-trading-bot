@@ -17,7 +17,6 @@ from src.order_management.binance_api import BinanceAPI
 from src.order_management.position_manager import PositionManager
 from src.order_management.order_manager import OrderManager
 from src.order_management.risk_controller import RiskController
-from src.order_management.monitoring import MonitoringService
 from src.order_management.performance_metrics import PerformanceMetricsCalculator
 from src.order_management.models import OrderSide, OrderType, PositionSide
 from src.order_management import metrics
@@ -94,15 +93,6 @@ def setup_order_management_system(testnet: bool = False):
     order_manager = OrderManager(storage, binance_api)
     risk_controller = RiskController(storage, binance_api)
     
-    # 初始化监控服务
-    monitoring_service = MonitoringService(
-        storage=storage,
-        position_manager=position_manager,
-        order_manager=order_manager,
-        binance_api=binance_api,
-        update_interval=5
-    )
-    
     # 初始化性能指标计算器
     performance_calculator = PerformanceMetricsCalculator(storage)
     
@@ -112,7 +102,6 @@ def setup_order_management_system(testnet: bool = False):
         'position_manager': position_manager,
         'order_manager': order_manager,
         'risk_controller': risk_controller,
-        'monitoring_service': monitoring_service,
         'performance_calculator': performance_calculator
     }
 
@@ -167,42 +156,6 @@ def example_basic_usage():
     logger.info("4. 查询订单")
     open_orders = om.get_open_orders()
     logger.info(f"当前未完成订单数量: {len(open_orders)}")
-
-
-def example_with_monitoring():
-    """带监控的使用示例"""
-    logger.info("=== 带监控的使用示例 ===")
-    
-    # 设置系统
-    system = setup_order_management_system(testnet=True)
-    monitoring = system['monitoring_service']
-    
-    # 启动Prometheus metrics服务器
-    metrics.start_metrics_server(port=8000)
-    logger.info("Prometheus metrics服务器已启动在端口8000")
-    
-    # 启动监控服务
-    monitoring.start()
-    logger.info("监控服务已启动")
-    
-    # 注册告警回调
-    def alert_callback(alert_type: str, message: str):
-        logger.warning(f"告警 [{alert_type}]: {message}")
-        # 这里可以发送邮件、Telegram通知等
-    
-    monitoring.register_alert_callback(alert_callback)
-    
-    try:
-        # 运行一段时间
-        import time
-        time.sleep(30)
-        
-        # 获取监控摘要
-        summary = monitoring.get_monitoring_summary()
-        logger.info(f"监控摘要: {summary}")
-    finally:
-        monitoring.stop()
-        logger.info("监控服务已停止")
 
 
 def example_with_websocket_integration():
@@ -267,8 +220,6 @@ if __name__ == "__main__":
     # 运行示例
     try:
         example_basic_usage()
-        print("\n" + "="*50 + "\n")
-        example_with_monitoring()
         print("\n" + "="*50 + "\n")
         example_with_websocket_integration()
     except Exception as e:

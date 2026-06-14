@@ -91,7 +91,7 @@ TPC direction band 对齐、fast_scalp dual-head、ME CompressionBreakout rework
    - `reconcile_open_orders`（open ↔ local pending）  
    - `reconcile_recent_terminal_orders`（终态回填）  
    - multileg daemon `reconcile`（engine state ↔ exchange，60s 或 on action）  
-   - `MonitoringService.reconcile_open_orders`（legacy 路径）
+   - ~~`MonitoringService.reconcile_open_orders`~~ 已删除（2026-06-14）；止损/保证金告警改由 CMS 账户层
 
 2. **统一 metrics / 告警字段**：同一 issue 类型不因入口不同而丢失（见 §3）。
 
@@ -160,7 +160,7 @@ for issue in RECONCILIATION_ISSUE_BUCKETS:
 1. ~~allowlist 加 `open_reconcile_updated`~~ ✅  
 2. ~~`_deactivate` → `record_strategy_event(segment_*)`~~ ✅ Phase 2  
 3. ~~Grafana + provisioning tests~~ ✅ Phase 3  
-4. ~~`execution_truth_sync.py` helper~~ ✅ Phase 4（legacy `monitoring.py` 仍待迁移）  
+4. ~~`execution_truth_sync.py` helper~~ ✅ Phase 4（legacy `monitoring.py` 已删除）  
 5. segment-lifecycle §6 Live 项 + 本文 Phase 5 prod 观察 → ⏳  
 6. `mlbot monitor` manifest 纳入 reconcile / segment 事件 → 登记
 
@@ -173,7 +173,7 @@ for issue in RECONCILIATION_ISSUE_BUCKETS:
 | 问题 | 说明 |
 | ---- | ---- |
 | 三源 drift | engine JSON ↔ SQLite ↔ exchange；分账户后每账户仍存在 |
-| reconcile 多入口 | terminal backfill、daemon、MonitoringService、orchestrator on action — 行为/频率不一致 |
+| reconcile 多入口 | terminal backfill、daemon、orchestrator on action — 行为/频率不一致（legacy MonitoringService 已删） |
 | 监控链断裂 | B Regime 有 parquet verb；C Regime 未接；C 执行无实时 reconcile 告警 |
 | 宪法 bucket | ABC 应用 constitution 分 gross/net cap，而非仅 strategy slug |
 
@@ -364,7 +364,7 @@ mlbot_reconciliation_issue_count{scope="trend", issue="open_reconcile_updated"}
 1. `terminal_order_backfill.py` metrics 发布 → 走 helper ✅  
 2. `multi_leg_orchestrator.py` reconcile metrics → 走 helper ✅（daemon 经 orchestrator）  
 3. `multi_leg_order_backfill.py` / `run_spot_accum_live.py` → 走 helper ✅  
-4. legacy `order_management/monitoring.py` → 仍待迁移或 deprecated ⏳  
+4. ~~legacy `order_management/monitoring.py`~~ → 已删除；止损/保证金告警由 CMS 账户层承担  
 
 **验收**：各入口 issue 名称一致 ✅；无 duplicate gauge 写入 ✅；仍只有现有 systemd 进程 ✅
 
@@ -431,7 +431,7 @@ pytest tests/deploy/test_monitoring_provisioning.py
 | 1 | `open_reconcile_updated` 单测 + 常量 + `ok` 语义 | ✅ | ~0.5d |
 | 2 | `segment_*` → `strategy_event_total` | ✅ | ~0.5d |
 | 3 | Grafana panels + provisioning tests | ✅ | ~1d |
-| 4 | `execution_truth_sync.py`（进程内 helper） | ✅ 主路径；legacy monitoring 待迁 | ~1–2d |
+| 4 | `execution_truth_sync.py`（进程内 helper） | ✅ 含 legacy monitoring 删除 | ~1–2d |
 | 5 | 自动化 + Live（含 §5.1 dual_add） | 自动化 ✅ / Live ⏳ | ~0.5d + 1–3 交易日 |
 | 6 | Regime verb / ledger / 子账户 | 登记 | 单独立项 |
 
