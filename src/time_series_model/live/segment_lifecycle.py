@@ -72,7 +72,9 @@ class SegmentLifecycleMixin:
         raise NotImplementedError
 
     def _reconcile_legacy_active_flag(self) -> None:
-        if not (self.state.active and self.state.segment_state == SegmentState.IDLE.value):
+        if not (
+            self.state.active and self.state.segment_state == SegmentState.IDLE.value
+        ):
             return
         # Legacy state: active=True but segment_state was never persisted.
         # Only preserve as ACTIVE when real inventory/pending exists; otherwise

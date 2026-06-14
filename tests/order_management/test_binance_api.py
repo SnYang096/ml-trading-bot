@@ -572,6 +572,7 @@ def test_place_stop_order_no_stop_price(binance_api):
 
 # P0: -4136 defense-in-depth
 
+
 def test_hedge_mode_market_with_close_position_raises(binance_api):
     """Hedge Mode 下 MARKET + closePosition=True 触发 -4136，应提前拦截"""
     binance_api.hedge_mode = True

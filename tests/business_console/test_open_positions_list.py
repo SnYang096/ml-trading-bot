@@ -18,21 +18,25 @@ def test_collect_open_positions_trend_and_multileg(
     trend_db, spot_db, multi_leg_db, bus_root
 ) -> None:
     conn = sqlite3.connect(trend_db)
-    conn.execute("""
+    conn.execute(
+        """
         INSERT INTO positions VALUES (
             'p_open', 'ETHUSDT', 'long',
             '2024-01-02T10:00:00+00:00', NULL,
             100.0, NULL, NULL, 'open', 'tpc', 98.5, 106.0, 0.5, NULL
         )
-        """)
-    conn.execute("""
+        """
+    )
+    conn.execute(
+        """
         INSERT INTO orders VALUES (
             'ord_tp', 'ETHUSDT', 'SELL', 'open', 'limit',
             0.5, 106.0, NULL,
             NULL, '2024-01-02T11:00:00+00:00', '2024-01-02T11:00:00+00:00',
             NULL, 0.0, 'p_open'
         )
-        """)
+        """
+    )
     conn.commit()
     conn.close()
 
@@ -81,13 +85,15 @@ def test_collect_open_positions_spot_lot(
 
 def test_open_positions_api(client, trend_db, bus_root) -> None:
     conn = sqlite3.connect(trend_db)
-    conn.execute("""
+    conn.execute(
+        """
         INSERT INTO positions VALUES (
             'p_api', 'ETHUSDT', 'short',
             '2024-01-03T08:00:00+00:00', NULL,
             105.0, NULL, NULL, 'open', 'tpc', 108.0, 102.0, 0.2, NULL
         )
-        """)
+        """
+    )
     conn.commit()
     conn.close()
 

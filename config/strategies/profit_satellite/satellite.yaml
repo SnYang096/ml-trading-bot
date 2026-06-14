@@ -1,0 +1,23 @@
+# profit_satellite — weekly deploy from spot profit pool (test defaults)
+deploy_frac: 0.01          # profit_pool × 1% per week
+min_quote_volume_usdt: 1000000
+symbol_status: TRADING
+quote_asset: USDT
+
+# Candidate source (P0): Binance public ticker/24hr — no API key
+momentum:
+  provider: binance_spot
+  endpoint: /api/v3/ticker/24hr
+  window: 24h_rolling
+  pick: top1_by_price_change_percent
+
+# Optional later: CoinGecko 7d as secondary filter (not P0)
+# alt_provider: coingecko
+
+regime_gate:
+  require_t2_composite: risk_on
+
+caps:
+  satellite_nav_pct_max: 0.15
+  single_coin_nav_pct_max: 0.05
+  meme_single_coin_nav_pct_max: 0.02
