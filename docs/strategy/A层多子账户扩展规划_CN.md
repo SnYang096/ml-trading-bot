@@ -1,23 +1,22 @@
 # A 层多子账户扩展规划
 
-> **状态**：战略规划（2026-06-12）  
+> **状态**：战略规划（2026-06-14 修订）  
 > **上位文档**：[ABC三层收益结构_战略框架_CN.md](ABC三层收益结构_战略框架_CN.md) · [产品路线图_TODO优先级_CN.md](产品路线图_TODO优先级_CN.md) · [牛市Beta账本调仓与币本位取舍_CN.md](牛市Beta账本调仓与币本位取舍_CN.md)
 
----
+**2026-06-14**：**放弃** `profit_satellite` live、`rolling_trend` live；A 层维持 **现货主仓 only**；研发主攻 **T5 订单墙/清算 scan**（路线图 P1）。
 
 ## 1. 当前 A 层结构
 
 ```
 A 层（Beta 容器）
 └── A·Spot（现货账户）
-    ├── spot_accum_simple（主仓：周线 EMA200 深熊 DCA + 利润倍数阶梯卖出）
-    └── profit_satellite（卫星：利润 1% / 周 → Binance 24h 热榜 Top1，见 §3.1.1）
+    └── spot_accum_simple（主仓：周线 EMA200 深熊 DCA + 利润倍数阶梯卖出）
 ```
 
 **现状**：
 - 仅 1 个现货账户（`spot` scope）
 - 主仓：`spot_accum_simple`（周线 EMA200 深熊 DCA + 利润倍数阶梯卖出）
-- 卫星：`profit_satellite` **设计稿**（§3.1.1），未 live
+- ~~卫星 `profit_satellite`~~：**已放弃 live**（探针归档，见 §3.1.1）
 - 账户隔离：与 B（trend）、C（multi_leg）物理分离
 - 风控独立：`max_gross_notional_pct: 1.00`、`max_daily_deploy_pct: 1.00`
 
@@ -33,15 +32,15 @@ A 层（Beta 容器）
 ```
 A 层（Beta 容器 — 慢 regime 参与）
 ├── A·Spot（现货）— ✅ 已有
-│   ├── spot_accum_simple（主仓）
-│   └── profit_satellite（卫星，利润周冲强势币 — 优先于 rolling live）
-├── A·Futures（U 本位合约）— ⏸ 后置
-│   └── rolling_trend（组合级杠杆滚仓；见 §3.2，非 A 卫星 MVP 首选）
+│   └── spot_accum_simple（主仓）
+├── A·Futures（U 本位 rolling）— ❌ 已放弃 live（§3.2 归档）
 ├── A·CN（A 股）— 🆕 T3
 │   └── 慢周期高性价比（月线趋势 + 低估值）
 └── A·Coin-M（币本位）— 🆕 T4（可选，后置）
     └── BTC 币本位 beta 容器
 ```
+
+**当前 live 范围**：仅 **A·Spot 主仓**。扩展子账户除 T3/T4 研究外，**不立项** rolling / 卫星。
 
 ---
 
@@ -69,7 +68,14 @@ A 层（Beta 容器 — 慢 regime 参与）
 
 ---
 
-### 3.1.1 A·Spot 卫星 — `profit_satellite`（利润周冲强势币）【设计 · 优先 MVP】
+### 3.1.1 A·Spot 卫星 — `profit_satellite`【已放弃 live · 归档】
+
+> **2026-06-14 决定**：不立项 P0 周报、P1 利润池/regime/半自动、P2 全自动。  
+> 仓库内 `scripts/profit_satellite_probe.py` 与 `config/strategies/profit_satellite/` **仅作历史探针**，不接入 live / CMS。  
+> **资源转 T5**（B 层订单墙 / 清算 scan）。
+
+<details>
+<summary>原设计草案（只读归档）</summary>
 
 > **动机**：比 `profit_ladder` 多档梯子、`rolling_trend` 合约滚仓更简单；与「定投主仓 + 手动追叙事」相比，多了 **利润池纪律 + 客观选币 + regime 门控**。  
 > **与 B·TPC 浮盈加仓**：TPC `add_position` 是 **同标的、per-trade** 金字塔；卫星是 **跨标的、只用利润、每周至多一笔**。
@@ -169,55 +175,42 @@ GET /api/market/momentum?days=7&limit=20
 - ❌ Binance `fetch_ohlcv` 对全市场 USDT 对算 `days` 日涨幅  
 - ❌ 把 `market_heat`（周线 EMA50 趋势）当作「当周涨幅榜」唯一来源  
 
-#### 执行形态（分阶段）
+#### 执行形态（已取消）
 
-| 阶段 | 交付 |
+| 阶段 | 状态 |
 |------|------|
-| **P0** | `profit_satellite_probe.py` + 每周 TG/笔记 Top5；**人工**下单 |
-| **P1** | 利润池会计 + regime 门控 + 半自动「确认后下单」 |
-| **P2** | 全自动每周 `profit_pool×1%` 买 Top1（仍受上限约束） |
+| P0 探针 + 周报 | 探针已写；**不运营** |
+| P1 利润池 + regime + 半自动 | **放弃** |
+| P2 全自动下单 | **放弃** |
 
-#### 配置锚点（规划）
-
-| 用途 | 路径 |
-|------|------|
-| 卫星策略说明 | `config/strategies/profit_satellite/README.md` |
-| 比例/上限/regime | `config/strategies/profit_satellite/satellite.yaml` |
-| Binance 24h 探针 | `scripts/profit_satellite_probe.py`、`src/market_momentum/binance_spot_24h.py` |
-| Momentum 第三方（备选） | `config/market_momentum/providers.yaml`（待建，coingecko 7d） |
-| CMS 路由 | `src/mlbot_console/routers/market.py` → `GET /api/market/momentum`（备选，待建） |
-| 与 T2 联动 | `config/monitoring/rebalance_targets.yaml` `risk_on` 时允许卫星；`risk_off` 告警清仓 |
+</details>
 
 ---
 
-### 3.2 A·Futures（U 本位合约）— ⏸ 后置（原 P1 rolling）
+### 3.2 A·Futures（U 本位 rolling）— 【已放弃 live · 归档】
 
 | 属性 | 值 |
 |------|-----|
 | **账户类型** | Binance Futures USDT-M |
-| **结算货币** | USDT |
 | **策略** | `rolling_trend`（组合级杠杆滚仓） |
-| **时间尺度** | 周～月（TPC 信号驱动） |
-| **核心语义** | 杠杆化趋势 beta，与现货 A 语义一致但工具不同 |
-| **优先级** | **⏸ 后置**（现货 `profit_satellite` 更简单且已覆盖大部分「利润追强势」需求；若 simulate 证明显著增量再 live） |
+| **优先级** | **❌ 放弃 live**（2026-06-14）；`simulate` 保留对照 |
 
-**为何独立账户**：
-1. **风控隔离**：杠杆爆仓风险不应污染现货 A
-2. **宪法分层**：`max_gross_leverage` 需独立配置（现货 = 1.0，合约 = 2.0~3.0）
-3. **NAV 追踪**：便于 T2 调仓告警区分「无杠杆 beta」vs「杠杆 beta」
+**放弃理由**：
+- 杠杆滚仓运维、爆仓语义、独立账户成本高
+- A 层 beta 由 **现货主仓** 承担；alpha 增量转 **T5 清算/订单墙**
+- 与路线图 T1 同步废止
 
-**代码现状**：
-- 配置：`config/strategies/rolling_trend/`（README + archetypes + features.yaml + meta.yaml）
+**代码现状（只读）**：
+- 配置：`config/strategies/rolling_trend/`
 - 模拟：`scripts/rolling_trend_simulate.py`
-- **缺失**：live runner、独立 API key、宪法 `rolling` 段
+- **不开发**：live runner、`rolling` scope、宪法 `rolling` 段、CMS 卡片
 
-**实现路径**：
-1. 新增 `rolling` scope 到 `exchange_balances.py`
-2. 宪法新增 `rolling:` 段（独立 `equity_usdt`、`max_gross_leverage`）
-3. 开发 `scripts/run_rolling_live.py`（参考 `run_multi_leg_live.py`）
-4. CMS 卡片：rolling 账户净值、杠杆、回撤
+~~**实现路径**~~（归档，不执行）：
+1. ~~新增 `rolling` scope~~
+2. ~~宪法 `rolling:` 段~~
+3. ~~`scripts/run_rolling_live.py`~~
 
-**风险**：
+**风险**（若未来重评）：
 - 高杠杆爆仓语义需与宪法 `max_gross_leverage` 分层
 - TPC 信号源订阅与组合杠杆维护逻辑
 
@@ -279,12 +272,11 @@ GET /api/market/momentum?days=7&limit=20
 **为何后置**：
 1. **工程量大**：`dapi` 全栈缺失（符号体系 `BTCUSD_PERP`、PnL 单位、宪法 `equity_usdt`、SL/reconcile 均需重做）
 2. **运维复杂**：多币种 B/C 需分币抵押池（BTC 仓用 BTC、ETH 仓用 ETH），无法像 USDT 池统一调度
-3. **替代方案已覆盖**：现货 A + U 本位 rolling 已能覆盖大部分 beta 需求
+3. **替代方案已覆盖**：现货 A + **B/C（TPC）** 已覆盖 beta + alpha；无需 rolling 杠杆层
 4. **熊市风险**：币价下跌 → 抵押品贬值 + 多头亏损，双重打击
 
 **前置条件**：
-- T1 rolling + A 现货 + T2 调仓已运行 ≥1 个 regime 周期
-- 验证「持币复利」是否真的优于「现货 A + U 本位 rolling」
+- A 现货 + B/C + T2 调仓已运行 ≥1 个 regime 周期
 
 **实现路径（若仍要做）**：
 1. **仅 BTC** 币本位子账户（`dapi`），语义 = beta 容器
@@ -316,19 +308,16 @@ A 层的核心是 **payoff 语义统一（慢、长、凸性）**，而非工具
 ### 4.3 Regime 驱动权重
 
 牛市：
-- 提高 A·Spot 主仓占比；`profit_satellite` 在 risk_on 下每周利润 **1%** 追 24h 热榜 Top1
-- A·Futures（若上线）再叠加杠杆 beta
-- A·CN 可作为跨市场分散
+- 提高 A·Spot 主仓占比（`spot_accum` 深熊 DCA + 阶梯卖）
+- A·CN 可作为跨市场分散（T3，后置）
 
 熊市：
-- **关闭** `profit_satellite` 新开；优先清卫星
-- 收缩 A·Futures（降杠杆或暂停）
 - A·Spot 主仓降权（不新开 deploy；`spot_accum` 深熊逻辑照旧）
 - A·CN 视宏观 regime 调整
 
 ### 4.4 币本位非必需
 
-现货 A 已能抓 beta，U 本位 rolling 已能加杠杆。币本位的「抵押品升值」是锦上添花，不是雪中送炭。
+现货 A 已能抓 beta；杠杆 beta（rolling）与利润卫星 **已战略放弃**。币本位为锦上添花。
 
 ---
 
@@ -340,8 +329,8 @@ T2 调仓告警需监控各 A 层子账户的 NAV 占比：
 # config/monitoring/rebalance_targets.yaml（示意）
 a_layer:
   target_nav_pct:
-    spot: 0.40      # 现货 A
-    futures: 0.30   # rolling_trend
+    spot: 0.40      # 现货 A（主仓）
+    # futures: 0.30   # rolling — 已放弃，可不配置
     cn: 0.20        # A 股（若上线）
     coin_m: 0.10    # 币本位（若上线）
   tolerance_pct: 0.05  # ±5% 容忍带
@@ -360,10 +349,11 @@ a_layer:
 | 子账户 / 模块 | 优先级 | 依赖 | 工作量 |
 |---------------|--------|------|--------|
 | A·Spot 主仓 | — | — | 已有 |
-| A·Spot `profit_satellite` | **P1** | T2 risk_on 门控 + Binance 24h 探针已通 | 小（利润池会计 + 半自动下单） |
-| A·Futures rolling | **⏸ 后置** | profit_satellite 跑通 ≥1 周期 + rolling simulate 增量 | 中（2-4 周） |
-| A·CN | **P3** | T3 Phase A heatmap | 大（数据 + 合规 + 回测脚手架） |
-| A·Coin-M | **P4** | A 现货 + T2 已运行 ≥1 个 regime 周期 | 很大（4-8 周+） |
+| A·Spot `profit_satellite` | **❌ 放弃** | — | 探针归档 |
+| A·Futures rolling | **❌ 放弃** | — | simulate 只读 |
+| A·CN | **P3** | T3 Phase A heatmap | 大 |
+| A·Coin-M | **P4** | A 现货 + T2 ≥1 regime 周期 | 很大 |
+| **B·T5 清算/订单墙** | **P1（全项目主攻）** | TPC parquet + Phase 1 scan | 中 |
 
 ---
 
@@ -371,9 +361,9 @@ a_layer:
 
 | 项 | 原因 |
 |----|------|
-| A·Coin-M 作为 B/C **全量**币本位迁移 | 战略错层 + 工程量大；见币本位取舍 doc |
-| A·CN 与 A·Futures **同优先级**抢资源 | A 股合规与数据未验证，不应挡 crypto beta live |
-| A·Futures 未验证直接 live | 违反 experiments R&D workflow Phase 1 |
+| **`profit_satellite` live**（含 P1/P2） | 2026-06-14 放弃；资源转 T5 |
+| **`rolling_trend` live** | 2026-06-14 放弃；杠杆运维 > 增量 |
+| A·Coin-M 作为 B/C **全量**币本位迁移 | 战略错层 + 工程量大 |
 
 ---
 
@@ -382,8 +372,9 @@ a_layer:
 | 子账户 | 主要路径 |
 |--------|----------|
 | A·Spot 主仓 | `config/constitution/constitution.yaml` §5 spot、`config/strategies/spot_accum_simple/` |
-| A·Spot 卫星 | `config/strategies/profit_satellite/`、`scripts/profit_satellite_probe.py` |
-| A·Futures | `config/strategies/rolling_trend/`、`scripts/rolling_trend_simulate.py`、新增 `rolling` scope |
+| profit_satellite（归档） | `config/strategies/profit_satellite/`、`scripts/profit_satellite_probe.py` |
+| rolling（归档） | `config/strategies/rolling_trend/`、`scripts/rolling_trend_simulate.py` |
+| **T5 scan** | `config/experiments/20260614_t5_liquidation_wall_scan/`（待建）；路线图 §T5 |
 | A·CN | 新建 `src/market_heat_cn/` 或扩展 `market_heat`、`docs/market_heat/` |
 | A·Coin-M | `src/order_management/binance_api.py`（`dapi`） |
 
@@ -391,7 +382,7 @@ a_layer:
 
 ## 9. 一句话结论
 
-> **A 层应扩展为多子账户结构**：现货主仓（已有）+ **现货利润卫星 `profit_satellite`（P1，Binance 24h 热榜 + 利润 1%/周）** + U 本位合约 rolling（后置）+ A 股（P3）+ 币本位（P4 可选）。核心是 **payoff 语义统一（beta）**；卫星只用利润、一次 ticker/24hr 请求。
+> **A 层 live = 现货主仓 `spot_accum_simple`**。`profit_satellite` 与 `rolling_trend` **已放弃**（2026-06-14）。全项目 **主攻 T5**：B 层订单墙 / 清算簇 Phase 1 `mlbot research scan`。
 
 ---
 

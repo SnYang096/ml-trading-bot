@@ -1,5 +1,6 @@
-# profit_satellite — weekly deploy from spot profit pool (test defaults)
-deploy_frac: 0.01          # profit_pool × 1% per week
+# profit_satellite — weekly deploy from spot profit pool
+# STATUS: abandoned (2026-06-14) — archive only, no live runner
+deploy_frac: 0.01
 min_quote_volume_usdt: 1000000
 symbol_status: TRADING
 quote_asset: USDT

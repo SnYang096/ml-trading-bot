@@ -119,19 +119,10 @@ if not heat_pf.is_tradeable("BTCUSDT"):
 
 多市场（A 股、美股、黄金、外汇等）可在同一套「注册表 + 拉数器 + 聚合」抽象上扩展；当前版本聚焦 **Binance USDT 现货周线** 与 `crypto_sectors.yaml` 中的板块划分。
 
-### Momentum / 24h 热榜（与 heat 分离 · 见 A 层卫星）
+### Momentum / 24h 热榜（与 heat 分离）
 
-**`market_heat` ≠ 涨幅榜**（heat 是周线 EMA50 趋势）。A 层 `profit_satellite` **P0** 用：
+**`market_heat` ≠ 涨幅榜**（heat 是周线 EMA50 趋势）。
 
-- **Binance** `GET /api/v3/ticker/24hr` → USDT 24h `priceChangePercent` 排序（`scripts/profit_satellite_probe.py`）
-- 每周部署：**利润池 × 1%** 买 Top1
+A 层 `profit_satellite`（Binance 24h 热榜 + 利润 1%/周）**已于 2026-06-14 放弃 live**；`scripts/profit_satellite_probe.py` 仅归档。
 
-备选（7 日周涨幅，未接 live）：
-
-```http
-GET /api/market/momentum?days=7&limit=20
-```
-
-- **数据源**：第三方 API（**CoinGecko** `/coins/markets` 的 `price_change_percentage_7d` 等），**不**对 Binance 全 USDT 对自拉 K 线扫描。
-- **设计文档**：[A层多子账户扩展规划_CN.md](../strategy/A层多子账户扩展规划_CN.md) §3.1.1 · [profit_satellite README](../../config/strategies/profit_satellite/README.md)
-- **可选叠加**：Top 候选再滤 `market_heat.state != COLD`（趋势未坏）
+**当前主攻**：B 层 **T5** 订单墙 / 清算簇 — [产品路线图 §T5](../strategy/产品路线图_TODO优先级_CN.md)
