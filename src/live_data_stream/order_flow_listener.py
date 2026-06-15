@@ -304,7 +304,22 @@ class OrderFlowListener:
         """处理账户推送: 刷新权益快照（不直接做仓位关闭）。"""
         if not isinstance(update, dict):
             return
-        self._latest_account_update = dict(update)
+        prev = dict(self._latest_account_update or {})
+        merged = {**prev, **update}
+        # Position-only ACCOUNT_UPDATE often omits B[] → wallet_balance=0; keep last good.
+        for key in ("wallet_balance", "available_balance"):
+            try:
+                new_val = float(update.get(key, 0.0) or 0.0)
+            except (TypeError, ValueError):
+                new_val = 0.0
+            if new_val <= 0:
+                try:
+                    prev_val = float(prev.get(key, 0.0) or 0.0)
+                except (TypeError, ValueError):
+                    prev_val = 0.0
+                if prev_val > 0:
+                    merged[key] = prev_val
+        self._latest_account_update = merged
 
     def _release_runtime_for_position(
         self,

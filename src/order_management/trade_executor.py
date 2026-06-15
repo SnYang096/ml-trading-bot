@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Mapping, Optional
 
@@ -119,6 +120,25 @@ class TradeExecutor:
         self.per_strategy_limits = per_strategy_limits or {}
         self.account_risk_limits = account_risk_limits or {}
         self.stats_collector = stats_collector
+
+        # REST equity cache (TTL 5 min) to avoid frequent API calls
+        self._rest_equity_cache_value: float = 0.0
+        self._rest_equity_cache_ts: float = 0.0
+
+        # Log sizing mode when TradeExecutor is first created (lazy per symbol).
+        if risk_per_slot > 0:
+            logger.info(
+                "[%s] TradeExecutor init: constitution sizing (risk_per_slot=%.2f%%)",
+                symbol,
+                risk_per_slot * 100,
+            )
+        else:
+            logger.warning(
+                "[%s] TradeExecutor init: fixed USD sizing (risk_per_trade=$%.2f); "
+                "constitution sizing disabled",
+                symbol,
+                risk_per_trade or 0.0,
+            )
 
     # ------------------------------------------------------------------
     # 公共接口
@@ -634,6 +654,52 @@ class TradeExecutor:
         )
         return max(1e-6, effective_stop_r), atr_stop_pct, effective_stop_pct, source
 
+    def _resolve_sizing_equity(self, features: Dict[str, Any]) -> float:
+        """Equity for constitution sizing: features first, then REST snapshot (cached 5 min)."""
+        equity = float(features.get("equity", 0.0) or 0.0)
+        if equity > 0:
+            return equity
+
+        # Check REST cache (TTL 5 min)
+        now = time.time()
+        if (
+            self._rest_equity_cache_value > 0
+            and (now - self._rest_equity_cache_ts) < 300
+        ):
+            logger.debug(
+                "[%s] Using cached REST equity=$%.2f (age=%.0fs)",
+                self.symbol,
+                self._rest_equity_cache_value,
+                now - self._rest_equity_cache_ts,
+            )
+            features["equity"] = self._rest_equity_cache_value
+            return self._rest_equity_cache_value
+
+        api = getattr(self.order_manager, "binance_api", None)
+        if api is None:
+            return 0.0
+        try:
+            snap = snapshot_from_binance_balance(
+                balance=api.get_account_balance(),
+                positions=api.get_positions(),
+                features_fallback=features,
+            )
+        except Exception as exc:
+            logger.warning("[%s] REST equity fetch failed: %s", self.symbol, exc)
+            return 0.0
+
+        equity = float(snap.equity or 0.0)
+        if equity > 0:
+            features["equity"] = equity
+            self._rest_equity_cache_value = equity
+            self._rest_equity_cache_ts = now
+            logger.info(
+                "[%s] REST 刷新 sizing equity=$%.2f (user-stream equity 缺失)",
+                self.symbol,
+                equity,
+            )
+        return equity
+
     def _calc_qty(
         self,
         intent: TradeIntent,
@@ -678,7 +744,7 @@ class TradeExecutor:
                 if strat_risk is not None:
                     effective_risk = min(effective_risk, float(strat_risk))
 
-            equity = float(features.get("equity", 0.0) or 0.0)
+            equity = self._resolve_sizing_equity(features)
             if equity > 0:
                 result = compute_slot_size_from_risk(
                     equity_usd=equity,
@@ -703,9 +769,19 @@ class TradeExecutor:
                     entry_price,
                     qty,
                 )
+            else:
+                logger.warning(
+                    "[%s] 宪法风险反算跳过: equity 不可用，不下单",
+                    self.symbol,
+                )
 
-        # --- 3. risk_per_trade ---
-        if qty <= 0 and self.risk_per_trade and self.risk_per_trade > 0:
+        # --- 3. risk_per_trade (only when constitution sizing is disabled) ---
+        if (
+            qty <= 0
+            and self.risk_per_slot <= 0
+            and self.risk_per_trade
+            and self.risk_per_trade > 0
+        ):
             if sl_r > 0 and atr > 0 and entry_price and entry_price > 0:
                 result = compute_slot_size_from_risk(
                     equity_usd=self.risk_per_trade / 0.01,

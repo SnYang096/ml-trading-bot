@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import pytest
+import time
 from unittest.mock import MagicMock, patch, call
 from datetime import datetime, timezone
 
@@ -132,8 +133,8 @@ class TestQtyCalculation:
         assert qty > 0.0
 
     def test_qty_fallback_to_risk_per_trade(self):
-        """equity=0 时跳过宪法反算，fallback 到 risk_per_trade"""
-        ex, om, ce, pt = _make_executor(risk_per_slot=0.01, risk_per_trade=100.0)
+        """risk_per_slot=0 且无 equity 时 fallback 到 risk_per_trade"""
+        ex, om, ce, pt = _make_executor(risk_per_slot=0.0, risk_per_trade=100.0)
         intent = _make_intent(stop_loss_r=2.0)
         features = _make_features(close=50000.0, atr=500.0, equity=0.0)
 
@@ -142,6 +143,57 @@ class TestQtyCalculation:
         assert result is True
         qty = om.place_order.call_args_list[0].kwargs["quantity"]
         assert qty > 0.0
+
+    def test_constitution_sizing_skips_when_equity_unavailable(self):
+        """risk_per_slot>0 且无 equity 时不 silent fallback 到 risk_per_trade"""
+        ex, om, ce, pt = _make_executor(risk_per_slot=0.01, risk_per_trade=100.0)
+        intent = _make_intent(stop_loss_r=2.0)
+        features = _make_features(close=50000.0, atr=500.0, equity=0.0)
+
+        result = ex.execute(intent=intent, features=features)
+
+        assert result is False
+        om.place_order.assert_not_called()
+
+    def test_constitution_sizing_rest_equity_when_features_missing(self):
+        """features equity 缺失时 REST 刷新后走宪法反算"""
+        ex, om, ce, pt = _make_executor(risk_per_slot=0.01, risk_per_trade=10.0)
+        om.binance_api = MagicMock()
+        om.binance_api.get_positions.return_value = []
+        om.binance_api.get_account_balance.return_value = {
+            "USDT": {"total": 10000.0, "free": 8000.0, "used": 2000.0},
+            "info": {"totalMarginBalance": "10000.0"},
+        }
+        intent = _make_intent(stop_loss_r=2.0)
+        features = _make_features(close=50000.0, atr=500.0, equity=0.0)
+
+        result = ex.execute(intent=intent, features=features)
+
+        assert result is True
+        assert features["equity"] == pytest.approx(10000.0)
+        qty = om.place_order.call_args_list[0].kwargs["quantity"]
+        assert qty > 0.0
+        assert om.binance_api.get_account_balance.call_count == 1
+
+    def test_constitution_sizing_rest_equity_cache_writeback(self):
+        """Cached REST equity is written to features for slot enforcement."""
+        ex, om, ce, pt = _make_executor(risk_per_slot=0.01, risk_per_trade=10.0)
+        om.binance_api = MagicMock()
+        om.binance_api.get_positions.return_value = []
+        om.binance_api.get_account_balance.return_value = {
+            "USDT": {"total": 10000.0, "free": 8000.0, "used": 2000.0},
+            "info": {"totalMarginBalance": "10000.0"},
+        }
+        ex._rest_equity_cache_value = 12000.0
+        ex._rest_equity_cache_ts = time.time()
+        intent = _make_intent(stop_loss_r=2.0)
+        features = _make_features(close=50000.0, atr=500.0, equity=0.0)
+
+        equity = ex._resolve_sizing_equity(features)
+
+        assert equity == pytest.approx(12000.0)
+        assert features["equity"] == pytest.approx(12000.0)
+        om.binance_api.get_account_balance.assert_not_called()
 
     def test_qty_fallback_to_trade_size(self):
         """所有反算均无法计算时 fallback 到 trade_size"""

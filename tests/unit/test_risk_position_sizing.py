@@ -209,9 +209,9 @@ class TestExecuteIntentPriorityChain:
 
     @patch("src.live_data_stream.order_flow_listener.enforce_before_order")
     def test_priority_3_fixed_usd_risk(self, mock_enforce):
-        """无 equity 时 fallback 到 risk_per_trade (固定美元风险)"""
+        """risk_per_slot=0 且无 equity 时 fallback 到 risk_per_trade (固定美元风险)"""
         listener = _make_listener(
-            risk_per_slot=0.01,
+            risk_per_slot=0.0,
             risk_per_trade=10.0,  # $10 固定风险
         )
         intent = _make_intent()

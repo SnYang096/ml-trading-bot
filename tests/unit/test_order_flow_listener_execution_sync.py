@@ -180,6 +180,35 @@ def test_account_update_injects_equity_features():
     assert features["account_event_time"] == 1710001234
 
 
+def test_position_only_account_update_preserves_wallet_balance():
+    listener, _, _, _, _ = _make_listener()
+    listener.on_account_update(
+        {
+            "wallet_balance": 2345.6,
+            "available_balance": 2100.0,
+            "event_time": 1710000000,
+            "positions": [],
+        }
+    )
+    listener.on_account_update(
+        {
+            "wallet_balance": 0.0,
+            "available_balance": 0.0,
+            "event_time": 1710000060,
+            "positions": [
+                {"symbol": "BTCUSDT", "position_amount": 0.01, "unrealized_pnl": 1.2}
+            ],
+        }
+    )
+
+    features = {"close": 50000.0}
+    listener._inject_account_features(features)
+
+    assert listener._latest_account_update["wallet_balance"] == 2345.6
+    assert listener._latest_account_update["available_balance"] == 2100.0
+    assert features["equity"] == 2345.6
+
+
 def test_exchange_fill_notifies_pcm_slot_release_with_archetype():
     listener, om, ce, rs, _ = _make_listener()
     listener.decision_handler = MagicMock()
