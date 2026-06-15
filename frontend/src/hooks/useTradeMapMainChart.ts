@@ -34,11 +34,9 @@ import {
 } from '@/lib/tradeMap/constants.ts';
 import {
   buildTradeLinkLines,
-  expandPriceRangeForOverlays,
   markersForChartDisplay,
   markersToLwc,
   prepareChartMarkers,
-  priceRangeForChartAutoscale,
   sanitizeCandlesForLwc,
 } from '@/lib/tradeMap';
 import {
@@ -189,22 +187,8 @@ export function useTradeMapMainChart(params: MainChartParams) {
 
   const refreshPriceAutoscale = useCallback(() => {
     const chart = chartRef.current;
-    const candles = paramsRef.current.candles;
-    if (!chart || !candles.length) return;
-    const logical = chart.timeScale().getVisibleLogicalRange();
-    let pr = priceRangeForChartAutoscale(candles, logical);
-    if (pr && paramsRef.current.mainOverlays) {
-      const overlayPts = new Map<string, Array<{ time: number; value: number }>>();
-      for (const [k, spec] of Object.entries(paramsRef.current.mainOverlays)) {
-        if (spec?.points?.length) overlayPts.set(k, spec.points);
-      }
-      if (overlayPts.size) {
-        pr = expandPriceRangeForOverlays(pr, candles, logical, overlayPts) || pr;
-      }
-    }
-    if (!pr) return;
-    const ps = chart.priceScale('right');
-    ps.applyOptions({ autoScale: true });
+    if (!chart || !paramsRef.current.candles.length) return;
+    chart.priceScale('right').applyOptions({ autoScale: true });
   }, []);
 
   const applyChopLayers = useCallback(
