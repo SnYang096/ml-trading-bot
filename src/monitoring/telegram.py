@@ -268,8 +268,7 @@ def send_account_watch_alerts(
         ok = send_telegram_message(
             msg,
             stamp_key=f"acct:{scope}:{kind}",
-            cooldown_sec=300 if not force_notify else 0,
-            skip_cooldown=force_notify,
+            cooldown_sec=0 if force_notify else 300,
         )
         if ok:
             sent += 1
