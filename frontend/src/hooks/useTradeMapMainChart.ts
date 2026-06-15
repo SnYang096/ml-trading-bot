@@ -266,9 +266,8 @@ export function useTradeMapMainChart(params: MainChartParams) {
       }
       setLabelSpecs((prev) => (labelSpecsEqual(prev, labels) ? prev : labels));
       void candleSeries;
-      refreshPriceAutoscale();
     },
-    [clearOverlaySeries, refreshPriceAutoscale],
+    [clearOverlaySeries],
   );
 
   const applyTradeLinks = useCallback((chart: IChartApi) => {
@@ -398,7 +397,6 @@ export function useTradeMapMainChart(params: MainChartParams) {
     applyMainOverlays(chart);
     applyChopLayers(chart, series);
     applyTradeLinks(chart);
-    refreshPriceAutoscale();
   }, [
     params.candles,
     params.mainOverlays,
@@ -413,7 +411,6 @@ export function useTradeMapMainChart(params: MainChartParams) {
     applyChopLayers,
     applyMainOverlays,
     applyTradeLinks,
-    refreshPriceAutoscale,
   ]);
 
   useEffect(() => {
