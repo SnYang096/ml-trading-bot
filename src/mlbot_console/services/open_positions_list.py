@@ -611,8 +611,14 @@ def collect_open_positions(
     #     have zero exchange position (stale / fully-closed but unpaired). ──
     if exchange_ledger:
         ex_map = _exchange_position_map(exchange_ledger)
+        logger.debug(
+            "exchange_ledger cross-validation: ex_map size=%d, merged rows=%d",
+            len(ex_map),
+            len(merged),
+        )
         if ex_map:
             filtered: List[Dict[str, Any]] = []
+            dropped_count = 0
             for row in merged:
                 scope = str(row.get("scope") or "")
                 if scope == "spot":
@@ -621,10 +627,27 @@ def collect_open_positions(
                     continue
                 sym = str(row.get("symbol") or "")
                 side = str(row.get("side") or "long")
-                if _exchange_has_position(ex_map, sym, side):
+                has_pos = _exchange_has_position(ex_map, sym, side)
+                if not has_pos:
+                    dropped_count += 1
+                    logger.debug(
+                        "Dropping stale position: scope=%s symbol=%s side=%s (exchange=0)",
+                        scope,
+                        sym,
+                        side,
+                    )
+                else:
                     filtered.append(row)
-                # else: exchange shows 0 → drop as stale/closed
+            logger.debug(
+                "exchange_ledger filter: dropped=%d, kept=%d",
+                dropped_count,
+                len(filtered),
+            )
             merged = filtered
+        else:
+            logger.warning("exchange_ledger provided but ex_map is empty!")
+    else:
+        logger.warning("exchange_ledger is None - skipping cross-validation")
 
     # ── Deduplicate: same (scope, symbol, side) with identical qty → keep
     #     most recent entry_time (fixes exchange-sync + bootstrap dupes).
