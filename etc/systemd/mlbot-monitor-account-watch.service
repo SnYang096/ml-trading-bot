@@ -1,0 +1,11 @@
+[Unit]
+Description=mlbot multi-leg account Telegram watch (single poll)
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/quant-engine/deploy/systemd/mlbot-account-watch-docker-run.sh
+
+[Install]
+WantedBy=multi-user.target

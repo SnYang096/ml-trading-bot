@@ -8391,6 +8391,55 @@ def monitor_check_staleness(schedules: str, dry_run: bool):
     sys.exit(run_script("scripts/monitoring/check_monitor_staleness.py", args))
 
 
+@monitor.command("account-watch")
+@click.option("--once", is_flag=True, help="Single poll (default)")
+@click.option("--loop", is_flag=True, help="Poll continuously")
+@click.option("--interval-seconds", default=60.0, show_default=True, type=float)
+@click.option("--mainnet", is_flag=True, help="Use MULTI_LEG_BINANCE_FUTURES_* keys")
+@click.option("--dry-run", is_flag=True, help="Print alerts only, no Telegram")
+@click.option("--force-notify", is_flag=True, help="Skip cooldown and send if triggered")
+@click.option(
+    "--change-pct",
+    default=None,
+    type=float,
+    help="Equity move threshold (default env MLBOT_ACCOUNT_TG_CHANGE_PCT or 0.03)",
+)
+@click.option(
+    "--state-path",
+    default="",
+    help="State JSON path (default env MLBOT_ACCOUNT_TG_STATE)",
+)
+def monitor_account_watch(
+    once: bool,
+    loop: bool,
+    interval_seconds: float,
+    mainnet: bool,
+    dry_run: bool,
+    force_notify: bool,
+    change_pct: float | None,
+    state_path: str,
+):
+    """Multi-leg equity >=3%% move or new exchange position → Telegram."""
+    args: list[str] = []
+    if once:
+        args.append("--once")
+    if loop:
+        args.append("--loop")
+    if interval_seconds != 60.0:
+        args.extend(["--interval-seconds", str(interval_seconds)])
+    if mainnet:
+        args.append("--mainnet")
+    if dry_run:
+        args.append("--dry-run")
+    if force_notify:
+        args.append("--force-notify")
+    if change_pct is not None:
+        args.extend(["--change-pct", str(change_pct)])
+    if state_path.strip():
+        args.extend(["--state-path", state_path.strip()])
+    sys.exit(run_script("scripts/monitoring/multi_leg_account_telegram_watch.py", args))
+
+
 @monitor.command("catalog")
 @click.option(
     "--root",

@@ -1,4 +1,17 @@
-"""Telegram notifications for monitor ALERT and cadence staleness."""
+"""Central Telegram notifications for mlbot monitoring and live ops.
+
+All Python paths share ``send_telegram_message`` + creds from
+``GRAFANA_ALERT_TELEGRAM_*`` / ``/opt/quant-engine/monitoring/.env``.
+
+Consumers:
+  - ``scheduler.post_run_hooks`` → ``notify_cadence_result`` (watchdog/drift ALERT)
+  - ``staleness_check`` → ``notify_stale_cadences`` (缺勤)
+  - ``rebalance_cockpit_run`` → rebalance NAV band alerts
+  - ``account_telegram_watch`` → equity move + new exchange positions
+  - ``scripts/monitoring/monitor_telegram_notify.sh`` (systemd OnFailure, curl)
+  - ``deploy/monitoring/scripts/quant_telegram_notify.sh`` (infra units, curl)
+  - Grafana Unified Alerting → ``telegram-quant-ops`` contact point
+"""
 
 from __future__ import annotations
 
@@ -57,8 +70,13 @@ def send_telegram_message(
     *,
     stamp_key: str = "default",
     cooldown_sec: Optional[int] = None,
+    token: Optional[str] = None,
+    chat_id: Optional[str] = None,
+    skip_cooldown: bool = False,
 ) -> bool:
-    token, chat = _load_telegram_creds()
+    env_token, env_chat = _load_telegram_creds()
+    token = (token or env_token or "").strip()
+    chat = (chat_id or env_chat or "").strip()
     if not token or not chat:
         print("monitor_telegram: not configured", flush=True)
         return False
@@ -67,10 +85,9 @@ def send_telegram_message(
         if cooldown_sec is not None
         else os.environ.get("MLBOT_TG_NOTIFY_COOLDOWN_SEC", "600")
     )
-    if not _cooldown_ok(stamp_key, cd):
+    if not skip_cooldown and not _cooldown_ok(stamp_key, cd):
         return False
 
-    enc = urllib.parse.quote(text)
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     data = urllib.parse.urlencode(
         {
@@ -194,6 +211,69 @@ def notify_cadence_result(
     card["display_status"] = "ALERT" if business_alert or exit_code else status
     msg = format_alert_message(cadence=cadence, card=card, alert_events=events)
     return send_telegram_message(msg, stamp_key=f"alert:{cadence}:{run_ts}")
+
+
+def format_account_equity_change_message(
+    *,
+    scope: str,
+    anchor: float,
+    current: float,
+    threshold_pct: float,
+) -> Optional[str]:
+    if anchor <= 0.0 or current <= 0.0:
+        return None
+    delta = current - anchor
+    pct = delta / anchor
+    if abs(pct) < threshold_pct:
+        return None
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    direction = "↑" if pct > 0 else "↓"
+    return (
+        f"📊 Multi-leg 账户权益变动 {direction}\n"
+        f"scope: {scope}\n"
+        f"time: {ts}\n"
+        f"anchor: {anchor:,.2f} USDT\n"
+        f"now: {current:,.2f} USDT\n"
+        f"Δ: {delta:+,.2f} USDT ({pct:+.2%})\n"
+        f"threshold: {threshold_pct:.1%}"
+    )
+
+
+def format_account_open_position_message(*, scope: str, keys: List[str]) -> str:
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    legs = ", ".join(_format_position_key(k) for k in keys)
+    return (
+        f"📈 Multi-leg 新开仓\n"
+        f"scope: {scope}\n"
+        f"time: {ts}\n"
+        f"legs: {legs}"
+    )
+
+
+def _format_position_key(key: str) -> str:
+    sym, _, side = key.partition(":")
+    return f"{sym} {side.upper()}"
+
+
+def send_account_watch_alerts(
+    messages: List[str],
+    *,
+    scope: str = "multi_leg",
+    force_notify: bool = False,
+) -> int:
+    """Send equity / open-position messages; returns count sent."""
+    sent = 0
+    for msg in messages:
+        kind = "equity" if "权益" in msg else "open"
+        ok = send_telegram_message(
+            msg,
+            stamp_key=f"acct:{scope}:{kind}",
+            cooldown_sec=300 if not force_notify else 0,
+            skip_cooldown=force_notify,
+        )
+        if ok:
+            sent += 1
+    return sent
 
 
 def notify_stale_cadences(
