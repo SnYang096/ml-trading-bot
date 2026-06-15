@@ -547,7 +547,11 @@ class MultiLegStorage:
         active_leg_ids: Iterable[str],
         run_id: Optional[str] = None,
     ) -> int:
-        """Close open DB rows no longer present in the engine inventory snapshot."""
+        """Close open DB rows no longer present in the engine inventory snapshot.
+        
+        Also closes corresponding entry/inventory orders in multi_leg_orders
+        whose leg_id is no longer active, so CMS won't display ghost positions.
+        """
         active = [str(x) for x in active_leg_ids if str(x)]
         conn = self._connect()
         try:
@@ -568,6 +572,25 @@ class MultiLegStorage:
                   {not_in}
                 """,
                 params,
+            )
+            # Also close entry/inventory orders for pruned legs
+            # so CMS open-positions view won't show ghost entries.
+            order_params: list[Any] = [str(strategy), str(symbol), *active]
+            order_not_in = ""
+            if active:
+                order_not_in = f"AND leg_id NOT IN ({','.join('?' for _ in active)})"
+            conn.execute(
+                f"""
+                UPDATE multi_leg_orders
+                SET status = 'closed',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE strategy = ?
+                  AND symbol = ?
+                  AND LOWER(TRIM(COALESCE(purpose, ''))) IN ('entry', 'inventory')
+                  AND LOWER(TRIM(COALESCE(status, ''))) = 'filled'
+                  {order_not_in}
+                """,
+                order_params,
             )
             conn.commit()
             return int(cur.rowcount or 0)
