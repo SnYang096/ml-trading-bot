@@ -65,6 +65,9 @@ export function useTradeMapBundle() {
         markers: mergedMarkers,
         lastTradeLinks: mergedLinks,
         lastMarkerPollSince: new Date().toISOString(),
+        ...(data.chop_grid_overlay ? { lastChopMapData: data.chop_grid_overlay } : {}),
+        ...(data.chop_regime_regions ? { chopRegimeRegions: data.chop_regime_regions } : {}),
+        ...(data.strategy_stage_regions ? { strategyStageRegions: data.strategy_stage_regions } : {}),
         statusText: `${mergedCandles.length} bars · ${markerCount} markers · ${linkCount} links · ${state.selectedFeatureColumns.length} features`,
       });
     } finally {

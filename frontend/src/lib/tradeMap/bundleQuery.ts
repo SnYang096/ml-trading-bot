@@ -121,7 +121,7 @@ export function buildPollQuery(state: BundleQueryState): string {
     include_features: 'false',
     include_markers: 'true',
     include_trade_links: 'true',
-    include_chop: 'false',
+    include_chop: 'true',
     full_range: 'false',
   });
 }
