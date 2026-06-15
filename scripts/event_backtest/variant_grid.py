@@ -11,8 +11,8 @@ Each ``run:`` entry (or the grid-level fields) may specify ``engine``:
   chop grid R&D.
 - ``trend_scalp``: drives ``scripts.diagnose_dual_add_trend`` — used for C-system
   trend scalp R&D.
-- ``multileg_joint``: runs chop_grid + trend_scalp per segment, then replays
-  both on a shared account timeline via ``sim_multileg_account.py``.
+- ``multileg_joint``: runs ``scripts.backtest_multileg_timeline`` per canonical
+  segment (LiveEngine chop + trend, shared account).
 
 All engines write per-run output under the configured ``output_dir``.
 """
@@ -211,6 +211,67 @@ def _build_trend_scalp_cmd(
     return cmd
 
 
+def _build_multileg_timeline_cmd(
+    *,
+    seg_id: str,
+    seg: Dict[str, Any],
+    grid: Dict[str, Any],
+    out_path: Path,
+    extra_argv: List[str],
+    preload_path: Path | None,
+    save_preload: bool,
+) -> List[str]:
+    chop_cfg = grid.get("chop_config") or grid.get("config")
+    trend_cfg = grid.get("trend_config") or grid.get("config")
+    if not chop_cfg or not trend_cfg:
+        raise ValueError("multileg_joint requires chop_config and trend_config")
+
+    symbols = grid.get(
+        "symbols", ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"]
+    )
+    sym_arg = ",".join(symbols) if isinstance(symbols, list) else str(symbols)
+    equity = float(grid.get("equity") or grid.get("initial_capital") or 10000)
+    constitution_yaml = str(
+        grid.get(
+            "constitution_yaml",
+            "live/highcap/config/constitution/constitution.yaml",
+        )
+    )
+    data_dir = str(grid.get("data_dir") or "data/parquet_data")
+
+    cmd = [
+        sys.executable,
+        str(_REPO_ROOT / "scripts" / "backtest_multileg_timeline.py"),
+        "--start",
+        str(seg["start_date"]),
+        "--end",
+        str(seg["end_date"]),
+        "--symbols",
+        sym_arg,
+        "--data-dir",
+        data_dir,
+        "--equity",
+        str(equity),
+        "--chop-config",
+        str(chop_cfg),
+        "--trend-config",
+        str(trend_cfg),
+        "--constitution-yaml",
+        constitution_yaml,
+        "--summary-json",
+        str(out_path / "summary.json"),
+    ]
+    if save_preload and preload_path is not None:
+        cmd += ["--save-preload", str(preload_path)]
+    elif preload_path is not None and preload_path.exists():
+        cmd += ["--load-preload", str(preload_path)]
+
+    if grid.get("trend_time_filter"):
+        cmd.append("--trend-time-filter")
+    cmd += extra_argv
+    return cmd
+
+
 def _run_multileg_joint_pipeline(
     grid: Dict[str, Any],
     extra_argv: List[str],
@@ -237,84 +298,60 @@ def _run_multileg_joint_pipeline(
     out_root = Path(str(grid.get("output_dir", "results/multileg_joint")))
     if not out_root.is_absolute():
         out_root = (_REPO_ROOT / out_root).resolve()
+    out_root.mkdir(parents=True, exist_ok=True)
 
-    chop_cfg = grid.get("chop_config") or grid.get("config")
-    trend_cfg = grid.get("trend_config") or grid.get("config")
-    symbols = grid.get(
-        "symbols", ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"]
-    )
-    constitution_yaml = grid.get("constitution_yaml")
-    trend_extra = list(grid.get("trend_extra_argv") or [])
-
+    preload_path = out_root / "preload.pkl"
+    joint_summaries: List[Dict[str, Any]] = []
     worst_rc = 0
-    for seg_id in seg_ids:
+
+    for i, seg_id in enumerate(seg_ids):
         seg = segments.get(seg_id)
         if not seg:
+            print(f"WARNING: unknown segment {seg_id!r}", file=sys.stderr)
             continue
 
-        chop_out = out_root / "chop_grid" / seg_id
-        chop_out.mkdir(parents=True, exist_ok=True)
-        chop_cmd = _build_chop_grid_cmd(
-            run={
-                "start_date": seg["start_date"],
-                "end_date": seg["end_date"],
-                "config": chop_cfg,
-                "symbols": symbols,
-            },
+        seg_out = out_root / "timeline" / seg_id
+        seg_out.mkdir(parents=True, exist_ok=True)
+        cmd = _build_multileg_timeline_cmd(
+            seg_id=seg_id,
+            seg=seg,
             grid=grid,
-            out_path=chop_out,
+            out_path=seg_out,
             extra_argv=backend_argv,
+            preload_path=preload_path,
+            save_preload=(i == 0 and not preload_path.exists()),
         )
-        print(f"\n=== multileg_joint[chop_grid]: {seg_id} ===")
-        print(" ".join(chop_cmd))
-        rc = subprocess.run(chop_cmd, cwd=str(_REPO_ROOT)).returncode
+        print(f"\n=== multileg_joint[timeline]: {seg_id} ===")
+        print(" ".join(cmd))
+        rc = subprocess.run(cmd, cwd=str(_REPO_ROOT)).returncode
         worst_rc = max(worst_rc, rc)
 
-        trend_out = out_root / "trend_scalp" / seg_id
-        trend_out.mkdir(parents=True, exist_ok=True)
-        trend_cmd = _build_trend_scalp_cmd(
-            run={
-                "start_date": seg["start_date"],
-                "end_date": seg["end_date"],
-                "config": trend_cfg,
-                "symbols": symbols,
-            },
-            grid=grid,
-            out_path=trend_out,
-            extra_argv=trend_extra + backend_argv,
-        )
-        print(f"\n=== multileg_joint[trend_scalp]: {seg_id} ===")
-        print(" ".join(trend_cmd))
-        rc = subprocess.run(trend_cmd, cwd=str(_REPO_ROOT)).returncode
-        worst_rc = max(worst_rc, rc)
+        summary_path = seg_out / "summary.json"
+        if summary_path.exists():
+            row = json.loads(summary_path.read_text(encoding="utf-8"))
+            row["segment_id"] = seg_id
+            joint_summaries.append(row)
 
     joint_out = out_root / "joint"
     joint_out.mkdir(parents=True, exist_ok=True)
-    joint_cmd = [
-        sys.executable,
-        str(_REPO_ROOT / "scripts" / "sim_multileg_account.py"),
-        "--chop-root",
-        str(out_root / "chop_grid"),
-        "--trend-root",
-        str(out_root / "trend_scalp"),
-        "--segments",
-        *seg_ids,
-    ]
-    if constitution_yaml:
-        joint_cmd += ["--constitution-yaml", str(constitution_yaml)]
-        joint_cmd += ["--with-constitution"]
-    if grid.get("max_concurrent_multi_leg_symbols"):
-        joint_cmd += [
-            "--max-concurrent-multi-leg-symbols",
-            str(grid["max_concurrent_multi_leg_symbols"]),
-        ]
-    if grid.get("equity"):
-        joint_cmd += ["--equity", str(grid["equity"])]
-    print(f"\n=== multileg_joint: account simulation ===")
-    print(" ".join(joint_cmd))
-    rc = subprocess.run(joint_cmd, cwd=str(_REPO_ROOT)).returncode
-    worst_rc = max(worst_rc, rc)
-    print(f"\nJoint results: {joint_out}")
+    payload = {
+        "engine": "backtest_multileg_timeline",
+        "experiment_id": grid.get("experiment_id"),
+        "segments": joint_summaries,
+    }
+    joint_path = joint_out / "summary.json"
+    joint_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    print(f"\nJoint timeline results: {joint_path}")
+    for row in joint_summaries:
+        print(
+            f"  {row.get('segment_id')}: "
+            f"{row.get('return_pct', 0):+.2f}%  "
+            f"maxDD={row.get('max_drawdown_pct', 0):.2f}%  "
+            f"halted={row.get('halted')}"
+        )
     return worst_rc
 
 

@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-"""Sweep multi-leg constitution limits from live YAML baseline (one knob per variant).
+"""Sweep multi-leg constitution limits via ``backtest_multileg_timeline`` (LiveEngine).
 
 Loads ``live/highcap/config/constitution/constitution.yaml``, deep-copies, injects a
-single override path, and replays joint chop_grid + trend_scalp trades with
-``simulate_account_with_constitution``.
+single override path, and runs joint chop_grid + trend_scalp timeline backtest.
 
 Usage
 -----
     python scripts/sweep_multileg_constitution_matrix.py \\
-        --chop-root results/multileg_joint/sizing_072_20260613/chop_grid \\
-        --trend-root results/multileg_joint/sizing_072_20260613/trend_scalp \\
-        --segments bear_2022 bull_2023_2024 recent_range_to_bear recent_6m_oos
+        --start 2025-12-01 --end 2026-05-31 \\
+        --chop-config config/experiments/20260613_multileg_sizing_validate/variants/chop_prod/meta.yaml \\
+        --trend-config config/experiments/20260613_multileg_sizing_validate/variants/trend_prod/meta.yaml
 
 Output: CSV + markdown table under ``--output-dir``.
 """
@@ -20,30 +19,18 @@ import argparse
 import copy
 import csv
 import sys
+import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Tuple
 
 import pandas as pd
+import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.config.multileg_sizing import resolve_multi_leg_unit_notionals
-from src.live_data_stream.constitution_config import (
-    load_constitution_dict,
-    multi_leg_section,
-    resolve_multileg_sim_limits,
-)
-from src.sim.multileg_account_sim import (
-    apply_multileg_segment_gates,
-    filter_trades_by_segment_blocks,
-    load_chop_segments,
-    load_chop_trades,
-    load_trend_segments,
-    load_trend_trades,
-    simulate_account_with_constitution,
-)
+from scripts.backtest_multileg_timeline import run_timeline_backtest
 
 PathTuple = Tuple[str, ...]
 
@@ -59,72 +46,7 @@ def _set_nested(cfg: Dict[str, Any], path: PathTuple, value: Any) -> None:
     cur[path[-1]] = value
 
 
-def _load_combined_trades(
-    *,
-    chop_root: Optional[Path],
-    trend_root: Optional[Path],
-    segments: Sequence[str],
-    max_concurrent: int,
-) -> pd.DataFrame:
-    chop_tr_parts: List[pd.DataFrame] = []
-    trend_tr_parts: List[pd.DataFrame] = []
-    chop_seg_parts: List[pd.DataFrame] = []
-    trend_seg_parts: List[pd.DataFrame] = []
-
-    for seg in segments:
-        if chop_root is not None:
-            ct = load_chop_trades(chop_root, seg)
-            if not ct.empty:
-                chop_tr_parts.append(ct)
-            cs = load_chop_segments(chop_root, seg)
-            if not cs.empty:
-                chop_seg_parts.append(cs)
-        if trend_root is not None:
-            tt = load_trend_trades(trend_root, seg)
-            if not tt.empty:
-                trend_tr_parts.append(tt)
-            ts = load_trend_segments(trend_root, seg)
-            if not ts.empty:
-                trend_seg_parts.append(ts)
-
-    chop_tr = (
-        pd.concat(chop_tr_parts, ignore_index=True) if chop_tr_parts else pd.DataFrame()
-    )
-    trend_tr = (
-        pd.concat(trend_tr_parts, ignore_index=True)
-        if trend_tr_parts
-        else pd.DataFrame()
-    )
-    chop_seg = (
-        pd.concat(chop_seg_parts, ignore_index=True)
-        if chop_seg_parts
-        else pd.DataFrame()
-    )
-    trend_seg = (
-        pd.concat(trend_seg_parts, ignore_index=True)
-        if trend_seg_parts
-        else pd.DataFrame()
-    )
-
-    gate_stats = apply_multileg_segment_gates(
-        chop_seg,
-        trend_seg,
-        max_concurrent_multi_leg_symbols=int(max_concurrent or 0),
-    )
-    chop_allowed = filter_trades_by_segment_blocks(
-        chop_tr, gate_stats.blocked_chop_segment_ids
-    )
-    trend_allowed = filter_trades_by_segment_blocks(
-        trend_tr, gate_stats.blocked_trend_segment_ids
-    )
-    return pd.concat(
-        [x for x in (chop_allowed, trend_allowed) if not x.empty],
-        ignore_index=True,
-    )
-
-
 def _matrix_variants() -> List[Dict[str, Any]]:
-    """One override (or fuse mode) per row — avoids incomplete hand-written YAML."""
     dd_paths = (
         ("kill_switch", "max_dd"),
         ("multi_leg", "account", "max_drawdown_pct"),
@@ -136,125 +58,28 @@ def _matrix_variants() -> List[Dict[str, Any]]:
             "variant": "prod",
             "label": "prod baseline",
             "overrides": [],
-            "fuse_mode": "hard",
         },
         {
             "variant": "max_dd_half",
             "label": "max_dd 20%→10% (both paths)",
             "overrides": [(dd_paths, 0.10)],
-            "fuse_mode": "hard",
         },
         {
             "variant": "max_dd_15",
             "label": "max_dd 20%→15%",
             "overrides": [(dd_paths, 0.15)],
-            "fuse_mode": "hard",
         },
         {
             "variant": "net_cap_100",
             "label": "max_symbol_net 1.80→1.00",
             "overrides": [(net_path, 1.00)],
-            "fuse_mode": "hard",
         },
         {
             "variant": "net_cap_120",
             "label": "max_symbol_net 1.80→1.20",
             "overrides": [(net_path, 1.20)],
-            "fuse_mode": "hard",
-        },
-        {
-            "variant": "fuse_derate",
-            "label": "prod + tier_derate (soft@50% max_dd, size×0.5)",
-            "overrides": [],
-            "fuse_mode": "tier_derate",
-        },
-        {
-            "variant": "fuse_daily_scaled",
-            "label": "prod + tier_daily_scaled (daily loss ∝ gross)",
-            "overrides": [],
-            "fuse_mode": "tier_daily_scaled",
-        },
-        {
-            "variant": "max_dd_half_fuse_derate",
-            "label": "max_dd 10% + tier_derate",
-            "overrides": [(dd_paths, 0.10)],
-            "fuse_mode": "tier_derate",
-        },
-        {
-            "variant": "max_dd_half_fuse_daily",
-            "label": "max_dd 10% + tier_daily_scaled",
-            "overrides": [(dd_paths, 0.10)],
-            "fuse_mode": "tier_daily_scaled",
         },
     ]
-
-
-def _run_variant(
-    *,
-    base_cfg: Dict[str, Any],
-    variant: Dict[str, Any],
-    trades: pd.DataFrame,
-    equity: float,
-    units: Dict[str, float],
-) -> Dict[str, Any]:
-    cfg = copy.deepcopy(base_cfg)
-    for paths, value in variant.get("overrides") or []:
-        if isinstance(paths[0], tuple):
-            for path in paths:
-                _set_nested(cfg, path, value)
-        else:
-            _set_nested(cfg, paths, value)
-
-    limits = resolve_multileg_sim_limits(cfg)
-    fuse_mode = str(variant.get("fuse_mode") or "hard")
-    sim_kwargs = {
-        k: limits[k]
-        for k in (
-            "max_drawdown_pct",
-            "daily_loss_limit_pct",
-            "max_gross_notional_pct",
-            "max_net_notional_pct",
-            "max_symbol_gross_notional_pct",
-            "max_symbol_net_notional_pct",
-            "max_gross_leverage",
-        )
-        if limits.get(k) is not None
-    }
-    sim_kwargs["fuse_mode"] = fuse_mode
-
-    u_chop = units.get("chop_grid", 556.0)
-    u_trend = units.get("trend_scalp", 556.0)
-    unit_by = {"chop_grid": u_chop, "trend_scalp": u_trend}
-
-    m = simulate_account_with_constitution(
-        trades,
-        equity=equity,
-        unit_notional=0.0,
-        unit_by_strategy=unit_by,
-        **sim_kwargs,
-    )
-    row = {
-        "variant": variant["variant"],
-        "label": variant.get("label", variant["variant"]),
-        "fuse_mode": fuse_mode,
-        "max_dd": limits.get("max_drawdown_pct"),
-        "net_cap": limits.get("max_symbol_net_notional_pct"),
-        "daily_loss": limits.get("daily_loss_limit_pct"),
-        "ret_pct": round(float(m["ret_pct"]), 2),
-        "max_dd_pct": round(float(m["max_dd_pct"]), 2),
-        "max_dd_peak_pct": round(float(m.get("max_dd_peak_pct") or 0.0), 2),
-        "peak_gross_pct": round(float(m["peak_gross_pct"]), 1),
-        "halted": bool(m.get("halted")),
-        "halted_day": m.get("halted_day") or "",
-        "halted_reason": m.get("halted_reason") or "",
-        "n_trades": int(m.get("n_trades") or 0),
-        "n_rejected": int(m.get("n_rejected") or 0),
-        "n_reject_daily": int(m.get("n_reject_daily") or 0),
-        "n_reject_net": int(m.get("n_reject_net") or 0),
-        "n_reject_max_dd": int(m.get("n_reject_max_dd") or 0),
-        "n_derated": int(m.get("n_derated") or 0),
-    }
-    return row
 
 
 def _write_markdown(rows: List[Dict[str, Any]], path: Path) -> None:
@@ -262,17 +87,14 @@ def _write_markdown(rows: List[Dict[str, Any]], path: Path) -> None:
         "variant",
         "max_dd",
         "net_cap",
-        "fuse",
         "ret%",
-        "DD%(init)",
         "DD%(peak)",
         "halted",
-        "halt_day",
-        "trades",
-        "rejected",
+        "trades_ok",
+        "trades_rej",
     ]
     lines = [
-        "# Multi-leg constitution matrix",
+        "# Multi-leg constitution matrix (timeline)",
         "",
         "| " + " | ".join(headers) + " |",
         "| " + " | ".join(["---"] * len(headers)) + " |",
@@ -285,14 +107,11 @@ def _write_markdown(rows: List[Dict[str, Any]], path: Path) -> None:
                     str(r["variant"]),
                     f"{float(r['max_dd'] or 0):.0%}" if r.get("max_dd") else "-",
                     f"{float(r['net_cap'] or 0):.2f}" if r.get("net_cap") else "-",
-                    str(r["fuse_mode"]),
-                    f"{r['ret_pct']:+.1f}",
-                    f"{r['max_dd_pct']:.1f}",
-                    f"{r['max_dd_peak_pct']:.1f}",
+                    f"{r['return_pct']:+.1f}",
+                    f"{r['max_drawdown_pct']:.1f}",
                     "yes" if r["halted"] else "no",
-                    str(r["halted_day"] or "-"),
-                    str(r["n_trades"]),
-                    str(r["n_rejected"]),
+                    str(r["trades_ok"]),
+                    str(r["trades_rej"]),
                 ]
             )
             + " |"
@@ -307,55 +126,35 @@ def main() -> None:
         type=Path,
         default=PROJECT_ROOT / "live/highcap/config/constitution/constitution.yaml",
     )
-    ap.add_argument("--chop-root", type=Path, required=True)
-    ap.add_argument("--trend-root", type=Path, required=True)
+    ap.add_argument("--start", default="2025-12-01")
+    ap.add_argument("--end", default="2026-05-31")
     ap.add_argument(
-        "--segments",
-        nargs="+",
-        default=[
-            "bear_2022",
-            "bull_2023_2024",
-            "recent_range_to_bear",
-            "recent_6m_oos",
-        ],
+        "--symbols",
+        default="BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT",
     )
     ap.add_argument("--equity", type=float, default=10000.0)
-    ap.add_argument(
-        "--strategies-root",
-        default="live/highcap/config/strategies",
-    )
-    ap.add_argument("--max-concurrent-multi-leg-symbols", type=int, default=6)
+    ap.add_argument("--chop-config", type=Path, required=True)
+    ap.add_argument("--trend-config", type=Path, required=True)
     ap.add_argument(
         "--output-dir",
         type=Path,
         default=PROJECT_ROOT
         / "config/experiments/20260613_multileg_sizing_validate/quick_scan",
     )
+    ap.add_argument("--load-preload", type=Path, default=None)
     args = ap.parse_args()
 
-    base_cfg = load_constitution_dict(str(args.constitution_yaml))
-    if not base_cfg:
-        raise SystemExit(f"empty constitution: {args.constitution_yaml}")
+    base_cfg = yaml.safe_load(args.constitution_yaml.read_text(encoding="utf-8")) or {}
+    symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+    start = pd.Timestamp(args.start).tz_localize("UTC")
+    end = pd.Timestamp(args.end).tz_localize("UTC")
 
-    ml = multi_leg_section(base_cfg)
-    sr = Path(args.strategies_root)
-    if not sr.is_absolute():
-        sr = PROJECT_ROOT / sr
-    units = resolve_multi_leg_unit_notionals(
-        ml,
-        equity_usdt=float(args.equity),
-        chop_grid_execution_path=sr / "chop_grid" / "archetypes" / "execution.yaml",
-        trend_scalp_execution_path=sr / "trend_scalp" / "archetypes" / "execution.yaml",
-    )
-
-    trades = _load_combined_trades(
-        chop_root=args.chop_root,
-        trend_root=args.trend_root,
-        segments=args.segments,
-        max_concurrent=int(args.max_concurrent_multi_leg_symbols),
-    )
-    if trades.empty:
-        raise SystemExit("no trades after segment gates")
+    chop_cfg = args.chop_config
+    trend_cfg = args.trend_config
+    if not chop_cfg.is_absolute():
+        chop_cfg = PROJECT_ROOT / chop_cfg
+    if not trend_cfg.is_absolute():
+        trend_cfg = PROJECT_ROOT / trend_cfg
 
     out_dir = args.output_dir
     if not out_dir.is_absolute():
@@ -363,21 +162,56 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     rows: List[Dict[str, Any]] = []
-    for spec in _matrix_variants():
-        row = _run_variant(
-            base_cfg=base_cfg,
-            variant=spec,
-            trades=trades,
-            equity=float(args.equity),
-            units=units,
-        )
+    preload = args.load_preload
+    for i, spec in enumerate(_matrix_variants()):
+        cfg = copy.deepcopy(base_cfg)
+        for paths, value in spec.get("overrides") or []:
+            if isinstance(paths[0], tuple):
+                for path in paths:
+                    _set_nested(cfg, path, value)
+            else:
+                _set_nested(cfg, paths, value)
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yaml", delete=False, encoding="utf-8"
+        ) as tmp:
+            yaml.dump(cfg, tmp)
+            const_path = Path(tmp.name)
+
+        try:
+            acct, _meta = run_timeline_backtest(
+                start=start,
+                end=end,
+                symbols=symbols,
+                equity=float(args.equity),
+                chop_config=chop_cfg,
+                trend_config=trend_cfg,
+                constitution_yaml=const_path,
+                load_preload=preload if preload and preload.exists() else None,
+                save_preload=preload if i == 0 and preload else None,
+                clean_state=True,
+                progress=True,
+            )
+        finally:
+            const_path.unlink(missing_ok=True)
+
+        summary = acct.to_summary()
+        ks = cfg.get("kill_switch", {})
+        ml = cfg.get("multi_leg", {})
+        rs = ml.get("risk_limits", {})
+        row = {
+            "variant": spec["variant"],
+            "label": spec.get("label", spec["variant"]),
+            "max_dd": ks.get("max_dd"),
+            "net_cap": rs.get("max_symbol_net_notional_pct"),
+            **summary,
+        }
         rows.append(row)
         halt = "HALT" if row["halted"] else "ok"
         print(
-            f"{row['variant']:<28} ret={row['ret_pct']:+.1f}% "
-            f"DD={row['max_dd_pct']:.1f}%/{row['max_dd_peak_pct']:.1f}% "
-            f"{halt} trades={row['n_trades']} rej={row['n_rejected']} "
-            f"(daily={row['n_reject_daily']} net={row['n_reject_net']})"
+            f"{row['variant']:<20} ret={row['return_pct']:+.1f}% "
+            f"DD={row['max_drawdown_pct']:.1f}% {halt} "
+            f"trades={row['trades_ok']}/{row['trades_rej']}"
         )
 
     csv_path = out_dir / "constitution_matrix.csv"

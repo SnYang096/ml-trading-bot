@@ -1,12 +1,12 @@
-# 多腿联合回测 — chop_grid + trend_scalp 同一账户 timeline
+# 多腿联合回测 — chop_grid + trend_scalp 同一账户 timeline (LiveEngine)
 #
 #   python -m scripts.event_backtest \
 #     --variant-grid config/experiments/20260613_multileg_sizing_validate/variant_grid.yaml
 #
-# 自动：4 segments × (chop + trend) → 逐段独立回测 → 联合账户模拟
+# 自动：4 segments × backtest_multileg_timeline（共享账户、MockBinanceAPI）
 
 engine: multileg_joint
-experiment_id: multileg_sizing_072_20260613
+experiment_id: multileg_sizing_072_20260613_timeline
 
 chop_config: config/experiments/20260613_multileg_sizing_validate/variants/chop_prod/meta.yaml
 trend_config: config/experiments/20260613_multileg_sizing_validate/variants/trend_prod/meta.yaml
@@ -33,17 +33,4 @@ segments:
   - recent_range_to_bear
   - recent_6m_oos
 
-max_concurrent_multi_leg_symbols: 6
-
-trend_extra_argv:
-  - --scale-max-loser-hold-to-signal
-  - --take-profit-mode
-  - basket
-  - --no-reseed-on-flip
-  - --risk-stop-mode
-  - regime_only
-  - --no-maps
-  - --max-loss-per-segment
-  - "0.02"
-
-output_dir: results/multileg_joint/sizing_072_20260613
+output_dir: results/multileg_joint/sizing_072_20260613_timeline

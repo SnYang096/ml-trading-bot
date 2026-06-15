@@ -19,6 +19,9 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import glob
+import json
+import os
 import sys
 import time
 from dataclasses import dataclass, field
@@ -140,94 +143,121 @@ class Account:
     def current(self):
         return self.equity + self.cum_pnl
 
+    def to_summary(self) -> Dict[str, Any]:
+        ret_pct = self.cum_pnl / max(self.equity, 1.0) * 100.0
+        return {
+            "equity_start": self.equity,
+            "equity_end": self.current,
+            "return_pct": ret_pct,
+            "peak_equity": self.peak_equity,
+            "max_drawdown_pct": self.max_dd_peak * 100.0,
+            "trades_ok": self.trades_ok,
+            "trades_rej": self.trades_rej,
+            "halted": self.halted,
+            "halt_reason": self.halt_reason,
+        }
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--start", required=True)
-    ap.add_argument("--end", required=True)
-    ap.add_argument("--symbols", default="BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT")
-    ap.add_argument("--data-dir", default="data/parquet_data")
-    ap.add_argument("--equity", type=float, default=50000.0)
-    ap.add_argument("--chop-config", required=True)
-    ap.add_argument("--trend-config", required=True)
-    ap.add_argument(
-        "--constitution-yaml",
-        default="live/highcap/config/constitution/constitution.yaml",
-    )
-    ap.add_argument("--no-chop", action="store_true")
-    ap.add_argument("--no-trend", action="store_true")
-    ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument(
-        "--trend-time-filter",
-        action="store_true",
-        help="Restrict trend_scalp entries to non-Asian (UTC 09:00+) weekdays only",
-    )
-    ap.add_argument(
-        "--save-preload", help="Save pre-computed bars+features to this pickle file"
-    )
-    ap.add_argument(
-        "--load-preload", help="Load pre-computed bars+features from this pickle file"
-    )
-    args = ap.parse_args()
 
-    symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
-    start = pd.Timestamp(args.start).tz_localize("UTC")
-    end = pd.Timestamp(args.end).tz_localize("UTC")
-    data_dir = Path(args.data_dir)
+def clean_bt_state(symbols: Optional[List[str]] = None) -> None:
+    """Remove per-engine JSON state under /tmp so runs do not cross-contaminate."""
+    patterns = ["/tmp/bt_chop_*.json", "/tmp/bt_trend_*.json"]
+    if symbols:
+        for sym in symbols:
+            patterns.append(f"/tmp/bt_chop_{sym}.json")
+            patterns.append(f"/tmp/bt_trend_{sym}.json")
+    seen: set[str] = set()
+    for pat in patterns:
+        for f in glob.glob(pat):
+            if f in seen:
+                continue
+            seen.add(f)
+            try:
+                os.remove(f)
+            except OSError:
+                pass
 
-    # ── Preload support: skip expensive data loading on repeated runs ──
+
+def run_timeline_backtest(
+    *,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    symbols: List[str],
+    equity: float,
+    chop_config: Path,
+    trend_config: Path,
+    constitution_yaml: Path,
+    data_dir: Path = Path("data/parquet_data"),
+    no_chop: bool = False,
+    no_trend: bool = False,
+    dry_run: bool = False,
+    trend_time_filter: bool = False,
+    save_preload: Optional[Path] = None,
+    load_preload: Optional[Path] = None,
+    clean_state: bool = True,
+    progress: bool = True,
+) -> Tuple[Account, Dict[str, Any]]:
+    if clean_state:
+        clean_bt_state(symbols)
+
     bars_1m = feats = None
-    if args.load_preload:
+    if load_preload and load_preload.exists():
         import pickle as _pickle
 
-        print(f"Loading pre-computed data from {args.load_preload} ...")
-        pre = _pickle.loads(Path(args.load_preload).read_bytes())
-        bars_1m = pre["bars_1m"]
-        feats = pre["feats"]
-        print(f"  {len(bars_1m)} 1m bars, {len(feats)} symbols ready\n")
+        if progress:
+            print(f"Loading pre-computed features from {load_preload} ...")
+        pre = _pickle.loads(load_preload.read_bytes())
+        feats = pre.get("feats") or pre
+        if progress:
+            print(f"  {len(feats)} symbol feature frames ready\n")
     else:
-        print(f"Loading 1m bars: {start} → {end}")
-        bars_1m = _load_1m_bars(data_dir, symbols, start, end)
-        print(f"  {len(bars_1m)} 1m bars, {bars_1m['symbol'].nunique()} symbols\n")
-
-        print("Computing 2h features...")
+        if progress:
+            print("Computing 2h features...")
         feats = _build_features(data_dir, symbols)
-        print(f"  {len(feats)} symbols ready\n")
+        if progress:
+            print(f"  {len(feats)} symbols ready\n")
 
-        if args.save_preload:
+        if save_preload:
             import pickle as _pickle
 
-            pre = {"bars_1m": bars_1m, "feats": feats}
-            Path(args.save_preload).write_bytes(_pickle.dumps(pre))
-            print(f"Saved preload to {args.save_preload}\n")
+            save_preload.parent.mkdir(parents=True, exist_ok=True)
+            save_preload.write_bytes(_pickle.dumps({"feats": feats}))
+            if progress:
+                print(f"Saved feature preload to {save_preload}\n")
 
-    # Constitution
+    if progress:
+        print(f"Loading 1m bars: {start} → {end}")
+    bars_1m = _load_1m_bars(data_dir, symbols, start, end)
+    bars_1m = bars_1m[(bars_1m.index >= start) & (bars_1m.index <= end)]
+    if progress:
+        print(f"  {len(bars_1m)} 1m bars, {bars_1m['symbol'].nunique()} symbols\n")
+
     from src.live_data_stream.constitution_config import (
         load_constitution_dict,
         multi_leg_section,
     )
     from src.config.multileg_sizing import resolve_multi_leg_unit_notionals
 
-    const = load_constitution_dict(Path(str(args.constitution_yaml)))
+    const = load_constitution_dict(constitution_yaml)
     ml = multi_leg_section(const)
     rs = ml.get("risk_limits", {})
     ks = const.get("kill_switch", {})
-    max_gross = float(rs.get("max_gross_notional_pct", 2.70)) * args.equity
-    daily_loss = float(ks.get("daily_loss_limit", 0.06)) * args.equity
+    max_gross = float(rs.get("max_gross_notional_pct", 2.70)) * equity
+    daily_loss = float(ks.get("daily_loss_limit", 0.06)) * equity
     max_dd = float(ks.get("max_dd", 0.20))
     max_sym = int(rs.get("max_concurrent_multi_leg_symbols", 6))
     cd = int(rs.get("strategy_switch_cooldown_bars", 3))
     units = resolve_multi_leg_unit_notionals(
-        ml, equity_usdt=args.equity, strategies=["chop_grid", "trend_scalp"]
+        ml, equity_usdt=equity, strategies=["chop_grid", "trend_scalp"]
     )
     chop_u = units.get("chop_grid", 4000.0)
     trend_u = units.get("trend_scalp", 9000.0)
-    print(
-        f"Constitution: gross≤{max_gross:.0f} daily≤{daily_loss:.0f} dd≤{max_dd*100:.0f}% sym≤{max_sym}"
-    )
-    print(f"Sizing: chop={chop_u:.0f}/lvl trend={trend_u:.0f}/leg\n")
+    if progress:
+        print(
+            f"Constitution: gross≤{max_gross:.0f} daily≤{daily_loss:.0f} "
+            f"dd≤{max_dd*100:.0f}% sym≤{max_sym}"
+        )
+        print(f"Sizing: chop={chop_u:.0f}/lvl trend={trend_u:.0f}/leg\n")
 
-    # Engines
     from src.order_management.chop_grid_concurrency import MultiLegConcurrencyGate
     from src.time_series_model.live.chop_grid_live_engine import ChopGridLiveEngine
     from src.time_series_model.live.dual_add_trend_live_engine import (
@@ -238,9 +268,9 @@ def main():
     engines: Dict[str, Dict] = {}
     for sym in symbols:
         engines[sym] = {}
-        if not args.no_chop:
+        if not no_chop:
             ce = ChopGridLiveEngine(
-                config_path=Path(args.chop_config),
+                config_path=chop_config,
                 state_path=Path(f"/tmp/bt_chop_{sym}.json"),
                 level_notional=chop_u,
                 metrics_strategy="bt",
@@ -248,9 +278,9 @@ def main():
             ce.state.symbol = sym
             gate.register(sym, ce, strategy="chop_grid")
             engines[sym]["chop"] = ce
-        if not args.no_trend:
+        if not no_trend:
             te = DualAddTrendLiveEngine(
-                config_path=Path(args.trend_config),
+                config_path=trend_config,
                 state_path=Path(f"/tmp/bt_trend_{sym}.json"),
                 unit_notional=trend_u,
                 metrics_strategy="bt",
@@ -259,7 +289,6 @@ def main():
             gate.register(sym, te, strategy="trend_scalp")
             engines[sym]["trend"] = te
 
-    # Mock API + Adapter + Governor (same stack as run_multi_leg_live.py)
     from src.order_management.mock_binance_api import MockBinanceAPI
     from src.order_management.grid_execution_adapter import MultiLegExecutionAdapter
     from src.order_management.multi_leg_risk_governor import (
@@ -276,22 +305,22 @@ def main():
         client_id_prefix="bt",
         default_symbol=symbols[0],
     )
-    governor = MultiLegPortfolioRiskGovernor(
+    MultiLegPortfolioRiskGovernor(
         MultiLegRiskLimits(
             max_gross_notional=max_gross,
             max_net_notional=max_gross * 0.75,
             max_symbol_gross_notional=max_gross,
             max_symbol_net_notional=max_gross * 0.66,
             max_resting_orders=60,
-            account_equity_usdt=args.equity,
+            account_equity_usdt=equity,
             max_drawdown_pct=max_dd,
         )
     )
 
-    acct = Account(equity=args.equity, peak_equity=args.equity)
+    acct = Account(equity=equity, peak_equity=equity)
 
-    # Main loop
-    print(f"=== Timeline Backtest ({len(bars_1m)} bars) ===\n")
+    if progress:
+        print(f"=== Timeline Backtest ({len(bars_1m)} bars) ===\n")
     t0 = time.monotonic()
     last_2h: Dict[str, pd.Timestamp] = {}
     n_1m = 0
@@ -313,7 +342,6 @@ def main():
         if not f:
             continue
 
-        # Snapshot inventory BEFORE on_bar (engine clears it during _exit_*)
         inv_snapshot = {}
         for ek, eng in engines.get(sym, {}).items():
             state = getattr(eng, "state", None)
@@ -327,8 +355,7 @@ def main():
                     for p in state.inventory
                 ]
 
-        # ── Engine tick: separate chop/trend actions for time-filter control ──
-        bar_ts = idx  # UTC Timestamp of this 2h bar
+        bar_ts = idx
         engs = engines.get(sym, {})
         chop_actions: list = []
         trend_actions: list = []
@@ -360,32 +387,30 @@ def main():
                 else:
                     trend_actions = acts
 
-        # Time filter for trend_scalp entries: block place during Asian/weekend
-        if args.trend_time_filter:
+        if trend_time_filter:
             valid_entry = _is_valid_entry_time(bar_ts)
             trend_actions_filtered = []
             for a in trend_actions:
                 kind = str(a.get("action", "")).lower()
                 if kind == "place" and not valid_entry:
-                    acct.trades_rej += 1  # count as rejected
+                    acct.trades_rej += 1
                     continue
                 trend_actions_filtered.append(a)
             trend_actions = trend_actions_filtered
 
         actions = chop_actions + trend_actions
 
-        if args.dry_run:
+        if dry_run:
             acct.trades_ok += sum(1 for a in actions if a.get("action") == "place")
             continue
 
-        # ── Compute PnL from market_exit using inventory snapshot ──
         for a in actions:
             if a.get("action") != "market_exit":
                 continue
             side = str(a.get("side", "")).upper()
             qty = float(a.get("quantity", 0))
             exit_px = float(a.get("exit_price", close))
-            for ek, positions in inv_snapshot.items():
+            for _ek, positions in inv_snapshot.items():
                 for pos in positions:
                     if pos["side"] == side and abs(pos["quantity"] - qty) < 1e-8:
                         if side == "LONG":
@@ -396,19 +421,16 @@ def main():
                         acct.daily_pnl += pnl
                         break
 
-        # ── Constitution gates BEFORE execution ──
         day_key = str(idx.date())
         if acct.current_day and day_key != acct.current_day:
             acct.daily_pnl = 0.0
         acct.current_day = day_key
 
-        # Kill switch check (does NOT block market_exit)
         ceq = acct.current
         if not acct.halted and ceq <= acct.peak_equity * (1.0 - max_dd):
             acct.halted = True
             acct.halt_reason = f"dd>{max_dd*100:.0f}% at {idx}"
 
-        # Filter: allow market_exit always; reject new place if halted
         allowed, rejected = [], []
         for a in actions:
             kind = str(a.get("action", "")).lower()
@@ -427,7 +449,6 @@ def main():
             allowed.append(a)
         acct.trades_rej += len(rejected)
 
-        # ── Two-phase execution ──
         phase1 = [
             a for a in allowed if a["action"] in ("place", "cancel", "place_protection")
         ]
@@ -435,7 +456,6 @@ def main():
         for eng in engs.values():
             if hasattr(eng, "on_execution_results"):
                 eng.on_execution_results(results_p1)
-        # Drain follow-up actions (SL/TP after entry fills)
         for _ in range(8):
             follow_ups = []
             for eng in engs.values():
@@ -454,7 +474,6 @@ def main():
         for eng in engs.values():
             if hasattr(eng, "on_execution_results"):
                 eng.on_execution_results(results_p2)
-        # Drain follow-up actions after market_exit (e.g. cancel protections)
         for _ in range(8):
             follow_ups = []
             for eng in engs.values():
@@ -473,19 +492,103 @@ def main():
         acct.peak_equity = max(acct.peak_equity, acct.current)
         dd = (acct.current - acct.peak_equity) / max(acct.peak_equity, 1.0)
         acct.max_dd_peak = min(acct.max_dd_peak, dd)
-        if n_2h % 200 == 0:
+        if progress and n_2h % 200 == 0:
             print(f"  [{idx}] eq={acct.current:.0f} dd={dd*100:.1f}%")
 
     elapsed = time.monotonic() - t0
-    print(f"\n=== Results ({elapsed:.0f}s) ===")
-    print(
-        f"Equity:  {args.equity:,.0f} → {acct.current:,.0f}  ({acct.cum_pnl/args.equity*100:+.2f}%)"
+    meta = {
+        "start": str(start),
+        "end": str(end),
+        "symbols": symbols,
+        "elapsed_sec": elapsed,
+        "bars_1m": n_1m,
+        "bars_2h": n_2h,
+        "chop_config": str(chop_config),
+        "trend_config": str(trend_config),
+        "constitution_yaml": str(constitution_yaml),
+    }
+    if progress:
+        print(f"\n=== Results ({elapsed:.0f}s) ===")
+        print(
+            f"Equity:  {equity:,.0f} → {acct.current:,.0f}  "
+            f"({acct.cum_pnl/equity*100:+.2f}%)"
+        )
+        print(f"Peak:    {acct.peak_equity:,.0f}")
+        print(f"Max DD:  {acct.max_dd_peak*100:.2f}% (from peak)")
+        print(f"Trades:  {acct.trades_ok} ok / {acct.trades_rej} rej")
+        print(f"Halted:  {acct.halted} {acct.halt_reason}")
+        print(f"1m bars: {n_1m}  2h events: {n_2h}")
+    return acct, meta
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--start", required=True)
+    ap.add_argument("--end", required=True)
+    ap.add_argument("--symbols", default="BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT")
+    ap.add_argument("--data-dir", default="data/parquet_data")
+    ap.add_argument("--equity", type=float, default=50000.0)
+    ap.add_argument("--chop-config", required=True)
+    ap.add_argument("--trend-config", required=True)
+    ap.add_argument(
+        "--constitution-yaml",
+        default="live/highcap/config/constitution/constitution.yaml",
     )
-    print(f"Peak:    {acct.peak_equity:,.0f}")
-    print(f"Max DD:  {acct.max_dd_peak*100:.2f}% (from peak)")
-    print(f"Trades:  {acct.trades_ok} ok / {acct.trades_rej} rej")
-    print(f"Halted:  {acct.halted} {acct.halt_reason}")
-    print(f"1m bars: {n_1m}  2h events: {n_2h}")
+    ap.add_argument("--no-chop", action="store_true")
+    ap.add_argument("--no-trend", action="store_true")
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument(
+        "--trend-time-filter",
+        action="store_true",
+        help="Restrict trend_scalp entries to non-Asian (UTC 09:00+) weekdays only",
+    )
+    ap.add_argument(
+        "--save-preload", help="Save pre-computed bars+features to this pickle file"
+    )
+    ap.add_argument(
+        "--load-preload", help="Load pre-computed bars+features from this pickle file"
+    )
+    ap.add_argument(
+        "--summary-json",
+        help="Write run summary JSON to this path",
+    )
+    ap.add_argument(
+        "--no-clean-state",
+        action="store_true",
+        help="Do not delete /tmp/bt_*.json engine state before run",
+    )
+    args = ap.parse_args()
+
+    symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+    start = pd.Timestamp(args.start).tz_localize("UTC")
+    end = pd.Timestamp(args.end).tz_localize("UTC")
+    data_dir = Path(args.data_dir)
+
+    acct, meta = run_timeline_backtest(
+        start=start,
+        end=end,
+        symbols=symbols,
+        equity=float(args.equity),
+        chop_config=Path(args.chop_config),
+        trend_config=Path(args.trend_config),
+        constitution_yaml=Path(str(args.constitution_yaml)),
+        data_dir=data_dir,
+        no_chop=bool(args.no_chop),
+        no_trend=bool(args.no_trend),
+        dry_run=bool(args.dry_run),
+        trend_time_filter=bool(args.trend_time_filter),
+        save_preload=Path(args.save_preload) if args.save_preload else None,
+        load_preload=Path(args.load_preload) if args.load_preload else None,
+        clean_state=not args.no_clean_state,
+        progress=True,
+    )
+
+    if args.summary_json:
+        out = Path(args.summary_json)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        payload = {**meta, **acct.to_summary()}
+        out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        print(f"Wrote {out}")
 
 
 if __name__ == "__main__":

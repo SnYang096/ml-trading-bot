@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """DD experiment matrix runner with state cleanup and data preloading."""
 
-import copy, subprocess, sys, yaml, glob, os, re
+import copy, subprocess, sys, yaml, re
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -18,16 +18,11 @@ TREND = (
 PRELOAD = Path("/tmp/bt_preload.pkl")
 
 
-def clean_state():
-    for f in glob.glob("/tmp/bt_chop_*.json") + glob.glob("/tmp/bt_trend_*.json"):
-        try:
-            os.remove(f)
-        except Exception:
-            pass
+from scripts.backtest_multileg_timeline import clean_bt_state
 
 
 def run_one(label, max_dd, daily_loss, seg_dd, time_filter, use_preload):
-    clean_state()
+    clean_bt_state()
     cfg = copy.deepcopy(base)
     cfg["kill_switch"]["max_dd"] = max_dd
     cfg["kill_switch"]["daily_loss_limit"] = daily_loss
@@ -100,7 +95,7 @@ def run_one(label, max_dd, daily_loss, seg_dd, time_filter, use_preload):
 # ── Step 1: Generate preload if needed ──
 if not PRELOAD.exists():
     print("=== Generating preload data (one-time, ~1-2 min) ===", flush=True)
-    clean_state()
+    clean_bt_state()
     r = subprocess.run(
         [
             sys.executable,

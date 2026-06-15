@@ -10,6 +10,7 @@ from scripts.event_backtest.variant_grid import (
     _VALID_ENGINES,
     _build_chop_grid_cmd,
     _build_event_backtest_cmd,
+    _build_multileg_timeline_cmd,
     _resolve_engine,
 )
 
@@ -33,7 +34,12 @@ def test_resolve_engine_rejects_unknown() -> None:
 
 
 def test_engines_set_locked() -> None:
-    assert set(_VALID_ENGINES) == {"event_backtest", "chop_grid"}
+    assert set(_VALID_ENGINES) == {
+        "event_backtest",
+        "chop_grid",
+        "trend_scalp",
+        "multileg_joint",
+    }
 
 
 def test_event_backtest_cmd_uses_strategies_root() -> None:
@@ -85,3 +91,24 @@ def test_chop_grid_cmd_requires_config() -> None:
             out_path=Path("/tmp/out"),
             extra_argv=[],
         )
+
+
+def test_multileg_timeline_cmd_uses_live_engine_backtest(tmp_path: Path) -> None:
+    cmd = _build_multileg_timeline_cmd(
+        seg_id="recent_6m_oos",
+        seg={"start_date": "2025-12-01", "end_date": "2026-05-31"},
+        grid={
+            "chop_config": "variants/chop_prod/meta.yaml",
+            "trend_config": "variants/trend_prod/meta.yaml",
+            "symbols": ["BTCUSDT", "ETHUSDT"],
+            "equity": 10000,
+        },
+        out_path=tmp_path,
+        extra_argv=[],
+        preload_path=tmp_path / "preload.pkl",
+        save_preload=True,
+    )
+    assert any("backtest_multileg_timeline.py" in part for part in cmd)
+    assert "--summary-json" in cmd
+    assert "--save-preload" in cmd
+    assert cmd[cmd.index("--equity") + 1] == "10000.0"

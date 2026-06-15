@@ -724,3 +724,251 @@ def test_multileg_pnl_skips_ghost_unrealized_when_positions_table_used(
         multi_leg_db, "HYPEUSDT", mark_prices={"HYPEUSDT": 70.0}
     )
     assert f"{group}_L1" not in pnl_map
+
+
+# ---------------------------------------------------------------------------
+# Orphan-open-position fallback tests
+# Tests for _multileg_stats() when multi_leg_positions has open legs
+# that have NO corresponding entry rows in multi_leg_orders.
+# ---------------------------------------------------------------------------
+def _seed_orphan_position(
+    multi_leg_db,
+    *,
+    leg_id: str = "XRPUSDT_2026-06-15 12:58:00+00:00_trend_buy_0",
+    symbol: str = "XRPUSDT",
+    strategy: str = "trend_scalp",
+    side: str = "LONG",
+    entry_price: float = 1.2384,
+    quantity: float = 8760.9,
+    status: str = "open",
+) -> None:
+    """Insert a position into multi_leg_positions WITHOUT a matching order."""
+    from src.order_management.multi_leg_storage import MultiLegStorage
+
+    storage = MultiLegStorage(str(multi_leg_db))
+    run_id = storage.create_run(
+        mode="testnet",
+        strategies=[strategy],
+        symbols=[symbol],
+        run_id=f"orphan_{leg_id}",
+    )
+    storage.upsert_position(
+        {
+            "run_id": run_id,
+            "strategy": strategy,
+            "leg_id": leg_id,
+            "symbol": symbol,
+            "side": side,
+            "entry_price": entry_price,
+            "quantity": quantity,
+            "status": status,
+        }
+    )
+
+
+def test_orphan_long_position_computes_unrealized(multi_leg_db) -> None:
+    """An open LONG position with no matching order should contribute unrealized PnL."""
+    from mlbot_console.services.account_summary import _multileg_stats
+
+    _seed_orphan_position(
+        multi_leg_db,
+        entry_price=1.20,
+        quantity=1000.0,
+    )
+    result = _multileg_stats(
+        multi_leg_db,
+        symbol="XRPUSDT",
+        mark_prices={"XRPUSDT": 1.25},
+        since_ts=None,
+    )
+    # (1.25 - 1.20) * 1000 = 50.0
+    assert result["unrealized_pnl"] == pytest.approx(50.0)
+    assert result["open_positions"] == 1
+    ts = result["by_strategy"]["trend_scalp"]
+    assert ts["unrealized_pnl"] == pytest.approx(50.0)
+    assert ts["open_positions"] == 1
+
+
+def test_orphan_short_position_computes_unrealized(multi_leg_db) -> None:
+    """An open SHORT position with no matching order should compute (entry - mark) × qty."""
+    from mlbot_console.services.account_summary import _multileg_stats
+
+    _seed_orphan_position(
+        multi_leg_db,
+        leg_id="XRPUSDT_2026-06-15 13:00:00+00:00_short_0",
+        side="SHORT",
+        entry_price=1.30,
+        quantity=500.0,
+    )
+    result = _multileg_stats(
+        multi_leg_db,
+        symbol="XRPUSDT",
+        mark_prices={"XRPUSDT": 1.25},
+        since_ts=None,
+    )
+    # (1.30 - 1.25) * 500 = 25.0
+    assert result["unrealized_pnl"] == pytest.approx(25.0)
+
+
+def test_orphan_position_skipped_when_no_mark_price(multi_leg_db) -> None:
+    """Orphan positions should be skipped when mark price is missing or zero."""
+    from mlbot_console.services.account_summary import _multileg_stats
+
+    _seed_orphan_position(multi_leg_db, entry_price=1.20, quantity=1000.0)
+    # No mark price for XRPUSDT
+    result = _multileg_stats(
+        multi_leg_db,
+        symbol="XRPUSDT",
+        mark_prices={},
+        since_ts=None,
+    )
+    assert result["unrealized_pnl"] == pytest.approx(0.0)
+
+
+def test_orphan_position_skipped_when_entry_price_zero(multi_leg_db) -> None:
+    """Orphan positions with entry_price=0 should be skipped."""
+    from mlbot_console.services.account_summary import _multileg_stats
+
+    _seed_orphan_position(multi_leg_db, entry_price=0.0, quantity=1000.0)
+    result = _multileg_stats(
+        multi_leg_db,
+        symbol="XRPUSDT",
+        mark_prices={"XRPUSDT": 1.25},
+        since_ts=None,
+    )
+    assert result["unrealized_pnl"] == pytest.approx(0.0)
+
+
+def test_orphan_position_skipped_when_quantity_zero(multi_leg_db) -> None:
+    """Orphan positions with quantity=0 should be skipped."""
+    from mlbot_console.services.account_summary import _multileg_stats
+
+    _seed_orphan_position(multi_leg_db, entry_price=1.20, quantity=0.0)
+    result = _multileg_stats(
+        multi_leg_db,
+        symbol="XRPUSDT",
+        mark_prices={"XRPUSDT": 1.25},
+        since_ts=None,
+    )
+    assert result["unrealized_pnl"] == pytest.approx(0.0)
+
+
+def test_orphan_closed_position_not_counted(multi_leg_db) -> None:
+    """Closed positions should NOT contribute unrealized PnL (only 'open' status)."""
+    from mlbot_console.services.account_summary import _multileg_stats
+
+    _seed_orphan_position(
+        multi_leg_db,
+        entry_price=1.20,
+        quantity=1000.0,
+        status="closed",
+    )
+    result = _multileg_stats(
+        multi_leg_db,
+        symbol="XRPUSDT",
+        mark_prices={"XRPUSDT": 1.25},
+        since_ts=None,
+    )
+    assert result["unrealized_pnl"] == pytest.approx(0.0)
+    assert result["open_positions"] == 0
+
+
+def test_orphan_not_double_counted_with_order_entry(multi_leg_db) -> None:
+    """If a position's leg_id already has a PnL from the order path, it must not be counted again."""
+    from src.order_management.multi_leg_storage import MultiLegStorage
+    from mlbot_console.services.account_summary import _multileg_stats
+
+    storage = MultiLegStorage(str(multi_leg_db))
+    sym = "XRPUSDT"
+    leg = "XRPUSDT_2026-06-15 14:00:00+00:00_L1"
+    run_id = storage.create_run(
+        mode="testnet",
+        strategies=["chop_grid"],
+        symbols=[sym],
+        run_id="orphan_dedup",
+    )
+    # Insert a filled entry order (same leg_id as the position)
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": leg,
+            "leg_id": leg,
+            "symbol": sym,
+            "side": "BUY",
+            "purpose": "entry",
+            "status": "filled",
+            "filled_quantity": 100.0,
+            "average_price": 1.20,
+        }
+    )
+    # Insert matching open position
+    storage.upsert_position(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "leg_id": leg,
+            "symbol": sym,
+            "side": "LONG",
+            "entry_price": 1.20,
+            "quantity": 100.0,
+            "status": "open",
+        }
+    )
+    result = _multileg_stats(
+        multi_leg_db,
+        symbol=sym,
+        mark_prices={sym: 1.25},
+        since_ts=None,
+    )
+    # Should be computed ONCE: (1.25 - 1.20) * 100 = 5.0
+    assert result["unrealized_pnl"] == pytest.approx(5.0)
+
+
+def test_orphan_multiple_positions_accumulated(multi_leg_db) -> None:
+    """Multiple orphan positions should have their unrealized PnL accumulated."""
+    from mlbot_console.services.account_summary import _multileg_stats
+
+    _seed_orphan_position(
+        multi_leg_db,
+        leg_id="XRPUSDT_2026-06-15 12:00:00+00:00_leg1",
+        side="LONG",
+        entry_price=1.20,
+        quantity=1000.0,
+    )
+    _seed_orphan_position(
+        multi_leg_db,
+        leg_id="XRPUSDT_2026-06-15 12:00:00+00:00_leg2",
+        side="LONG",
+        entry_price=1.25,
+        quantity=2000.0,
+    )
+    result = _multileg_stats(
+        multi_leg_db,
+        symbol="XRPUSDT",
+        mark_prices={"XRPUSDT": 1.30},
+        since_ts=None,
+    )
+    # leg1: (1.30 - 1.20) * 1000 = 100.0
+    # leg2: (1.30 - 1.25) * 2000 = 100.0
+    assert result["unrealized_pnl"] == pytest.approx(200.0)
+    assert result["open_positions"] == 2
+
+
+def test_orphan_negative_unrealized_for_losing_position(multi_leg_db) -> None:
+    """Orphan position with mark below entry should produce negative unrealized."""
+    from mlbot_console.services.account_summary import _multileg_stats
+
+    _seed_orphan_position(
+        multi_leg_db,
+        entry_price=1.30,
+        quantity=1000.0,
+    )
+    result = _multileg_stats(
+        multi_leg_db,
+        symbol="XRPUSDT",
+        mark_prices={"XRPUSDT": 1.20},
+        since_ts=None,
+    )
+    # (1.20 - 1.30) * 1000 = -100.0
+    assert result["unrealized_pnl"] == pytest.approx(-100.0)
