@@ -1,0 +1,5 @@
+# chop_grid Emergency SL — weak SL (4× spacing)
+grid_backtest:
+  feature_store_dir: feature_store
+  feature_store_timeframe: 120T
+  execution_timeframe: 1min

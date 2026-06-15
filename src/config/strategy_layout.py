@@ -199,6 +199,10 @@ def resolve_strategy_config_input(
         cfg_dir = path
         dp = PACKAGED_PROFILE_DEFAULT_STEM if default_profile is None else default_profile
         prof_path = resolve_strategy_profile_path(cfg_dir, dp)
+        if not prof_path.exists():
+            meta_path = cfg_dir / "meta.yaml"
+            if meta_path.exists():
+                prof_path = meta_path
         return cfg_dir, prof_path if prof_path.exists() else None, None
     if path.parent.name == "research":
         return path.parent.parent, path, None

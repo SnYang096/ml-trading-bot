@@ -161,6 +161,14 @@ def _build_chop_grid_cmd(
     timeframe = run.get("timeframe") or grid.get("timeframe")
     if timeframe:
         cmd += ["--timeframe", str(timeframe)]
+    etf = run.get("execution_timeframe") or grid.get("execution_timeframe")
+    if etf:
+        cmd += ["--execution-timeframe", str(etf)]
+    ic = run.get("initial_capital") or grid.get("initial_capital")
+    if ic:
+        cmd += ["--initial-capital", str(ic)]
+    run_extra = run.get("extra_argv") or []
+    cmd += [str(x) for x in run_extra]
     cmd += extra_argv
     return cmd
 

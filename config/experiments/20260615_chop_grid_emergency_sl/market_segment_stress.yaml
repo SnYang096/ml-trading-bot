@@ -1,0 +1,25 @@
+# Extreme windows for chop_grid emergency SL stress (experiment-local; not canonical promote segments).
+segments:
+  - id: bear_2022
+    label: Bear2022
+    start_date: '2022-01-01'
+    end_date: '2023-11-01'
+    purpose: Full 2022 bear (LUNA/FTX inside)
+
+  - id: covid_crash_2020
+    label: CovidMar2020
+    start_date: '2020-02-20'
+    end_date: '2020-04-15'
+    purpose: COVID flash crash + rebound
+
+  - id: luna_crash_2022
+    label: LunaMay2022
+    start_date: '2022-05-01'
+    end_date: '2022-06-30'
+    purpose: UST/LUNA depeg cascade
+
+  - id: ftx_crash_2022
+    label: FtxNov2022
+    start_date: '2022-11-01'
+    end_date: '2022-12-31'
+    purpose: FTX collapse liquidity shock

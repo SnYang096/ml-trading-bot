@@ -71,13 +71,29 @@ from src.time_series_model.grid.subbar_replay import (  # noqa: E402
 )
 
 
-DEFAULT_GRID_CONFIG = (
-    PROJECT_ROOT / "config/strategies/chop_grid/research/calibrate_roll.default.yaml"
-)
+DEFAULT_GRID_CONFIG = PROJECT_ROOT / "config/strategies/chop_grid"
 
 
 def _load_grid_defaults(path: Path) -> dict:
     return merge_chop_grid_yaml(path)
+
+
+def _per_leg_sl_from_defaults(defaults: dict) -> tuple[bool, float | None]:
+    if not bool(defaults.get("per_leg_stop_loss", False)):
+        return False, None
+    raw_mult = defaults.get("per_leg_sl_spacing_mult")
+    if raw_mult is None or float(raw_mult) <= 0:
+        return True, None
+    return True, float(raw_mult)
+
+
+def _emergency_sl_from_defaults(defaults: dict) -> tuple[bool, float | None]:
+    if not bool(defaults.get("emergency_stop_loss_enabled", False)):
+        return False, None
+    raw = defaults.get("emergency_stop_loss_trigger_pct")
+    if raw is None or float(raw) <= 0:
+        return True, None
+    return True, float(raw)
 
 
 def _parse_max_replenish_cli(value: str) -> int | None:
@@ -421,6 +437,8 @@ def run_backtest(
             box_pos_max=getattr(args, "box_pos_max", None),
         ),
     )
+    per_leg_stop_loss, sl_mult = _per_leg_sl_from_defaults(defaults)
+    em_sl_enabled, em_sl_pct = _emergency_sl_from_defaults(defaults)
     engine_cfg = GridEngineConfig(
         box_window=args.box_window,
         entry_chop_min=args.chop_min,
@@ -430,7 +448,9 @@ def run_backtest(
         grid_atr_mult=args.grid_atr_mult,
         grid_min_pct=args.grid_pct,
         max_levels_per_side=args.max_levels,
-        tp_spacing_mult=getattr(args, "tp_spacing_mult", 1.0),
+        tp_spacing_mult=float(
+            getattr(args, "tp_spacing_mult", defaults.get("tp_spacing_mult", 1.0))
+        ),
         fee_bps=args.fee_bps + args.slippage_bps,
         maker_fee_bps=args.maker_fee_bps,
         taker_fee_bps=args.taker_fee_bps,
@@ -442,6 +462,10 @@ def run_backtest(
         max_replenish_per_level_per_segment=getattr(
             args, "max_replenish_per_level", None
         ),
+        per_leg_stop_loss=per_leg_stop_loss,
+        per_leg_sl_spacing_mult=sl_mult,
+        emergency_stop_loss_enabled=em_sl_enabled,
+        emergency_stop_loss_trigger_pct=em_sl_pct,
     )
     engine = ChopGridEngine(engine_cfg)
     symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
@@ -1129,8 +1153,8 @@ def main() -> None:
         type=float,
         default=float(defaults.get("tp_spacing_mult", 1.0)),
         help=(
-            "Take-profit distance = grid spacing * this multiplier. 1.0 = legacy "
-            "(TP at one grid step); >1.0 widens the TP while keeping entry density."
+            "Take-profit distance = grid spacing * mult (from execution.yaml). "
+            "1.0 = legacy; >1.0 widens TP while keeping entry density."
         ),
     )
     parser.add_argument(
@@ -1211,18 +1235,6 @@ def main() -> None:
         "--max-open-levels-total",
         type=int,
         default=defaults.get("max_open_levels_total", 6),
-    )
-    parser.add_argument(
-        "--per-leg-stop-loss",
-        action=argparse.BooleanOptionalAction,
-        default=defaults.get("per_leg_stop_loss", False),
-        help="Enable per-leg stop-loss in backtest (default false).",
-    )
-    parser.add_argument(
-        "--per-leg-sl-spacing-mult",
-        type=float,
-        default=defaults.get("per_leg_sl_spacing_mult", None),
-        help="Stop-loss distance = spacing * mult (default None = disabled).",
     )
     parser.add_argument(
         "--chop-signal",

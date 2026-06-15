@@ -73,19 +73,19 @@ def _parse_max_replenish_inv(raw: Any) -> int | None:
 
 
 def merge_chop_grid_yaml(path: Path) -> Dict[str, Any]:
-    """Load strategy knobs from ``grid.yaml`` for backtests, diagnostics, sweeps.
+    """Load strategy knobs from packaged config for backtests, diagnostics, sweeps.
 
     Includes ``regime.box_prefilter`` (StudyConfig / ``box_prefilter`` column),
     ``chop_series`` (raw vs ts_quantile), and risk/spacing used by CLIs.
     """
     if not path.exists():
         return {}
-    cfg_dir, profile_path, engine_path = resolve_strategy_config_input(path)
+    cfg_dir, profile_path, _engine_path = resolve_strategy_config_input(path)
     cfg = load_multileg_effective_config(
         config_dir=cfg_dir,
         strategy_type="grid",
         profile_path=profile_path,
-        engine_path=engine_path,
+        engine_path=None,
     )
     regime = cfg.get("regime", {}) or {}
     inv = cfg.get("inventory", {}) or {}
@@ -157,6 +157,16 @@ def merge_chop_grid_yaml(path: Path) -> Dict[str, Any]:
             float(risk["per_leg_sl_spacing_mult"])
             if "per_leg_sl_spacing_mult" in risk
             and risk["per_leg_sl_spacing_mult"] is not None
+            else None
+        ),
+        "tp_spacing_mult": float(risk.get("tp_spacing_mult", 1.0)),
+        "emergency_stop_loss_enabled": bool(
+            (risk.get("emergency_stop_loss") or {}).get("enabled", False)
+        ),
+        "emergency_stop_loss_trigger_pct": (
+            float((risk.get("emergency_stop_loss") or {})["trigger_pct"])
+            if isinstance(risk.get("emergency_stop_loss"), dict)
+            and (risk.get("emergency_stop_loss") or {}).get("trigger_pct") is not None
             else None
         ),
         "stability_min": float(box_pf.get("stability_min", 0.85)),

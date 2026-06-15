@@ -59,7 +59,7 @@ def test_chop_grid_cmd_dispatches_to_chop_grid_backtest(tmp_path: Path) -> None:
     cmd = _build_chop_grid_cmd(
         run={
             "variant": "baseline_recent",
-            "config": "config/strategies/chop_grid/research/calibrate_roll.default.yaml",
+            "config": "config/experiments/20260615_chop_grid_emergency_sl/variants/baseline/meta.yaml",
             "start_date": "2025-04-01",
             "end_date": "2026-04-01",
         },

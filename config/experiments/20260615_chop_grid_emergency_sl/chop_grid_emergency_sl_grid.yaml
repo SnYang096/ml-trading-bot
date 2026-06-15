@@ -1,11 +1,13 @@
 # chop_grid Emergency SL backtest — variant grid
-# Run: PYTHONPATH=src:scripts python -m scripts.event_backtest --variant-grid config/experiments/20260615_chop_grid_emergency_sl/chop_grid_emergency_sl_grid.yaml
+# Each variant = meta.yaml + archetypes/ (prod regime/prefilter, execution SL knobs).
+#
+# Run:
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260615_chop_grid_emergency_sl/chop_grid_emergency_sl_grid.yaml
 
 engine: chop_grid
 strategy: chop_grid
 experiment_id: chop_grid_emergency_sl_20260615
-
-config: config/strategies/chop_grid/research/calibrate_roll.default.yaml
 
 symbols:
   - BTCUSDT
@@ -29,17 +31,17 @@ segment_matrix:
     - recent_6m_oos
   variants:
     - suffix: baseline
-      config: config/experiments/20260615_chop_grid_emergency_sl/variants/execution_baseline.yaml
+      config: config/experiments/20260615_chop_grid_emergency_sl/variants/baseline/meta.yaml
       output_dir: results/chop_grid/experiments/emergency_sl_20260615/baseline
 
     - suffix: sl_4x
-      config: config/experiments/20260615_chop_grid_emergency_sl/variants/execution_sl_4x.yaml
+      config: config/experiments/20260615_chop_grid_emergency_sl/variants/sl_4x/meta.yaml
       output_dir: results/chop_grid/experiments/emergency_sl_20260615/sl_4x
 
     - suffix: sl_6x
-      config: config/experiments/20260615_chop_grid_emergency_sl/variants/execution_sl_6x.yaml
+      config: config/experiments/20260615_chop_grid_emergency_sl/variants/sl_6x/meta.yaml
       output_dir: results/chop_grid/experiments/emergency_sl_20260615/sl_6x
 
     - suffix: sl_8x
-      config: config/experiments/20260615_chop_grid_emergency_sl/variants/execution_sl_8x.yaml
+      config: config/experiments/20260615_chop_grid_emergency_sl/variants/sl_8x/meta.yaml
       output_dir: results/chop_grid/experiments/emergency_sl_20260615/sl_8x

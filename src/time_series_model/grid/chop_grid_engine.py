@@ -40,6 +40,9 @@ class GridEngineConfig:
     # Exchange-side per-leg STOP (live only). Default off — validated backtest
     # exits via grid_tp + regime_exit + max_loss_per_grid only.
     per_leg_stop_loss: bool = False
+    # Per-leg entry-% emergency STOP (exchange parity); independent of grid spacing SL.
+    emergency_stop_loss_enabled: bool = False
+    emergency_stop_loss_trigger_pct: float | None = None
 
 
 @dataclass(frozen=True)
@@ -164,6 +167,13 @@ class ChopGridEngine:
             and float(self.cfg.per_leg_sl_spacing_mult) > 0
             else None
         )
+        em_sl_pct = (
+            float(self.cfg.emergency_stop_loss_trigger_pct)
+            if self.cfg.emergency_stop_loss_enabled
+            and self.cfg.emergency_stop_loss_trigger_pct is not None
+            and float(self.cfg.emergency_stop_loss_trigger_pct) > 0
+            else None
+        )
 
         maker_fee_bps = (
             float(self.cfg.maker_fee_bps)
@@ -220,7 +230,7 @@ class ChopGridEngine:
             )
             exit_fee_bps = maker_fee_bps
             slippage_bps = 0.0
-            if exit_reason in {"regime_exit", "risk_exit", "grid_sl"}:
+            if exit_reason in {"regime_exit", "risk_exit", "grid_sl", "emergency_sl"}:
                 exit_fee_bps = taker_fee_bps
                 slippage_bps = float(self.cfg.forced_exit_slippage_bps or 0.0)
             hold_hours = max(
@@ -266,7 +276,7 @@ class ChopGridEngine:
             close = float(row["close"])
 
             # Target exits before new fills; optionally disallow same-bar entry+exit.
-            # Per-leg SL (live parity) is checked before TP on the same bar.
+            # Per-leg SL (spacing-based) then entry-% emergency STOP before TP.
             if sl_distance is not None:
                 for level_i, (entry, entry_ts, fill_bar) in list(open_longs.items()):
                     sl_px = entry - sl_distance
@@ -295,6 +305,38 @@ class ChopGridEngine:
                             exit_price=sl_px,
                             exit_time=ts,
                             exit_reason="grid_sl",
+                        )
+                        completed_short[level_i] = completed_short.get(level_i, 0) + 1
+                        del open_shorts[level_i]
+
+            if em_sl_pct is not None:
+                for level_i, (entry, entry_ts, fill_bar) in list(open_longs.items()):
+                    sl_px = entry * (1.0 - em_sl_pct)
+                    can_exit = self.cfg.same_bar_entry_exit or bar_i > fill_bar
+                    if can_exit and low <= sl_px:
+                        _record(
+                            side="LONG",
+                            level=level_i + 1,
+                            entry_price=entry,
+                            entry_time=entry_ts,
+                            exit_price=sl_px,
+                            exit_time=ts,
+                            exit_reason="emergency_sl",
+                        )
+                        completed_long[level_i] = completed_long.get(level_i, 0) + 1
+                        del open_longs[level_i]
+                for level_i, (entry, entry_ts, fill_bar) in list(open_shorts.items()):
+                    sl_px = entry * (1.0 + em_sl_pct)
+                    can_exit = self.cfg.same_bar_entry_exit or bar_i > fill_bar
+                    if can_exit and high >= sl_px:
+                        _record(
+                            side="SHORT",
+                            level=level_i + 1,
+                            entry_price=entry,
+                            entry_time=entry_ts,
+                            exit_price=sl_px,
+                            exit_time=ts,
+                            exit_reason="emergency_sl",
                         )
                         completed_short[level_i] = completed_short.get(level_i, 0) + 1
                         del open_shorts[level_i]

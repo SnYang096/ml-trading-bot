@@ -335,10 +335,8 @@ def test_materialize_chop_grid_from_store_prefilter_respects_stability():
     assert not bool(merged["box_prefilter"].iloc[0])
 
 
-def test_repo_chop_grid_research_turbo_yaml_multileg_no_live_section():
-    prof = (
-        REPO_ROOT / "config/strategies/chop_grid/research/calibrate_roll.default.yaml"
-    )
+def test_repo_chop_grid_meta_yaml_multileg_no_live_section():
+    prof = REPO_ROOT / "config/strategies/chop_grid/meta.yaml"
     assert prof.exists()
     eff = load_multileg_effective_config(
         config_dir=REPO_ROOT / "config/strategies/chop_grid",
@@ -349,33 +347,22 @@ def test_repo_chop_grid_research_turbo_yaml_multileg_no_live_section():
 
 
 def test_merge_chop_grid_yaml_repo_profile_grid_backtest_store_baselines():
-    merged = merge_chop_grid_yaml(
-        REPO_ROOT / "config/strategies/chop_grid/research/calibrate_roll.default.yaml",
-    )
+    merged = merge_chop_grid_yaml(REPO_ROOT / "config/strategies/chop_grid")
     assert Path(str(merged.get("feature_store_dir"))).name == "feature_store"
     assert merged.get("feature_store_timeframe") == "120T"
 
 
-def test_repo_chop_grid_turbo_grid_backtest_rolling_aligned_costs_and_maps():
+def test_repo_chop_grid_meta_grid_backtest_execution_timeframe():
     import yaml
 
     raw = yaml.safe_load(
-        (
-            REPO_ROOT
-            / "config/strategies/chop_grid/research/calibrate_roll.default.yaml"
-        ).read_text(encoding="utf-8")
+        (REPO_ROOT / "config/strategies/chop_grid/meta.yaml").read_text(
+            encoding="utf-8"
+        )
     )
     grid_bt = raw["grid_backtest"]
     assert "output_dir" not in grid_bt
-    assert "map_months" not in grid_bt
-    assert "continuous_map_months" not in grid_bt
-    assert grid_bt["costs"] == {
-        "fee_bps": 20.0,
-        "maker_fee_bps": 20.0,
-        "taker_fee_bps": 20.0,
-        "forced_exit_slippage_bps": 20.0,
-        "funding_cost_bps_per_8h": 20.0,
-    }
+    assert grid_bt["execution_timeframe"] == "1min"
 
 
 def test_live_highcap_chop_grid_uses_strategy_package_layers():

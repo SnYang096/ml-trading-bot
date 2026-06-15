@@ -1,0 +1,21 @@
+# Entry-% emergency SL — trigger_pct=0.12 (per-leg entry, taker exit)
+inventory:
+  spacing:
+    primary: atr
+    atr_mult: 0.01
+    min_pct: 0.0033
+  max_levels_per_side: 3
+  max_replenish_per_level_per_segment: 1
+  order_type: limit
+
+risk:
+  min_segment_bars: 6
+  max_segment_bars: 120
+  force_exit_on_regime_loss: true
+  max_loss_per_grid: 0.03
+  max_open_levels_total: 6
+  per_leg_stop_loss: false
+  tp_spacing_mult: 2
+  emergency_stop_loss:
+    enabled: true
+    trigger_pct: 0.12

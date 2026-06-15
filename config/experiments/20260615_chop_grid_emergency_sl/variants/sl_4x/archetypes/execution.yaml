@@ -1,0 +1,19 @@
+# Weak SL — per_leg_sl_spacing_mult=4.0 (execution layer only)
+inventory:
+  spacing:
+    primary: atr
+    atr_mult: 0.01
+    min_pct: 0.0033
+  max_levels_per_side: 3
+  max_replenish_per_level_per_segment: 1
+  order_type: limit
+
+risk:
+  min_segment_bars: 6
+  max_segment_bars: 120
+  force_exit_on_regime_loss: true
+  max_loss_per_grid: 0.03
+  max_open_levels_total: 6
+  per_leg_stop_loss: true
+  per_leg_sl_spacing_mult: 4.0
+  tp_spacing_mult: 2

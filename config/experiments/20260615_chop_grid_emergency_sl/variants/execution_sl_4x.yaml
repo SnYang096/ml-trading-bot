@@ -1,4 +1,0 @@
-# Weak SL — per_leg_sl_spacing_mult=4.0
-risk:
-  per_leg_stop_loss: true
-  per_leg_sl_spacing_mult: 4.0

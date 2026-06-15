@@ -1,4 +1,0 @@
-# Medium SL — per_leg_sl_spacing_mult=6.0
-risk:
-  per_leg_stop_loss: true
-  per_leg_sl_spacing_mult: 6.0

@@ -1,0 +1,46 @@
+# chop_grid emergency SL — extreme-window stress (entry-% + baseline)
+#
+# Run:
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260615_chop_grid_emergency_sl/chop_grid_emergency_sl_stress_grid.yaml
+
+engine: chop_grid
+strategy: chop_grid
+experiment_id: chop_grid_emergency_sl_stress_20260615
+
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - BNBUSDT
+  - XRPUSDT
+  - ADAUSDT
+
+timeframe: 2h
+execution_timeframe: 1min
+initial_capital: 10000
+
+market_segment_path: config/experiments/20260615_chop_grid_emergency_sl/market_segment_stress.yaml
+
+segment_matrix:
+  segments:
+    - bear_2022
+    - covid_crash_2020
+    - luna_crash_2022
+    - ftx_crash_2022
+  variants:
+    - suffix: baseline
+      config: config/experiments/20260615_chop_grid_emergency_sl/variants/baseline/meta.yaml
+      output_dir: results/chop_grid/experiments/emergency_sl_stress_20260615/baseline
+
+    - suffix: em_12
+      config: config/experiments/20260615_chop_grid_emergency_sl/variants/em_12/meta.yaml
+      output_dir: results/chop_grid/experiments/emergency_sl_stress_20260615/em_12
+
+    - suffix: em_15
+      config: config/experiments/20260615_chop_grid_emergency_sl/variants/em_15/meta.yaml
+      output_dir: results/chop_grid/experiments/emergency_sl_stress_20260615/em_15
+
+    - suffix: em_20
+      config: config/experiments/20260615_chop_grid_emergency_sl/variants/em_20/meta.yaml
+      output_dir: results/chop_grid/experiments/emergency_sl_stress_20260615/em_20
