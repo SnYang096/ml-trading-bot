@@ -335,6 +335,8 @@ export function useTradeMapMainChart(params: MainChartParams) {
     markersRef.current = markerPlugin;
     paramsRef.current.onChartReady?.(chart);
     setChartReadyTick((n) => n + 1);
+    // 暴露给 E2E 测试
+    if (typeof window !== 'undefined') (window as any).__lwcChart = chart;
 
     chart.subscribeCrosshairMove((param) => {
       if (!param.time) {
@@ -363,6 +365,9 @@ export function useTradeMapMainChart(params: MainChartParams) {
     return () => {
       ro.disconnect();
       chart.remove();
+      if (typeof window !== 'undefined' && (window as any).__lwcChart === chart) {
+        delete (window as any).__lwcChart;
+      }
       chartRef.current = null;
       seriesRef.current = null;
       setCandleSeries(null);

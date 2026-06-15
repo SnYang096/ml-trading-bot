@@ -4670,6 +4670,60 @@ features:
       funding_rate_abs_zscore_50: funding_rate_abs_zscore_50
       oi_zscore: oi_zscore
 
+  liquidation_cluster_proxy_f:
+    module: interaction
+    compute_func: compute_liquidation_cluster_proxy_from_df
+    dependencies:
+    - oi_features_f
+    - funding_rate_features_f
+    - oi_scene_semantic_scores_f
+    - atr_percentile_f
+    required_columns:
+    - oi_flow_zscore
+    - funding_rate_abs_zscore_50
+    - atr_percentile
+    - oi_ignition_score
+    - oi_exhaustion_score
+    output_columns:
+    - liquidation_cluster_score
+    - liquidation_cascade_proxy_score
+    - liquidation_reversal_proxy_score
+    category: interaction
+    description: 'T5β 2h liquidation-cluster proxy (OI flow burst × funding stress × vol).
+      Cascade/reversal sub-scores gate by OI ignition/exhaustion semantics.'
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        liquidation_cluster_score: bounded_0_1
+        liquidation_cascade_proxy_score: bounded_0_1
+        liquidation_reversal_proxy_score: bounded_0_1
+    pass_full_df: true
+
+  wall_features_f:
+    module: order_flow
+    compute_func: compute_wall_features_from_df
+    dependencies:
+    - atr_f
+    required_columns:
+    - atr
+    - close
+    output_columns:
+    - wall_bid_notional_usd_max
+    - wall_ask_notional_usd_max
+    - wall_bid_price
+    - wall_ask_price
+    - wall_nearest_dist_atr
+    - wall_persist_sec
+    - wall_cancel_rate_5m
+    - wall_eaten_ratio_1h
+    category: order_flow
+    description: 'T5α orderbook wall snapshots joined to bars (Vision bookDepth or REST depth).'
+    compute_params:
+      depth_dir: null
+      on_missing: nan
+      atr_col: atr
+    pass_full_df: true
+
   vpin_semantic_scores_f:
     module: enhanced
     compute_func: compute_vpin_semantic_scores_from_series

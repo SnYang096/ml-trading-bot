@@ -601,6 +601,42 @@ def _multileg_stats(
             unrealized += float(u)
             by_strategy[strat]["unrealized_pnl"] += float(u)
 
+        # ── orphan-open-position fallback ──────────────────────────────
+        # Some strategies (e.g. trend_scalp) write open legs to
+        # multi_leg_positions but never create entry rows in
+        # multi_leg_orders.  For each open leg not yet represented in
+        # pnl_map, compute unrealized PnL directly from entry_price
+        # and the current mark price.
+        _orphan_pos_rows = query_rows(
+            multi_leg_db,
+            "SELECT leg_id, side, entry_price, quantity, strategy "
+            "FROM multi_leg_positions WHERE status = 'open' AND symbol = ?",
+            (sym,),
+        )
+        _covered_keys = set(pnl_map.keys())
+        for _pos in _orphan_pos_rows:
+            _leg = str(_pos.get("leg_id") or "").strip()
+            if not _leg:
+                continue
+            # Skip if the leg already has a PnL record from the order-based path
+            if _leg in _covered_keys:
+                continue
+            _side = str(_pos.get("side") or "").upper()
+            _ep = float(_pos.get("entry_price") or 0)
+            _qty = float(_pos.get("quantity") or 0)
+            _mark = float((mark_prices or {}).get(sym) or 0)
+            if _ep <= 0 or _qty <= 0 or _mark <= 0:
+                continue
+            if _side == "LONG":
+                _upnl = (_mark - _ep) * _qty
+            elif _side == "SHORT":
+                _upnl = (_ep - _mark) * _qty
+            else:
+                continue
+            _strat = str(_pos.get("strategy") or "multi_leg").lower()
+            unrealized += _upnl
+            by_strategy[_strat]["unrealized_pnl"] += _upnl
+
         for item in _multileg_realized_rows(multi_leg_db, sym):
             exit_ts = int(item.get("exit_time") or 0)
             if since_ts is not None and exit_ts < since_ts:

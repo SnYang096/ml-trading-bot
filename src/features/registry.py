@@ -334,6 +334,9 @@ FEATURE_MODULES = [
     "src.features.time_series.box_structure_features",
     # Session & Microstructure features
     "src.features.time_series.session_features",
+    # T5 orderbook wall + liquidation proxy
+    "src.features.time_series.wall_features",
+    "src.features.time_series.t5_liquidation_proxy_features",
 ]
 
 _features_registered = False
