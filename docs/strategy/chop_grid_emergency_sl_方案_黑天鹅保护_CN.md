@@ -147,11 +147,48 @@ Emergency SL：
 
 ---
 
-## 6. 实验方案建议
+## 6. 实验方案与结果（2026-06-15 已完成）
 
-如果决定加 Emergency SL，建议先做实验验证影响。
+实验目录：`config/experiments/20260615_chop_grid_emergency_sl/`  
+决策记录：`config/experiments/20260615_chop_grid_emergency_sl/DECISION.md`
 
-### 6.1 实验设计
+### 6.1 Phase A — spacing × mult `per_leg_stop_loss`
+
+| Variant | 四段合计 return | 平均 Sharpe | `grid_sl` 触发率 |
+|---------|----------------|-------------|-----------------|
+| **baseline** (`per_leg_stop_loss: false`) | **+58.8%** | 7.60 | 0% |
+| sl_4x | +7.1% | 1.99 | **21.4%** |
+| sl_6x | +29.8% | 4.29 | 9.6% |
+| sl_8x | +39.0% | 5.11 | 5.2% |
+
+**结论**：spacing 绑定的 per-leg SL 假止损率过高，显著侵蚀 edge；**不开启**。
+
+### 6.2 Phase B — entry-% `emergency_stop_loss`
+
+| Variant | `trigger_pct` | 四段合计 return | `emergency_sl` 触发率 |
+|---------|---------------|----------------|----------------------|
+| baseline | off | **+58.8%** | 0% |
+| em_12 | -12% | +56.6% | 0% |
+| em_15 | -15% | +58.8% | 0% |
+| em_20 | -20% | +58.8% | 0% |
+
+**结论**：`max_loss_per_grid`（3%）+ `regime_exit` 先于 entry-% 阈值触发；emergency SL 全程未生效，**不开启**。
+
+### 6.3 Phase C — 极端窗口 stress
+
+窗口：`bear_2022`、`luna_crash_2022`、`ftx_crash_2022`（1min 执行；`covid_crash_2020` 因 FeatureStore 起始于 2022-02 跳过）。
+
+| 窗口 (baseline) | return | Sharpe | `risk_exit` | `regime_exit` | 单腿最差 pnl |
+|----------------|--------|--------|-------------|---------------|-------------|
+| bear_2022 | +20.5% | 8.16 | 6 (0.3%) | 519 (24%) | -7.8% |
+| luna_crash_2022 | +2.7% | 6.85 | 6 (2.0%) | 28 (9%) | -7.8% |
+| ftx_crash_2022 | +1.7% | 7.39 | 0 | 50 (26%) | -3.5% |
+
+四 variant（baseline / em_12 / em_15 / em_20）在 stress 窗口结果**完全一致**，`emergency_sl` 触发 **0%**。
+
+**结论**：极端行情下单腿亏损仍远低于 -12% 阈值，现有 basket 风控已足够；**不开启** entry-% emergency SL。
+
+### 6.4 原实验设计（存档）
 
 **实验组 A：无 Emergency SL（基线）**
 - 配置：`per_leg_stop_loss: false`
@@ -169,23 +206,11 @@ Emergency SL：
 - 配置：`emergency_stop_loss_pct: 0.20`
 - 触发条件：价格偏离 entry 价格 ≥ 20%
 
-### 6.2 评估指标
+### 6.5 关键问题（已回答）
 
-| 指标 | 基线（无 SL） | 弱 | 中 | 强 |
-|------|-------------|---|---|---|
-| 总收益 | — | | | |
-| 夏普比率 | — | | | |
-| 最大回撤 | — | | | |
-| 交易次数 | — | | | |
-| SL 触发次数 | 0 | ? | ? | ? |
-| 假止损占比 | 0% | ? | ? | ? |
-| 黑天鹅保护次数 | 0 | ? | ? | ? |
-
-### 6.3 关键问题
-
-1. **假止损率**：多少次 Emergency SL 触发后价格反弹？
-2. **对夏普比率的影响**：SL 保护是否抵消了策略收益？
-3. **极端行情回测**：在历史极端行情（如 2020 年 3 月、2022 年 5 月）中的表现
+1. **假止损率**：spacing SL 5–21%；entry-% emergency SL **0%**（从未触发）
+2. **对夏普比率的影响**：spacing SL 显著拉低 Sharpe；entry-% 无差异
+3. **极端行情回测**：bear/LUNA/FTX 窗口下单腿最差 ~-7.8%，现有 `max_loss_per_grid` + `regime_exit` 先平仓
 
 ---
 
@@ -260,36 +285,36 @@ def _check_emergency_stop_loss(self, position, current_price):
 
 ---
 
-## 8. 最终建议
+## 8. 最终建议（2026-06-15 实验后更新）
 
-### 8.1 短期（不改动）
+### 8.1 决策：**不开启任何 SL**
 
-- **当前配置保持不变**（`per_leg_stop_loss: false`）
-- 原因：
-  - 现有三层保护在正常市场下已足够
-  - chop_grid 回撤非常小（已验证）
-  - Emergency SL 对策略逻辑有潜在负面影响
+经 Phase A/B/C 三轮回测验证，**维持 prod 现状**：
 
-### 8.2 中期（实验验证）
+```yaml
+# live/highcap/config/strategies/chop_grid/archetypes/execution.yaml
+risk:
+  per_leg_stop_loss: false
+  max_loss_per_grid: 0.03
+  force_exit_on_regime_loss: true
+  # 不添加 emergency_stop_loss
+```
 
-- 在历史数据上做实验（见第 6 节）
-- 重点关注：
-  - 假止损率
-  - 对夏普比率的影响
-  - 极端行情下的保护效果
+| 方案 | 结论 | 原因 |
+|------|------|------|
+| spacing × mult `per_leg_stop_loss` | ❌ 不开启 | 假止损 5–21%，四段收益少 20–50pp |
+| entry-% `emergency_stop_loss` | ❌ 不开启 | canonical + stress 窗口触发率 0%，单腿最差 ~-7.8% |
+| 交易所 STOP_MARKET（live 兜底） | ❌ 暂不挂 | 回测无法验证闪崩/宕机；现有 basket 风控已覆盖历史极端行情 |
 
-### 8.3 长期（条件性开启）
+### 8.2 现有三层保护已足够
 
-- 如果实验表明 **假止损率 < 5%** 且 **对夏普比率影响 < 10%**：
-  - 开启 `emergency_stop_loss.enabled: true`
-  - 建议参数：`trigger_pct: 0.15`（-15%）
-- 如果实验表明假止损率过高或对策略伤害大：
-  - 保持 `enabled: false`
-  - 考虑其他替代方案（如多交易所分散、期权对冲等）
+- `max_levels_per_side: 3` — 仓位上限
+- `max_loss_per_grid: 0.03` — basket 级 3% 止损（stress 窗口 LUNA 段 `risk_exit` ~2%）
+- `force_exit_on_regime_loss: true` — regime 失效强平（stress 窗口 `regime_exit` 9–26%）
 
-### 8.4 替代方案（如果担心交易所风险）
+### 8.3 替代方案（如果担心交易所风险）
 
-如果核心担忧是**交易所宕机**而非**价格极端波动**，Emergency SL 帮不上忙。可以考虑：
+如果核心担忧是**交易所宕机**而非**价格极端波动**，per-leg / entry-% SL 帮不上忙。可以考虑：
 
 1. **多交易所部署**：同时在币安、OKX 运行，分散风险
 2. **定期 reconcile**：已实现的 `sync_live_exchange_state` + 定期 reconcile
@@ -302,11 +327,12 @@ def _check_emergency_stop_loss(self, position, current_price):
 
 | 问题 | 答案 |
 |------|------|
-| chop_grid 需要 Emergency SL 吗？ | **不一定需要**，现有保护已足够应对正常市场 |
-| 现有保护和 Emergency SL 的区别？ | 现有保护是**策略逻辑内**的，Emergency SL 是**策略逻辑外**的兜底 |
+| chop_grid 需要 Emergency SL 吗？ | **不需要** — 实验已验证，现有三层保护足够 |
+| spacing `per_leg_stop_loss` 要开吗？ | **不开** — 假止损率高，收益损失 20–50pp |
+| entry-% `emergency_stop_loss` 要开吗？ | **不开** — 历史 + stress 窗口触发率 0% |
+| 现有保护和 Emergency SL 的区别？ | 现有保护是**策略逻辑内**的 basket 风控；Emergency SL 是**单腿 entry-%** 兜底 |
 | 币安 SL 在宕机时有用吗？ | ❌ **没用**，SL 也在交易所，宕机时无法执行 |
-| 什么时候需要加？ | 黑天鹅频发、或者你对极端风险极度厌恶时 |
-| 建议怎么做？ | **先做实验**，验证假止损率和收益影响后再决定 |
+| prod 配置？ | `per_leg_stop_loss: false`，不添加 `emergency_stop_loss` |
 
 ---
 

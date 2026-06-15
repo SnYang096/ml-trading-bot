@@ -1,12 +1,7 @@
-# chop_grid emergency SL — extreme-window stress (entry-% + baseline)
-#
-# Run:
-#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
-#     --variant-grid config/experiments/20260615_chop_grid_emergency_sl/chop_grid_emergency_sl_stress_grid.yaml
-
+# Remaining stress segments (bear_2022 already completed)
 engine: chop_grid
 strategy: chop_grid
-experiment_id: chop_grid_emergency_sl_stress_20260615
+experiment_id: chop_grid_emergency_sl_stress_remainder_20260615
 
 symbols:
   - BTCUSDT
@@ -24,7 +19,6 @@ market_segment_path: config/experiments/20260615_chop_grid_emergency_sl/market_s
 
 segment_matrix:
   segments:
-    - bear_2022
     - luna_crash_2022
     - ftx_crash_2022
   variants:

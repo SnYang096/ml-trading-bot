@@ -24,7 +24,9 @@ Judgement (from design doc): promote if `emergency_sl` rate < 5% and Sharpe drop
 
 ## Phase C — extreme-window stress
 
-Windows in `market_segment_stress.yaml`: `bear_2022`, `covid_crash_2020`, `luna_crash_2022`, `ftx_crash_2022`.
+Windows in `market_segment_stress.yaml`: `bear_2022`, `luna_crash_2022`, `ftx_crash_2022`.
+
+`covid_crash_2020` omitted — FeatureStore `features_chop_grid_120T` starts 2022-02.
 
 ```bash
 PYTHONPATH=src:scripts python -m scripts.event_backtest \
@@ -32,3 +34,9 @@ PYTHONPATH=src:scripts python -m scripts.event_backtest \
 ```
 
 Results: `results/chop_grid/experiments/emergency_sl_stress_20260615/QUICK_SUMMARY.md`
+
+## Decision (2026-06-15)
+
+**Do not enable** `per_leg_stop_loss` or `emergency_stop_loss`. Keep prod `execution.yaml` as-is.
+
+See `DECISION.md` and `docs/strategy/chop_grid_emergency_sl_方案_黑天鹅保护_CN.md` §6–§9.
