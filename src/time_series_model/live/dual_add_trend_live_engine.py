@@ -192,9 +192,7 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
     def __init__(
         self,
         *,
-        config_path: (
-            str | Path
-        ) = "config/strategies/trend_scalp/research/calibrate_roll.default.yaml",
+        config_path: str | Path = "live/highcap/config/strategies/trend_scalp",
         state_path: str | Path = "results/trend_scalp/live_state.json",
         unit_notional: float = 1.0,
         metrics_strategy: str = "",

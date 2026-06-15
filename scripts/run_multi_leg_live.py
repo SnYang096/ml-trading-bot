@@ -762,7 +762,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--dual-add-config",
-        default="config/strategies/trend_scalp/research/calibrate_roll.default.yaml",
+        default="live/highcap/config/strategies/trend_scalp",
     )
     return p.parse_args()
 
