@@ -124,6 +124,7 @@ class DualAddTrendState:
     inventory: List[DualAddPosition] = field(default_factory=list)
     last_timestamp: str = ""
     bar_index: int = 0
+    last_entry_signal_ts: str = ""
     last_reconciliation_ok: bool = True
     last_reconciliation_issues: List[str] = field(default_factory=list)
     block_reseed_after_flip: bool = False
@@ -307,6 +308,8 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
             inventory=inventory,
             last_timestamp=str(raw.get("last_timestamp", "")),
             bar_index=int(raw.get("bar_index", 0) or 0),
+            last_entry_signal_ts=str(raw.get("last_entry_signal_ts", "")),
+            block_reseed_after_flip=bool(raw.get("block_reseed_after_flip", False)),
             last_reconciliation_ok=bool(raw.get("last_reconciliation_ok", True)),
             last_reconciliation_issues=[
                 str(x) for x in raw.get("last_reconciliation_issues", [])
@@ -400,6 +403,7 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
             and trend_conf >= self.cfg.entry_trend_min
             and chop <= self.cfg.max_entry_chop
             and not (self.cfg.exclude_box_prefilter and is_box)
+            and self._entry_decision_allowed(features, timestamp)
         )
         if should_enter:
             gate = getattr(self, "_concurrency_gate", None)
@@ -411,6 +415,7 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
             actions.extend(
                 self._start_segment(symbol, timestamp, close, atr, trend_side)
             )
+            self._mark_entry_signal_used(features, timestamp)
             self.save_state()
             self._record_trend_bar_audit(
                 symbol,
@@ -443,7 +448,9 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
                     not self.state.inventory
                     and not self.state.pending_orders
                     and not self.state.block_reseed_after_flip
+                    and self._entry_decision_allowed(features, timestamp)
                 ):
+                    self._mark_entry_signal_used(features, timestamp)
                     actions.extend(
                         self._seed_inventory_orders(close, timestamp, trend_side)
                     )
@@ -774,6 +781,9 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
             last_timestamp=timestamp,
             bar_index=0,
             block_reseed_after_flip=False,
+            last_entry_signal_ts=str(
+                getattr(self.state, "last_entry_signal_ts", "") or ""
+            ),
         )
         gate = getattr(self, "_concurrency_gate", None)
         if gate is not None:

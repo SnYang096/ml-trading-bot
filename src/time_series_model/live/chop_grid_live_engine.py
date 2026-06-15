@@ -86,6 +86,7 @@ class GridState:
     pending_orders: List[GridOrder] = field(default_factory=list)
     inventory: List[GridPosition] = field(default_factory=list)
     last_timestamp: str = ""
+    last_entry_signal_ts: str = ""
     current_regime: str = "idle"
     last_reconciliation_ok: bool = True
     last_reconciliation_issues: List[str] = field(default_factory=list)
@@ -366,6 +367,7 @@ class ChopGridLiveEngine(SegmentLifecycleMixin):
             pending_orders=pending_orders,
             inventory=inventory,
             last_timestamp=str(raw.get("last_timestamp", "")),
+            last_entry_signal_ts=str(raw.get("last_entry_signal_ts", "")),
             current_regime=str(raw.get("current_regime", "idle")),
             last_reconciliation_ok=bool(raw.get("last_reconciliation_ok", True)),
             last_reconciliation_issues=[
@@ -1293,8 +1295,10 @@ class ChopGridLiveEngine(SegmentLifecycleMixin):
             self._reconcile_legacy_active_flag()
             if not should_exit:
                 self.clear_stale_active_if_ghost()
-        should_enter = wanted_enter and segment_allows_new_entry(
-            self.state.segment_state
+        should_enter = (
+            wanted_enter
+            and segment_allows_new_entry(self.state.segment_state)
+            and self._entry_decision_allowed(features, timestamp)
         )
 
         self.state.last_timestamp = timestamp
@@ -1304,6 +1308,7 @@ class ChopGridLiveEngine(SegmentLifecycleMixin):
                 should_enter = False
             else:
                 actions.extend(self._start_grid(symbol, timestamp, close, atr))
+                self._mark_entry_signal_used(features, timestamp)
 
         if (
             segment_occupies_slot(self.state.segment_state)
@@ -1368,6 +1373,9 @@ class ChopGridLiveEngine(SegmentLifecycleMixin):
             center=close,
             spacing=spacing,
             last_timestamp=timestamp,
+            last_entry_signal_ts=str(
+                getattr(self.state, "last_entry_signal_ts", "") or ""
+            ),
             current_regime="chop_grid",
             level_replenish_count={},
         )

@@ -648,3 +648,205 @@ def test_chop_market_exit_shadow_does_not_clear_inventory(
 
     # shadow = paper mode, no real fill → inventory must remain
     assert engine.state.inventory == [pos]
+
+
+def test_closing_deactivates_despite_exchange_open_orders(tmp_path: Path) -> None:
+    engine = DualAddTrendLiveEngine(
+        config_path=_trend_config(tmp_path),
+        state_path=tmp_path / "closing_force.json",
+        unit_notional=100.0,
+    )
+    engine.state.active = True
+    engine.state.segment_state = SegmentState.CLOSING.value
+    engine.state.symbol = "BTCUSDT"
+    engine.state.inventory = []
+    engine.state.pending_orders = []
+    engine._exchange_open_orders = True
+
+    engine._maybe_deactivate_if_fully_closed()
+
+    assert engine.state.active is False
+    assert engine.state.segment_state == SegmentState.IDLE.value
+
+
+def test_late_fill_winding_down_skips_protection_actions(tmp_path: Path) -> None:
+    engine = DualAddTrendLiveEngine(
+        config_path=_trend_config(tmp_path),
+        state_path=tmp_path / "late_no_prot.json",
+        unit_notional=100.0,
+    )
+    engine.state.active = True
+    engine.state.segment_state = SegmentState.CLOSING.value
+    engine.state.symbol = "BTCUSDT"
+    engine.state.segment_id = "seg"
+    order = DualAddOrder(
+        order_id="entry_0",
+        symbol="BTCUSDT",
+        side="BUY",
+        price=100.0,
+        quantity=1.0,
+        reason="initial_trend",
+        exchange_order_id="ex_late2",
+        client_order_id="cl_late2",
+        reference_price=100.0,
+        max_slippage_bps=5.0,
+        seq=0,
+        created_bar=0,
+    )
+    engine.state.pending_orders = [order]
+
+    engine.on_execution_report(
+        {
+            "order_id": "ex_late2",
+            "client_order_id": "cl_late2",
+            "symbol": "BTCUSDT",
+            "status": "FILLED",
+            "filled_qty": 1.0,
+            "last_filled_price": 100.0,
+            "trade_time": "2026-01-01T02:00:00Z",
+        }
+    )
+
+    pending = engine.pop_pending_actions()
+    assert any(a.get("action") == "market_exit" for a in pending)
+    assert not any(a.get("action") == "place_protection" for a in pending)
+
+
+def test_terminal_archived_order_not_reprocessed(tmp_path: Path) -> None:
+    engine = DualAddTrendLiveEngine(
+        config_path=_trend_config(tmp_path),
+        state_path=tmp_path / "archived_skip.json",
+        unit_notional=100.0,
+    )
+    order = DualAddOrder(
+        order_id="entry_done",
+        symbol="BTCUSDT",
+        side="BUY",
+        price=100.0,
+        quantity=1.0,
+        reason="initial_trend",
+        status="filled",
+        filled_quantity=1.0,
+        exchange_order_id="ex_done",
+        client_order_id="cl_done",
+        seq=0,
+        created_bar=0,
+    )
+    engine.state._order_history = {order.order_id: order}
+
+    assert engine._find_order(exchange_id="ex_done") is None
+
+
+def test_trend_reseed_blocked_on_same_signal_timestamp(tmp_path: Path) -> None:
+    engine = DualAddTrendLiveEngine(
+        config_path=_trend_config(tmp_path),
+        state_path=tmp_path / "reseed_signal.json",
+        unit_notional=100.0,
+    )
+    engine.state.active = True
+    engine.state.segment_state = SegmentState.ACTIVE.value
+    engine.state.symbol = "BTCUSDT"
+    engine.state.segment_id = "seg"
+    engine.state.center = 100.0
+    engine.state.atr = 2.0
+    engine.state.trend_side = "LONG"
+    engine.state.last_entry_signal_ts = "2026-01-01T00:00:00Z"
+    features = {
+        "trend_confidence": 1.0,
+        "trend_direction": "UP",
+        "semantic_chop": 0.0,
+        "box_prefilter": False,
+        "_signal_timestamp": "2026-01-01T00:00:00Z",
+    }
+
+    actions = engine.on_bar(
+        symbol="BTCUSDT",
+        timestamp="2026-01-01T00:01:00Z",
+        high=101.0,
+        low=99.0,
+        close=100.0,
+        atr=2.0,
+        features=features,
+    )
+
+    assert not any(a.get("action") == "place" for a in actions)
+
+
+def test_trend_entry_once_per_signal_across_execution_bars(tmp_path: Path) -> None:
+    engine = DualAddTrendLiveEngine(
+        config_path=_trend_config(tmp_path),
+        state_path=tmp_path / "entry_signal.json",
+        unit_notional=100.0,
+    )
+    features = {
+        "trend_confidence": 1.0,
+        "trend_direction": "UP",
+        "semantic_chop": 0.0,
+        "box_prefilter": False,
+        "_signal_timestamp": "2026-01-01T00:00:00Z",
+    }
+    first = engine.on_bar(
+        symbol="BTCUSDT",
+        timestamp="2026-01-01T00:00:00Z",
+        high=101.0,
+        low=99.0,
+        close=100.0,
+        atr=2.0,
+        features=features,
+    )
+    assert any(a.get("action") == "place" for a in first)
+
+    engine.state.active = False
+    engine.state.segment_state = SegmentState.IDLE.value
+    engine.state.inventory = []
+    engine.state.pending_orders = []
+
+    second = engine.on_bar(
+        symbol="BTCUSDT",
+        timestamp="2026-01-01T00:01:00Z",
+        high=101.0,
+        low=99.0,
+        close=100.0,
+        atr=2.0,
+        features=features,
+    )
+    assert not any(a.get("action") == "place" for a in second)
+
+
+def test_chop_entry_once_per_signal_across_execution_bars(tmp_path: Path) -> None:
+    engine = ChopGridLiveEngine(
+        config_path=_chop_config(tmp_path),
+        state_path=tmp_path / "chop_signal.json",
+        level_notional=100.0,
+    )
+    features = {
+        "semantic_chop": 0.8,
+        "box_prefilter": False,
+        "_signal_timestamp": "2026-01-01T00:00:00Z",
+    }
+    first = engine.on_bar(
+        symbol="BTCUSDT",
+        timestamp="2026-01-01T00:00:00Z",
+        high=101.0,
+        low=99.0,
+        close=100.0,
+        atr=2.0,
+        features=features,
+    )
+    assert any(a.get("action") == "place" for a in first)
+
+    engine.state.active = False
+    engine.state.segment_state = SegmentState.IDLE.value
+    engine.state.inventory = []
+    engine.state.pending_orders = []
+
+    second = engine.on_bar(
+        symbol="BTCUSDT",
+        timestamp="2026-01-01T00:01:00Z",
+        high=101.0,
+        low=99.0,
+        close=100.0,
+        atr=2.0,
+        features=features,
+    )
+    assert not any(a.get("action") == "place" for a in second)

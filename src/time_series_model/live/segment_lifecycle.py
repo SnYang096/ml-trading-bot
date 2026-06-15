@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from enum import Enum
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,30 @@ def segment_occupies_slot(segment_state: str) -> bool:
 
 def segment_allows_new_entry(segment_state: str) -> bool:
     return segment_state == SegmentState.IDLE.value
+
+
+def entry_signal_timestamp(features: Mapping[str, Any], bar_timestamp: str) -> str:
+    """Stable 2h (or primary signal) timestamp for entry/reseed decisions."""
+    raw = features.get("_signal_timestamp")
+    if raw is not None and str(raw).strip():
+        return str(raw)
+    logger.debug(
+        "entry_signal_timestamp: _signal_timestamp missing in features, "
+        "falling back to bar_timestamp=%s — dedup will be per-execution-bar",
+        bar_timestamp,
+    )
+    return str(bar_timestamp)
+
+
+def entry_decision_allowed_for_signal(
+    *,
+    last_entry_signal_ts: str,
+    features: Mapping[str, Any],
+    bar_timestamp: str,
+) -> bool:
+    """One entry/reseed attempt per signal bar (ignore 1min execution bar churn)."""
+    signal_ts = entry_signal_timestamp(features, bar_timestamp)
+    return signal_ts != str(last_entry_signal_ts or "")
 
 
 def migrate_segment_state_from_legacy(
@@ -55,6 +79,7 @@ class _SegmentLifecycleState(Protocol):
     pending_orders: list[Any]
     inventory: list[Any]
     current_regime: str
+    last_entry_signal_ts: str
 
 
 class SegmentLifecycleMixin:
@@ -67,6 +92,24 @@ class SegmentLifecycleMixin:
 
     def save_state(self) -> None:  # noqa: E704
         ...
+
+    def _entry_decision_allowed(
+        self, features: Mapping[str, Any], bar_timestamp: str
+    ) -> bool:
+        return entry_decision_allowed_for_signal(
+            last_entry_signal_ts=str(
+                getattr(self.state, "last_entry_signal_ts", "") or ""
+            ),
+            features=features,
+            bar_timestamp=bar_timestamp,
+        )
+
+    def _mark_entry_signal_used(
+        self, features: Mapping[str, Any], bar_timestamp: str
+    ) -> None:
+        self.state.last_entry_signal_ts = entry_signal_timestamp(
+            features, bar_timestamp
+        )
 
     def _log_stale_active_reset(self) -> None:
         raise NotImplementedError
