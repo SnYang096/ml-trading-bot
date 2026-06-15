@@ -224,6 +224,14 @@ class MultiLegLiveDaemon:
                         exchange_orders, exchange_positions = self._exchange_snapshot(
                             sym, rt, exchange_snapshots
                         )
+                    # Force sync inventory with exchange truth during reconcile
+                    live_sync = getattr(rt.engine, "sync_live_exchange_state", None)
+                    if callable(live_sync):
+                        self._last_exchange_synced_at[sym] = time.monotonic()
+                        live_sync(
+                            exchange_orders=exchange_orders,
+                            exchange_positions=exchange_positions,
+                        )
                     self._last_reconciled_at[sym] = time.monotonic()
                 report = rt.orchestrator.run_actions(
                     actions,
