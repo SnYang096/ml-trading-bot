@@ -35,7 +35,9 @@ from scripts.diagnose_chop_grid import (
 from scripts.capital_report import write_capital_report_from_trades
 from src.live_data_stream.constitution_config import (
     load_multi_leg_backtest_risk_context,
+    max_segment_starts_per_symbol_per_day_from_constitution,
 )
+from src.order_management.chop_grid_concurrency import filter_segment_spans_by_daily_cap
 from scripts.diagnose_crf_edge import _load_symbol_1m, _resample_ohlcv
 from src.time_series_model.grid.subbar_replay import (
     merge_signal_features_onto_execution_bars,
@@ -637,6 +639,7 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
         initial_capital=float(getattr(args, "initial_capital", 10_000.0) or 10_000.0),
         strategy="trend_scalp",
     )
+    daily_segment_cap = max_segment_starts_per_symbol_per_day_from_constitution()
     cfg = DualAddConfig(
         regime=args.regime,
         add_mode=args.add_mode,
@@ -765,6 +768,14 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
             min_len=cfg.min_segment_bars,
             max_len=cfg.max_segment_bars,
         )
+        if daily_segment_cap > 0:
+            segs = filter_segment_spans_by_daily_cap(
+                segs,
+                df.index,
+                symbol=symbol,
+                strategy="trend_scalp",
+                max_starts_per_day=daily_segment_cap,
+            )
         print(f"{symbol}: segments={len(segs)}")
         for seq, (s, e) in enumerate(segs, start=1):
             seg_id = f"{symbol}_{seq:04d}_{df.index[s].strftime('%Y%m%d%H%M')}"

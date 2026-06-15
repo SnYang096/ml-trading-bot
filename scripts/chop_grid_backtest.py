@@ -54,6 +54,10 @@ from scripts.pipeline.multileg_prefilter_rules import (  # noqa: E402
 )
 from src.live_data_stream.constitution_config import (  # noqa: E402
     load_multi_leg_backtest_risk_context,
+    max_segment_starts_per_symbol_per_day_from_constitution,
+)
+from src.order_management.chop_grid_concurrency import (  # noqa: E402
+    filter_segment_spans_by_daily_cap,
 )
 from src.time_series_model.grid.chop_grid_engine import (  # noqa: E402
     ChopGridEngine,
@@ -297,6 +301,7 @@ def collect_chop_grid_trades_for_symbol(
     parquet_data_dir: Path | None = None,
     account_risk_tracker=None,
     unit_notional_usdt: float = 0.0,
+    max_segment_starts_per_day: int = 0,
 ) -> Tuple[List[dict], List[dict], int, float]:
     """Simulate chop grid for one symbol given pre-built feature ``df`` (signal timeframe).
 
@@ -329,6 +334,14 @@ def collect_chop_grid_trades_for_symbol(
         min_len=cfg.min_segment_bars,
         max_len=cfg.max_segment_bars,
     )
+    if max_segment_starts_per_day > 0:
+        segs = filter_segment_spans_by_daily_cap(
+            segs,
+            df.index,
+            symbol=symbol,
+            strategy="chop_grid",
+            max_starts_per_day=max_segment_starts_per_day,
+        )
     entry_rate = float(entry_mask.mean()) if len(entry_mask) else 0.0
     trades_out: List[dict] = []
     summaries_out: List[dict] = []
@@ -480,6 +493,7 @@ def run_backtest(
         initial_capital=float(getattr(args, "initial_capital", 10_000.0) or 10_000.0),
         strategy="chop_grid",
     )
+    daily_segment_cap = max_segment_starts_per_symbol_per_day_from_constitution()
 
     for symbol in symbols:
         raw = _load_symbol_1m(data_dir, symbol, warmup_start, end)
@@ -524,6 +538,7 @@ def run_backtest(
             parquet_data_dir=data_dir,
             account_risk_tracker=risk_tracker,
             unit_notional_usdt=unit_notional,
+            max_segment_starts_per_day=daily_segment_cap,
         )
         print(f"{symbol}: segments={n_seg}, entry_rate={entry_rate:.1%}")
         all_trades.extend(tlist)

@@ -521,7 +521,9 @@ class LivePCM:
             )
 
         # ── 每日入场节流 (max_new_entries_per_day) ──
-        self._daily_entry_counts: Dict[tuple, int] = {}  # (family, date_str) -> count
+        self._daily_entry_counts: Dict[tuple, int] = (
+            {}
+        )  # (family, symbol, date_str) -> count
         self._daily_entry_limits: Dict[str, Optional[int]] = {}
         _psl = self._constitution.get("per_strategy_limits") or {}
         for _fam, _cfg in _psl.items():
@@ -1483,7 +1485,7 @@ class LivePCM:
                 )
                 _throttle_limit = self._daily_entry_limits.get(_fam_throttle)
                 if _throttle_limit is not None:
-                    _dk = (_fam_throttle, _pcm_day)
+                    _dk = (_fam_throttle, str(symbol or "").upper().strip(), _pcm_day)
                     if self._daily_entry_counts.get(_dk, 0) >= _throttle_limit:
                         self._last_decide_trace["drop_daily_limit"] = (
                             int(self._last_decide_trace.get("drop_daily_limit", 0) or 0)
@@ -1520,7 +1522,7 @@ class LivePCM:
                     intent.archetype, intent.action
                 )
                 if _fam_rec in self._daily_entry_limits:
-                    _dk = (_fam_rec, _pcm_day)
+                    _dk = (_fam_rec, str(symbol or "").upper().strip(), _pcm_day)
                     self._daily_entry_counts[_dk] = (
                         self._daily_entry_counts.get(_dk, 0) + 1
                     )

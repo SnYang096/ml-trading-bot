@@ -122,6 +122,33 @@ class TestLivePCMBacktestParity:
         )
         assert len(out4) == 1
 
+    def test_pcm_daily_throttle_is_per_symbol(self):
+        """limit=1: BTC and ETH each get one new entry on the same UTC day."""
+        pcm = LivePCM(max_slots=10)
+        pcm._daily_entry_limits["me"] = 1
+        pcm.register("me", FakeStrategy(intents=[_make_intent("ME")]))
+        base_feat = {"close": 50000.0, "ema_200": 40000.0, "volume": 1.0}
+        day_a = pd.Timestamp("2024-11-07 00:00:00+00:00")
+        out_btc = pcm.decide(
+            features={**base_feat, "timestamp": day_a},
+            symbol="BTCUSDT",
+            decision_time=day_a,
+        )
+        out_eth = pcm.decide(
+            features={**base_feat, "timestamp": day_a},
+            symbol="ETHUSDT",
+            decision_time=day_a,
+        )
+        assert len(out_btc) == 1
+        assert len(out_eth) == 1
+        pcm.notify_position_closed("BTCUSDT", "ME")
+        out_btc2 = pcm.decide(
+            features={**base_feat, "timestamp": day_a},
+            symbol="BTCUSDT",
+            decision_time=day_a,
+        )
+        assert out_btc2 == []
+
     def test_hydrate_slot_evidence_from_constitution_slots_restart_recovery(self):
         """Persisted constitution slots refill PCM memory across fake 'restart'."""
         from src.time_series_model.core.constitution.runtime_state import (

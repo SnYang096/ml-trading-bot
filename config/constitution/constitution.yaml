@@ -152,6 +152,7 @@ slots:
 #   Layer 0: slots.risk_per_slot = 每 slot 最大风险 (宪法硬上限)
 #   Layer 1: slot_policy = trend/fat-tail 账户池的 symbol 级 slot 规则
 #   Layer 1: per_strategy_limits = 每策略风险/加仓/日内节流上限 (max_risk_per_trade ≤ risk_per_slot)
+#   非高频约定: max_new_entries_per_day=1 → 每 UTC 日 × 每 symbol × 每策略 最多 1 次新开仓/段
 #   Layer 2: pcm_regime.yaml 的仲裁策略在这些限制内运行
 #
 # 约束规则:
@@ -227,21 +228,25 @@ resource_allocation:
       allow_add_position: true
       max_add_times: 3
       require_locked_profit: true
+      max_new_entries_per_day: 1
     bpc:
       max_risk_per_trade: 0.01
       allow_add_position: true
       max_add_times: 2
       require_locked_profit: true
+      max_new_entries_per_day: 1
     me:
       max_risk_per_trade: 0.01
       allow_add_position: true
       max_add_times: 2
       require_locked_profit: true
+      max_new_entries_per_day: 1
     srb:
       max_risk_per_trade: 0.01
       allow_add_position: true
       max_add_times: 2
       require_locked_profit: true
+      max_new_entries_per_day: 1
 
   # 未配置 direction_policy 时 LivePCM 不做事：方向由各策略 / gate 决定。
   # 若要在 PCM 层用 BTC close vs ema_200 再挡逆势单，可恢复 resource_allocation.direction_policy.enabled
@@ -304,7 +309,7 @@ multi_leg:
     # Experiment 20260612_chop_grid_cooldown_protect: 3 bars +0.93%, -86% conflicts.
     strategy_switch_cooldown_bars: 3
     # UTC calendar day cap: each (symbol, strategy) may open at most N new segments.
-    # Stops 1min execution-bar churn from re-arming trend_scalp every minute.
+    # C-system parity with B max_new_entries_per_day; stops 1min bar re-arm churn.
     max_segment_starts_per_symbol_per_day: 1
     # Maximum number of resting open orders across all multi-leg strategies.
     max_resting_orders: 60 # Cap on open limit orders (grid + dual-add combined).

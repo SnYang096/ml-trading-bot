@@ -543,6 +543,21 @@ def load_multi_leg_backtest_risk_context(
     return tracker, unit
 
 
+def max_segment_starts_per_symbol_per_day_from_constitution(
+    *,
+    strategies_root: Optional[str] = None,
+    constitution_yaml: Optional[str] = None,
+) -> int:
+    sr = strategies_root or os.getenv("MLBOT_STRATEGIES_ROOT", "live/highcap/config/strategies")
+    path = resolve_constitution_yaml(sr, override=constitution_yaml)
+    ml = multi_leg_section(load_constitution_dict(path))
+    rs = ml.get("risk_limits") or {}
+    if not isinstance(rs, dict):
+        return 0
+    raw = rs.get("max_segment_starts_per_symbol_per_day")
+    return int(raw) if raw is not None else 0
+
+
 def resolve_multi_leg_risk_limits_from_constitution(
     cfg: Dict[str, Any],
 ) -> Dict[str, Optional[float]]:

@@ -398,3 +398,59 @@ def test_cooldown_independent_per_symbol() -> None:
     assert gate.allow_new_segment("BTCUSDT", strategy="chop_grid") is False
     # ETH chop should be fine (no cooldown on ETHUSDT)
     assert gate.allow_new_segment("ETHUSDT", strategy="chop_grid") is True
+
+
+def test_filter_segment_spans_by_daily_cap() -> None:
+    import pandas as pd
+
+    from src.order_management.chop_grid_concurrency import (
+        filter_segment_spans_by_daily_cap,
+    )
+
+    idx = pd.date_range("2024-01-01", periods=10, freq="2h", tz="UTC")
+    segs = [(0, 1), (2, 3), (4, 5)]
+    kept = filter_segment_spans_by_daily_cap(
+        segs,
+        idx,
+        symbol="BTCUSDT",
+        strategy="chop_grid",
+        max_starts_per_day=1,
+    )
+    assert kept == [(0, 1)]
+
+
+def test_gate_evaluation_utc_day_resets_daily_cap() -> None:
+    gate = MultiLegConcurrencyGate(6, max_segment_starts_per_symbol_per_day=1)
+    gate.set_evaluation_utc_day("2024-01-01")
+    gate.record_segment_start("BTCUSDT", "trend_scalp")
+    assert gate.allow_new_segment("BTCUSDT", strategy="trend_scalp") is False
+    gate.set_evaluation_utc_day("2024-01-02")
+    assert gate.allow_new_segment("BTCUSDT", strategy="trend_scalp") is True
+
+
+def test_filter_segment_spans_by_daily_cap() -> None:
+    import pandas as pd
+
+    from src.order_management.chop_grid_concurrency import (
+        filter_segment_spans_by_daily_cap,
+    )
+
+    idx = pd.date_range("2024-01-01", periods=10, freq="2h", tz="UTC")
+    segs = [(0, 1), (2, 3), (4, 5)]
+    kept = filter_segment_spans_by_daily_cap(
+        segs,
+        idx,
+        symbol="BTCUSDT",
+        strategy="chop_grid",
+        max_starts_per_day=1,
+    )
+    assert kept == [(0, 1)]
+
+
+def test_gate_evaluation_utc_day_resets_daily_cap() -> None:
+    gate = MultiLegConcurrencyGate(6, max_segment_starts_per_symbol_per_day=1)
+    gate.set_evaluation_utc_day("2024-01-01")
+    gate.record_segment_start("BTCUSDT", "trend_scalp")
+    assert gate.allow_new_segment("BTCUSDT", strategy="trend_scalp") is False
+    gate.set_evaluation_utc_day("2024-01-02")
+    assert gate.allow_new_segment("BTCUSDT", strategy="trend_scalp") is True

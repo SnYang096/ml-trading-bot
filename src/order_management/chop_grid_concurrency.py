@@ -5,11 +5,49 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
 BAR_MINUTES = 120  # 2h bar duration for cooldown unit
+
+
+def utc_day_key_from_timestamp(ts: Any) -> str:
+    import pandas as pd
+
+    t = pd.Timestamp(ts)
+    if t.tzinfo is None:
+        t = t.tz_localize("UTC")
+    else:
+        t = t.tz_convert("UTC")
+    return t.strftime("%Y-%m-%d")
+
+
+def filter_segment_spans_by_daily_cap(
+    segments: Iterable[Tuple[int, int]],
+    index,
+    *,
+    symbol: str,
+    strategy: str,
+    max_starts_per_day: int,
+) -> List[Tuple[int, int]]:
+    """Keep at most N segment starts per (symbol, strategy, UTC day) for offline replay."""
+    cap = max(0, int(max_starts_per_day))
+    if cap <= 0:
+        return list(segments)
+    sym = str(symbol or "").upper().strip()
+    strat = str(strategy or "").strip().lower()
+    counts: Dict[Tuple[str, str, str], int] = {}
+    kept: List[Tuple[int, int]] = []
+    for span in segments:
+        s, _e = span
+        day = utc_day_key_from_timestamp(index[s])
+        key = (sym, strat, day)
+        if counts.get(key, 0) >= cap:
+            continue
+        counts[key] = counts.get(key, 0) + 1
+        kept.append(span)
+    return kept
 
 
 class MultiLegConcurrencyGate:
@@ -35,6 +73,11 @@ class MultiLegConcurrencyGate:
         self._last_deactivated: Dict[Tuple[str, str], float] = {}
         # (symbol, strategy, UTC date) → segment open count
         self._daily_starts: Dict[Tuple[str, str, str], int] = {}
+        # Backtest: override calendar day from bar timestamp (live uses wall clock).
+        self._eval_utc_day: Optional[str] = None
+
+    def set_evaluation_utc_day(self, utc_day: Optional[str]) -> None:
+        self._eval_utc_day = str(utc_day).strip() if utc_day else None
 
     def register(
         self, symbol: str, engine: Any, *, strategy: str = "chop_grid"
@@ -114,6 +157,9 @@ class MultiLegConcurrencyGate:
     def _utc_day_key() -> str:
         return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
+    def _active_utc_day(self) -> str:
+        return self._eval_utc_day or self._utc_day_key()
+
     def record_segment_start(self, symbol: str, strategy: str) -> None:
         """Count a new segment/grid open for daily per-symbol caps."""
         if self._max_daily_starts <= 0:
@@ -121,7 +167,7 @@ class MultiLegConcurrencyGate:
         key = (
             str(symbol).upper().strip(),
             str(strategy).strip().lower(),
-            self._utc_day_key(),
+            self._active_utc_day(),
         )
         self._daily_starts[key] = self._daily_starts.get(key, 0) + 1
 
@@ -129,7 +175,7 @@ class MultiLegConcurrencyGate:
         key = (
             str(symbol).upper().strip(),
             str(strategy).strip().lower(),
-            self._utc_day_key(),
+            self._active_utc_day(),
         )
         return int(self._daily_starts.get(key, 0))
 
@@ -165,7 +211,7 @@ class MultiLegConcurrencyGate:
                     strat,
                     used,
                     self._max_daily_starts,
-                    self._utc_day_key(),
+                    self._active_utc_day(),
                 )
                 return False
 

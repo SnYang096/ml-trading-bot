@@ -259,6 +259,7 @@ def run_timeline_backtest(
     max_dd = float(ks.get("max_dd", 0.20))
     max_sym = int(rs.get("max_concurrent_multi_leg_symbols", 6))
     cd = int(rs.get("strategy_switch_cooldown_bars", 3))
+    daily_starts = int(rs.get("max_segment_starts_per_symbol_per_day", 0) or 0)
     units = resolve_multi_leg_unit_notionals(
         ml, equity_usdt=equity, strategies=["chop_grid", "trend_scalp"]
     )
@@ -277,7 +278,9 @@ def run_timeline_backtest(
         DualAddTrendLiveEngine,
     )
 
-    gate = MultiLegConcurrencyGate(max_sym, cooldown_bars=cd)
+    gate = MultiLegConcurrencyGate(
+        max_sym, cooldown_bars=cd, max_segment_starts_per_symbol_per_day=daily_starts
+    )
     engines: Dict[str, Dict] = {}
     for sym in symbols:
         engines[sym] = {}
@@ -369,6 +372,12 @@ def run_timeline_backtest(
                 ]
 
         bar_ts = idx
+        if daily_starts > 0:
+            gate.set_evaluation_utc_day(
+                pd.Timestamp(bar_ts).tz_convert("UTC").strftime("%Y-%m-%d")
+                if pd.Timestamp(bar_ts).tzinfo is not None
+                else pd.Timestamp(bar_ts, tz="UTC").strftime("%Y-%m-%d")
+            )
         engs = engines.get(sym, {})
         chop_actions: list = []
         trend_actions: list = []

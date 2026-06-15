@@ -217,6 +217,7 @@ resource_allocation:
       allow_add_position: true
       max_add_times: 3
       require_locked_profit: true
+      max_new_entries_per_day: 1
 
   # 未配置 direction_policy 时 LivePCM 不做事：方向由各策略 / gate 决定。
   # 若要在 PCM 层用 BTC close vs ema_200 再挡逆势单，可恢复 resource_allocation.direction_policy.enabled

@@ -1000,7 +1000,7 @@ class EventBacktester:
                 _daily_entry_limits[s.lower()] = (
                     _executor.resolve_max_new_entries_per_day(s)
                 )
-        _daily_entry_counts: Dict[tuple, int] = {}  # (strategy, date) -> count
+        _daily_entry_counts: Dict[tuple, int] = {}  # (strategy, symbol, date) -> count
         _daily_entry_limit_log = False
         for _s, _lim in _daily_entry_limits.items():
             if _lim is not None:
@@ -1411,7 +1411,7 @@ class EventBacktester:
                         and _ts_date is not None
                         and _is_new_entry
                     ):
-                        _dk = (_arch_lc, _ts_date)
+                        _dk = (_arch_lc, str(sym or "").upper().strip(), _ts_date)
                         if _daily_entry_counts.get(_dk, 0) >= _entry_limit:
                             funnel.setdefault("reject_daily_entry_limit", 0)
                             funnel["reject_daily_entry_limit"] += 1
@@ -1472,7 +1472,7 @@ class EventBacktester:
                         _op = simulator._positions.get(opened) or {}
                         _scale_in_evt = int(_op.get("_accumulate_deploys", 0) or 0) > 0
                         if not _scale_in_evt:
-                            _dk2 = (_arch_lc, _ts_date)
+                            _dk2 = (_arch_lc, str(sym or "").upper().strip(), _ts_date)
                             _daily_entry_counts[_dk2] = (
                                 _daily_entry_counts.get(_dk2, 0) + 1
                             )
