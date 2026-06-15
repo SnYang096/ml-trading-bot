@@ -38,6 +38,21 @@ def test_chop_outcome_flat_blocked_chop_low() -> None:
     )
 
 
+def test_chop_outcome_flat_blocked_prefilter() -> None:
+    assert (
+        chop_grid_bar_outcome(
+            active_at_open=False,
+            wanted_enter=False,
+            is_box=False,
+            prefilter_ok=False,
+            chop=0.8,
+            entry_chop_min=0.5,
+            actions=[],
+        )
+        == "flat_blocked_prefilter"
+    )
+
+
 def test_chop_outcome_open_grid_placed() -> None:
     assert (
         chop_grid_bar_outcome(
@@ -184,6 +199,23 @@ def test_multileg_dispatch_by_audit_engine() -> None:
     )
     assert f["prefilter"] is False
     assert f["outcome"] == "flat_blocked_box"
+
+
+def test_chop_funnel_prefilter_false_when_box_pos_out_of_band() -> None:
+    f = funnel_for_chop_grid_bar(
+        audit={
+            "is_box": False,
+            "prefilter_ok": False,
+            "wanted_enter": False,
+            "active_at_open": False,
+            "outcome": "flat_blocked_prefilter",
+        },
+        actions=[],
+        approved_actions=[],
+        rejected=[],
+    )
+    assert f["prefilter"] is False
+    assert f["wanted_enter"] is False
 
 
 def test_stats_collector_multileg_digest_log(

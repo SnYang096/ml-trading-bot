@@ -20,6 +20,7 @@ def chop_grid_bar_outcome(
     active_at_open: bool,
     wanted_enter: bool,
     is_box: bool,
+    prefilter_ok: bool = True,
     chop: float,
     entry_chop_min: float,
     actions: Iterable[Any],
@@ -35,6 +36,8 @@ def chop_grid_bar_outcome(
     if not active_at_open:
         if is_box:
             return "flat_blocked_box"
+        if not prefilter_ok:
+            return "flat_blocked_prefilter"
         if chop < entry_chop_min:
             return "flat_blocked_chop_low"
         return "flat_other"
@@ -111,6 +114,7 @@ def funnel_for_chop_grid_bar(
 ) -> Dict[str, Any]:
     """record_strategy_eval-shaped dict aligned with chop_grid audit fields."""
     is_box = bool(audit.get("is_box"))
+    prefilter_ok = bool(audit.get("prefilter_ok", not is_box))
     wanted_enter = bool(audit.get("wanted_enter"))
     active_at_open = bool(audit.get("active_at_open"))
     outcome = str(audit.get("outcome") or "")
@@ -124,7 +128,7 @@ def funnel_for_chop_grid_bar(
         "multileg": True,
         "engine": "chop_grid",
         "regime": True,
-        "prefilter": not is_box,
+        "prefilter": prefilter_ok and not is_box,
         "wanted_enter": wanted_enter,
         "active_segment": active_at_open,
         "outcome": outcome,

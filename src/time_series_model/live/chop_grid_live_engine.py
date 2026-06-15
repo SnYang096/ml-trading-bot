@@ -29,6 +29,10 @@ from src.order_management.multi_leg_reconciliation import (
     ReconciliationReport,
 )
 from src.time_series_model.grid.chop_grid_engine import GridEngineConfig
+from src.time_series_model.live.multileg_prefilter_rules import (
+    CHOP_GRID_PREFILTER_ALIASES,
+    features_pass_prefilter_rules,
+)
 from src.time_series_model.live.regime_box_prefilter import stable_box_blocks_chop_entry
 from src.time_series_model.live.segment_lifecycle import (
     SegmentLifecycleMixin,
@@ -1270,20 +1274,27 @@ class ChopGridLiveEngine(SegmentLifecycleMixin):
             self.regime,
             rules=self._prefilter_rules,
         )
-        wanted_enter = chop >= self.cfg.entry_chop_min and not is_box
-        if self.state.symbol == symbol:
-            self._reconcile_legacy_active_flag()
-            self.clear_stale_active_if_ghost()
+        prefilter_ok = features_pass_prefilter_rules(
+            features,
+            self._prefilter_rules,
+            feature_aliases=CHOP_GRID_PREFILTER_ALIASES,
+        )
+        wanted_enter = chop >= self.cfg.entry_chop_min and not is_box and prefilter_ok
         active_at_open = (
             segment_occupies_slot(self.state.segment_state)
             and self.state.symbol == symbol
         )
-        should_enter = wanted_enter and segment_allows_new_entry(
-            self.state.segment_state
-        )
         should_exit = (
             segment_occupies_slot(self.state.segment_state)
-            and chop < self.cfg.exit_chop_below
+            and self.state.symbol == symbol
+            and (chop < self.cfg.exit_chop_below or not prefilter_ok)
+        )
+        if self.state.symbol == symbol:
+            self._reconcile_legacy_active_flag()
+            if not should_exit:
+                self.clear_stale_active_if_ghost()
+        should_enter = wanted_enter and segment_allows_new_entry(
+            self.state.segment_state
         )
 
         self.state.last_timestamp = timestamp
@@ -1298,13 +1309,16 @@ class ChopGridLiveEngine(SegmentLifecycleMixin):
             segment_occupies_slot(self.state.segment_state)
             and self.state.symbol == symbol
         ):
-            if self.bar_simulation:
-                actions.extend(self._simulate_fills(timestamp, high, low))
-                actions.extend(self._simulate_targets(timestamp, high, low))
-            else:
-                actions.extend(self._maybe_replenish_empty_levels(symbol, timestamp))
-            if self._risk_stop(close):
-                should_exit = True
+            if not should_exit:
+                if self.bar_simulation:
+                    actions.extend(self._simulate_fills(timestamp, high, low))
+                    actions.extend(self._simulate_targets(timestamp, high, low))
+                else:
+                    actions.extend(
+                        self._maybe_replenish_empty_levels(symbol, timestamp)
+                    )
+                if self._risk_stop(close):
+                    should_exit = True
 
         if should_exit:
             actions.extend(
@@ -1319,6 +1333,7 @@ class ChopGridLiveEngine(SegmentLifecycleMixin):
             active_at_open=active_at_open,
             wanted_enter=wanted_enter,
             is_box=is_box,
+            prefilter_ok=prefilter_ok,
             chop=chop,
             entry_chop_min=self.cfg.entry_chop_min,
             actions=actions,
@@ -1327,6 +1342,7 @@ class ChopGridLiveEngine(SegmentLifecycleMixin):
             "engine": "chop_grid",
             "chop": chop,
             "is_box": is_box,
+            "prefilter_ok": prefilter_ok,
             "wanted_enter": wanted_enter,
             "active_at_open": active_at_open,
             "should_enter": should_enter,

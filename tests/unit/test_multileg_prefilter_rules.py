@@ -1,6 +1,10 @@
 import pandas as pd
 
 from scripts.pipeline.multileg_prefilter_rules import apply_prefilter_rules
+from src.time_series_model.live.multileg_prefilter_rules import (
+    CHOP_GRID_PREFILTER_ALIASES,
+    features_pass_prefilter_rules,
+)
 
 
 def test_apply_simple_rule():
@@ -53,3 +57,34 @@ def test_apply_any_of_and_all_of_rules():
     ]
     mask = apply_prefilter_rules(df, rules)
     assert mask.tolist() == [True, False, True]
+
+
+def test_features_pass_prefilter_fail_closed_on_missing_feature() -> None:
+    rules = [{"feature": "box_pos_60", "operator": ">=", "value": 0.40}]
+    assert not features_pass_prefilter_rules({}, rules)
+    assert not features_pass_prefilter_rules({"box_stability_60": 0.9}, rules)
+
+
+def test_features_pass_prefilter_chop_grid_aliases() -> None:
+    rules = [{"feature": "bpc_semantic_chop", "operator": ">=", "value": 0.50}]
+    assert features_pass_prefilter_rules(
+        {"semantic_chop": 0.55},
+        rules,
+        feature_aliases=CHOP_GRID_PREFILTER_ALIASES,
+    )
+    assert not features_pass_prefilter_rules(
+        {"semantic_chop": 0.40},
+        rules,
+        feature_aliases=CHOP_GRID_PREFILTER_ALIASES,
+    )
+
+
+def test_scripts_reexport_matches_src_implementation() -> None:
+    from src.time_series_model.live import multileg_prefilter_rules as src_mod
+    from scripts.pipeline import multileg_prefilter_rules as script_mod
+
+    assert script_mod.apply_prefilter_rules is src_mod.apply_prefilter_rules
+    assert (
+        script_mod.features_pass_prefilter_rules
+        is src_mod.features_pass_prefilter_rules
+    )
