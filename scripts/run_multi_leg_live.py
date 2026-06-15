@@ -54,6 +54,9 @@ lose recent history as long as ``--state-dir`` points at a **mounted volume**
   ``multi_leg_orders`` rows (default ``60`` when unset; ``0``/``off`` to disable).
 - ``MLBOT_MULTI_LEG_ORDER_BACKFILL_LOOKBACK_HOURS`` / ``..._LIMIT`` — backfill
   candidate window + per-pass max rows (defaults ``168`` / ``200``).
+- ``--no-orders`` / ``MLBOT_MULTI_LEG_NO_ORDERS=1`` — testnet/mainnet observe-only:
+  real exchange API + user stream + reconcile diagnostics, but **no** place/cancel
+  orders (including reconcile orphan cancels). Use while investigating account PnL.
 """
 
 from __future__ import annotations
@@ -77,6 +80,13 @@ logger = logging.getLogger(__name__)
 def _env_truthy(name: str) -> bool:
     v = os.environ.get(name, "").strip().lower()
     return v in ("1", "true", "yes", "on")
+
+
+def _multi_leg_no_orders(args: argparse.Namespace) -> bool:
+    """Observe-only on live exchange: engine runs but adapter skips all order IO."""
+    if _env_truthy("MLBOT_MULTI_LEG_NO_ORDERS"):
+        return True
+    return bool(getattr(args, "no_orders", False))
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -392,6 +402,14 @@ def build_daemon(
     args: argparse.Namespace,
 ) -> Tuple[MultiLegLiveDaemon, Any, MultiLegStorage | None, str | None]:
     api = _make_api(args.mode, allow_shared_account=args.allow_shared_account)
+    no_orders = _multi_leg_no_orders(args)
+    if no_orders and args.mode in ("testnet", "mainnet"):
+        logger.warning(
+            "multi-leg NO-ORDERS: %s exchange connected; bars/engine/reconcile "
+            "run but no place/cancel/protection orders (omit --no-orders and "
+            "MLBOT_MULTI_LEG_NO_ORDERS to resume trading)",
+            args.mode,
+        )
     _sync_multi_leg_sizing_equity(api, args)
     apply_multi_leg_args_from_constitution(args)
     resolved_csv = resolve_multi_leg_base_symbols_csv(args)
@@ -544,8 +562,8 @@ def build_daemon(
             prefix = "cg" if strategy == "chop_grid" else "dat"
             adapter = MultiLegExecutionAdapter(
                 api,
-                require_hedge_mode=args.mode != "shadow",
-                shadow=args.mode == "shadow",
+                require_hedge_mode=args.mode != "shadow" and not no_orders,
+                shadow=args.mode == "shadow" or no_orders,
                 client_id_prefix=prefix,
                 default_symbol=symbol,
                 storage=storage,
@@ -572,7 +590,7 @@ def build_daemon(
                 governor=governor,
                 adapter=adapter,
                 reconciler=reconciler,
-                execute_reconciliation_actions=True,
+                execute_reconciliation_actions=not no_orders,
                 storage=storage,
                 run_id=run_id,
                 strategy_name=strategy,
@@ -754,6 +772,15 @@ def parse_args() -> argparse.Namespace:
             "testnet: fallback to BINANCE_FUTURES_TESTNET_* when MULTI_LEG_* unset. "
             "mainnet: fallback to BINANCE_API_KEY/SECRET. Not recommended if you "
             "need strict account isolation."
+        ),
+    )
+    p.add_argument(
+        "--no-orders",
+        action="store_true",
+        help=(
+            "testnet/mainnet observe-only: real API + user stream + reconcile "
+            "diagnostics, but skip all exchange place/cancel orders (including "
+            "reconcile orphan cancels). Same as MLBOT_MULTI_LEG_NO_ORDERS=1."
         ),
     )
     p.add_argument(

@@ -150,3 +150,76 @@ strategy:
     assert ("chop_grid", "XRPUSDT") not in pairs
     assert ("dual_add_trend", "XRPUSDT") in pairs
     assert ("dual_add_trend", "ETHUSDT") not in pairs
+
+
+def test_build_daemon_no_orders_enables_adapter_shadow_and_skips_reconcile_actions(
+    tmp_path: Path, monkeypatch
+):
+    import scripts.run_multi_leg_live as m
+
+    chop_dir = tmp_path / "chop_grid"
+    chop_dir.mkdir(parents=True)
+    (chop_dir / "research").mkdir(parents=True)
+    (chop_dir / "research" / "calibrate_roll.default.yaml").write_text(
+        "", encoding="utf-8"
+    )
+
+    monkeypatch.setattr(m, "apply_multi_leg_args_from_constitution", lambda args: None)
+    monkeypatch.setattr(
+        m,
+        "_make_api",
+        lambda mode, allow_shared_account=False: MockBinanceAPI(),
+    )
+    monkeypatch.setattr(
+        m,
+        "_make_engine",
+        lambda strategy, symbol, args: object(),
+    )
+    monkeypatch.delenv("MLBOT_MULTI_LEG_NO_ORDERS", raising=False)
+
+    args = Namespace(
+        mode="testnet",
+        strategies="chop_grid",
+        symbols="BTCUSDT",
+        allow_shared_account=False,
+        no_orders=True,
+        multi_leg_db_path="",
+        max_gross_notional=2000.0,
+        max_net_notional=1000.0,
+        max_symbol_gross_notional=800.0,
+        max_symbol_net_notional=400.0,
+        max_resting_orders=60,
+        max_concurrent_multi_leg_symbols=0,
+        strategy_switch_cooldown_bars=0,
+        account_equity_usdt=10000.0,
+        max_drawdown_pct=0.12,
+        bar_source="parquet",
+        data_dir="data/parquet_data",
+        timeframe="2h",
+        lookback_days=180,
+        feature_bus_root="live/shared_feature_bus",
+        feature_store_timeframe="2h",
+        feature_store_execution_timeframe="1min",
+        feature_store_initial_backfill_bars=1,
+        poll_seconds=60.0,
+        reconcile_interval_seconds=60.0,
+        unit_notional=100.0,
+        state_dir=str(tmp_path / "state"),
+        chop_grid_config=str(chop_dir / "research" / "calibrate_roll.default.yaml"),
+        dual_add_config=str(chop_dir / "research" / "calibrate_roll.default.yaml"),
+        constitution_yaml="",
+    )
+
+    daemon, _api, _storage, _run_id = m.build_daemon(args)
+    assert len(daemon.runtimes) == 1
+    rt = daemon.runtimes[0]
+    assert rt.orchestrator.adapter.shadow is True
+    assert rt.orchestrator.execute_reconciliation_actions is False
+
+
+def test_multi_leg_no_orders_from_env(tmp_path: Path, monkeypatch):
+    import scripts.run_multi_leg_live as m
+
+    monkeypatch.setenv("MLBOT_MULTI_LEG_NO_ORDERS", "1")
+    args = Namespace(no_orders=False)
+    assert m._multi_leg_no_orders(args) is True

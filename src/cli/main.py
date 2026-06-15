@@ -4308,6 +4308,11 @@ def multileg_shadow(
 @click.option("--bar-source", default="feature-store", show_default=True)
 @click.option("--poll-seconds", type=float, default=60.0, show_default=True)
 @click.option("--allow-shared-account", is_flag=True)
+@click.option(
+    "--no-orders",
+    is_flag=True,
+    help="只观测不下单（testnet/mainnet；同 MLBOT_MULTI_LEG_NO_ORDERS=1）",
+)
 @click.option("--config", "constitution_yaml", default="", help="可选：宪法路径覆盖")
 def multileg_live(
     mode: str,
@@ -4315,6 +4320,7 @@ def multileg_live(
     bar_source: str,
     poll_seconds: float,
     allow_shared_account: bool,
+    no_orders: bool,
     constitution_yaml: str,
 ):
     """启动多腿测试网/主网运行（run_multi_leg_live.py）。"""
@@ -4330,6 +4336,8 @@ def multileg_live(
     ]
     if allow_shared_account:
         args.append("--allow-shared-account")
+    if no_orders:
+        args.append("--no-orders")
     if str(constitution_yaml).strip():
         args.extend(["--constitution-yaml", str(constitution_yaml).strip()])
     sys.exit(run_script("scripts/run_multi_leg_live.py", args))
