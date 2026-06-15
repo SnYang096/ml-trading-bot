@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { waitFor } from '@testing-library/react';
 import { renderWithProviders, createTestQueryClient } from '@/test/utils.tsx';
 import { OrdersPage } from '@/pages/Orders/OrdersPage.tsx';
 import { mockOrders } from '@/test/mocks/api.ts';

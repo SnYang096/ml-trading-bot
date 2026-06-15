@@ -13,9 +13,22 @@ export type ApiResponse<T = unknown> = { data: T; meta?: Record<string, unknown>
 
 // ---------- 工厂函数 ----------
 
+const EMPTY_BUNDLE_FIELDS: Omit<BundleData, 'ohlcv'> = {
+  markers: [],
+  trade_links: [],
+  overlays: {},
+  main_overlays: {},
+  chop_grid_overlay: {},
+  chop_regime_regions: [],
+  strategy_stage_regions: {},
+};
+
 /** 创建空的 BundleData */
 export function emptyBundleData(): BundleData {
-  return {};
+  return {
+    ohlcv: { candles: [] },
+    ...EMPTY_BUNDLE_FIELDS,
+  };
 }
 
 /** 创建带 candles 的 BundleData */
@@ -28,7 +41,10 @@ export function bundleWithCandles(count: number, baseTime = 1700000000): BundleD
     close: 3050 + Math.random() * 100,
     volume: 100 + Math.random() * 900,
   }));
-  return { ohlcv: { candles } };
+  return {
+    ohlcv: { candles },
+    ...EMPTY_BUNDLE_FIELDS,
+  };
 }
 
 /** 创建 symbol 列表 */
