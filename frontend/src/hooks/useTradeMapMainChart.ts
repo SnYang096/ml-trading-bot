@@ -204,12 +204,7 @@ export function useTradeMapMainChart(params: MainChartParams) {
     }
     if (!pr) return;
     const ps = chart.priceScale('right');
-    ps.applyOptions({ autoScale: false });
-    if (typeof ps.setVisibleRange === 'function') {
-      ps.setVisibleRange({ from: pr.minValue, to: pr.maxValue });
-    } else {
-      ps.applyOptions({ autoScale: true });
-    }
+    ps.applyOptions({ autoScale: true });
   }, []);
 
   const applyChopLayers = useCallback(
@@ -381,10 +376,6 @@ export function useTradeMapMainChart(params: MainChartParams) {
       }
     });
     ro.observe(containerRef.current);
-
-    chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
-      refreshPriceAutoscale();
-    });
 
     return () => {
       ro.disconnect();
