@@ -14,6 +14,8 @@
 #         不设则用 github.actor；别人/Robot 点 Run 时 actor≠PAT 账号会导致拉包 403，建议设此项。
 #   可选（成对）: MULTI_LEG_BINANCE_FUTURES_API_KEY / MULTI_LEG_BINANCE_FUTURES_API_SECRET
 #   可选（成对）: BINANCE_SPOT_API_KEY / BINANCE_SPOT_API_SECRET — 写入 binance_spot_mainnet.env 并启用 quant-spot-accum
+#   可选: GRAFANA_ALERT_TELEGRAM_BOT_TOKEN — 写入 /opt/quant-engine/monitoring/.env（Grafana + mlbot TG 告警）
+#   可选: GRAFANA_ALERT_TELEGRAM_CHAT_ID — 同上；未设则默认 -1002004555233
 # 注意: TENCENTCLOUD_SECRET_ID/KEY 等若存在但本 workflow 未引用，不会触发校验（与 CD 无关则属正常）。
 # 单机约 4G RAM: 三容器 cgroup 上限合计约 3.5G（余量给内核/Docker）；feature-bus 启动 audit 对 BTC 等算 VPIN 时峰值 ~2G。
 # 「不重跑 warmup prepare」（Actions 勾选 skip_warmup_prepare）只适合 quant-warmup-prepare.service 已经成功跑过一次，
@@ -73,6 +75,7 @@ on:
       - 'deploy/business-console/**'
       - 'deploy/systemd/quant-business-console.service'
       - 'deploy/systemd/mlbot-monitor-docker-run.sh'
+      - 'deploy/systemd/mlbot-account-watch-docker-run.sh'
       - 'etc/systemd/mlbot-monitor-*.service'
       - 'etc/systemd/mlbot-monitor-*.timer'
       - 'etc/systemd/mlbot-monitor-notify@.service'
@@ -145,6 +148,14 @@ jobs:
             echo "::warning::已配置 BINANCE_SPOT_API_SECRET 但未配置 BINANCE_SPOT_API_KEY，现货服务不会部署。"
           elif [ -z "${SK:-}" ] && [ -z "${SS:-}" ]; then
             echo "::notice::未配置 BINANCE_SPOT_*，quant-spot-accum 将保持禁用。"
+          fi
+
+      - name: Warn if optional Telegram alerting is incomplete
+        env:
+          TG_TOKEN: ${{ secrets.GRAFANA_ALERT_TELEGRAM_BOT_TOKEN }}
+        run: |
+          if [ -z "${TG_TOKEN:-}" ]; then
+            echo "::notice::未配置 GRAFANA_ALERT_TELEGRAM_BOT_TOKEN；Grafana/mlbot 告警不发 Telegram。"
           fi
 
   # ============================================
@@ -226,11 +237,13 @@ jobs:
           MULTI_LEG_BINANCE_FUTURES_API_SECRET: ${{ secrets.MULTI_LEG_BINANCE_FUTURES_API_SECRET }}
           BINANCE_SPOT_API_KEY: ${{ secrets.BINANCE_SPOT_API_KEY }}
           BINANCE_SPOT_API_SECRET: ${{ secrets.BINANCE_SPOT_API_SECRET }}
+          GRAFANA_ALERT_TELEGRAM_BOT_TOKEN: ${{ secrets.GRAFANA_ALERT_TELEGRAM_BOT_TOKEN }}
+          GRAFANA_ALERT_TELEGRAM_CHAT_ID: ${{ secrets.GRAFANA_ALERT_TELEGRAM_CHAT_ID }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
-          envs: BINANCE_API_KEY,BINANCE_API_SECRET,MULTI_LEG_BINANCE_FUTURES_API_KEY,MULTI_LEG_BINANCE_FUTURES_API_SECRET,BINANCE_SPOT_API_KEY,BINANCE_SPOT_API_SECRET
+          envs: BINANCE_API_KEY,BINANCE_API_SECRET,MULTI_LEG_BINANCE_FUTURES_API_KEY,MULTI_LEG_BINANCE_FUTURES_API_SECRET,BINANCE_SPOT_API_KEY,BINANCE_SPOT_API_SECRET,GRAFANA_ALERT_TELEGRAM_BOT_TOKEN,GRAFANA_ALERT_TELEGRAM_CHAT_ID
           script: |
             sudo mkdir -p /opt/quant-engine/live
             # 防止 Docker 将文件路径创建为目录（首次启动时 -v 会自动创建缺失路径为目录）
@@ -269,8 +282,20 @@ jobs:
             # 仅持久化 runtime 数据目录；config/scripts 来自镜像（避免 bind mount 顶替 image 内容）
             sudo mkdir -p /opt/quant-engine/live/shared_feature_bus
             sudo mkdir -p /opt/quant-engine/live/highcap/data
-            sudo mkdir -p /opt/quant-engine/data
+            sudo mkdir -p /opt/quant-engine/data/monitoring
             echo "✅ Runtime mount 目录就绪"
+            sudo mkdir -p /opt/quant-engine/monitoring
+            if [ -n "${GRAFANA_ALERT_TELEGRAM_BOT_TOKEN:-}" ]; then
+              TG_CHAT="${GRAFANA_ALERT_TELEGRAM_CHAT_ID:--1002004555233}"
+              printf 'GRAFANA_ALERT_TELEGRAM_BOT_TOKEN=%s\nGRAFANA_ALERT_TELEGRAM_CHAT_ID=%s\n' \
+                "${GRAFANA_ALERT_TELEGRAM_BOT_TOKEN}" "${TG_CHAT}" \
+                | sudo tee /opt/quant-engine/monitoring/.env > /dev/null
+              sudo chmod 600 /opt/quant-engine/monitoring/.env
+              sudo chown "$(whoami):$(whoami)" /opt/quant-engine/monitoring/.env
+              echo "✅ Telegram monitoring .env written (/opt/quant-engine/monitoring/.env)"
+            else
+              echo "::notice::GRAFANA_ALERT_TELEGRAM_BOT_TOKEN 未配置，跳过 monitoring/.env"
+            fi
 
       - name: 🚀 Pull image & restart service
         uses: appleboy/ssh-action@v1
@@ -715,7 +740,11 @@ jobs:
             docker ps --filter name=mlbot --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
             echo ""
             echo "Grafana 默认 http://<主机>:3000 （首页 System Health；admin/admin 上线后请改密）；Prometheus :9091；Loki :3100。"
-            echo "Telegram 告警: 在 monitoring 目录 cp .env.example .env 并填入 GRAFANA_ALERT_TELEGRAM_BOT_TOKEN 后 restart grafana。"
+            if [ -f .env ] && grep -qE '^GRAFANA_ALERT_TELEGRAM_BOT_TOKEN=.+' .env 2>/dev/null; then
+              echo "Telegram 告警: monitoring/.env 已配置（deploy 从 GitHub Secret 写入）；account-watch timer 每 60s 轮询多腿账户。"
+            else
+              echo "Telegram 告警: 在 GitHub Secrets 配置 GRAFANA_ALERT_TELEGRAM_BOT_TOKEN 后 redeploy，或手动 cp .env.example .env 并 restart grafana。"
+            fi
             echo "SQLite 只读浏览器 sqlite-web：8871=live_monitor / 8872=order_management / 8873=multi_leg_order_management（无登录，勿对公网暴露）。"
             echo "Metrics: 宿主 9192=feature-bus / 9190=trend-swing / 9191=hedge-multileg / 9193=spot-accum（Prometheus 经 host.docker.internal，见 deploy/monitoring/prometheus.yml）。"
 
@@ -727,6 +756,7 @@ jobs:
             deploy/business-console \
             deploy/systemd/quant-business-console.service \
             deploy/systemd/mlbot-monitor-docker-run.sh \
+            deploy/systemd/mlbot-account-watch-docker-run.sh \
             etc/systemd/mlbot-monitor-daily.service \
             etc/systemd/mlbot-monitor-daily.timer \
             etc/systemd/mlbot-monitor-weekly.service \
@@ -738,6 +768,8 @@ jobs:
             etc/systemd/mlbot-monitor-yearly.service \
             etc/systemd/mlbot-monitor-yearly.timer \
             etc/systemd/mlbot-monitor-notify@.service \
+            etc/systemd/mlbot-monitor-account-watch.service \
+            etc/systemd/mlbot-monitor-account-watch.timer \
             scripts/monitoring/monitor_telegram_notify.sh \
             frontend \
             src/__init__.py \
@@ -763,6 +795,7 @@ jobs:
               deploy/business-console \
               deploy/systemd/quant-business-console.service \
               deploy/systemd/mlbot-monitor-docker-run.sh \
+              deploy/systemd/mlbot-account-watch-docker-run.sh \
               etc/systemd/mlbot-monitor-daily.service \
               etc/systemd/mlbot-monitor-daily.timer \
               etc/systemd/mlbot-monitor-weekly.service \
@@ -774,6 +807,8 @@ jobs:
               etc/systemd/mlbot-monitor-yearly.service \
               etc/systemd/mlbot-monitor-yearly.timer \
               etc/systemd/mlbot-monitor-notify@.service \
+              etc/systemd/mlbot-monitor-account-watch.service \
+              etc/systemd/mlbot-monitor-account-watch.timer \
               scripts/monitoring/monitor_telegram_notify.sh \
               frontend \
               src/__init__.py \
@@ -820,6 +855,9 @@ jobs:
             if [ -f /opt/quant-engine/deploy/systemd/mlbot-monitor-docker-run.sh ]; then
               chmod +x /opt/quant-engine/deploy/systemd/mlbot-monitor-docker-run.sh
             fi
+            if [ -f /opt/quant-engine/deploy/systemd/mlbot-account-watch-docker-run.sh ]; then
+              chmod +x /opt/quant-engine/deploy/systemd/mlbot-account-watch-docker-run.sh
+            fi
             if [ -f /opt/quant-engine/scripts/monitoring/monitor_telegram_notify.sh ]; then
               chmod +x /opt/quant-engine/scripts/monitoring/monitor_telegram_notify.sh
             fi
@@ -829,7 +867,8 @@ jobs:
               mlbot-monitor-monthly.service mlbot-monitor-monthly.timer \
               mlbot-monitor-quarterly.service mlbot-monitor-quarterly.timer \
               mlbot-monitor-yearly.service mlbot-monitor-yearly.timer \
-              mlbot-monitor-notify@.service; do
+              mlbot-monitor-notify@.service \
+              mlbot-monitor-account-watch.service mlbot-monitor-account-watch.timer; do
               if [ -f "/opt/quant-engine/etc/systemd/${unit}" ]; then
                 sudo cp "/opt/quant-engine/etc/systemd/${unit}" /etc/systemd/system/
               fi
@@ -841,6 +880,10 @@ jobs:
               mlbot-monitor-monthly.timer \
               mlbot-monitor-quarterly.timer \
               mlbot-monitor-yearly.timer
+            if [ -f /etc/systemd/system/mlbot-monitor-account-watch.timer ]; then
+              sudo systemctl enable --now mlbot-monitor-account-watch.timer
+              echo "✅ mlbot-monitor-account-watch.timer enabled (60s poll)"
+            fi
             echo "✅ mlbot monitor timers enabled (writes /opt/quant-engine/results/monitoring/index.json)"
             systemctl list-timers 'mlbot-monitor-*' --no-pager 2>/dev/null || true
             if [ -f /opt/quant-engine/live/highcap/universe.yaml ]; then
