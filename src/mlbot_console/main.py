@@ -28,6 +28,7 @@ from mlbot_console.routers import (
     spot,
     trade_map,
 )
+from mlbot_console.routers import orders_cancel  # noqa: F401  register cancel route
 
 app = FastAPI(
     title="MLBot Business Console",
