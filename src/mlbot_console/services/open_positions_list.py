@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from mlbot_console.services.exchange_balances import _parse_float
 from mlbot_console.services.account_summary import (
@@ -166,6 +166,31 @@ def _get_multileg_tp_sl_orders(
     return out
 
 
+def _multileg_open_leg_ids(db_path: Path, symbol: Optional[str]) -> Set[str]:
+    """Return leg_ids that have an open position in multi_leg_positions table.
+    
+    Used to filter ghost entries from multi_leg_orders that are filled
+    but whose position has already been closed/reconciled away.
+    """
+    if not db_path.is_file():
+        return set()
+    where = "WHERE lower(trim(coalesce(status, ''))) = 'open'"
+    params: tuple[Any, ...] = ()
+    if symbol and not is_all_symbols(symbol):
+        where += " AND symbol = ?"
+        params = (symbol.upper(),)
+    rows = query_rows(
+        db_path,
+        f"""
+        SELECT leg_id
+        FROM multi_leg_positions
+        {where}
+        """,
+        params,
+    )
+    return {str(row.get("leg_id") or "").strip() for row in rows if str(row.get("leg_id") or "").strip()}
+
+
 def _trend_open_rows(
     db_path: Path,
     *,
@@ -325,6 +350,9 @@ def _multileg_open_rows(
     # Get TP/SL order details for all positions
     tp_sl_map = _get_multileg_tp_sl_orders(db_path, symbol)
 
+    # Get active leg_ids from positions table (ground truth after reconcile)
+    active_leg_ids = _multileg_open_leg_ids(db_path, symbol)
+
     out: List[Dict[str, Any]] = []
     for sym in symbols:
         raw = query_rows(
@@ -371,6 +399,12 @@ def _multileg_open_rows(
             else:
                 side = _normalize_side(row.get("side"))
             leg_key = str(row.get("leg_id") or oid)
+            
+            # Filter ghost positions: only show if leg_id is in active positions table
+            # If positions table has data (active_leg_ids is non-empty), skip
+            # entries whose leg_id is not tracked as open.
+            if active_leg_ids and leg_key not in active_leg_ids:
+                continue
             entry_ts = _parse_ts(row.get("filled_at")) or _parse_ts(
                 row.get("created_at")
             )

@@ -204,6 +204,15 @@ export function MarginBreakdownPanel({
           }
           hint="总占用 / 总权益"
         />
+        <KpiCard
+          label="持仓占用占比"
+          value={
+            totalPosInit != null && totalEquity != null && totalEquity > 0
+              ? fmtPct(totalPosInit / totalEquity)
+              : '—'
+          }
+          hint="（不含挂单）持仓保证金 / 总权益"
+        />
       </div>
 
       <div className={styles.marginScopeGrid}>
