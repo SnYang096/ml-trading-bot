@@ -202,7 +202,7 @@ echo ""
 if [ $FAILED_CHECKS -eq 0 ]; then
     echo "🎉 所有依赖检查通过！"
     echo ""
-    echo "可以启动实盘测试（先起 quant-feature-bus，再 quant-trend-fattail）："
+    echo "可以启动实盘测试（先起 quant-feature-bus，再 quant-trend-swing）："
     echo "  export MLBOT_FEATURE_SOURCE=bus"
     echo "  export MLBOT_LIVE_SYMBOLS=BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT"
     echo "  export MLBOT_LIVE_TRADE_SIZE=0.0  # 观察模式，不下单"

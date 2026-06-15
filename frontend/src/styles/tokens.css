@@ -1,6 +1,21 @@
-:root {
+/* Shared structural tokens (theme-agnostic) */
+:root,
+[data-theme='terminal'] {
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Courier New', ui-monospace, monospace;
+  --font-sans: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-serif: Georgia, 'Times New Roman', serif;
+  --layout-gutter: 16px;
+  --heading-transform: uppercase;
+  --heading-tracking: 0.1em;
+  --base-font-size: 14px;
+  --line-height: 1.5;
+  --font-weight-body: 500;
+  --focus-ring-width: 1px;
+}
 
+/* ── 极客终端 (default) ── */
+:root,
+[data-theme='terminal'] {
   --bg: #020402;
   --bg-elevated: #0a120a;
   --surface: #101a10;
@@ -28,7 +43,316 @@
   --glow: 0 0 10px rgba(0, 255, 65, 0.55);
   --glow-strong: 0 0 18px rgba(0, 255, 65, 0.75);
   --glow-cyan: 0 0 10px rgba(92, 255, 255, 0.45);
-  --radius: 0;
+  --glow-positive: 0 0 8px rgba(0, 255, 136, 0.6);
+  --glow-negative: 0 0 8px rgba(255, 51, 102, 0.55);
 
-  --layout-gutter: 16px;
+  --radius: 0;
+  --body-font: var(--font-mono);
+  --link-shadow: var(--glow-cyan);
+  --link-hover-shadow: var(--glow-strong);
+  --selection-bg: rgba(0, 255, 65, 0.35);
+  --selection-fg: var(--accent-bright);
+  --crt-scanlines: 0.22;
+  --crt-vignette: 0.38;
+  --shell-grid-a: rgba(0, 255, 65, 0.03);
+  --panel-inset: rgba(0, 255, 65, 0.05);
+  --panel-outer: rgba(0, 255, 65, 0.06);
+  --toolbar-inset: rgba(0, 255, 65, 0.04);
+  --row-selected: rgba(0, 255, 65, 0.14);
+}
+
+/* ── 彭博终端 ── */
+[data-theme='bloomberg'] {
+  --bg: #0a0e14;
+  --bg-elevated: #121820;
+  --surface: #1a2230;
+  --surface-hover: #222c3c;
+  --border: #2a3545;
+  --border-bright: rgba(255, 140, 0, 0.45);
+
+  --text: #e8e4dc;
+  --text-muted: #9aa0a8;
+  --text-dim: #6a7280;
+
+  --accent: #ff8c00;
+  --accent-bright: #ffb347;
+  --accent-cyan: #4da6ff;
+  --accent-amber: #ffcc44;
+  --accent-purple: #c77dff;
+
+  --positive: #3dd68c;
+  --negative: #f23645;
+  --warning: #ffcc44;
+
+  --nav-active: rgba(255, 140, 0, 0.18);
+  --nav-active-border: #ff8c00;
+
+  --glow: 0 0 8px rgba(255, 140, 0, 0.35);
+  --glow-strong: 0 0 14px rgba(255, 140, 0, 0.5);
+  --glow-cyan: 0 0 8px rgba(77, 166, 255, 0.35);
+  --glow-positive: none;
+  --glow-negative: none;
+
+  --radius: 2px;
+  --body-font: var(--font-mono);
+  --link-shadow: none;
+  --link-hover-shadow: var(--glow-cyan);
+  --selection-bg: rgba(255, 140, 0, 0.28);
+  --selection-fg: #ffe0b2;
+  --crt-scanlines: 0;
+  --crt-vignette: 0.12;
+  --shell-grid-a: rgba(77, 166, 255, 0.04);
+  --panel-inset: rgba(255, 140, 0, 0.04);
+  --panel-outer: rgba(0, 0, 0, 0.2);
+  --toolbar-inset: rgba(0, 0, 0, 0.15);
+  --row-selected: rgba(255, 140, 0, 0.12);
+}
+
+/* ── TradingView 暗色 ── */
+[data-theme='tradingview'] {
+  --bg: #131722;
+  --bg-elevated: #1e222d;
+  --surface: #2a2e39;
+  --surface-hover: #323642;
+  --border: #363a45;
+  --border-bright: rgba(41, 98, 255, 0.5);
+
+  --text: #d1d4dc;
+  --text-muted: #787b86;
+  --text-dim: #5d606b;
+
+  --accent: #2962ff;
+  --accent-bright: #5b8cff;
+  --accent-cyan: #26a69a;
+  --accent-amber: #ff9800;
+  --accent-purple: #ab47bc;
+
+  --positive: #26a69a;
+  --negative: #ef5350;
+  --warning: #ff9800;
+
+  --nav-active: rgba(41, 98, 255, 0.2);
+  --nav-active-border: #2962ff;
+
+  --glow: none;
+  --glow-strong: none;
+  --glow-cyan: none;
+  --glow-positive: none;
+  --glow-negative: none;
+
+  --radius: 4px;
+  --body-font: var(--font-sans);
+  --heading-transform: none;
+  --heading-tracking: 0.02em;
+  --link-shadow: none;
+  --link-hover-shadow: none;
+  --selection-bg: rgba(41, 98, 255, 0.28);
+  --selection-fg: #d1d4dc;
+  --crt-scanlines: 0;
+  --crt-vignette: 0;
+  --shell-grid-a: rgba(255, 255, 255, 0.02);
+  --panel-inset: rgba(0, 0, 0, 0.12);
+  --panel-outer: rgba(0, 0, 0, 0.18);
+  --toolbar-inset: rgba(0, 0, 0, 0.1);
+  --row-selected: rgba(41, 98, 255, 0.14);
+}
+
+/* ── 日间专业 ── */
+[data-theme='light'] {
+  --bg: #f5f6f8;
+  --bg-elevated: #ffffff;
+  --surface: #eef0f4;
+  --surface-hover: #e4e7ec;
+  --border: #d1d5db;
+  --border-bright: rgba(37, 99, 235, 0.35);
+
+  --text: #1a1d24;
+  --text-muted: #5c6370;
+  --text-dim: #94a3b8;
+
+  --accent: #2563eb;
+  --accent-bright: #1d4ed8;
+  --accent-cyan: #0891b2;
+  --accent-amber: #d97706;
+  --accent-purple: #7c3aed;
+
+  --positive: #059669;
+  --negative: #dc2626;
+  --warning: #ca8a04;
+
+  --nav-active: rgba(37, 99, 235, 0.1);
+  --nav-active-border: #2563eb;
+
+  --glow: none;
+  --glow-strong: none;
+  --glow-cyan: none;
+  --glow-positive: none;
+  --glow-negative: none;
+
+  --radius: 6px;
+  --body-font: var(--font-sans);
+  --heading-transform: none;
+  --heading-tracking: 0.02em;
+  --link-shadow: none;
+  --link-hover-shadow: none;
+  --selection-bg: rgba(37, 99, 235, 0.18);
+  --selection-fg: #1e3a8a;
+  --crt-scanlines: 0;
+  --crt-vignette: 0;
+  --shell-grid-a: rgba(0, 0, 0, 0.03);
+  --panel-inset: rgba(0, 0, 0, 0.02);
+  --panel-outer: rgba(0, 0, 0, 0.04);
+  --toolbar-inset: rgba(0, 0, 0, 0.02);
+  --row-selected: rgba(37, 99, 235, 0.08);
+}
+
+/* ── 纸质账本 ── */
+[data-theme='paper'] {
+  --bg: #f4f0e8;
+  --bg-elevated: #faf8f4;
+  --surface: #ebe6dc;
+  --surface-hover: #e2dbd0;
+  --border: #c4b8a8;
+  --border-bright: rgba(139, 69, 19, 0.35);
+
+  --text: #2c2416;
+  --text-muted: #6b5f4f;
+  --text-dim: #9a8f7f;
+
+  --accent: #8b4513;
+  --accent-bright: #a0522d;
+  --accent-cyan: #2d6a4f;
+  --accent-amber: #b45309;
+  --accent-purple: #7c4a6a;
+
+  --positive: #2d6a4f;
+  --negative: #9b2226;
+  --warning: #b45309;
+
+  --nav-active: rgba(139, 69, 19, 0.12);
+  --nav-active-border: #8b4513;
+
+  --glow: none;
+  --glow-strong: none;
+  --glow-cyan: none;
+  --glow-positive: none;
+  --glow-negative: none;
+
+  --radius: 3px;
+  --body-font: var(--font-serif);
+  --heading-transform: none;
+  --heading-tracking: 0.04em;
+  --link-shadow: none;
+  --link-hover-shadow: none;
+  --selection-bg: rgba(139, 69, 19, 0.18);
+  --selection-fg: #3d2914;
+  --crt-scanlines: 0;
+  --crt-vignette: 0.08;
+  --shell-grid-a: rgba(139, 69, 19, 0.04);
+  --panel-inset: rgba(139, 69, 19, 0.03);
+  --panel-outer: rgba(0, 0, 0, 0.04);
+  --toolbar-inset: rgba(0, 0, 0, 0.03);
+  --row-selected: rgba(139, 69, 19, 0.1);
+}
+
+/* ── 纯黑 OLED ── */
+[data-theme='oled'] {
+  --bg: #000000;
+  --bg-elevated: #0a0a0a;
+  --surface: #111111;
+  --surface-hover: #1a1a1a;
+  --border: #2e2e2e;
+  --border-bright: rgba(255, 255, 255, 0.28);
+
+  --text: #e8e8e8;
+  --text-muted: #a8a8a8;
+  --text-dim: #707070;
+
+  --accent: #ffffff;
+  --accent-bright: #ffffff;
+  --accent-cyan: #40c4ff;
+  --accent-amber: #ffd740;
+  --accent-purple: #ea80fc;
+
+  --positive: #00e676;
+  --negative: #ff5252;
+  --warning: #ffd740;
+
+  --nav-active: rgba(255, 255, 255, 0.12);
+  --nav-active-border: #ffffff;
+
+  --glow: none;
+  --glow-strong: none;
+  --glow-cyan: none;
+  --glow-positive: none;
+  --glow-negative: none;
+
+  --radius: 0;
+  --body-font: var(--font-sans);
+  --heading-transform: none;
+  --heading-tracking: 0.03em;
+  --link-shadow: none;
+  --link-hover-shadow: none;
+  --selection-bg: rgba(64, 196, 255, 0.35);
+  --selection-fg: #ffffff;
+  --crt-scanlines: 0;
+  --crt-vignette: 0;
+  --shell-grid-a: rgba(255, 255, 255, 0.025);
+  --panel-inset: rgba(255, 255, 255, 0.02);
+  --panel-outer: rgba(0, 0, 0, 0);
+  --toolbar-inset: rgba(255, 255, 255, 0.03);
+  --row-selected: rgba(255, 255, 255, 0.1);
+}
+
+/* ── 高对比无障碍 (WCAG) ── */
+[data-theme='a11y'] {
+  --bg: #000000;
+  --bg-elevated: #000000;
+  --surface: #141414;
+  --surface-hover: #1f1f1f;
+  --border: #ffffff;
+  --border-bright: #ffff00;
+
+  --text: #ffffff;
+  --text-muted: #e8e8e8;
+  --text-dim: #cccccc;
+
+  --accent: #ffff00;
+  --accent-bright: #ffff66;
+  --accent-cyan: #00d4ff;
+  --accent-amber: #ffaa00;
+  --accent-purple: #ff66ff;
+
+  --positive: #00ff66;
+  --negative: #ff4444;
+  --warning: #ffff00;
+
+  --nav-active: rgba(255, 255, 0, 0.22);
+  --nav-active-border: #ffff00;
+
+  --glow: none;
+  --glow-strong: none;
+  --glow-cyan: none;
+  --glow-positive: none;
+  --glow-negative: none;
+
+  --radius: 2px;
+  --body-font: var(--font-sans);
+  --heading-transform: none;
+  --heading-tracking: 0.04em;
+  --base-font-size: 18px;
+  --line-height: 1.65;
+  --font-weight-body: 600;
+  --focus-ring-width: 3px;
+  --link-shadow: none;
+  --link-hover-shadow: none;
+  --selection-bg: #ffff00;
+  --selection-fg: #000000;
+  --crt-scanlines: 0;
+  --crt-vignette: 0;
+  --shell-grid-a: rgba(255, 255, 255, 0.06);
+  --panel-inset: rgba(255, 255, 255, 0.04);
+  --panel-outer: rgba(255, 255, 255, 0.08);
+  --toolbar-inset: rgba(255, 255, 255, 0.05);
+  --row-selected: rgba(255, 255, 0, 0.25);
 }

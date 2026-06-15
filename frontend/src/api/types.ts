@@ -141,18 +141,24 @@ export interface OpenPositionRow {
   exchange_maint_margin_usdt?: number | null;
   exchange_liquidation_price?: number | null;
   exchange_margin_type?: string | null;
+  exchange_margin_allocated?: boolean;
 }
 
 export interface OpenOrderMarginRow {
   order_id: string;
   client_order_id?: string;
   symbol: string;
+  scope?: string;
   side: string;
   position_side?: string | null;
   type: string;
   price?: number;
   quantity?: number;
   initial_margin_usdt?: number | null;
+  margin_estimated?: boolean;
+  margin_allocated?: boolean;
+  reduce_only?: boolean;
+  leverage?: number | null;
   status: string;
 }
 

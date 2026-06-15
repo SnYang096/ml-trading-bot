@@ -8,11 +8,11 @@
 #
 # sqlite-web（coleifer/sqlite-web 一单库一进程；order/multi_leg 目录需 RW 挂载，详见各 service 注释）
 #   live_monitor.db        → http://<host>:8871  （stats_15min）
-#   order_management.db    → http://<host>:8872  （quant-trend-fattail：`MLBOT_ORDER_MANAGEMENT_DB_PATH` 默认对应宿主 ``/opt/quant-engine/data/order_management.db``，不是 highcap/data/db 下那份拷贝）
+#   order_management.db    → http://<host>:8872  （quant-trend-swing：`MLBOT_ORDER_MANAGEMENT_DB_PATH` 默认对应宿主 ``/opt/quant-engine/data/order_management.db``，不是 highcap/data/db 下那份拷贝）
 #   multi_leg_order_management.db → http://<host>:8873
 # 无外置鉴权，勿对公网裸奔；建议安全组仅限内网或使用 SSH 隧道。
 #
-# 指标：quant-feature-bus → 宿主 9192；quant-trend-fattail → 宿主 9190；quant-hedge-multileg → 宿主 9191（见 prometheus.yml）。
+# 指标：quant-feature-bus → 宿主 9192；quant-trend-swing → 宿主 9190；quant-hedge-multileg → 宿主 9191（见 prometheus.yml）。
 # 若 Grafana 面板无数据，检查 systemd docker run 是否已 -p 上述端口。
 
 services:
@@ -98,7 +98,7 @@ services:
     ports:
       - "8871:8871"
     volumes:
-      # 与 systemd quant-trend-fattail 挂载一致（宿主机）
+      # 与 systemd quant-trend-swing 挂载一致（宿主机）
       - /opt/quant-engine/live/highcap/data/db:/db/trend:ro
     command:
       - "-H"

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 import pandas as pd
 
@@ -78,6 +78,66 @@ def _discover_symbols(
                     found.add(sym)
         except Exception:
             continue
+    return sorted(found)
+
+
+def _discover_symbols_from_feature_bus(feature_bus_root: Path) -> List[str]:
+    """Discover symbols from feature bus parquet files.
+
+    Scans bars_1min directory for available symbol parquet files.
+    Returns sorted list of uppercase symbol names.
+    """
+    bars_root = feature_bus_root / "bars_1min"
+    if not bars_root.is_dir():
+        return []
+    syms: set[str] = set()
+    for path in bars_root.glob("*.parquet"):
+        sym = path.stem.upper()
+        # Filter out non-symbol files (e.g., hidden files, temp files)
+        if sym and len(sym) >= 4 and not sym.startswith("."):
+            syms.add(sym)
+    return sorted(syms)
+
+
+MAX_MARK_SYMBOLS_FROM_BUS = 30
+MAX_MARK_SYMBOLS_OPEN_ORDERS_FALLBACK = 20
+
+
+def resolve_mark_price_symbols(
+    *,
+    symbol: Optional[str],
+    feature_bus_root: Optional[Path],
+    trend_db: Path,
+    spot_db: Path,
+    multi_leg_db: Path,
+    extra_symbols: Optional[Iterable[str]] = None,
+    bus_cap: int = MAX_MARK_SYMBOLS_FROM_BUS,
+) -> List[str]:
+    """Symbols to load from feature bus for mark-to-market.
+
+    For a single symbol, returns that symbol only. For ALL / unset, unions DB-held
+    symbols (positions/orders) with a capped slice of feature-bus parquet names so
+    exchange ledger enrich still gets marks for actively traded legs.
+    """
+    from mlbot_console.services.symbols import is_all_symbols
+
+    if symbol and not is_all_symbols(symbol):
+        return [str(symbol).upper()]
+
+    found: set[str] = set()
+    for raw in extra_symbols or ():
+        sym = str(raw or "").upper()
+        if sym:
+            found.add(sym)
+    found.update(
+        _discover_symbols(
+            trend_db=trend_db,
+            spot_db=spot_db,
+            multi_leg_db=multi_leg_db,
+        )
+    )
+    if feature_bus_root is not None and feature_bus_root.is_dir():
+        found.update(_discover_symbols_from_feature_bus(feature_bus_root)[:bus_cap])
     return sorted(found)
 
 

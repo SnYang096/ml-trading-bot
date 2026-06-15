@@ -4,7 +4,7 @@
 Use when open positions exist on exchange but local tracker state was lost
 (process restart before persist, or first deploy of position_tracker snapshots).
 
-Example (on server, inside quant-trend-fattail container):
+Example (on server, inside quant-trend-swing container):
 
   python3 scripts/bootstrap_position_tracker_from_exchange.py \\
     --state-dir /app/live/highcap/data/position_tracker \\

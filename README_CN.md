@@ -356,7 +356,7 @@ python scripts/regime_drift_monitor.py \
 python scripts/deploy_config_to_live.py --diff -s tpc
 python scripts/deploy_config_to_live.py --deploy -s tpc --yes
 python scripts/verify_live_regime_feature_columns.py   # regime → box_structure_f 节点
-# 重启 quant-feature-bus、quant-trend-fattail；constitution enabled_archetypes 仅启用已上线策略（默认仅 tpc）
+# 重启 quant-feature-bus、quant-trend-swing；constitution enabled_archetypes 仅启用已上线策略（默认仅 tpc）
 ```
 
 验收：`live/.../tpc/archetypes/regime.yaml` 存在；live `gate.yaml` 无 `gate_tpc_semantic_chop_high`；trend 日志含 `regime rules`；`posthoc_layer_effectiveness.py --strict-locked-features --strategies tpc` 退出码 0。详见 `docs/strategy/regime_layer.md`。
@@ -1220,7 +1220,7 @@ python scripts/run_spot_accum_live.py
 | `quant-warmup-prepare` | Vision **futures aggTrades** → ticks/bars（约 6 个月），供 180d 高频特征 warmup |
 | `quant-macro-seed-prepare` + **`.timer`** | Vision **spot 1d** → `weekly_ema_200` seed parquet（**不阻塞 bus**；timer 默认每日 **UTC 02:00** 刷新最近日 K） |
 | `quant-feature-bus` | 唯一行情 WS + 180d warmup + 特征计算 + 写 `live/shared_feature_bus`；**`--skip-macro-warmup`**，只读已有 seed |
-| `quant-trend-fattail` / `quant-hedge-multileg` / `quant-spot-accum` | **只读** Feature Bus，不算特征、不下 Vision |
+| `quant-trend-swing` / `quant-hedge-multileg` / `quant-spot-accum` | **只读** Feature Bus，不算特征、不下 Vision |
 
 **两条 warmup 线路互不连通：**
 
@@ -1258,7 +1258,7 @@ sudo systemctl restart quant-feature-bus
 
 # 再重启只读消费者
 sudo systemctl restart quant-spot-accum
-# sudo systemctl restart quant-trend-fattail quant-hedge-multileg
+# sudo systemctl restart quant-trend-swing quant-hedge-multileg
 
 # 一键检查 seed + bus + spot 日志
 bash scripts/check_live_spot_feature_bus.sh
@@ -1358,7 +1358,7 @@ ssh -i ~/.ssh/your_key.pem -L 3000:127.0.0.1:3000 -N <用户>@<主机>
 
 浏览器打开 `http://127.0.0.1:3000`。需要同时开 sqlite-web 时，可把上面的 PowerShell 例子里再加上一行 ``-L 3000:127.0.0.1:3000``（或单独再开一个 `ssh -L` 会话）。
 
-**Strategy Map · Trend 整页 No data**（含 CPU / uptime）：多半是 Prometheus 未抓到 `job=quant-trend-fattail`，不是策略没交易。在服务器执行：
+**Strategy Map · Trend 整页 No data**（含 CPU / uptime）：多半是 Prometheus 未抓到 `job=quant-trend-swing`，不是策略没交易。在服务器执行：
 
 ```bash
 cd /opt/quant-engine && bash scripts/check_trend_prometheus_metrics.sh
@@ -1368,4 +1368,4 @@ curl -sS http://127.0.0.1:9190/metrics | head
 cd /opt/quant-engine/monitoring && docker compose -f docker-compose.monitoring.yml restart prometheus grafana
 ```
 
-仅漏斗/事件曲线空、但 CPU 有数：说明 scrape 正常，检查 `quant-feature-bus` 是否在写 bus、`quant-trend-fattail` 日志里是否有 bus 轮询与 `StatsCollector` flush。
+仅漏斗/事件曲线空、但 CPU 有数：说明 scrape 正常，检查 `quant-feature-bus` 是否在写 bus、`quant-trend-swing` 日志里是否有 bus 轮询与 `StatsCollector` flush。

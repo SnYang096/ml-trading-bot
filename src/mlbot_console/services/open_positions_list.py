@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from mlbot_console.services.exchange_balances import _parse_float
 from mlbot_console.services.account_summary import (
     _trend_entry_qty_by_position,
     _trend_position_qty,
@@ -372,7 +373,6 @@ def _enrich_with_exchange_legs(
     if not exchange_ledger:
         return
 
-    # Build a lookup map: (scope, symbol, side) -> first matching exchange leg
     ex_legs: Dict[tuple, Dict[str, Any]] = {}
     for acct in exchange_ledger.get("accounts") or []:
         scope = acct.get("scope", "")
@@ -383,28 +383,48 @@ def _enrich_with_exchange_legs(
             if key not in ex_legs:
                 ex_legs[key] = pos
 
-    for row in rows:
+    # Group local rows sharing the same exchange leg for pro-rata margin split.
+    groups: Dict[tuple, List[int]] = {}
+    for idx, row in enumerate(rows):
         scope = str(row.get("scope") or "")
         sym = str(row.get("symbol") or "").upper()
         side = str(row.get("side") or "long").lower()
+        groups.setdefault((scope, sym, side), []).append(idx)
+
+    for (scope, sym, side), indices in groups.items():
         key = (scope, sym, side)
-        
-        # For multi-leg, we might need to aggregate or just show the net exchange leg
-        # For now, we try to match exact (scope, symbol, side)
         ex_pos = ex_legs.get(key)
         if not ex_pos:
-            # Fallback: try to find any account with this symbol/side (for Trend/Multi-leg cross-account visibility)
             for acct_scope in ["trend", "multi_leg"]:
                 fallback_key = (acct_scope, sym, side)
                 if fallback_key in ex_legs:
                     ex_pos = ex_legs[fallback_key]
                     break
+        if not ex_pos:
+            continue
 
-        if ex_pos:
+        total_margin = _parse_float(ex_pos.get("initial_margin_usdt"))
+        total_qty = sum(float(rows[i].get("quantity") or 0.0) for i in indices)
+        n = len(indices)
+        for i in indices:
+            row = rows[i]
+            row_qty = float(row.get("quantity") or 0.0)
+            share = (row_qty / total_qty) if total_qty > 0 else (1.0 / max(n, 1))
             row["exchange_leverage"] = ex_pos.get("leverage")
-            row["exchange_notional_usdt"] = ex_pos.get("notional_usdt")
-            row["exchange_initial_margin_usdt"] = ex_pos.get("initial_margin_usdt")
-            row["exchange_maint_margin_usdt"] = ex_pos.get("maint_margin_usdt")
+            row["exchange_notional_usdt"] = (
+                round(_parse_float(ex_pos.get("notional_usdt")) * share, 4)
+                if ex_pos.get("notional_usdt") is not None
+                else None
+            )
+            if total_margin > 0:
+                row["exchange_initial_margin_usdt"] = round(total_margin * share, 4)
+                row["exchange_margin_allocated"] = n > 1
+            else:
+                row["exchange_initial_margin_usdt"] = ex_pos.get("initial_margin_usdt")
+            maint = _parse_float(ex_pos.get("maint_margin_usdt"))
+            row["exchange_maint_margin_usdt"] = (
+                round(maint * share, 4) if maint > 0 and n > 1 else ex_pos.get("maint_margin_usdt")
+            )
             row["exchange_liquidation_price"] = ex_pos.get("liquidation_price")
             row["exchange_margin_type"] = ex_pos.get("margin_type")
 

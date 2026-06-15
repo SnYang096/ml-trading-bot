@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -15,6 +16,7 @@ from mlbot_console.services.account_summary import (
     build_wallet_equity_curves,
     cumulative_realized_curve,
     latest_close_prices,
+    resolve_mark_price_symbols,
 )
 
 
@@ -258,6 +260,49 @@ def test_latest_close_prices_reads_bus(bus_root) -> None:
     assert "ETHUSDT" in marks
     assert marks["ETHUSDT"] > 0
     assert "MISSING" not in marks
+
+
+def test_resolve_mark_price_symbols_single() -> None:
+    syms = resolve_mark_price_symbols(
+        symbol="btcusdt",
+        feature_bus_root=None,
+        trend_db=Path("/dev/null"),
+        spot_db=Path("/dev/null"),
+        multi_leg_db=Path("/dev/null"),
+    )
+    assert syms == ["BTCUSDT"]
+
+
+def test_resolve_mark_price_symbols_all_unions_db_and_bus(
+    trend_db, spot_db, multi_leg_db, bus_root
+) -> None:
+    conn = sqlite3.connect(trend_db)
+    conn.execute(
+        """
+        INSERT INTO positions VALUES (
+            'p_z', 'ZECUSDT', 'long',
+            '2024-01-03T08:00:00+00:00', NULL,
+            10.0, NULL, NULL, 'open', 'tpc', 9.0, 11.0, 1.0, NULL
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    bars_dir = bus_root / "bars_1min"
+    (bars_dir / "ADAUSDT.parquet").touch()
+
+    syms = resolve_mark_price_symbols(
+        symbol="*",
+        feature_bus_root=bus_root,
+        trend_db=trend_db,
+        spot_db=spot_db,
+        multi_leg_db=multi_leg_db,
+        bus_cap=2,
+    )
+    assert "ZECUSDT" in syms
+    assert "ETHUSDT" in syms
+    assert "ADAUSDT" in syms
 
 
 def test_account_summary_api(client) -> None:

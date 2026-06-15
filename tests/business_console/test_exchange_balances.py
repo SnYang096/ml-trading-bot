@@ -14,6 +14,7 @@ from mlbot_console.services.exchange_balances import (
     parse_futures_account,
     spot_symbol_holdings_value,
 )
+from mlbot_console.services.account_summary import _discover_symbols_from_feature_bus
 
 
 def test_futures_open_positions_filters_flat_legs() -> None:
@@ -154,6 +155,26 @@ def test_parse_futures_account_gross_leverage_from_positions() -> None:
     )
     assert parsed["gross_notional_usdt"] == pytest.approx(30000.0)
     assert parsed["gross_leverage"] == pytest.approx(3.0)
+
+
+def test_futures_open_positions_negative_notional_fallback_is_abs() -> None:
+    raw = {
+        "positions": [
+            {
+                "symbol": "XRPUSDT",
+                "positionAmt": "-8285.4",
+                "entryPrice": "1.18",
+                "markPrice": "0",
+                "notional": "-9734.37",
+                "leverage": "5",
+                "positionInitialMargin": "1942.87",
+            },
+        ]
+    }
+    legs = futures_open_positions(raw, mark_prices={"XRPUSDT": 1.175})
+    assert len(legs) == 1
+    assert legs[0]["notional_usdt"] == pytest.approx(9735.345, rel=1e-3)
+    assert legs[0]["unrealized_pnl_usdt"] != 0.0
 
 
 def test_futures_open_positions_includes_leverage_and_margin() -> None:
@@ -326,3 +347,39 @@ def test_account_summary_includes_exchange_ledger(
     assert data["totals"]["equity_usdt"] == pytest.approx(2320.0)
     trend_scope = next(s for s in data["scopes"] if s["scope"] == "trend")
     assert trend_scope["exchange"]["equity_usdt"] == pytest.approx(2010.0)
+
+
+def test_discover_symbols_from_feature_bus_empty(tmp_path) -> None:
+    """When bars_1min directory doesn't exist, return empty list."""
+    result = _discover_symbols_from_feature_bus(tmp_path)
+    assert result == []
+
+
+def test_discover_symbols_from_feature_bus_with_files(tmp_path) -> None:
+    """Discover symbols from parquet files in bars_1min directory."""
+    bars_dir = tmp_path / "bars_1min"
+    bars_dir.mkdir()
+
+    # Create some fake parquet files
+    (bars_dir / "BTCUSDT.parquet").touch()
+    (bars_dir / "ETHUSDT.parquet").touch()
+    (bars_dir / "XRPUSDT.parquet").touch()
+    (bars_dir / ".hidden.parquet").touch()  # Should be filtered out
+    (bars_dir / "temp.tmp").touch()  # Not a .parquet file
+
+    result = _discover_symbols_from_feature_bus(tmp_path)
+    assert len(result) == 3
+    assert result == ["BTCUSDT", "ETHUSDT", "XRPUSDT"]
+
+
+def test_discover_symbols_from_feature_bus_sorted(tmp_path) -> None:
+    """Symbols should be returned in sorted order."""
+    bars_dir = tmp_path / "bars_1min"
+    bars_dir.mkdir()
+
+    # Create files in random order
+    for sym in ["ZECUSDT", "ADAUSDT", "BNBUSDT"]:
+        (bars_dir / f"{sym}.parquet").touch()
+
+    result = _discover_symbols_from_feature_bus(tmp_path)
+    assert result == ["ADAUSDT", "BNBUSDT", "ZECUSDT"]

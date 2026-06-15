@@ -167,7 +167,7 @@ quant-feature-bus
   scripts/run_market_feature_publisher.py
   ticks → bars/features → live/shared_feature_bus
         │
-        ├── quant-trend-fattail
+        ├── quant-trend-swing
         │     scripts/run_live.py
         │     disk Feature Bus → GenericLiveStrategy → PCM → OrderManager
         │
@@ -179,9 +179,9 @@ quant-feature-bus
 生产边界：
 
 - `quant-feature-bus` 是唯一监听 Binance 行情 WebSocket 的进程。
-- `quant-trend-fattail` 是方向性趋势 / fat-tail 账户，只消费磁盘 Feature Bus。
+- `quant-trend-swing` 是方向性 B·Trend 账户消费者（`run_live.py`），只消费磁盘 Feature Bus。
 - `quant-hedge-multileg` 是 hedge 账户的多腿策略进程，只消费磁盘 Feature Bus。
-- `BinanceUserStream` 仅用于账户成交/订单回报，不代表行情 WebSocket。
+- `BinanceUserStream` 仅用于账户成交/订单回报，不代表行情 WebSocket。**Trend 与 Multi-leg 各进程、各子账户各建一条 User Data Stream**（`run_live.py` / `run_multi_leg_live.py`）；Multi-leg 只订阅订单/成交流，Trend 另订阅 `ACCOUNT_UPDATE`。详见 [multi_leg_user_stream_design.md](architecture/multi_leg_user_stream_design.md)。
 
 本地启动趋势消费者示例：
 ```bash
@@ -211,7 +211,7 @@ MLBOT_FEATURE_SOURCE=bus MLBOT_FEATURE_BUS_ROOT=live/shared_feature_bus python s
 | 文件 | 职责 |
 |------|------|
 | `scripts/run_market_feature_publisher.py` | 唯一行情 WebSocket publisher，写入磁盘 Feature Bus |
-| `scripts/run_live.py` | `quant-trend-fattail` 消费者；装配 **GenericLiveStrategy** + LivePCM |
+| `scripts/run_live.py` | `quant-trend-swing` 消费者；装配 **GenericLiveStrategy** + LivePCM |
 | `scripts/run_multi_leg_live.py` | `quant-hedge-multileg` 消费者；只读 Feature Bus / feature-store |
 | `src/time_series_model/live/generic_live_strategy.py` | **配置驱动决策引擎**（Prefilter→…→Execution） |
 | `src/live_data_stream/order_flow_listener.py` | publisher/consumer 共享的 bar/feature/状态机组件 |

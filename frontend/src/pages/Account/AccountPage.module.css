@@ -201,20 +201,12 @@
   width: 100%;
 }
 
-.pnlChartsRow {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  align-items: start;
-}
-
-.pnlChartCol {
-  min-width: 0;
+.pnlDailyRow {
+  margin-top: 4px;
 }
 
 @media (max-width: 900px) {
-  .pnlWeeklyRow,
-  .pnlChartsRow {
+  .pnlWeeklyRow {
     grid-template-columns: 1fr;
   }
 

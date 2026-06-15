@@ -146,9 +146,13 @@ def _parse_float(value: Any) -> float:
 
 
 def futures_open_positions(
-    data: Mapping[str, Any], *, symbol: Optional[str] = None
+    data: Mapping[str, Any],
+    *,
+    symbol: Optional[str] = None,
+    mark_prices: Optional[Mapping[str, float]] = None,
 ) -> List[Dict[str, Any]]:
     """Non-flat futures legs from ``/fapi/v2/account`` ``positions`` array."""
+    marks = mark_prices or {}
     sym_filter = (
         str(symbol).upper()
         if symbol and not is_all_symbols(symbol)
@@ -166,25 +170,33 @@ def futures_open_positions(
         if amt == 0.0:
             continue
         mark = _parse_float(pos.get("markPrice"))
-        notional = abs(amt) * mark if mark > 0 else _parse_float(pos.get("notional"))
+        if mark <= 0:
+            mark = _parse_float(marks.get(sym))
+        if mark <= 0:
+            entry = _parse_float(pos.get("entryPrice"))
+            if entry > 0:
+                mark = entry
+        entry = _parse_float(pos.get("entryPrice"))
+        notional = abs(amt) * mark if mark > 0 else abs(_parse_float(pos.get("notional")))
         lev = int(_parse_float(pos.get("leverage")) or 0)
         init_margin = _parse_float(
             pos.get("positionInitialMargin") or pos.get("initialMargin")
         )
+        upnl_pos = {**pos, "markPrice": mark, "entryPrice": entry}
         out.append(
             {
                 "symbol": sym,
                 "side": "long" if amt > 0 else "short",
                 "quantity": abs(amt),
                 "position_amt": amt,
-                "entry_price": _parse_float(pos.get("entryPrice")),
+                "entry_price": entry,
                 "mark_price": mark,
                 "notional_usdt": round(notional, 4),
                 "leverage": lev if lev > 0 else None,
                 "initial_margin_usdt": init_margin if init_margin > 0 else None,
                 "maint_margin_usdt": _parse_float(pos.get("maintMargin")) or None,
                 "margin_type": str(pos.get("marginType") or "").lower() or None,
-                "unrealized_pnl_usdt": _compute_position_unrealized_pnl(pos),
+                "unrealized_pnl_usdt": _compute_position_unrealized_pnl(upnl_pos),
                 "liquidation_price": _parse_float(pos.get("liquidationPrice")) or None,
             }
         )
@@ -224,7 +236,7 @@ def spot_symbol_holdings_value(
 
 def futures_gross_notional(positions: List[Mapping[str, Any]]) -> float:
     return round(
-        sum(_parse_float(p.get("notional_usdt")) for p in positions),
+        sum(abs(_parse_float(p.get("notional_usdt"))) for p in positions),
         4,
     )
 
@@ -263,30 +275,178 @@ def parse_futures_account(
     }
 
 
-def parse_open_orders_margin(orders: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Parse initial margin for open orders from Binance raw response."""
+def _fetch_position_risk_raw(*, api_key: str, api_secret: str) -> List[Dict[str, Any]]:
+    session = _http_session()
+    base = "https://fapi.binance.com"
+    srv = session.get(f"{base}/fapi/v1/time", timeout=8)
+    srv.raise_for_status()
+    server_ts = int(srv.json().get("serverTime", int(time.time() * 1000)))
+    query = f"timestamp={server_ts}"
+    sig = hmac.new(api_secret.encode(), query.encode(), hashlib.sha256).hexdigest()
+    resp = session.get(
+        f"{base}/fapi/v2/positionRisk?{query}&signature={sig}",
+        headers={"X-MBX-APIKEY": api_key},
+        timeout=12,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if not isinstance(data, list):
+        raise ValueError("unexpected position risk response")
+    return data
+
+
+def futures_symbol_leverage_map(data: Mapping[str, Any]) -> Dict[str, int]:
+    """Per-symbol leverage from ``/fapi/v2/account`` positions (includes flat symbols)."""
+    out: Dict[str, int] = {}
+    for pos in data.get("positions") or []:
+        sym = str(pos.get("symbol") or "").upper()
+        lev = int(_parse_float(pos.get("leverage")) or 0)
+        if sym and lev > 0:
+            out[sym] = lev
+    return out
+
+
+def futures_leverage_map_from_risk(risk_rows: List[Mapping[str, Any]]) -> Dict[str, int]:
+    """Leverage per symbol from positionRisk (covers symbols with orders but flat position)."""
+    out: Dict[str, int] = {}
+    for row in risk_rows:
+        sym = str(row.get("symbol") or "").upper()
+        lev = int(_parse_float(row.get("leverage")) or 0)
+        if sym and lev > 0:
+            out[sym] = lev
+    return out
+
+
+def merge_leverage_maps(*maps: Mapping[str, int]) -> Dict[str, int]:
+    merged: Dict[str, int] = {}
+    for m in maps:
+        for sym, lev in m.items():
+            if lev > 0:
+                merged[str(sym).upper()] = int(lev)
+    return merged
+
+
+def merge_liquidation_from_position_risk(
+    positions: List[Dict[str, Any]], risk_rows: List[Mapping[str, Any]]
+) -> None:
+    """Fill missing liquidation_price from /fapi/v2/positionRisk.
+
+    Mutates ``positions`` list in place (each dict may get ``liquidation_price``).
+    """
+    liq_by_key: Dict[tuple, float] = {}
+    for row in risk_rows:
+        sym = str(row.get("symbol") or "").upper()
+        try:
+            amt = float(row.get("positionAmt") or 0.0)
+        except (TypeError, ValueError):
+            amt = 0.0
+        if amt == 0.0:
+            continue
+        pos_side = str(row.get("positionSide") or "BOTH").upper()
+        side = "long" if amt > 0 else "short"
+        liq = _parse_float(row.get("liquidationPrice"))
+        if liq > 0:
+            liq_by_key[(sym, side)] = liq
+            if pos_side in {"LONG", "SHORT"}:
+                liq_by_key[(sym, pos_side.lower())] = liq
+    for pos in positions:
+        if _parse_float(pos.get("liquidation_price")) > 0:
+            continue
+        sym = str(pos.get("symbol") or "").upper()
+        side = str(pos.get("side") or "long").lower()
+        liq = liq_by_key.get((sym, side))
+        if liq:
+            pos["liquidation_price"] = liq
+
+
+def _order_price_for_margin(o: Mapping[str, Any], marks: Mapping[str, float]) -> float:
+    for key in ("price", "stopPrice", "activatePrice"):
+        px = _parse_float(o.get(key))
+        if px > 0:
+            return px
+    sym = str(o.get("symbol") or "").upper()
+    return _parse_float(marks.get(sym))
+
+
+def distribute_open_order_margin_fallback(
+    orders: List[Dict[str, Any]], *, total_margin: float
+) -> None:
+    """Allocate account open-order margin across rows missing per-order values."""
+    if total_margin <= 0:
+        return
+    need = [
+        o
+        for o in orders
+        if o.get("initial_margin_usdt") is None and not o.get("reduce_only")
+    ]
+    if not need:
+        return
+    weights: List[float] = []
+    for o in need:
+        px = _parse_float(o.get("price"))
+        qty = _parse_float(o.get("quantity"))
+        weights.append(px * qty if px > 0 and qty > 0 else 1.0)
+    wsum = sum(weights) or float(len(need))
+    for o, w in zip(need, weights):
+        o["initial_margin_usdt"] = round(total_margin * w / wsum, 4)
+        o["margin_estimated"] = True
+        o["margin_allocated"] = True
+
+
+def parse_open_orders_margin(
+    orders: List[Dict[str, Any]],
+    *,
+    leverage_by_symbol: Optional[Mapping[str, float]] = None,
+    mark_prices: Optional[Mapping[str, float]] = None,
+    total_open_order_margin: Optional[float] = None,
+) -> List[Dict[str, Any]]:
+    """Parse or estimate initial margin for open orders.
+
+    ``/fapi/v1/openOrders`` usually omits ``initialMargin``; estimate as
+    ``price * qty / leverage`` when leverage map is available.
+    """
+    lev_map = leverage_by_symbol or {}
+    marks = mark_prices or {}
     out: List[Dict[str, Any]] = []
     for o in orders:
         sym = str(o.get("symbol") or "").upper()
         side = str(o.get("side") or "").lower()
         pos_side = str(o.get("positionSide") or "").upper()
         oid = str(o.get("orderId") or "")
-        
-        # Binance returns initialMargin in the order object for open orders
+        reduce_only = str(o.get("reduceOnly") or "").lower() in {"true", "1"}
         init_margin = _parse_float(o.get("initialMargin"))
-        
-        out.append({
-            "order_id": oid,
-            "client_order_id": str(o.get("clientOrderId") or ""),
-            "symbol": sym,
-            "side": side,
-            "position_side": pos_side if pos_side in {"LONG", "SHORT"} else None,
-            "type": str(o.get("type") or "").lower(),
-            "price": _parse_float(o.get("price")),
-            "quantity": _parse_float(o.get("origQty")),
-            "initial_margin_usdt": init_margin if init_margin > 0 else None,
-            "status": str(o.get("status") or "").lower(),
-        })
+        margin_estimated = False
+        if reduce_only:
+            init_margin = 0.0
+        elif init_margin <= 0:
+            lev = _parse_float(lev_map.get(sym))
+            price = _order_price_for_margin(o, marks)
+            qty = _parse_float(o.get("origQty"))
+            if lev > 0 and price > 0 and qty > 0:
+                init_margin = round(price * qty / lev, 4)
+                margin_estimated = True
+        px_out = _order_price_for_margin(o, marks)
+        out.append(
+            {
+                "order_id": oid,
+                "client_order_id": str(o.get("clientOrderId") or ""),
+                "symbol": sym,
+                "side": side,
+                "position_side": pos_side if pos_side in {"LONG", "SHORT"} else None,
+                "type": str(o.get("type") or "").lower(),
+                "price": px_out if px_out > 0 else None,
+                "quantity": _parse_float(o.get("origQty")),
+                "initial_margin_usdt": init_margin if init_margin > 0 else (0.0 if reduce_only else None),
+                "margin_estimated": margin_estimated,
+                "margin_allocated": False,
+                "reduce_only": reduce_only,
+                "leverage": int(_parse_float(lev_map.get(sym))) or None,
+                "status": str(o.get("status") or "").lower(),
+            }
+        )
+    distribute_open_order_margin_fallback(
+        out, total_margin=_parse_float(total_open_order_margin)
+    )
     return out
 
 
@@ -447,8 +607,15 @@ def fetch_scope_exchange_balance(
         if meta["account_type"] == "futures_usdtm":
             raw = _fetch_futures_account_raw(api_key=api_key, api_secret=api_secret)
             open_positions = futures_open_positions(
-                raw, symbol=sym_filter if symbol_scoped else None
+                raw,
+                symbol=sym_filter if symbol_scoped else None,
+                mark_prices=mark_prices or {},
             )
+            try:
+                risk_rows = _fetch_position_risk_raw(api_key=api_key, api_secret=api_secret)
+                merge_liquidation_from_position_risk(open_positions, risk_rows)
+            except Exception:
+                logger.debug("positionRisk fetch failed scope=%s", scope, exc_info=True)
             parsed = parse_futures_account(raw, open_positions=open_positions)
             account_upnl = float(parsed.get("unrealized_pnl_usdt") or 0.0)
             parsed = dict(parsed)

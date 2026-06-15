@@ -1,5 +1,7 @@
 # 多腿（Multi-Leg）实盘 / 影子盘守护进程架构
 
+**相关**：User-stream 三层兜底与监控 backlog → [multi_leg_user_stream_design.md](../multi_leg_user_stream_design.md) · 对账专题 → [HEDGE_RECONCILIATION_CN.md](../../deployment/HEDGE_RECONCILIATION_CN.md)
+
 ## 名字是什么意思
 
 - **multi leg（多腿）**：指同一标的、同一账户下，策略**不是**「单一净仓位一条腿」模型，而是可能同时存在：
@@ -25,7 +27,7 @@
 
 ```text
 quant-feature-bus（行情 WebSocket → 磁盘 Feature Bus）
-  → quant-trend-fattail / MultiSymbolManager → OrderFlowListener
+  → quant-trend-swing / MultiSymbolManager → OrderFlowListener
   → GenericLiveStrategy（BPC / ME / SRB / TPC 等 TradeIntent 策略）
   → LivePCM / OrderManager → BinanceAPI
 ```
@@ -43,18 +45,18 @@ quant-feature-bus（行情 WebSocket → 磁盘 Feature Bus）
   - `MULTI_LEG_BINANCE_FUTURES_TESTNET_API_SECRET`
 - 若未设置上述变量，脚本仍回落到 `BINANCE_FUTURES_TESTNET_API_KEY` / `SECRET`（兼容单账户、单进程）。
 
-同一台机器上并行跑两个进程时：`quant-trend-fattail` 加载方向性账户配置；`quant-hedge-multileg` 在独立 systemd 单元中使用 `MULTI_LEG_*` 专用密钥。
+同一台机器上并行跑两个进程时：`quant-trend-swing` 加载方向性账户配置；`quant-hedge-multileg` 在独立 systemd 单元中使用 `MULTI_LEG_*` 专用密钥。
 
 ---
 
-## Directional Trend / Fat-tail 路径
+## Directional B·Trend 路径（`quant-trend-swing`）
 
 现有实盘主路径为：
 
 ```text
 quant-feature-bus
 -> disk Feature Bus
--> quant-trend-fattail / MultiSymbolManager
+-> quant-trend-swing / MultiSymbolManager
 -> IncrementalFeatureComputer
 -> GenericLiveStrategy
 -> LivePCM
@@ -112,7 +114,7 @@ run_market_feature_publisher.py
 随后两个消费者都读同一份已闭合快照：
 
 ```text
-quant-trend-fattail / run_live.py
+quant-trend-swing / run_live.py
   MLBOT_FEATURE_SOURCE=bus
   -> FeatureBusReader
   -> LivePCM / OrderManager
@@ -238,7 +240,7 @@ on_execution_report(report)
 
 两条路径应 **并存、互补**，而不是互相替代。
 
-**用 Directional Trend / Fat-tail Live** 当：
+**用 B·Trend Live（`quant-trend-swing`）** 当：
 
 - 单仓位 alpha 策略
 - `TradeIntent`
@@ -281,10 +283,10 @@ on_execution_report(report)
 
 后续生产化工作包括但不限于：
 
-- 已完成：`BinanceUserStream` 在 `run_multi_leg_live.py` 的 testnet + `BinanceAPI` 下接入 `MultiLegLiveOrchestrator.on_execution_report`
+- 已完成：`BinanceUserStream` 在 `run_multi_leg_live.py` 的 testnet/mainnet + `BinanceAPI` 下接入 `MultiLegLiveOrchestrator.on_execution_report`（`shadow` 模式无 WS）
 - 已完成：`--bar-source feature-store` 消费 quant-feature-bus 写出的磁盘 Feature Bus，作为 hedge 多腿慢信号输入
 - 已完成：per-leg reduce-only TP / SL 保护单动作与 `multi_leg_*` 独立持久化表
-- 主网多腿：与 `MULTI_LEG_*` 对称的专用主网 API 环境变量（若扩展 `--mode live`）
+- 主网多腿 hardened：`--mode mainnet` + `MULTI_LEG_BINANCE_FUTURES_API_KEY/SECRET`（已支持；运维与告警仍待加强）
 - 进程重启后基于 `multi_leg_orders` / engine state 完整恢复保护单映射
 - 明确「持仓漂移」策略：仅告警 vs 自动减仓
 - 跨 trend/fat-tail Live 与 hedge multi-leg Live 的 account master governor

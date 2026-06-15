@@ -364,8 +364,16 @@ export function OrdersPage() {
                         {r.unrealized_pnl_usdt != null ? fmtPnl(r.unrealized_pnl_usdt) : '—'}
                       </td>
                       <td>{r.exchange_leverage ?? '—'}</td>
-                      <td>{r.exchange_initial_margin_usdt != null ? Number(r.exchange_initial_margin_usdt).toFixed(2) : '—'}</td>
-                      <td>{r.exchange_liquidation_price != null ? Number(r.exchange_liquidation_price).toFixed(2) : '—'}</td>
+                      <td title={r.exchange_margin_allocated ? '按本地 qty 分摊交易所保证金' : undefined}>
+                        {r.exchange_initial_margin_usdt != null
+                          ? `${r.exchange_margin_allocated ? '~' : ''}${Number(r.exchange_initial_margin_usdt).toFixed(2)}`
+                          : '—'}
+                      </td>
+                      <td>
+                        {r.exchange_liquidation_price != null && Number(r.exchange_liquidation_price) > 0
+                          ? Number(r.exchange_liquidation_price).toFixed(4)
+                          : '—'}
+                      </td>
                       <td>{formatUnixTs(r.entry_time)}</td>
                       <td>{Number(r.pending_exit_orders ?? 0) > 0 ? String(r.pending_exit_orders) : '—'}</td>
                       <td>
@@ -396,27 +404,38 @@ export function OrdersPage() {
           {openOrderRows.length > 0 && (
             <div style={{ marginTop: '20px' }}>
               <h3>未平挂单（保证金占用）</h3>
+              <p className="muted" style={{ fontSize: '0.8rem', margin: '0 0 8px' }}>
+                币安 openOrders 通常无逐单保证金；无 API 字段时按 价格×数量÷杠杆 估算（标 ~）。
+              </p>
               <table className="data-table">
                 <thead>
                   <tr>
+                    <th>Scope</th>
                     <th>Symbol</th>
                     <th>方向</th>
                     <th>类型</th>
                     <th>价格</th>
                     <th>数量</th>
+                    <th>杠杆</th>
                     <th>锁定保证金</th>
                     <th>订单号</th>
                   </tr>
                 </thead>
                 <tbody>
                   {openOrderRows.map((r) => (
-                    <tr key={r.order_id}>
+                    <tr key={`${r.scope}-${r.order_id}`}>
+                      <td>{SCOPE_LABELS[r.scope || ''] || r.scope || '—'}</td>
                       <td>{r.symbol}</td>
                       <td>{r.position_side || r.side}</td>
                       <td>{r.type}</td>
                       <td>{r.price}</td>
                       <td>{r.quantity}</td>
-                      <td>{r.initial_margin_usdt != null ? Number(r.initial_margin_usdt).toFixed(2) : '—'}</td>
+                      <td>{r.leverage != null ? `${r.leverage}x` : '—'}</td>
+                      <td>
+                        {r.initial_margin_usdt != null
+                          ? `${r.margin_allocated || r.margin_estimated ? '~' : ''}${Number(r.initial_margin_usdt).toFixed(2)}${r.reduce_only ? ' (RO)' : ''}`
+                          : '—'}
+                      </td>
                       <td className="muted" style={{ fontSize: '0.8rem' }}>{r.client_order_id || r.order_id}</td>
                     </tr>
                   ))}
@@ -425,15 +444,15 @@ export function OrdersPage() {
             </div>
           )}
 
-          <div style={{ marginTop: '20px', padding: '10px', background: '#f9f9f9', borderRadius: '4px', fontSize: '0.9rem' }}>
-            <strong>页脚对账：</strong>
-            <ul style={{ margin: '5px 0 0 20px' }}>
-              <li>Σ 持仓保证金: {positionRows.reduce((sum, r) => sum + (Number(r.exchange_initial_margin_usdt) || 0), 0).toFixed(2)} USDT</li>
-              <li>Σ 挂单保证金: {openOrderRows.reduce((sum, r) => sum + (Number(r.initial_margin_usdt) || 0), 0).toFixed(2)} USDT</li>
+          <div className="panel" style={{ marginTop: 16, fontSize: '0.85rem' }}>
+            <strong>页脚对账</strong>
+            <ul style={{ margin: '8px 0 0 1.2rem' }}>
+              <li>Σ 持仓保证金: {positionRows.reduce((sum, r) => sum + (Number(r.exchange_initial_margin_usdt) || 0), 0).toFixed(2)} USDT（Multi-leg 多行可能为分摊）</li>
+              <li>Σ 挂单保证金: {openOrderRows.reduce((sum, r) => sum + (Number(r.initial_margin_usdt) || 0), 0).toFixed(2)} USDT（含估算）</li>
               <li>总计占用: {(positionRows.reduce((sum, r) => sum + (Number(r.exchange_initial_margin_usdt) || 0), 0) + openOrderRows.reduce((sum, r) => sum + (Number(r.initial_margin_usdt) || 0), 0)).toFixed(2)} USDT</li>
             </ul>
-            <p className="muted" style={{ fontSize: '0.8rem', marginTop: '5px' }}>
-              注：Multi-leg 本地行可能为估算分摊，总和对齐请以账户总览页 exchange_ledger 为准。
+            <p className="muted" style={{ fontSize: '0.78rem', marginTop: 8 }}>
+              权威总占用见 <Link to="/account">账户总览</Link> exchange_ledger（含账户级挂单保证金汇总）。
             </p>
           </div>
         </>

@@ -15,7 +15,7 @@ groups:
         to: 0
       datasourceUid: prometheus-monitoring
       model:
-        expr: up{job=~"quant-feature-bus|quant-trend-fattail|quant-hedge-multileg|quant-spot-accum"} == 0
+        expr: up{job=~"quant-feature-bus|quant-trend-swing|quant-hedge-multileg|quant-spot-accum"} == 0
         instant: true
         intervalMs: 1000
         maxDataPoints: 43200
@@ -63,7 +63,7 @@ groups:
         to: 0
       datasourceUid: prometheus-monitoring
       model:
-        expr: avg_over_time(up{job=~"quant-feature-bus|quant-trend-fattail|quant-hedge-multileg|quant-spot-accum"}[5m]) < 0.5
+        expr: avg_over_time(up{job=~"quant-feature-bus|quant-trend-swing|quant-hedge-multileg|quant-spot-accum"}[5m]) < 0.5
         instant: true
         intervalMs: 1000
         maxDataPoints: 43200

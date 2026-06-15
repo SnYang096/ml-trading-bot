@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, Query
@@ -18,13 +19,21 @@ from mlbot_console.services.strategy_registry import strategy_account_layer
 from mlbot_console.services.trade_links import collect_trade_links
 from mlbot_console.services.trend_funnel import fetch_funnel_snapshots
 from mlbot_console.services.exchange_balances import (
+    _fetch_futures_account_raw,
     _fetch_open_orders_raw,
-    parse_open_orders_margin,
+    _fetch_position_risk_raw,
     _env_first,
+    _parse_float,
     _SCOPE_META,
+    futures_leverage_map_from_risk,
+    futures_symbol_leverage_map,
+    merge_leverage_maps,
+    parse_futures_account,
+    parse_open_orders_margin,
 )
 
 router = APIRouter(tags=["orders"])
+logger = logging.getLogger(__name__)
 
 
 def _scopes_list(scopes: str) -> List[str]:
@@ -82,16 +91,35 @@ def orders_open_positions(
     """Open holdings with mark-to-market unrealized PnL (not limit-order book)."""
     # ── Fetch exchange positions for cross-validation ──
     exchange_ledger = None
+    mark_prices: dict = {}
     try:
+        from mlbot_console.services.account_summary import (
+            latest_close_prices,
+            resolve_mark_price_symbols,
+        )
         from mlbot_console.services.exchange_balances import build_exchange_ledger
 
+        if SETTINGS.feature_bus_root and SETTINGS.feature_bus_root.is_dir():
+            syms = resolve_mark_price_symbols(
+                symbol=symbol,
+                feature_bus_root=SETTINGS.feature_bus_root,
+                trend_db=SETTINGS.trend_order_db,
+                spot_db=SETTINGS.spot_order_db,
+                multi_leg_db=SETTINGS.multi_leg_db,
+            )
+            mark_prices = latest_close_prices(SETTINGS.feature_bus_root, syms)
         exchange_ledger = build_exchange_ledger(
-            mark_prices=None,
+            mark_prices=mark_prices,
             scopes=_scopes_list(scopes),
             symbol=symbol,
         )
     except Exception:
-        pass
+        logger.debug(
+            "exchange_ledger fetch failed for open-positions symbol=%s scopes=%s",
+            symbol,
+            scopes,
+            exc_info=True,
+        )
 
     rows = collect_open_positions(
         trend_db=SETTINGS.trend_order_db,
@@ -126,11 +154,57 @@ def orders_open_orders_margin(
     
     try:
         raw_orders = _fetch_open_orders_raw(api_key=api_key, api_secret=api_secret, symbol=symbol)
-        parsed = parse_open_orders_margin(raw_orders)
+        raw_account = _fetch_futures_account_raw(api_key=api_key, api_secret=api_secret)
+        risk_rows: list = []
+        try:
+            risk_rows = _fetch_position_risk_raw(api_key=api_key, api_secret=api_secret)
+        except Exception:
+            logger.debug(
+                "positionRisk fetch failed for open-orders-margin scope=%s",
+                scope,
+                exc_info=True,
+            )
+        leverage_map = merge_leverage_maps(
+            futures_symbol_leverage_map(raw_account),
+            futures_leverage_map_from_risk(risk_rows),
+        )
+        total_order_margin = _parse_float(
+            parse_futures_account(raw_account).get("open_order_initial_margin_usdt")
+        )
+        mark_prices: dict = {}
+        if SETTINGS.feature_bus_root and SETTINGS.feature_bus_root.is_dir():
+            from mlbot_console.services.account_summary import (
+                MAX_MARK_SYMBOLS_OPEN_ORDERS_FALLBACK,
+                latest_close_prices,
+                resolve_mark_price_symbols,
+            )
+
+            syms = {str(o.get("symbol") or "").upper() for o in raw_orders if o.get("symbol")}
+            if symbol and not is_all_symbols(symbol):
+                syms.add(symbol.upper())
+            elif not syms:
+                syms = set(
+                    resolve_mark_price_symbols(
+                        symbol=symbol,
+                        feature_bus_root=SETTINGS.feature_bus_root,
+                        trend_db=SETTINGS.trend_order_db,
+                        spot_db=SETTINGS.spot_order_db,
+                        multi_leg_db=SETTINGS.multi_leg_db,
+                        bus_cap=MAX_MARK_SYMBOLS_OPEN_ORDERS_FALLBACK,
+                    )
+                )
+            mark_prices = latest_close_prices(SETTINGS.feature_bus_root, sorted(syms))
+        parsed = parse_open_orders_margin(
+            raw_orders,
+            leverage_by_symbol=leverage_map,
+            mark_prices=mark_prices,
+            total_open_order_margin=total_order_margin,
+        )
+        for row in parsed:
+            row["scope"] = scope
         return ok(parsed, meta={"count": len(parsed), "scope": scope})
     except Exception as e:
-        logger = __import__("logging").getLogger(__name__)
-        logger.error(f"Failed to fetch open orders margin for {scope}: {e}")
+        logger.error("Failed to fetch open orders margin for %s: %s", scope, e)
         return ok([], meta={"error": str(e)})
 
 

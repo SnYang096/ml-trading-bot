@@ -2,9 +2,9 @@
 #
 # 三进程架构：
 #   quant-feature-bus 监听 Binance WebSocket 并写磁盘 Feature Bus；
-#   quant-trend-fattail 与 quant-hedge-multileg 分别消费磁盘 bus，且各自使用独立账户。
+#   quant-trend-swing 与 quant-hedge-multileg 分别消费磁盘 bus，且各自使用独立账户。
 # systemd 需在宿主机映射（见 deploy.yml）：
-#   9192→feature-bus，9190→trend/fattail，9191→hedge multi-leg，9193→spot_accum_simple。
+#   9192→feature-bus，9190→trend/swing，9191→hedge multi-leg，9193→spot_accum_simple。
 # 注意：Prometheus 运行在 Docker 内，不能抓取只绑定宿主 127.0.0.1 的端口。
 # monitoring 栈通过 host.docker.internal 访问宿主（compose 已为 prometheus 配 extra_hosts）。
 
@@ -29,12 +29,12 @@ scrape_configs:
         regex: "^(mlbot_ws_connected|mlbot_cpu_percent|mlbot_memory_mb|mlbot_memory_rss_mb|mlbot_uptime_seconds|mlbot_disk_used_percent|mlbot_disk_free_gb|mlbot_dir_size_gb|mlbot_pipeline_data_age_seconds|mlbot_pipeline_data_fresh)$"
         action: keep
 
-  - job_name: "quant-trend-fattail"
+  - job_name: "quant-trend-swing"
     static_configs:
       - targets: ["host.docker.internal:9190"]
         labels:
           instance: "live"
-          workload: "trend_fattail_consumer"
+          workload: "trend_swing_consumer"
     # 与 hedge 对齐：显式保留 Strategy Map / 账户 / 进程指标；丢弃 multi_leg 专用序列。
     metric_relabel_configs:
       - source_labels: [__name__]

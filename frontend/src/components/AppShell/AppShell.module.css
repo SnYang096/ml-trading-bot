@@ -1,8 +1,8 @@
 .root {
   min-height: 100vh;
   background:
-    linear-gradient(rgba(0, 255, 65, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 255, 65, 0.03) 1px, transparent 1px);
+    linear-gradient(var(--shell-grid-a) 1px, transparent 1px),
+    linear-gradient(90deg, var(--shell-grid-a) 1px, transparent 1px);
   background-size: 24px 24px;
 }
 
@@ -16,7 +16,7 @@
   background: var(--bg-elevated);
   box-shadow:
     0 1px 0 var(--border-bright),
-    inset 0 -1px 0 rgba(0, 255, 65, 0.08);
+    inset 0 -1px 0 var(--toolbar-inset);
 }
 
 .title {
@@ -35,6 +35,12 @@
 .prompt {
   color: var(--accent-cyan);
   text-shadow: var(--glow-cyan);
+}
+
+.brand {
+  color: var(--accent);
+  letter-spacing: var(--heading-tracking, 0.06em);
+  text-shadow: var(--glow);
 }
 
 .path {
@@ -61,7 +67,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg);
-  box-shadow: inset 0 0 12px rgba(0, 255, 65, 0.06);
+  box-shadow: inset 0 0 12px var(--toolbar-inset);
 }
 
 .navLink {

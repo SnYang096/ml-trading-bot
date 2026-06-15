@@ -5,9 +5,9 @@
 ## 视角与变量
 
 - `scope`: `trend` 或 `hedge`。
-- `job`: 由 `scope` 派生。
-  - `trend` -> `quant-trend-fattail`
-  - `hedge` -> `quant-hedge-multileg`
+- `job`: 由 `scope` 派生（与 systemd / Docker 容器名一致）。
+  - `trend` -> `quant-trend-swing`（宿主 metrics :9190）
+  - `hedge` -> `quant-hedge-multileg`（:9191）
 - `strategy` / `symbol` / `timeframe`: 在已筛选 `job` 的前提下级联查询。
 
 这保证了趋势与多腿不会在同一组下拉里串数据。

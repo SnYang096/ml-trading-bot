@@ -4,11 +4,11 @@ set -euo pipefail
 
 TREND_PORT="${MLBOT_TREND_METRICS_PORT:-9190}"
 PROM_URL="${MLBOT_PROMETHEUS_URL:-http://127.0.0.1:9091}"
-JOB="quant-trend-fattail"
+JOB="quant-trend-swing"
 
 echo "=== 1) 宿主 trend /metrics (127.0.0.1:${TREND_PORT}) ==="
 metrics="$(curl -sfS --max-time 5 "http://127.0.0.1:${TREND_PORT}/metrics" 2>&1)" || {
-  echo "FAIL: 无法访问 trend metrics。检查: systemctl status quant-trend-fattail; docker ps | grep quant-trend-fattail"
+  echo "FAIL: 无法访问 trend metrics。检查: systemctl status quant-trend-swing; docker ps | grep quant-trend-swing"
   exit 1
 }
 printf '%s\n' "$metrics" | sed -n '1,3p'
@@ -49,6 +49,6 @@ if not r:
 "
 fi
 echo ""
-echo "若 1) OK 且 2) DOWN: 重启 monitoring 栈并确认 prometheus.yml 中 quant-trend-fattail → host.docker.internal:9190"
-echo "若 1) FAIL: sudo systemctl restart quant-trend-fattail"
+echo "若 1) OK 且 2) DOWN: 重启 monitoring 栈并确认 prometheus.yml 中 quant-trend-swing → host.docker.internal:9190"
+echo "若 1) FAIL: sudo systemctl restart quant-trend-swing"
 echo "若 1–3) OK 仅漏斗空: 等 bus 事件触发 StatsCollector.flush，或查 quant-feature-bus / shared_feature_bus"

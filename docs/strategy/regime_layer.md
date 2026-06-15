@@ -69,7 +69,7 @@ H 是 Pareto 强于 baseline 的稳健折中：bull-DD 保护 + recent 上行均
 ```bash
 python scripts/deploy_config_to_live.py --diff -s tpc bpc me srb
 python scripts/deploy_config_to_live.py --deploy -s tpc bpc me srb --yes
-# 重启 quant-feature-bus、quant-trend-fattail
+# 重启 quant-feature-bus、quant-trend-swing
 ```
 
 验收：

@@ -53,7 +53,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "## Strategy Map · 策略管道健康\n\n业务账户/订单/K 线请用 **业务 CMS**（:8800）。本组只看 **信号、拒因、对账、风控**。\n\n- **[Trend](/d/quant-strategy-map-trend)** — `quant-trend-fattail` :9190\n- **[Multi-leg Hedge](/d/quant-strategy-map-hedge)** — `quant-hedge-multileg` :9191\n- **[Spot Accum](/d/quant-strategy-map-spot)** — `quant-spot-accum` :9193\n\n[System Health](/d/quant-system) · [Logs](/d/quant-logs) · [Ops Hub](/d/quant-home)"
+        "content": "## Strategy Map · 策略管道健康\n\n业务账户/订单/K 线请用 **业务 CMS**（:8800）。本组只看 **信号、拒因、对账、风控**。\n\n- **[Trend](/d/quant-strategy-map-trend)** — `quant-trend-swing` :9190\n- **[Multi-leg Hedge](/d/quant-strategy-map-hedge)** — `quant-hedge-multileg` :9191\n- **[Spot Accum](/d/quant-strategy-map-spot)** — `quant-spot-accum` :9193\n\n[System Health](/d/quant-system) · [Logs](/d/quant-logs) · [Ops Hub](/d/quant-home)"
       },
       "transparent": false
     }

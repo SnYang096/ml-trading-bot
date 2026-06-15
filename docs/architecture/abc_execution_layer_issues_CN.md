@@ -99,7 +99,7 @@ TPC direction band 对齐、fast_scalp dual-head、ME CompressionBreakout rework
 
 3. **明确三源优先级**：exchange truth 用于 replenishment guard；段 slot 以本地 inventory/pending 为主（见 [segment-lifecycle.md §4.4](segment-lifecycle.md)）。
 
-**落地形态（Phase 4）**：共享 Python 模块（候选路径 `src/order_management/execution_truth_sync.py`），由 `quant-hedge-multileg`、`quant-trend-fattail` 等**现有进程 import 调用**——不新增 daemon。
+**落地形态（Phase 4）**：共享 Python 模块（候选路径 `src/order_management/execution_truth_sync.py`），由 `quant-hedge-multileg`、`quant-trend-swing` 等**现有进程 import 调用**——不新增 daemon。
 
 即使 chop 与 trend 永远分账户，**每个账户** 仍需要上述 1–3；ExecutionTruthSync 是 **单账户内部的工程债名称**，不是否定 ABC 分账。
 
@@ -218,7 +218,7 @@ for issue in RECONCILIATION_ISSUE_BUCKETS:
 | ExecutionTruthSync 表述 | ✅ 本文 §2.3 / §8 已澄清（非新进程） |
 | segment-lifecycle doc snippet | ✅ §1.2 / §4.3 已与实现对齐（2026-06-14） |
 
-**第一实施目标**：C hedge runtime（`quant-hedge-multileg`）+ trend backfill（`quant-trend-fattail`）的 metrics 与 issue 命名统一；**不**在本迭代新增进程。
+**第一实施目标**：C hedge runtime（`quant-hedge-multileg`）+ trend backfill（`quant-trend-swing`）的 metrics 与 issue 命名统一；**不**在本迭代新增进程。
 
 ### 5.1 代码 follow-up（非 metrics Phase 主线）
 
@@ -244,7 +244,7 @@ flowchart LR
     cSync --> cMetrics["Prometheus"]
   end
 
-  subgraph bProc [quant-trend-fattail]
+  subgraph bProc [quant-trend-swing]
     bBackfill["TerminalOrderBackfill"] --> bMetrics["Prometheus"]
   end
 
@@ -255,7 +255,7 @@ flowchart LR
 | 进程 | 职责 | truth sync 相关入口 |
 | ---- | ---- | ------------------- |
 | `quant-hedge-multileg` | C 层 chop/trend 多腿 | daemon reconcile 60s / on action；`sync_live_exchange_state` |
-| `quant-trend-fattail` | B 层 PCM/单腿 | `terminal_order_backfill` → `reconcile_open_orders` + 终态回填 |
+| `quant-trend-swing` | B 层 PCM/单腿 | `terminal_order_backfill` → `reconcile_open_orders` + 终态回填 |
 | `quant-spot-accum` | A 层 spot | 独立 reconcile metrics（scope=spot） |
 
 ---

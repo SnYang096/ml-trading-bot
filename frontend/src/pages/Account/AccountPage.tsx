@@ -236,18 +236,14 @@ export function AccountPage() {
               <WeeklyPnlTable weekly={scoped?.weekly_realized || []} />
             </div>
           </div>
+          <div className={styles.pnlDailyRow}>
+            <h4 className={styles.pnlSubhead}>按日明细</h4>
+            <DailyPnlChart daily={scoped?.daily_realized || []} />
+          </div>
           <h4 className={styles.pnlSubhead}>钱包 / 权益曲线</h4>
           <AccountEquityChart curves={scoped?.account_curves} />
-          <div className={styles.pnlChartsRow}>
-            <div className={styles.pnlChartCol}>
-              <h4 className={styles.pnlSubhead}>已实现盈亏（本地 DB · 累计）</h4>
-              <EquityCurveChart curve={scoped?.cumulative_realized || []} />
-            </div>
-            <div className={styles.pnlChartCol}>
-              <h4 className={styles.pnlSubhead}>按日明细</h4>
-              <DailyPnlChart daily={scoped?.daily_realized || []} />
-            </div>
-          </div>
+          <h4 className={styles.pnlSubhead}>已实现盈亏（本地 DB · 累计）</h4>
+          <EquityCurveChart curve={scoped?.cumulative_realized || []} />
           {scoped?.notes?.length ? (
             <p className={styles.notes}>{scoped.notes.map((n) => `· ${n}`).join('\n')}</p>
           ) : null}

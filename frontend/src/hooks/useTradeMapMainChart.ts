@@ -47,6 +47,8 @@ import {
   type LogicalRange,
 } from '@/lib/tradeMap/candles.ts';
 import type { FeatureOverlays } from '@/lib/tradeMap/types.ts';
+import { candleSeriesOptions, chartLayoutOptions } from '@/lib/tradeMap/chartTheme.ts';
+import { useTheme } from '@/context/ThemeContext.tsx';
 import type { LayerState } from '@/stores/tradeMapStore.ts';
 import { useTradeMapStore } from '@/stores/tradeMapStore.ts';
 
@@ -75,24 +77,13 @@ function labelSpecsEqual(a: ChopGridLabelSpec[], b: ChopGridLabelSpec[]): boolea
   return true;
 }
 
-const CHART_OPTS = {
-  layout: {
-    background: { color: CHART_THEME.bg },
-    textColor: CHART_THEME.text,
-    attributionLogo: false,
-  },
-  grid: { vertLines: { color: CHART_THEME.grid }, horzLines: { color: CHART_THEME.grid } },
+const CHART_OPTS_BASE = {
   timeScale: {
     timeVisible: true,
     secondsVisible: false,
     barSpacing: 3,
     minBarSpacing: 0.5,
     rightOffset: 8,
-  },
-  rightPriceScale: {
-    borderColor: CHART_THEME.border,
-    scaleMargins: { top: 0.08, bottom: 0.12 },
-    minimumWidth: 72,
   },
   handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true },
   handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true },
@@ -116,6 +107,7 @@ export interface MainChartParams {
 }
 
 export function useTradeMapMainChart(params: MainChartParams) {
+  const { chartTheme } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -353,14 +345,11 @@ export function useTradeMapMainChart(params: MainChartParams) {
 
   useEffect(() => {
     if (!containerRef.current) return;
-    const chart = createChart(containerRef.current, CHART_OPTS);
-    const series = chart.addSeries(CandlestickSeries, {
-      upColor: CHART_THEME.candleUp,
-      downColor: CHART_THEME.candleDown,
-      borderVisible: false,
-      wickUpColor: CHART_THEME.candleUp,
-      wickDownColor: CHART_THEME.candleDown,
+    const chart = createChart(containerRef.current, {
+      ...CHART_OPTS_BASE,
+      ...chartLayoutOptions(chartTheme),
     });
+    const series = chart.addSeries(CandlestickSeries, candleSeriesOptions(chartTheme));
     const markerPlugin = createSeriesMarkers(series);
     chartRef.current = chart;
     seriesRef.current = series;
@@ -412,6 +401,14 @@ export function useTradeMapMainChart(params: MainChartParams) {
       mainOverlaySeriesRef.current.clear();
     };
   }, [refreshPriceAutoscale]);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    const series = seriesRef.current;
+    if (!chart) return;
+    chart.applyOptions(chartLayoutOptions(chartTheme));
+    if (series) series.applyOptions(candleSeriesOptions(chartTheme));
+  }, [chartTheme]);
 
   useEffect(() => {
     const series = seriesRef.current;

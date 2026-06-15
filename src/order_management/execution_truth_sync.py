@@ -1,7 +1,7 @@
 """Process-local reconciliation metrics helper (ExecutionTruthSync contract).
 
 Not a standalone daemon — imported by existing live processes
-(``quant-hedge-multileg``, ``quant-trend-fattail``, ``quant-spot-accum``).
+(``quant-hedge-multileg``, ``quant-trend-swing``, ``quant-spot-accum``).
 """
 
 from __future__ import annotations

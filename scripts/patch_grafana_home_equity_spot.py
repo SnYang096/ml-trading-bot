@@ -79,7 +79,7 @@ def main() -> None:
             pid=101,
             title="Total Equity (all)",
             expr=(
-                'sum(mlbot_account_balance{job=~"quant-trend-fattail|quant-hedge-multileg|quant-spot-accum",type="margin"})'
+                'sum(mlbot_account_balance{job=~"quant-trend-swing|quant-hedge-multileg|quant-spot-accum",type="margin"})'
             ),
             x=0,
             y=1,
@@ -88,7 +88,7 @@ def main() -> None:
         stat_panel(
             pid=102,
             title="Total Unrealized PnL",
-            expr='sum(mlbot_unrealized_pnl_total{job=~"quant-trend-fattail|quant-hedge-multileg"})',
+            expr='sum(mlbot_unrealized_pnl_total{job=~"quant-trend-swing|quant-hedge-multileg"})',
             x=6,
             y=1,
             w=6,
@@ -96,7 +96,7 @@ def main() -> None:
         stat_panel(
             pid=103,
             title="Trend Equity",
-            expr='mlbot_account_balance{job="quant-trend-fattail",type="margin"}',
+            expr='mlbot_account_balance{job="quant-trend-swing",type="margin"}',
             x=12,
             y=1,
             w=4,
@@ -178,7 +178,7 @@ def main() -> None:
             stat_panel(
                 pid=203,
                 title="Trend Equity",
-                expr='mlbot_account_balance{job="quant-trend-fattail",type="margin"}',
+                expr='mlbot_account_balance{job="quant-trend-swing",type="margin"}',
                 x=6,
                 y=trend_y,
                 w=3,
@@ -205,7 +205,7 @@ def main() -> None:
             p.setdefault("targets", []).append(
                 {
                     "refId": "D",
-                    "expr": 'mlbot_account_balance{job="quant-trend-fattail",type="margin"}',
+                    "expr": 'mlbot_account_balance{job="quant-trend-swing",type="margin"}',
                     "legendFormat": "equity",
                 }
             )

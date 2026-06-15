@@ -17,7 +17,7 @@ export const SUBCHART_COLORS = [
   '#ffff00',
 ];
 
-/** Lightweight Charts theme (hacker / terminal). */
+/** Lightweight Charts theme (hacker / terminal). Prefer useTheme().chartTheme at runtime. */
 export const CHART_THEME = {
   bg: '#020402',
   text: '#7ae87a',
@@ -31,6 +31,8 @@ export const CHART_THEME = {
   linkFallback: '#7ae87a',
   accentPurple: '#d966ff',
 } as const;
+
+export { getChartTheme } from '@/lib/theme.ts';
 
 export const DEFAULT_VISIBLE_BARS = 320;
 /** Max metric-matrix columns; wider logical windows keep the tail (latest bars). */

@@ -16,7 +16,7 @@ COMPOSE = MON / "docker-compose.monitoring.yml"
 
 QUANT_JOBS = {
     "quant-feature-bus",
-    "quant-trend-fattail",
+    "quant-trend-swing",
     "quant-hedge-multileg",
     "quant-spot-accum",
 }

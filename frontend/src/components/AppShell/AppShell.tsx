@@ -4,12 +4,16 @@ import { Suspense, useEffect, useState } from 'react';
 import { apiGet } from '@/api/client.ts';
 import type { NavLink as NavLinkRow } from '@/api/types.ts';
 import { PageFallback } from '@/components/PageFallback.tsx';
+import { ThemeSwitcher } from '@/components/ThemeSwitcher/ThemeSwitcher.tsx';
+import { useTheme } from '@/context/ThemeContext.tsx';
 import { prefetchPage } from '@/lib/pagePrefetch.ts';
 import { PAGES, resolveLinkUrl } from '@/lib/shell.ts';
 import styles from './AppShell.module.css';
 
 export function AppShell() {
   const [extLinks, setExtLinks] = useState<NavLinkRow[]>([]);
+  const { theme } = useTheme();
+  const isTerminal = theme === 'terminal';
 
   useQuery({
     queryKey: ['links'],
@@ -29,9 +33,15 @@ export function AppShell() {
     <div className={styles.root}>
       <header className={styles.toolbar}>
         <h1 className={styles.title}>
-          <span className={styles.prompt}>root@mlbot</span>
-          <span className={styles.path}>:~/console$ </span>
-          <span className={styles.cursor}>_</span>
+          {isTerminal ? (
+            <>
+              <span className={styles.prompt}>root@mlbot</span>
+              <span className={styles.path}>:~/console$ </span>
+              <span className={styles.cursor}>_</span>
+            </>
+          ) : (
+            <span className={styles.brand}>MLBot Console</span>
+          )}
         </h1>
         <nav className={styles.nav}>
           {PAGES.map((p) => (
@@ -49,6 +59,7 @@ export function AppShell() {
           ))}
         </nav>
         <div className={styles.extLinks}>
+          <ThemeSwitcher />
           {extLinks.map((link) => (
             <a
               key={link.id}

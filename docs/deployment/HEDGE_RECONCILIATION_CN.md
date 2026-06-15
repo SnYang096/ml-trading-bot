@@ -6,13 +6,14 @@
 
 | 模块 | 路径 |
 |------|------|
-| 守护进程循环 | `src/order_management/multi_leg_daemon.py` |
+| 守护进程循环 | `src/order_management/multi_leg_daemon.py`（bar 慢路径；User-stream 在 runner） |
 | 编排与对账入口 | `src/order_management/multi_leg_orchestrator.py` |
 | 对账算法 | `src/order_management/multi_leg_reconciliation.py` |
 | REST 补全 | `src/order_management/multi_leg_order_backfill.py` |
 | 订单持久化 | `src/order_management/multi_leg_storage.py` |
 | 交易所拉单 | `src/order_management/grid_execution_adapter.py` → `binance_api.get_open_orders_for_sl_cleanup` |
 | 策略配置 | `scripts/run_multi_leg_live.py` |
+| User-stream 架构 | [multi_leg_user_stream_design.md](../architecture/multi_leg_user_stream_design.md) |
 | Grafana 告警 | `deploy/monitoring/prometheus-rules/reconciliation_alerts.yml` |
 
 ---
@@ -26,21 +27,26 @@ Hedge 账户（`quant-hedge-multileg`）与 Trend 账户分离。对账只关心
 | `chop_grid` | `cg_` | `cg_5b030aa6a6ac` |
 | `trend_scalp` / `dual_add_trend` | `dat_` | `dat_xxxxxxxxxxxx` |
 
-两条并行链路都会更新 Prometheus 指标 `mlbot_reconciliation_*`（`scope="hedge"`）：
+Fill / 订单事件与 reconcile 是 **并行链路**（见 [multi_leg_user_stream_design.md](../architecture/multi_leg_user_stream_design.md)）。对账指标 `mlbot_reconciliation_*`（`scope="hedge"`）主要由 daemon reconcile 更新；User-stream 走 `on_execution_report` 快路径挂 TP/SL。
 
 ```mermaid
 flowchart TB
-    subgraph Process["quant-hedge-multileg"]
+    subgraph Process["quant-hedge-multileg / run_multi_leg_live.py"]
+        UserStream["BinanceUserStream<br/>ORDER_TRADE_UPDATE"]
         Daemon["MultiLegLiveDaemon<br/>每根新 K 线 + 定时"]
         Backfill["periodic_multi_leg_order_backfill<br/>默认每 60s"]
-        Daemon --> Orchestrator["MultiLegLiveOrchestrator.reconcile"]
+        Orchestrator["MultiLegLiveOrchestrator"]
+        UserStream -->|"on_execution_report"| Orchestrator
+        Daemon -->|"reconcile / run_actions"| Orchestrator
         Backfill --> Storage["multi_leg_orders 表"]
+        Backfill -->|"on_new_fill → on_execution_report"| Orchestrator
     end
 
-    Exchange["币安 Futures<br/>openOrders + openAlgoOrders"]
+    Exchange["币安 Futures<br/>openOrders + openAlgoOrders + User Stream"]
     EngineJSON["引擎 state JSON<br/>multi_leg_live/state/*.json"]
     DB["SQLite multi_leg_order_management.db"]
 
+    Exchange --> UserStream
     EngineJSON --> Orchestrator
     DB --> Orchestrator
     Exchange --> Orchestrator

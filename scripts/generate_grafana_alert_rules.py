@@ -76,7 +76,7 @@ def main() -> None:
         _rule(
             "quant_target_down",
             "QuantTargetDown",
-            'up{job=~"quant-feature-bus|quant-trend-fattail|quant-hedge-multileg|quant-spot-accum"} == 0',
+            'up{job=~"quant-feature-bus|quant-trend-swing|quant-hedge-multileg|quant-spot-accum"} == 0',
             "1m",
             "critical",
             "量化进程 Prometheus target 不可用",

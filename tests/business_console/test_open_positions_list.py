@@ -109,6 +109,47 @@ def test_open_positions_api(client, trend_db, bus_root) -> None:
     assert any(x["position_id"] == "p_api" and x["side"] == "short" for x in rows)
 
 
+@patch("mlbot_console.services.exchange_balances.build_exchange_ledger")
+def test_open_positions_api_all_symbols_builds_exchange_ledger(
+    mock_build_exchange_ledger,
+    client,
+    trend_db,
+    spot_db,
+    multi_leg_db,
+    bus_root,
+) -> None:
+    """symbol=* should resolve mark symbols from DB + bus and call build_exchange_ledger."""
+    mock_build_exchange_ledger.return_value = {
+        "scopes": [{"scope": "trend", "exchange": {"equity_usdt": 1000.0}}],
+        "totals": {},
+    }
+    conn = sqlite3.connect(trend_db)
+    conn.execute(
+        """
+        INSERT INTO positions VALUES (
+            'p_all', 'ETHUSDT', 'long',
+            '2024-01-03T08:00:00+00:00', NULL,
+            100.0, NULL, NULL, 'open', 'tpc', 98.0, 106.0, 0.3, NULL
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    r = client.get(
+        "/api/orders/open-positions",
+        params={"symbol": "*", "scopes": "trend"},
+    )
+    assert r.status_code == 200
+    payload = r.json()
+    assert payload["meta"]["symbol"] == "ALL"
+    mock_build_exchange_ledger.assert_called_once()
+    kwargs = mock_build_exchange_ledger.call_args.kwargs
+    mark_prices = kwargs.get("mark_prices") or {}
+    assert "ETHUSDT" in mark_prices
+    assert mark_prices["ETHUSDT"] > 0
+
+
 # ── TTS projection (P4) ─────────────────────────────────────
 
 

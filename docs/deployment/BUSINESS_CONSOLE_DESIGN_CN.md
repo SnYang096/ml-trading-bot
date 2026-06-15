@@ -31,7 +31,7 @@
 flowchart TB
   subgraph processes [实盘进程]
     BUS[quant-feature-bus]
-    TREND[quant-trend-fattail]
+    TREND[quant-trend-swing]
     HEDGE[quant-hedge-multileg]
     SPOT[quant-spot-accum]
   end
@@ -78,7 +78,7 @@ flowchart TB
 
 | 层 | 进程 | 策略示例 | CMS 一级导航 |
 |----|------|----------|--------------|
-| **B — Trend** | `quant-trend-fattail` | `tpc`（`enabled_archetypes`） | Trend 决策 / 订单 / 持仓 |
+| **B — Trend** | `quant-trend-swing` | `tpc`（`enabled_archetypes`） | Trend 决策 / 订单 / 持仓 |
 | **C — Multi-leg** | `quant-hedge-multileg` | `chop_grid`, `trend_scalp` | 多腿 runs / 订单 / 对账 |
 | **A — Spot** | `quant-spot-accum` | `spot_accum_simple` | Spot 吸筹 / pending / 账本 |
 
@@ -345,13 +345,14 @@ SPA 的 `index.html` 响应带 `Cache-Control: no-cache`，避免 HTML 缓存指
 | **策略盈亏** | Symbol + 回看（0/7/14/30/90/365d）筛选下的 KPI、已实现速览 | `GET /api/account/summary` |
 | **账户层表** | A/B/C scopes：交易所列 + 本地已实现/浮盈/平仓数；可展开策略子行 | `summary.scopes[]`、`summary.strategies[]` |
 | **现货持仓** | 资产明细 + 市值占比条 | `scopes[spot].exchange.holdings` |
-| **已实现 PnL** | 按周（柱图左 + 周表右）· 钱包/权益曲线（三态切换）· 累计曲线与按日柱图（宽屏两列） | `weekly_realized`、`account_curves`、`cumulative_realized`、`daily_realized` |
+| **已实现 PnL** | 按周（柱图左 + 周表右）→ **按日柱图（全宽，紧接按周下）** → 钱包/权益曲线（三态切换）→ 累计曲线（全宽） | `weekly_realized`、`daily_realized`、`account_curves`、`cumulative_realized` |
 | **交易所对账** | 按 scope 分 panel；差异为 **HTML 表格**（类型 / 资产 / 交易所 / 本地 / 差额） | `GET /api/account/reconciliation/all`；页面打开即请求 |
 
 **已实现 PnL 布局（2026-06）**：
 
 - `pnlWeeklyRow`：按周柱图与周表并排（窄屏单列）
-- `pnlChartsRow`：累计已实现曲线 + 按日柱图宽屏两列
+- `pnlDailyRow`：按日柱图单独一行，紧接按周区块下方（全宽）
+- 累计已实现曲线、钱包/权益曲线各自全宽纵向排列
 - 柱图日期标签与柱子等宽 flex 对齐（避免稀疏数据时标签挤在右侧）
 - **钱包 / 权益曲线**（`AccountEquityChart`）：图例右侧三态切换 **双线 / 钱包 / 权益**（默认双线叠加）；Y 轴与底部数值随可见序列重算；数据来自 `account_curves.balance` / `.equity`（无需额外 API）
 
@@ -514,7 +515,7 @@ deploy/business-console/        # Dockerfile、compose、systemd
 ### 5.3 与 Prometheus 的衔接（只读链接，不抓 TSDB）
 
 - 首页展示 Grafana 深链：`/d/quant-home`、`/d/quant-strategy-map-trend` 等。
-- 可选 BFF：`GET /api/metrics/link?job=quant-trend-fattail` 返回当前 Prom 查询 URL（不代理 Prom 数据）。
+- 可选 BFF：`GET /api/metrics/link?job=quant-trend-swing` 返回当前 Prom 查询 URL（不代理 Prom 数据）。
 
 ---
 
@@ -632,7 +633,7 @@ deploy/business-console/        # Dockerfile、compose、systemd
 |------|----------|
 | 保证金与杠杆占用面板 | `accountViews.tsx` · `MarginBreakdownPanel`；后端 `exchange_balances.py` |
 | 总占用 / Gross 杠杆 / 按 scope 逐腿表 | `exchange_ledger.totals` + `accounts[].exchange_open_positions` |
-| 已实现 PnL 宽屏网格（按周并排、累计+按日两列） | `AccountPage.tsx` · `pnlWeeklyRow` / `pnlChartsRow` |
+| 已实现 PnL 布局（按周并排、按日全宽接周下、累计全宽） | `AccountPage.tsx` · `pnlWeeklyRow` / `pnlDailyRow` |
 | 钱包/权益曲线三态切换（双线/钱包/权益） | `AccountEquityChart` · `curveModeToggle` |
 | 柱图日期标签与柱子对齐 | `pnlBars` · `pnlBarLabel` |
 

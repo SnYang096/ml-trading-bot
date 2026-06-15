@@ -1,13 +1,15 @@
 # Live 三进程节拍与存储说明
 
-本文说明当前主网三进程架构下，`quant-feature-bus`、`quant-trend-fattail`、`quant-hedge-multileg` 各自多久读取 / 计算 / 落盘 / 同步账户与订单。结论基于当前代码和 `.github/workflows/deploy.yml` 中的 systemd 参数。
+本文说明当前主网三进程架构下，`quant-feature-bus`、`quant-trend-swing`、`quant-hedge-multileg` 各自多久读取 / 计算 / 落盘 / 同步账户与订单。结论基于当前代码和 `.github/workflows/deploy.yml` 中的 systemd 参数。
+
+> **进程命名**：方向性 B·Trend 消费者统一为 **`quant-trend-swing`**（systemd 单元、Docker 容器名、Prometheus `job` 一致，端口宿主 **9190**）。旧称 `quant-trend-fattail` 已废弃。
 
 ## 总览
 
 | 进程 | 主要职责 | 当前线上节拍 |
 | --- | --- | --- |
 | `quant-feature-bus` | 唯一 Binance 行情 WebSocket owner；聚合 1min bar；计算特征；写磁盘 Feature Bus | tick 实时进入；已完成 1min bar 每分钟落盘；特征每 60 秒检查一次，达到 `--feature-compute-interval-minutes=15` 才批量计算并落盘 |
-| `quant-trend-fattail` | 趋势 / fat-tail 账户消费者；只读 Feature Bus；执行 directional strategies | `MLBOT_FEATURE_BUS_POLL_SECONDS=5`，每 5 秒检查 bus 是否有新 bar / feature；账户 REST 指标默认每 30 秒刷新；User Data Stream 事件实时进入 |
+| `quant-trend-swing` | 方向性 B·Trend 账户消费者（`run_live.py`）；只读 Feature Bus | `MLBOT_FEATURE_BUS_POLL_SECONDS=5`，每 5 秒检查 bus 是否有新 bar / feature；账户 REST 指标默认每 30 秒刷新；User Data Stream 事件实时进入 |
 | `quant-hedge-multileg` | hedge 多腿账户消费者；只读 Feature Bus；执行多腿策略 | `--poll-seconds 5`，每 5 秒读取 feature-store / 1min execution bars；`--reconcile-interval-seconds` 默认 60 秒做交易所对账 |
 
 这里的“轮询”不等于“每次都重算或下单”。消费者通常是高频检查磁盘上是否有新 timestamp；只有出现新 feature / 新 bar / 到达对账周期时才进入较重逻辑。
@@ -80,9 +82,9 @@ Feature Bus 路径：
 - `/var/lib/apport/coredump` 为崩溃 core，可安全删除；可用 `systemctl disable apport` 减少再生；
 - 根分区 `Used` 常含 **swapfile**（例如 16G）与 `data/warmup_raw`（180 天 warmup 缓存）；可 `docker builder prune` 回收 build cache。
 
-## `quant-trend-fattail`: bus 消费、信号、账户与订单同步
+## `quant-trend-swing`: bus 消费、信号、账户与订单同步
 
-部署命令见 `.github/workflows/deploy.yml` 中 `quant-trend-fattail.service`：
+部署命令见 `.github/workflows/deploy.yml` 中 `quant-trend-swing.service`：
 
 - `MLBOT_FEATURE_SOURCE=bus`
 - `MLBOT_FEATURE_BUS_ROOT=live/shared_feature_bus`
@@ -211,10 +213,11 @@ trend 使用两类 SQLite：
 
 多腿同步分三层：
 
-1. **User Data Stream**：
+1. **User Data Stream**（仅 `ORDER_TRADE_UPDATE`，**不**订阅 `ACCOUNT_UPDATE`）：
    - `run_multi_leg_live.py` 在 mainnet/testnet 下启动 `BinanceUserStream`；
    - 成交 / 订单事件实时进入每个 orchestrator 的 `on_execution_report(...)`；
    - listenKey keepalive 默认 **30 分钟**。
+   - 详见 [multi_leg_user_stream_design.md](../architecture/multi_leg_user_stream_design.md)。
 
 2. **REST 账户指标**：
    - `run_multi_leg_live.py` 的 `_periodic_process_metrics()` 默认也使用 `MLBOT_MARKET_DATA_INTERVAL=30`；
@@ -252,7 +255,7 @@ trend 使用两类 SQLite：
 | --- | --- | --- | --- | --- |
 | bus publisher | WebSocket tick 实时；定期任务每 60 秒检查 | 默认每 15 分钟批量计算 feature；1min bar 每分钟落地 | 无交易账户 | 无交易订单 |
 | trend | 每 5 秒 poll Feature Bus | 新 feature event 到达时调用 PCM / 策略；当前通常 15 分钟级别 | 每 30 秒 `fapi/v2/account` 指标刷新；User Stream 实时账户事件 | User Stream 实时订单事件；每 30 分钟 slot / 持仓一致性检查 |
-| multi-leg | 每 5 秒 poll feature-store | 新 1min execution bar 或新 signal feature 到达时 engine 运行；是否 action 由策略决定 | 每 30 秒账户指标刷新；User Stream 实时账户事件 | User Stream 实时订单事件；默认每 60 秒 reconcile，或有 action 时立即 reconcile |
+| multi-leg | 每 5 秒 poll feature-store | 新 1min execution bar 或新 signal feature 到达时 engine 运行；是否 action 由策略决定 | 每 30 秒 REST 账户指标刷新（**无** User Stream 账户推送） | User Stream 实时**订单/成交**事件；默认每 60 秒 reconcile + backfill，或有 action 时立即 reconcile |
 
 ## 当前容易误解的点
 

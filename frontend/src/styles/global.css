@@ -13,10 +13,10 @@ html {
 
 body {
   margin: 0;
-  font-family: var(--font-mono);
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1.5;
+  font-family: var(--body-font, var(--font-mono));
+  font-size: var(--base-font-size, 14px);
+  font-weight: var(--font-weight-body, 500);
+  line-height: var(--line-height, 1.5);
   background: var(--bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
@@ -36,7 +36,7 @@ body::before {
     rgba(0, 0, 0, 0.08) 2px,
     rgba(0, 0, 0, 0.08) 4px
   );
-  opacity: 0.22;
+  opacity: var(--crt-scanlines, 0);
 }
 
 body::after {
@@ -46,6 +46,7 @@ body::after {
   inset: 0;
   z-index: 9998;
   background: radial-gradient(ellipse at center, transparent 62%, rgba(0, 0, 0, 0.38) 100%);
+  opacity: var(--crt-vignette, 0);
 }
 
 #root {
@@ -55,19 +56,19 @@ body::after {
 }
 
 ::selection {
-  background: rgba(0, 255, 65, 0.35);
-  color: var(--accent-bright);
+  background: var(--selection-bg);
+  color: var(--selection-fg);
 }
 
 a {
   color: var(--accent-cyan);
   text-decoration: none;
-  text-shadow: var(--glow-cyan);
+  text-shadow: var(--link-shadow, none);
 }
 
 a:hover {
   color: var(--accent-bright);
-  text-shadow: var(--glow-strong);
+  text-shadow: var(--link-hover-shadow, none);
 }
 
 .muted {
@@ -77,13 +78,13 @@ a:hover {
 .pnl-pos {
   color: var(--positive);
   font-weight: 600;
-  text-shadow: 0 0 8px rgba(0, 255, 136, 0.6);
+  text-shadow: var(--glow-positive, none);
 }
 
 .pnl-neg {
   color: var(--negative);
   font-weight: 600;
-  text-shadow: 0 0 8px rgba(255, 51, 102, 0.55);
+  text-shadow: var(--glow-negative, none);
 }
 
 .page {
@@ -95,8 +96,8 @@ a:hover {
   font-size: 1.15rem;
   font-weight: 700;
   color: var(--accent);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
+  text-transform: var(--heading-transform, uppercase);
+  letter-spacing: var(--heading-tracking, 0.1em);
   text-shadow: var(--glow);
 }
 
@@ -105,8 +106,8 @@ a:hover {
   font-size: 0.95rem;
   font-weight: 700;
   color: var(--accent-cyan);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  text-transform: var(--heading-transform, uppercase);
+  letter-spacing: var(--heading-tracking, 0.08em);
   text-shadow: var(--glow-cyan);
 }
 
@@ -143,7 +144,7 @@ a:hover {
 }
 
 .data-table tr.selected td {
-  background: rgba(0, 255, 65, 0.14);
+  background: var(--row-selected);
   box-shadow: inset 0 0 0 1px var(--border-bright);
 }
 
@@ -161,7 +162,7 @@ a:hover {
   padding: 10px 12px;
   border: 1px solid var(--border);
   background: var(--bg-elevated);
-  box-shadow: inset 0 0 20px rgba(0, 255, 65, 0.04);
+  box-shadow: inset 0 0 20px var(--toolbar-inset);
 }
 
 .toolbar-row h2 {
@@ -184,8 +185,39 @@ a:hover {
 .toolbar-row select:focus,
 .toolbar-row button:focus,
 .toolbar-row input:focus {
-  outline: 1px solid var(--accent);
+  outline: var(--focus-ring-width, 1px) solid var(--accent);
+  outline-offset: 2px;
   box-shadow: var(--glow);
+}
+
+[data-theme='a11y'] .data-table {
+  font-size: 1rem;
+}
+
+[data-theme='a11y'] .data-table th,
+[data-theme='a11y'] .data-table td {
+  padding: 10px 14px;
+  border-width: 2px;
+}
+
+[data-theme='a11y'] .page h2 {
+  font-size: 1.35rem;
+}
+
+[data-theme='a11y'] .page h3 {
+  font-size: 1.1rem;
+}
+
+[data-theme='a11y'] a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+[data-theme='a11y'] .navLink:focus-visible,
+[data-theme='a11y'] .toolbar-row button:focus-visible,
+[data-theme='a11y'] .toolbar-row select:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
 }
 
 .toolbar-row button {
@@ -247,8 +279,8 @@ a:hover {
   padding: 14px 16px;
   margin-bottom: 16px;
   box-shadow:
-    inset 0 0 28px rgba(0, 255, 65, 0.05),
-    0 0 12px rgba(0, 255, 65, 0.06);
+    inset 0 0 28px var(--panel-inset),
+    0 0 12px var(--panel-outer);
 }
 
 .panel > div:not(.muted) {

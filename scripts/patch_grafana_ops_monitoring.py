@@ -89,7 +89,7 @@ def patch_quant_system(path: Path) -> None:
     }
     overview_stats = [
         _stat_panel(1101, "FB UP", 'up{job="quant-feature-bus"}', 0, 1, w=2),
-        _stat_panel(1102, "Tr UP", 'up{job="quant-trend-fattail"}', 2, 1, w=2),
+        _stat_panel(1102, "Tr UP", 'up{job="quant-trend-swing"}', 2, 1, w=2),
         _stat_panel(1103, "Hg UP", 'up{job="quant-hedge-multileg"}', 4, 1, w=2),
         _stat_panel(1104, "Sp UP", 'up{job="quant-spot-accum"}', 6, 1, w=2),
         _stat_panel(
@@ -106,7 +106,7 @@ def patch_quant_system(path: Path) -> None:
         _stat_panel(
             1107,
             "Tr 消费",
-            'sum(rate(mlbot_bars_processed_total{job="quant-trend-fattail"}[5m])) > bool 0',
+            'sum(rate(mlbot_bars_processed_total{job="quant-trend-swing"}[5m])) > bool 0',
             12,
             1,
             w=2,
@@ -122,7 +122,7 @@ def patch_quant_system(path: Path) -> None:
         _stat_panel(
             1109,
             "Tr 账",
-            'min(mlbot_reconciliation_ok{job="quant-trend-fattail",scope="trend"})',
+            'min(mlbot_reconciliation_ok{job="quant-trend-swing",scope="trend"})',
             16,
             1,
             w=2,
@@ -294,7 +294,7 @@ def patch_strategy_hub(path: Path) -> None:
             p["options"]["content"] = (
                 "## Strategy Map · 策略管道健康\n\n"
                 "业务账户/订单/K 线请用 **业务 CMS**（:8800）。本组只看 **信号、拒因、对账、风控**。\n\n"
-                "- **[Trend](/d/quant-strategy-map-trend)** — `quant-trend-fattail` :9190\n"
+                "- **[Trend](/d/quant-strategy-map-trend)** — `quant-trend-swing` :9190\n"
                 "- **[Multi-leg Hedge](/d/quant-strategy-map-hedge)** — `quant-hedge-multileg` :9191\n"
                 "- **[Spot Accum](/d/quant-strategy-map-spot)** — `quant-spot-accum` :9193\n\n"
                 "[System Health](/d/quant-system) · [Logs](/d/quant-logs) · [Ops Hub](/d/quant-home)"

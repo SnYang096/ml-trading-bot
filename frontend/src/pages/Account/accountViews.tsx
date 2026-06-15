@@ -134,8 +134,9 @@ function numUsdt(v: unknown): number | null {
 
 function fmtLev(v: unknown): string {
   const n = Number(v);
-  if (!Number.isFinite(n) || n <= 0) return '—';
-  return `${n.toFixed(n >= 10 ? 0 : 1)}x`;
+  if (!Number.isFinite(n) || n < 0) return '—';
+  if (n === 0) return '0x';
+  return `${n.toFixed(n >= 10 ? 0 : 2)}x`;
 }
 
 function scopeLedgerLabel(scope: string, row: Record<string, unknown>): string {

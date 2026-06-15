@@ -127,7 +127,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "up{job=\"quant-trend-fattail\"}",
+          "expr": "up{job=\"quant-trend-swing\"}",
           "instant": true,
           "legendFormat": "Tr UP"
         }
@@ -397,7 +397,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(rate(mlbot_bars_processed_total{job=\"quant-trend-fattail\"}[5m])) > bool 0",
+          "expr": "sum(rate(mlbot_bars_processed_total{job=\"quant-trend-swing\"}[5m])) > bool 0",
           "instant": true,
           "legendFormat": "Tr 消费"
         }
@@ -505,7 +505,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "min(mlbot_reconciliation_ok{job=\"quant-trend-fattail\",scope=\"trend\"})",
+          "expr": "min(mlbot_reconciliation_ok{job=\"quant-trend-swing\",scope=\"trend\"})",
           "instant": true,
           "legendFormat": "Tr 账"
         }
@@ -846,7 +846,7 @@
     },
     {
       "type": "row",
-      "title": "Trend · 方向账户 (quant-trend-fattail)",
+      "title": "Trend · 方向账户 (quant-trend-swing)",
       "id": 3010,
       "gridPos": {
         "h": 1,
@@ -873,7 +873,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "up{job=\"quant-trend-fattail\"}",
+          "expr": "up{job=\"quant-trend-swing\"}",
           "instant": true
         }
       ],
@@ -925,7 +925,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "mlbot_feature_bus_snapshot_age_seconds{job=\"quant-trend-fattail\"}",
+          "expr": "mlbot_feature_bus_snapshot_age_seconds{job=\"quant-trend-swing\"}",
           "legendFormat": "{{symbol}}"
         }
       ],
@@ -953,7 +953,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "mlbot_system_mode{job=\"quant-trend-fattail\"}",
+          "expr": "mlbot_system_mode{job=\"quant-trend-swing\"}",
           "legendFormat": "mode"
         }
       ],
@@ -982,12 +982,12 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "mlbot_cpu_percent{job=\"quant-trend-fattail\"}",
+          "expr": "mlbot_cpu_percent{job=\"quant-trend-swing\"}",
           "legendFormat": "cpu"
         },
         {
           "refId": "B",
-          "expr": "mlbot_memory_rss_mb{job=\"quant-trend-fattail\"}",
+          "expr": "mlbot_memory_rss_mb{job=\"quant-trend-swing\"}",
           "legendFormat": "rss"
         }
       ],
@@ -1013,7 +1013,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "rate(mlbot_bars_processed_total{job=\"quant-trend-fattail\"}[5m])",
+          "expr": "rate(mlbot_bars_processed_total{job=\"quant-trend-swing\"}[5m])",
           "legendFormat": "bars/s"
         }
       ],
@@ -1408,7 +1408,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "**分区说明**：上方为全局与 **feature-bus 发布端**；下方三块按进程拆分 — **Trend**（`quant-trend-fattail`）、**Multi-leg**（`quant-hedge-multileg`）、**Spot**（`quant-spot-accum`）。某块 Target UP 变红或 Bus 滞后尖峰时，优先查对应容器 `docker logs`。"
+        "content": "**分区说明**：上方为全局与 **feature-bus 发布端**；下方三块按进程拆分 — **Trend**（`quant-trend-swing`）、**Multi-leg**（`quant-hedge-multileg`）、**Spot**（`quant-spot-accum`）。某块 Target UP 变红或 Bus 滞后尖峰时，优先查对应容器 `docker logs`。"
       }
     }
   ],

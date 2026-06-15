@@ -18,7 +18,7 @@ groups:
           summary: "Trend 订单对账异常，需人工检查"
           description: |
             本地 order_management.db 与币安 open/algo 订单不一致。
-            检查: sqlite-web order_management、journalctl quant-trend-fattail、
+            检查: sqlite-web order_management、journalctl quant-trend-swing、
             指标 mlbot_reconciliation_issue_count{scope="trend"}。
 
       - alert: QuantHedgeReconciliationManualCheck

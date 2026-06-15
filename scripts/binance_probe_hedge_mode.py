@@ -9,7 +9,7 @@ Does not print secrets. Typical usage on the server::
 Trend/fat-tail stack keys::
 
     PYTHONPATH=src python scripts/binance_probe_hedge_mode.py \\
-      --env-file /opt/quant-engine/live/binance_mainnet.env --profile trend-fattail
+      --env-file /opt/quant-engine/live/binance_mainnet.env --profile trend-swing
 
 Optional: after a successful probe (no HTTP/auth error), try switching to hedge::
 
@@ -62,12 +62,12 @@ def _mask(s: str) -> str:
 
 
 def _resolve_keys(profile: str, allow_shared: bool) -> tuple[str, str]:
-    if profile == "trend-fattail":
+    if profile == "trend-swing":
         k = os.getenv("BINANCE_API_KEY", "").strip()
         s = os.getenv("BINANCE_API_SECRET", "").strip()
         if not k or not s:
             raise SystemExit(
-                "trend-fattail profile needs BINANCE_API_KEY and BINANCE_API_SECRET "
+                "trend-swing profile needs BINANCE_API_KEY and BINANCE_API_SECRET "
                 "(after --env-file if used)."
             )
         return k, s
@@ -99,9 +99,9 @@ def main() -> None:
     )
     p.add_argument(
         "--profile",
-        choices=("trend-fattail", "hedge-multileg"),
-        default="trend-fattail",
-        help="trend-fattail = BINANCE_*; hedge-multileg = MULTI_LEG_* (+optional shared).",
+        choices=("trend-swing", "hedge-multileg"),
+        default="trend-swing",
+        help="trend-swing = BINANCE_*; hedge-multileg = MULTI_LEG_* (+optional shared).",
     )
     p.add_argument(
         "--allow-shared-account",

@@ -5,7 +5,7 @@ GenericLiveStrategy → 配置驱动通用决策引擎
 
 数据管线（唯一支持）:
   quant-feature-bus: BinanceWS → 特征 → 磁盘 shared_feature_bus
-  quant-trend-fattail: 磁盘 Feature Bus → MultiSymbolManager → PCM → OrderManager（+ 可选 User Stream）
+  quant-trend-swing: 磁盘 Feature Bus → MultiSymbolManager → PCM → OrderManager（+ User Stream）
 
 审计日志文件（可选，默认开启）：
   ``{MLBOT_LIVE_STORAGE_BASE}/logs/trend_live_audit.log`` — 默认**按小时**切分并保留约

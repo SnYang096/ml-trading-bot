@@ -88,3 +88,69 @@ class TestParseOpenOrdersMargin:
         orders = [{"orderId": 1, "initialMargin": "0"}]
         result = parse_open_orders_margin(orders)
         assert result[0]["initial_margin_usdt"] is None
+
+    def test_estimate_margin_when_api_omits_field(self):
+        orders = [
+            {
+                "orderId": 99,
+                "symbol": "XRPUSDT",
+                "side": "SELL",
+                "type": "LIMIT",
+                "price": "1.20",
+                "origQty": "1000",
+                "status": "NEW",
+            }
+        ]
+        result = parse_open_orders_margin(orders, leverage_by_symbol={"XRPUSDT": 5})
+        assert result[0]["initial_margin_usdt"] == pytest.approx(240.0)
+        assert result[0]["margin_estimated"] is True
+        assert result[0]["leverage"] == 5
+
+    def test_allocate_total_open_order_margin(self):
+        orders = [
+            {
+                "orderId": 1,
+                "symbol": "BTCUSDT",
+                "side": "BUY",
+                "type": "LIMIT",
+                "price": "100000",
+                "origQty": "0.1",
+                "reduceOnly": "false",
+            },
+            {
+                "orderId": 2,
+                "symbol": "ETHUSDT",
+                "side": "SELL",
+                "type": "LIMIT",
+                "price": "3000",
+                "origQty": "1",
+                "reduceOnly": "false",
+            },
+        ]
+        result = parse_open_orders_margin(
+            orders,
+            leverage_by_symbol={},
+            total_open_order_margin=1000.0,
+        )
+        assert sum(r["initial_margin_usdt"] or 0 for r in result) == pytest.approx(
+            1000.0
+        )
+        assert all(r.get("margin_allocated") for r in result)
+
+    def test_reduce_only_order_margin_zero(self):
+        orders = [
+            {
+                "orderId": 3,
+                "symbol": "XRPUSDT",
+                "side": "BUY",
+                "type": "LIMIT",
+                "price": "1.2",
+                "origQty": "100",
+                "reduceOnly": "true",
+            }
+        ]
+        result = parse_open_orders_margin(
+            orders, leverage_by_symbol={"XRPUSDT": 5}, total_open_order_margin=500.0
+        )
+        assert result[0]["initial_margin_usdt"] == 0.0
+        assert result[0]["reduce_only"] is True
