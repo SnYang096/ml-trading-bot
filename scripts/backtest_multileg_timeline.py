@@ -158,13 +158,24 @@ class Account:
         }
 
 
-def clean_bt_state(symbols: Optional[List[str]] = None) -> None:
+def clean_bt_state(
+    symbols: Optional[List[str]] = None, *, run_id: Optional[str] = None
+) -> None:
     """Remove per-engine JSON state under /tmp so runs do not cross-contaminate."""
     patterns = ["/tmp/bt_chop_*.json", "/tmp/bt_trend_*.json"]
+    if run_id:
+        patterns = [
+            f"/tmp/bt_chop_{run_id}_*.json",
+            f"/tmp/bt_trend_{run_id}_*.json",
+        ]
     if symbols:
         for sym in symbols:
-            patterns.append(f"/tmp/bt_chop_{sym}.json")
-            patterns.append(f"/tmp/bt_trend_{sym}.json")
+            if run_id:
+                patterns.append(f"/tmp/bt_chop_{run_id}_{sym}.json")
+                patterns.append(f"/tmp/bt_trend_{run_id}_{sym}.json")
+            else:
+                patterns.append(f"/tmp/bt_chop_{sym}.json")
+                patterns.append(f"/tmp/bt_trend_{sym}.json")
     seen: set[str] = set()
     for pat in patterns:
         for f in glob.glob(pat):
@@ -195,9 +206,11 @@ def run_timeline_backtest(
     load_preload: Optional[Path] = None,
     clean_state: bool = True,
     progress: bool = True,
+    run_id: Optional[str] = None,
 ) -> Tuple[Account, Dict[str, Any]]:
+    run_id = run_id or str(os.getpid())
     if clean_state:
-        clean_bt_state(symbols)
+        clean_bt_state(symbols, run_id=run_id)
 
     bars_1m = feats = None
     if load_preload and load_preload.exists():
@@ -271,7 +284,7 @@ def run_timeline_backtest(
         if not no_chop:
             ce = ChopGridLiveEngine(
                 config_path=chop_config,
-                state_path=Path(f"/tmp/bt_chop_{sym}.json"),
+                state_path=Path(f"/tmp/bt_chop_{run_id}_{sym}.json"),
                 level_notional=chop_u,
                 metrics_strategy="bt",
             )
@@ -281,7 +294,7 @@ def run_timeline_backtest(
         if not no_trend:
             te = DualAddTrendLiveEngine(
                 config_path=trend_config,
-                state_path=Path(f"/tmp/bt_trend_{sym}.json"),
+                state_path=Path(f"/tmp/bt_trend_{run_id}_{sym}.json"),
                 unit_notional=trend_u,
                 metrics_strategy="bt",
             )

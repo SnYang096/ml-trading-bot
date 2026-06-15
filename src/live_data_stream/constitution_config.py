@@ -730,3 +730,6 @@ def apply_multi_leg_args_from_constitution(args: Any) -> None:
         cd = rs.get("strategy_switch_cooldown_bars")
         if cd is not None:
             setattr(args, "strategy_switch_cooldown_bars", int(cd))
+        daily = rs.get("max_segment_starts_per_symbol_per_day")
+        if daily is not None:
+            setattr(args, "max_segment_starts_per_symbol_per_day", int(daily))

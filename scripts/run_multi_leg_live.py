@@ -542,8 +542,13 @@ def build_daemon(
     runtimes: List[StrategyRuntime] = []
     max_cg = int(getattr(args, "max_concurrent_multi_leg_symbols", 0) or 0)
     cooldown_bars = int(getattr(args, "strategy_switch_cooldown_bars", 0) or 0)
+    daily_starts = int(getattr(args, "max_segment_starts_per_symbol_per_day", 0) or 0)
     ml_gate = (
-        MultiLegConcurrencyGate(max_cg, cooldown_bars=cooldown_bars)
+        MultiLegConcurrencyGate(
+            max_cg,
+            cooldown_bars=cooldown_bars,
+            max_segment_starts_per_symbol_per_day=daily_starts,
+        )
         if max_cg > 0
         else None
     )

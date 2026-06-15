@@ -303,6 +303,9 @@ multi_leg:
     # Minimum bars between chop↔trend strategy switches on same symbol.
     # Experiment 20260612_chop_grid_cooldown_protect: 3 bars +0.93%, -86% conflicts.
     strategy_switch_cooldown_bars: 3
+    # UTC calendar day cap: each (symbol, strategy) may open at most N new segments.
+    # Stops 1min execution-bar churn from re-arming trend_scalp every minute.
+    max_segment_starts_per_symbol_per_day: 1
     # Maximum number of resting open orders across all multi-leg strategies.
     max_resting_orders: 60 # Cap on open limit orders (grid + dual-add combined).
 

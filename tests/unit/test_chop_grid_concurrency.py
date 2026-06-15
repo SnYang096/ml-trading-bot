@@ -351,6 +351,34 @@ def test_cooldown_does_not_block_when_no_strategy_holds() -> None:
     assert gate.allow_new_segment("BTCUSDT", strategy="chop_grid") is True
 
 
+def test_daily_segment_cap_blocks_second_start_same_day() -> None:
+    gate = MultiLegConcurrencyGate(6, max_segment_starts_per_symbol_per_day=1)
+    eng = _FakeEngine(False)
+    gate.register("BTCUSDT", eng, strategy="trend_scalp")
+
+    gate.record_segment_start("BTCUSDT", "trend_scalp")
+    assert gate.allow_new_segment("BTCUSDT", strategy="trend_scalp") is False
+
+
+def test_daily_segment_cap_independent_per_strategy() -> None:
+    gate = MultiLegConcurrencyGate(6, max_segment_starts_per_symbol_per_day=1)
+    chop = _FakeEngine(False)
+    trend = _FakeEngine(False)
+    gate.register("BTCUSDT", chop, strategy="chop_grid")
+    gate.register("BTCUSDT", trend, strategy="trend_scalp")
+
+    gate.record_segment_start("BTCUSDT", "trend_scalp")
+    assert gate.allow_new_segment("BTCUSDT", strategy="trend_scalp") is False
+    assert gate.allow_new_segment("BTCUSDT", strategy="chop_grid") is True
+
+
+def test_daily_segment_cap_zero_disables() -> None:
+    gate = MultiLegConcurrencyGate(6, max_segment_starts_per_symbol_per_day=0)
+    gate.record_segment_start("BTCUSDT", "trend_scalp")
+    gate.record_segment_start("BTCUSDT", "trend_scalp")
+    assert gate.allow_new_segment("BTCUSDT", strategy="trend_scalp") is True
+
+
 def test_cooldown_independent_per_symbol() -> None:
     """Cooldown on BTCUSDT does not affect ETHUSDT."""
     gate = MultiLegConcurrencyGate(6, cooldown_bars=3)

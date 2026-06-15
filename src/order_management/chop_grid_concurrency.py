@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -24,12 +25,16 @@ class MultiLegConcurrencyGate:
         max_symbols: int,
         *,
         cooldown_bars: int = 0,
+        max_segment_starts_per_symbol_per_day: int = 0,
     ) -> None:
         self.max_symbols = max(1, int(max_symbols))
         self._cooldown_seconds = max(0, int(cooldown_bars)) * BAR_MINUTES * 60
+        self._max_daily_starts = max(0, int(max_segment_starts_per_symbol_per_day))
         self._engines: List[Tuple[str, str, Any]] = []  # (symbol, strategy, engine)
         # (symbol, strategy) → last deactivation wall-clock
         self._last_deactivated: Dict[Tuple[str, str], float] = {}
+        # (symbol, strategy, UTC date) → segment open count
+        self._daily_starts: Dict[Tuple[str, str, str], int] = {}
 
     def register(
         self, symbol: str, engine: Any, *, strategy: str = "chop_grid"
@@ -105,6 +110,29 @@ class MultiLegConcurrencyGate:
         key = (str(symbol).upper().strip(), str(strategy).strip().lower())
         self._last_deactivated[key] = time.monotonic()
 
+    @staticmethod
+    def _utc_day_key() -> str:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    def record_segment_start(self, symbol: str, strategy: str) -> None:
+        """Count a new segment/grid open for daily per-symbol caps."""
+        if self._max_daily_starts <= 0:
+            return
+        key = (
+            str(symbol).upper().strip(),
+            str(strategy).strip().lower(),
+            self._utc_day_key(),
+        )
+        self._daily_starts[key] = self._daily_starts.get(key, 0) + 1
+
+    def _daily_starts_count(self, symbol: str, strategy: str) -> int:
+        key = (
+            str(symbol).upper().strip(),
+            str(strategy).strip().lower(),
+            self._utc_day_key(),
+        )
+        return int(self._daily_starts.get(key, 0))
+
     def _cooldown_remaining(self, symbol: str, strategy: str) -> float:
         """Seconds until this strategy is allowed to re-activate on the symbol, or 0."""
         if self._cooldown_seconds <= 0:
@@ -126,6 +154,20 @@ class MultiLegConcurrencyGate:
     def allow_new_segment(self, symbol: str, *, strategy: str = "chop_grid") -> bool:
         sym = str(symbol or "").upper().strip()
         strat = str(strategy).strip().lower()
+
+        if self._max_daily_starts > 0:
+            used = self._daily_starts_count(sym, strat)
+            if used >= self._max_daily_starts:
+                logger.info(
+                    "multi-leg daily segment cap: block %s/%s "
+                    "(starts_today=%d cap=%d utc_day=%s)",
+                    sym,
+                    strat,
+                    used,
+                    self._max_daily_starts,
+                    self._utc_day_key(),
+                )
+                return False
 
         # Cooldown check: if this strategy was recently active and then
         # deactivated (other strategy took over), enforce minimum gap.

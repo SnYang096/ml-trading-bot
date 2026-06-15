@@ -158,14 +158,28 @@ class SegmentLifecycleMixin:
         self.state.active = True
 
     def _maybe_deactivate_if_fully_closed(self) -> None:
-        if self._exchange_has_open_activity():
-            return
-        if (
+        """Deactivate when local state is empty.
+
+        When the segment is CLOSING (engine already called _exit_all) and
+        both inventory and pending_orders are empty, the engine has
+        finished its exit cycle.  Exchange-side open orders at this point
+        are likely orphaned protection orders that the reconciler will
+        cancel — do not let them keep the segment alive.
+        """
+        if not (
             self.state.active
             and not self.state.inventory
             and not self.state.pending_orders
         ):
+            return
+        # In CLOSING state the engine has already committed to exit;
+        # exchange-side remnants should not block deactivation.
+        if self.state.segment_state == SegmentState.CLOSING.value:
             self._deactivate("fully_closed")
+            return
+        if self._exchange_has_open_activity():
+            return
+        self._deactivate("fully_closed")
 
     def is_stale_active_ghost(self) -> bool:
         if self._exchange_has_open_activity():

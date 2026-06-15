@@ -710,14 +710,6 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
             self._promote_to_active()
         terminal = status in {"FILLED", "CANCELED", "EXPIRED", "REJECTED"}
         if new_position is not None:
-            self._pending_actions.extend(
-                self._protection_actions(
-                    pos=new_position,
-                    timestamp=str(
-                        report.get("trade_time") or self.state.last_timestamp
-                    ),
-                )
-            )
             # ── Late-fill guard ──
             # When _exit_all ran before the fill report arrived, the segment
             # is already marked inactive but the order was still in
@@ -739,6 +731,19 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
                         last_px if last_px > 0 else order.price,
                         str(report.get("trade_time") or self.state.last_timestamp),
                         "late_fill_cleanup",
+                    )
+                )
+            else:
+                # Only queue protection actions (SL/TP) when the position
+                # will actually be held.  During winding_down the position
+                # is immediately unwound; protection orders would become
+                # orphaned exchange orders and keep the segment alive.
+                self._pending_actions.extend(
+                    self._protection_actions(
+                        pos=new_position,
+                        timestamp=str(
+                            report.get("trade_time") or self.state.last_timestamp
+                        ),
                     )
                 )
         if terminal or order.filled_quantity >= order.quantity:
@@ -770,6 +775,9 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
             bar_index=0,
             block_reseed_after_flip=False,
         )
+        gate = getattr(self, "_concurrency_gate", None)
+        if gate is not None:
+            gate.record_segment_start(symbol, self._engine_name or "trend_scalp")
         return self._seed_inventory_orders(close, timestamp, trend_side)
 
     def _seed_inventory_orders(
@@ -1196,16 +1204,33 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
         # routes the fill back via on_execution_report, the order is no
         # longer in pending_orders.  Keeping a small history lets us match
         # those late fills so the position/exit cycle is completed.
+        #
+        # Safety: skip archived orders that are already fully filled / terminal
+        # to prevent re-processing the same fill repeatedly (e.g. when the
+        # backfill re-reports an already-handled fill while the segment is
+        # stuck in CLOSING state).
         history = getattr(self.state, "_order_history", None)
         if history:
             for order in history.values():
                 if local_id and order.order_id == local_id:
-                    return order
+                    return self._maybe_skip_terminal_archived(order)
                 if exchange_id and order.exchange_order_id == exchange_id:
-                    return order
+                    return self._maybe_skip_terminal_archived(order)
                 if client_id and order.client_order_id == client_id:
-                    return order
+                    return self._maybe_skip_terminal_archived(order)
         return None
+
+    @staticmethod
+    def _maybe_skip_terminal_archived(
+        order: "DualAddOrder",
+    ) -> Optional["DualAddOrder"]:
+        """Return *order* only if it still has room to fill."""
+        if order.filled_quantity >= order.quantity or order.status in {
+            "filled",
+            "canceled",
+        }:
+            return None
+        return order
 
     def _archive_order(self, order: DualAddOrder) -> None:
         """Stash an order so late-fill lookups can still find it."""

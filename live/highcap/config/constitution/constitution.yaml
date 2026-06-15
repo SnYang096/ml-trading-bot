@@ -281,6 +281,8 @@ multi_leg:
     # Experiment 20260612_chop_grid_cooldown_protect: 3 bars +0.93% return,
     # -86% conflicts vs baseline. Beyond 3 bars no further gain.
     strategy_switch_cooldown_bars: 3
+    # UTC calendar day cap: each (symbol, strategy) may open at most N new segments.
+    max_segment_starts_per_symbol_per_day: 1
     # Maximum number of resting open orders across all multi-leg strategies.
     max_resting_orders: 60 # Cap on open limit orders (grid + dual-add combined).
 

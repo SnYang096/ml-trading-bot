@@ -1371,6 +1371,9 @@ class ChopGridLiveEngine(SegmentLifecycleMixin):
             current_regime="chop_grid",
             level_replenish_count={},
         )
+        gate = getattr(self, "_concurrency_gate", None)
+        if gate is not None:
+            gate.record_segment_start(symbol, self._engine_name or "chop_grid")
         actions: List[Dict[str, Any]] = []
         for level in range(1, self.cfg.max_levels_per_side + 1):
             qty = self.level_notional / max(close, 1e-12)
