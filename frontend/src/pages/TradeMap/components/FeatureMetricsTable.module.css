@@ -4,6 +4,9 @@
 }
 
 .caption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 4px 10px;
   font-family: var(--font-mono);
   font-size: 0.72rem;
@@ -13,14 +16,20 @@
   border-bottom: 1px solid var(--border);
 }
 
+.barTime {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
 .scroll {
   overflow: auto;
-  max-height: 220px;
+  max-height: 320px;
 }
 
 .table {
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
   border-collapse: collapse;
   font-family: var(--font-mono);
   font-size: 0.72rem;
@@ -29,56 +38,54 @@
 .table th,
 .table td {
   border: 1px solid var(--border);
-  padding: 3px 6px;
-  text-align: center;
+  padding: 3px 8px;
   white-space: nowrap;
 }
 
 .rowLabel {
-  position: sticky;
-  left: 0;
-  z-index: 2;
+  width: 1%;
   text-align: left !important;
   background: var(--surface);
   color: var(--text-muted);
-  min-width: 120px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.valCol {
+  text-align: center;
+  min-width: 60px;
 }
 
 .thresh {
   font-size: 0.62rem;
   color: var(--text-dim);
   font-weight: 400;
+  margin-top: 1px;
 }
 
-.barCol {
-  cursor: pointer;
-  min-width: 52px;
-}
-
-.barCol:hover {
-  background: var(--surface-hover);
-}
-
-.active {
-  background: var(--surface-hover);
-  outline: 1px solid var(--warning);
-  color: var(--warning);
+.mutedHint {
+  color: var(--text-dim);
+  font-style: italic;
 }
 
 .enterOk {
   color: var(--positive);
+  font-weight: 700;
 }
 
 .enterFail {
   color: var(--negative);
+  font-weight: 700;
 }
 
 .regimeOn {
   color: var(--accent);
+  font-weight: 700;
 }
 
 .regimeExit {
   color: var(--accent-amber);
+  font-weight: 700;
 }
 
 .passOk {
