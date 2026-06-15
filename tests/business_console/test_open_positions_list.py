@@ -10,6 +10,7 @@ import pytest
 
 from mlbot_console.services.open_positions_list import (
     _multileg_open_leg_ids,
+    _multileg_open_rows,
     _get_multileg_tp_sl_orders,
 )
 
@@ -51,8 +52,10 @@ def temp_db(tmp_path: Path) -> Path:
             price REAL,
             quantity REAL,
             filled_quantity REAL,
+            average_price REAL,
             leg_id TEXT,
             exchange_order_id TEXT,
+            filled_at TIMESTAMP,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """
@@ -267,6 +270,126 @@ class TestGhostPositionFiltering:
 
         result = _multileg_open_leg_ids(temp_db, "HYPEUSDT")
         assert result == {"active_leg"}
+
+    def test_closed_entry_order_is_filtered(self, temp_db: Path) -> None:
+        """Pruned entry orders marked closed must not appear as open positions."""
+        conn = sqlite3.connect(temp_db)
+        conn.execute(
+            "INSERT INTO multi_leg_positions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "r1",
+                "chop_grid",
+                "active_leg",
+                "HYPEUSDT",
+                "LONG",
+                63.0,
+                75.88,
+                "open",
+                "2026-06-15",
+            ),
+        )
+        conn.executemany(
+            """
+            INSERT INTO multi_leg_orders
+            (local_order_id, strategy, purpose, status, side, position_side,
+             symbol, price, quantity, filled_quantity, leg_id, exchange_order_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    "order_active",
+                    "chop_grid",
+                    "entry",
+                    "filled",
+                    "BUY",
+                    "LONG",
+                    "HYPEUSDT",
+                    63.0,
+                    75.88,
+                    75.88,
+                    "active_leg",
+                    "ex_active",
+                ),
+                (
+                    "order_ghost",
+                    "chop_grid",
+                    "entry",
+                    "closed",
+                    "BUY",
+                    "LONG",
+                    "HYPEUSDT",
+                    59.999,
+                    79.98,
+                    79.98,
+                    "ghost_leg",
+                    "ex_ghost",
+                ),
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        rows = _multileg_open_rows(
+            temp_db,
+            symbol="HYPEUSDT",
+            mark_prices={"HYPEUSDT": 67.0},
+            pending_exits={},
+        )
+        leg_ids = {str(r.get("leg") or "") for r in rows}
+        assert leg_ids == {"active_leg"}
+
+    def test_filled_entry_without_open_position_is_filtered(
+        self, temp_db: Path
+    ) -> None:
+        """Ghost filled entry with no open position row must not appear."""
+        conn = sqlite3.connect(temp_db)
+        conn.execute(
+            """
+            INSERT INTO multi_leg_orders
+            (local_order_id, strategy, purpose, status, side, position_side,
+             symbol, price, quantity, filled_quantity, leg_id, exchange_order_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "order_ghost",
+                "chop_grid",
+                "entry",
+                "filled",
+                "BUY",
+                "LONG",
+                "HYPEUSDT",
+                59.999,
+                79.98,
+                79.98,
+                "ghost_leg",
+                "ex_ghost",
+            ),
+        )
+        # Closed position row proves positions table is in use; leg is not open.
+        conn.execute(
+            "INSERT INTO multi_leg_positions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "r1",
+                "chop_grid",
+                "ghost_leg",
+                "HYPEUSDT",
+                "LONG",
+                59.999,
+                79.98,
+                "closed",
+                "2026-06-14",
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        rows = _multileg_open_rows(
+            temp_db,
+            symbol="HYPEUSDT",
+            mark_prices={"HYPEUSDT": 67.0},
+            pending_exits={},
+        )
+        assert rows == []
 
 
 class TestMultilegTpSlOrders:

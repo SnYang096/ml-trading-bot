@@ -166,6 +166,11 @@ def _get_multileg_tp_sl_orders(
     return out
 
 
+_MULTILEG_TERMINAL_ORDER_STATUSES = frozenset(
+    {"closed", "canceled", "cancelled", "expired", "rejected"}
+)
+
+
 def _multileg_open_leg_ids(db_path: Path, symbol: Optional[str]) -> Set[str]:
     """Return leg_ids that have an open position in multi_leg_positions table.
     
@@ -189,6 +194,23 @@ def _multileg_open_leg_ids(db_path: Path, symbol: Optional[str]) -> Set[str]:
         params,
     )
     return {str(row.get("leg_id") or "").strip() for row in rows if str(row.get("leg_id") or "").strip()}
+
+
+def _multileg_positions_table_used(db_path: Path, symbol: Optional[str]) -> bool:
+    """True when multi_leg_positions has rows (live hedge persists inventory here)."""
+    if not db_path.is_file():
+        return False
+    where = ""
+    params: tuple[Any, ...] = ()
+    if symbol and not is_all_symbols(symbol):
+        where = "WHERE symbol = ?"
+        params = (symbol.upper(),)
+    rows = query_rows(
+        db_path,
+        f"SELECT 1 FROM multi_leg_positions {where} LIMIT 1",
+        params,
+    )
+    return bool(rows)
 
 
 def _trend_open_rows(
@@ -307,6 +329,9 @@ def _spot_open_rows(
 def _multileg_is_open_entry_row(row: Dict[str, Any]) -> bool:
     from mlbot_console.services.multileg_order_links import is_entry_row
 
+    status = str(row.get("status") or "").lower().strip()
+    if status in _MULTILEG_TERMINAL_ORDER_STATUSES:
+        return False
     if not _is_filled_row(row):
         return False
     purpose = str(row.get("purpose") or "").lower()
@@ -352,6 +377,7 @@ def _multileg_open_rows(
 
     # Get active leg_ids from positions table (ground truth after reconcile)
     active_leg_ids = _multileg_open_leg_ids(db_path, symbol)
+    positions_table_used = _multileg_positions_table_used(db_path, symbol)
 
     out: List[Dict[str, Any]] = []
     for sym in symbols:
@@ -400,10 +426,10 @@ def _multileg_open_rows(
                 side = _normalize_side(row.get("side"))
             leg_key = str(row.get("leg_id") or oid)
             
-            # Filter ghost positions: only show if leg_id is in active positions table
-            # If positions table has data (active_leg_ids is non-empty), skip
-            # entries whose leg_id is not tracked as open.
-            if active_leg_ids and leg_key not in active_leg_ids:
+            # Filter ghost positions: live hedge persists open legs in
+            # multi_leg_positions. Pruned legs leave filled orders in
+            # multi_leg_orders (status filled/closed) — hide unless still open.
+            if positions_table_used and leg_key not in active_leg_ids:
                 continue
             entry_ts = _parse_ts(row.get("filled_at")) or _parse_ts(
                 row.get("created_at")

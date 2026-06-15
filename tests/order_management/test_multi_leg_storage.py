@@ -207,6 +207,38 @@ def test_close_absent_positions_marks_stale_open_rows_closed(tmp_path) -> None:
             "status": "open",
         }
     )
+    storage.upsert_order(
+        {
+            "local_order_id": "stale_entry",
+            "run_id": "run_1",
+            "strategy": "chop_grid",
+            "symbol": "BNBUSDT",
+            "side": "BUY",
+            "order_type": "limit",
+            "purpose": "entry",
+            "quantity": 0.1,
+            "leg_id": "stale_leg",
+            "status": "filled",
+            "filled_quantity": 0.1,
+            "average_price": 650.0,
+        }
+    )
+    storage.upsert_order(
+        {
+            "local_order_id": "active_entry",
+            "run_id": "run_1",
+            "strategy": "chop_grid",
+            "symbol": "BNBUSDT",
+            "side": "BUY",
+            "order_type": "limit",
+            "purpose": "entry",
+            "quantity": 0.1,
+            "leg_id": "active_leg",
+            "status": "filled",
+            "filled_quantity": 0.1,
+            "average_price": 640.0,
+        }
+    )
 
     changed = storage.close_absent_positions(
         strategy="chop_grid",
@@ -222,6 +254,15 @@ def test_close_absent_positions_marks_stale_open_rows_closed(tmp_path) -> None:
             conn.execute("SELECT leg_id, status FROM multi_leg_positions").fetchall()
         )
         assert rows == {"active_leg": "open", "stale_leg": "closed"}
+        order_rows = dict(
+            conn.execute(
+                "SELECT local_order_id, status FROM multi_leg_orders"
+            ).fetchall()
+        )
+        assert order_rows == {
+            "active_entry": "filled",
+            "stale_entry": "closed",
+        }
     finally:
         conn.close()
 
