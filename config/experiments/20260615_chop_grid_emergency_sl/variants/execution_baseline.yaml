@@ -1,0 +1,4 @@
+# Baseline — no per-leg SL
+risk:
+  per_leg_stop_loss: false
+  per_leg_sl_spacing_mult: null

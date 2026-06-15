@@ -1,0 +1,45 @@
+# chop_grid Emergency SL backtest — variant grid
+# Run: PYTHONPATH=src:scripts python -m scripts.event_backtest --variant-grid config/experiments/20260615_chop_grid_emergency_sl/chop_grid_emergency_sl_grid.yaml
+
+engine: chop_grid
+strategy: chop_grid
+experiment_id: chop_grid_emergency_sl_20260615
+
+config: config/strategies/chop_grid/research/calibrate_roll.default.yaml
+
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - BNBUSDT
+  - XRPUSDT
+  - ADAUSDT
+
+timeframe: 2h
+execution_timeframe: 1min
+initial_capital: 10000
+
+market_segment_path: config/market_segment.yaml
+
+segment_matrix:
+  segments:
+    - bear_2022
+    - bull_2023_2024
+    - recent_range_to_bear
+    - recent_6m_oos
+  variants:
+    - suffix: baseline
+      config: config/experiments/20260615_chop_grid_emergency_sl/variants/execution_baseline.yaml
+      output_dir: results/chop_grid/experiments/emergency_sl_20260615/baseline
+
+    - suffix: sl_4x
+      config: config/experiments/20260615_chop_grid_emergency_sl/variants/execution_sl_4x.yaml
+      output_dir: results/chop_grid/experiments/emergency_sl_20260615/sl_4x
+
+    - suffix: sl_6x
+      config: config/experiments/20260615_chop_grid_emergency_sl/variants/execution_sl_6x.yaml
+      output_dir: results/chop_grid/experiments/emergency_sl_20260615/sl_6x
+
+    - suffix: sl_8x
+      config: config/experiments/20260615_chop_grid_emergency_sl/variants/execution_sl_8x.yaml
+      output_dir: results/chop_grid/experiments/emergency_sl_20260615/sl_8x

@@ -1232,6 +1232,189 @@ def data_download_open_interest(
     sys.exit(run_script("src/data_tools/download_open_interest.py", args))
 
 
+@data.command("download-open-interest-vision")
+@click.option(
+    "--symbols", "-s", default="HYPEUSDT", help="Comma-separated symbols"
+)
+@click.option(
+    "--universe-config",
+    default=None,
+    help="YAML universe config (if set, overrides --symbols).",
+)
+@click.option("--universe-set", default="starter_a")
+@click.option("--universe-groups", default=None)
+@click.option("--start-date", required=True, help="YYYY-MM-DD (inclusive)")
+@click.option("--end-date", default=None, help="YYYY-MM-DD inclusive (default: today UTC)")
+@click.option(
+    "--data-dir",
+    default="data/open_interest/vision_zip",
+    help="Cache directory for daily metrics ZIP files",
+)
+@click.option(
+    "--parquet-dir",
+    default="data/open_interest/parquet",
+    help="Output directory for monthly OI Parquet",
+)
+@click.option("--sleep-sec", type=float, default=0.2, show_default=True)
+@click.option("--progress-every", type=int, default=25, show_default=True)
+@click.option("--force/--no-force", default=False, show_default=True)
+def data_download_open_interest_vision(
+    symbols,
+    universe_config,
+    universe_set,
+    universe_groups,
+    start_date,
+    end_date,
+    data_dir,
+    parquet_dir,
+    sleep_sec,
+    progress_every,
+    force,
+):
+    """Download Binance Vision daily metrics → monthly OI Parquet (5m, e.g. HYPE)."""
+    if universe_config:
+        from src.data_tools.universe_config import load_universe_config
+
+        cfg = load_universe_config(universe_config)
+        groups = (
+            [g.strip() for g in str(universe_groups).split(",") if g.strip()]
+            if universe_groups
+            else None
+        )
+        resolved = cfg.resolve_symbols_usdt(
+            universe_set=str(universe_set), groups=groups
+        )
+        symbols = ",".join(resolved)
+
+    args = [
+        "--data-dir",
+        data_dir,
+        "--parquet-dir",
+        parquet_dir,
+        "--symbols",
+        *[s for s in symbols.split(",") if s.strip()],
+        "--start-date",
+        str(start_date),
+        "--sleep-sec",
+        str(sleep_sec),
+        "--progress-every",
+        str(progress_every),
+    ]
+    if end_date:
+        args.extend(["--end-date", str(end_date)])
+    if force:
+        args.append("--force")
+
+    sys.exit(run_script("src/data_tools/download_open_interest_vision.py", args))
+
+
+@data.command("download-book-depth")
+@click.option(
+    "--symbols", "-s", default="BTCUSDT,ETHUSDT", help="Comma-separated symbols"
+)
+@click.option(
+    "--universe-config",
+    default=None,
+    help="YAML universe config (if set, overrides --symbols).",
+)
+@click.option("--universe-set", default="starter_a")
+@click.option("--universe-groups", default=None)
+@click.option("--start-date", required=True, help="YYYY-MM-DD (inclusive)")
+@click.option("--end-date", default=None, help="YYYY-MM-DD inclusive (default: today UTC)")
+@click.option(
+    "--data-dir",
+    default="data/book_depth/zip",
+    help="Cache directory for daily bookDepth ZIP files",
+)
+@click.option(
+    "--parquet-dir",
+    default="data/book_depth/parquet",
+    help="Output directory for daily wall snapshot Parquet",
+)
+@click.option("--sleep-sec", type=float, default=0.2, show_default=True)
+@click.option("--progress-every", type=int, default=25, show_default=True)
+@click.option("--force/--no-force", default=False, show_default=True)
+def data_download_book_depth(
+    symbols,
+    universe_config,
+    universe_set,
+    universe_groups,
+    start_date,
+    end_date,
+    data_dir,
+    parquet_dir,
+    sleep_sec,
+    progress_every,
+    force,
+):
+    """Download Binance Vision daily bookDepth → wall snapshot Parquet (T5α history)."""
+    if universe_config:
+        from src.data_tools.universe_config import load_universe_config
+
+        cfg = load_universe_config(universe_config)
+        groups = (
+            [g.strip() for g in str(universe_groups).split(",") if g.strip()]
+            if universe_groups
+            else None
+        )
+        resolved = cfg.resolve_symbols_usdt(
+            universe_set=str(universe_set), groups=groups
+        )
+        symbols = ",".join(resolved)
+
+    args = [
+        "--data-dir",
+        data_dir,
+        "--parquet-dir",
+        parquet_dir,
+        "--symbols",
+        *[s for s in symbols.split(",") if s.strip()],
+        "--start-date",
+        str(start_date),
+        "--sleep-sec",
+        str(sleep_sec),
+        "--progress-every",
+        str(progress_every),
+    ]
+    if end_date:
+        args.extend(["--end-date", str(end_date)])
+    if force:
+        args.append("--force")
+
+    sys.exit(run_script("src/data_tools/download_book_depth_vision.py", args))
+
+
+@data.command("download-depth-snapshots")
+@click.option(
+    "--symbols", "-s", default="BTCUSDT", help="Comma-separated symbols"
+)
+@click.option("--poll-count", type=int, default=1, show_default=True)
+@click.option("--poll-interval-sec", type=float, default=60.0, show_default=True)
+@click.option(
+    "--parquet-dir",
+    default="data/orderbook/parquet",
+    help="Output directory for REST depth snapshot Parquet",
+)
+@click.option("--bucket-pct", type=float, default=0.005, show_default=True)
+def data_download_depth_snapshots(
+    symbols, poll_count, poll_interval_sec, parquet_dir, bucket_pct
+):
+    """Poll live REST depth snapshots (incremental; Vision has historical bookDepth)."""
+    args = [
+        "--parquet-dir",
+        parquet_dir,
+        "--symbols",
+        *[s for s in symbols.split(",") if s.strip()],
+        "--poll-count",
+        str(poll_count),
+        "--poll-interval-sec",
+        str(poll_interval_sec),
+        "--bucket-pct",
+        str(bucket_pct),
+    ]
+    sys.exit(run_script("src/data_tools/download_depth_snapshots.py", args))
+
+
 @data.command("update-market-cap")
 @click.option(
     "--config", default="config/market_cap/market_cap.yaml", show_default=True

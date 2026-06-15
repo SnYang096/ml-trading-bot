@@ -1213,6 +1213,18 @@ def main() -> None:
         default=defaults.get("max_open_levels_total", 6),
     )
     parser.add_argument(
+        "--per-leg-stop-loss",
+        action=argparse.BooleanOptionalAction,
+        default=defaults.get("per_leg_stop_loss", False),
+        help="Enable per-leg stop-loss in backtest (default false).",
+    )
+    parser.add_argument(
+        "--per-leg-sl-spacing-mult",
+        type=float,
+        default=defaults.get("per_leg_sl_spacing_mult", None),
+        help="Stop-loss distance = spacing * mult (default None = disabled).",
+    )
+    parser.add_argument(
         "--chop-signal",
         choices=["raw", "ts_quantile"],
         default=str(defaults.get("chop_signal", "raw")),

@@ -152,6 +152,13 @@ def merge_chop_grid_yaml(path: Path) -> Dict[str, Any]:
         "block_stable_box": not bool(regime.get("exclude_box_prefilter", True)),
         "max_loss_per_grid": float(risk.get("max_loss_per_grid", 0.03)),
         "max_open_levels_total": int(risk.get("max_open_levels_total", 6)),
+        "per_leg_stop_loss": bool(risk.get("per_leg_stop_loss", False)),
+        "per_leg_sl_spacing_mult": (
+            float(risk["per_leg_sl_spacing_mult"])
+            if "per_leg_sl_spacing_mult" in risk
+            and risk["per_leg_sl_spacing_mult"] is not None
+            else None
+        ),
         "stability_min": float(box_pf.get("stability_min", 0.85)),
         "width_min": float(box_pf.get("width_min", 0.04)),
         "width_max": float(box_pf.get("width_max", 0.30)),

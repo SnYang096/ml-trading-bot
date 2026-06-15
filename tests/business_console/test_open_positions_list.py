@@ -19,7 +19,7 @@ def temp_db(tmp_path: Path) -> Path:
     """Create a temporary multi-leg database with positions and orders tables."""
     db_path = tmp_path / "test_multi_leg.db"
     conn = sqlite3.connect(db_path)
-    
+
     # Create multi_leg_positions table
     conn.execute(
         """
@@ -36,7 +36,7 @@ def temp_db(tmp_path: Path) -> Path:
         )
         """
     )
-    
+
     # Create multi_leg_orders table
     conn.execute(
         """
@@ -77,11 +77,41 @@ class TestMultilegOpenLegIds:
             "INSERT INTO multi_leg_positions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 # open position
-                ("r1", "chop_grid", "leg_open", "HYPEUSDT", "SHORT", 64.0, 77.12, "open", "2026-06-15"),
+                (
+                    "r1",
+                    "chop_grid",
+                    "leg_open",
+                    "HYPEUSDT",
+                    "SHORT",
+                    64.0,
+                    77.12,
+                    "open",
+                    "2026-06-15",
+                ),
                 # closed position
-                ("r1", "chop_grid", "leg_closed", "HYPEUSDT", "LONG", 63.0, 75.88, "closed", "2026-06-14"),
+                (
+                    "r1",
+                    "chop_grid",
+                    "leg_closed",
+                    "HYPEUSDT",
+                    "LONG",
+                    63.0,
+                    75.88,
+                    "closed",
+                    "2026-06-14",
+                ),
                 # open position for different symbol
-                ("r1", "chop_grid", "leg_btc", "BTCUSDT", "LONG", 65000.0, 0.01, "open", "2026-06-15"),
+                (
+                    "r1",
+                    "chop_grid",
+                    "leg_btc",
+                    "BTCUSDT",
+                    "LONG",
+                    65000.0,
+                    0.01,
+                    "open",
+                    "2026-06-15",
+                ),
             ],
         )
         conn.commit()
@@ -96,8 +126,28 @@ class TestMultilegOpenLegIds:
         conn.executemany(
             "INSERT INTO multi_leg_positions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
-                ("r1", "chop_grid", "leg_hype", "HYPEUSDT", "SHORT", 64.0, 77.12, "open", "2026-06-15"),
-                ("r1", "chop_grid", "leg_btc", "BTCUSDT", "LONG", 65000.0, 0.01, "open", "2026-06-15"),
+                (
+                    "r1",
+                    "chop_grid",
+                    "leg_hype",
+                    "HYPEUSDT",
+                    "SHORT",
+                    64.0,
+                    77.12,
+                    "open",
+                    "2026-06-15",
+                ),
+                (
+                    "r1",
+                    "chop_grid",
+                    "leg_btc",
+                    "BTCUSDT",
+                    "LONG",
+                    65000.0,
+                    0.01,
+                    "open",
+                    "2026-06-15",
+                ),
             ],
         )
         conn.commit()
@@ -114,7 +164,17 @@ class TestMultilegOpenLegIds:
         conn = sqlite3.connect(temp_db)
         conn.execute(
             "INSERT INTO multi_leg_positions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            ("r1", "chop_grid", "leg_hype", "HYPEUSDT", "SHORT", 64.0, 77.12, "open", "2026-06-15"),
+            (
+                "r1",
+                "chop_grid",
+                "leg_hype",
+                "HYPEUSDT",
+                "SHORT",
+                64.0,
+                77.12,
+                "open",
+                "2026-06-15",
+            ),
         )
         conn.commit()
         conn.close()
@@ -126,7 +186,9 @@ class TestMultilegOpenLegIds:
 class TestGhostPositionFiltering:
     """Tests that _multileg_open_rows filters ghost positions correctly."""
 
-    def test_entry_order_without_matching_position_is_filtered(self, temp_db: Path) -> None:
+    def test_entry_order_without_matching_position_is_filtered(
+        self, temp_db: Path
+    ) -> None:
         """Ghost entry order (filled but position closed) should not appear."""
         conn = sqlite3.connect(temp_db)
         # Insert a filled entry order (ghost)
@@ -138,9 +200,18 @@ class TestGhostPositionFiltering:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                "order_ghost", "chop_grid", "entry", "filled",
-                "SELL", "SHORT", "HYPEUSDT", 64.0, 77.12, 77.12,
-                "ghost_leg", "ex_ghost"
+                "order_ghost",
+                "chop_grid",
+                "entry",
+                "filled",
+                "SELL",
+                "SHORT",
+                "HYPEUSDT",
+                64.0,
+                77.12,
+                77.12,
+                "ghost_leg",
+                "ex_ghost",
             ),
         )
         # No matching open position in multi_leg_positions
@@ -156,7 +227,17 @@ class TestGhostPositionFiltering:
         # Insert open position
         conn.execute(
             "INSERT INTO multi_leg_positions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            ("r1", "chop_grid", "active_leg", "HYPEUSDT", "SHORT", 64.0, 77.12, "open", "2026-06-15"),
+            (
+                "r1",
+                "chop_grid",
+                "active_leg",
+                "HYPEUSDT",
+                "SHORT",
+                64.0,
+                77.12,
+                "open",
+                "2026-06-15",
+            ),
         )
         # Insert matching entry order
         conn.execute(
@@ -167,9 +248,18 @@ class TestGhostPositionFiltering:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                "order_active", "chop_grid", "entry", "filled",
-                "SELL", "SHORT", "HYPEUSDT", 64.0, 77.12, 77.12,
-                "active_leg", "ex_active"
+                "order_active",
+                "chop_grid",
+                "entry",
+                "filled",
+                "SELL",
+                "SHORT",
+                "HYPEUSDT",
+                64.0,
+                77.12,
+                77.12,
+                "active_leg",
+                "ex_active",
             ),
         )
         conn.commit()
@@ -194,27 +284,63 @@ class TestMultilegTpSlOrders:
             """,
             [
                 # TP order for leg_1 (status=open, not filled)
-                ("tp_1", "chop_grid", "take_profit", "open", "BUY", "SHORT",
-                 "HYPEUSDT", 64.5, 77.12, 0, "leg_1", "ex_tp_1"),
+                (
+                    "tp_1",
+                    "chop_grid",
+                    "take_profit",
+                    "open",
+                    "BUY",
+                    "SHORT",
+                    "HYPEUSDT",
+                    64.5,
+                    77.12,
+                    0,
+                    "leg_1",
+                    "ex_tp_1",
+                ),
                 # SL order for leg_1 (status=open, not filled)
-                ("sl_1", "chop_grid", "stop_loss", "open", "BUY", "SHORT",
-                 "HYPEUSDT", 62.0, 77.12, 0, "leg_1", "ex_sl_1"),
+                (
+                    "sl_1",
+                    "chop_grid",
+                    "stop_loss",
+                    "open",
+                    "BUY",
+                    "SHORT",
+                    "HYPEUSDT",
+                    62.0,
+                    77.12,
+                    0,
+                    "leg_1",
+                    "ex_sl_1",
+                ),
                 # TP order for leg_2 (status=open)
-                ("tp_2", "chop_grid", "take_profit", "open", "SELL", "LONG",
-                 "HYPEUSDT", 66.0, 75.88, 0, "leg_2", "ex_tp_2"),
+                (
+                    "tp_2",
+                    "chop_grid",
+                    "take_profit",
+                    "open",
+                    "SELL",
+                    "LONG",
+                    "HYPEUSDT",
+                    66.0,
+                    75.88,
+                    0,
+                    "leg_2",
+                    "ex_tp_2",
+                ),
             ],
         )
         conn.commit()
         conn.close()
 
         result = _get_multileg_tp_sl_orders(temp_db, "HYPEUSDT")
-        
+
         assert "leg_1" in result
         assert len(result["leg_1"]) == 2
         tp = next(o for o in result["leg_1"] if o["order_type"] == "TAKE_PROFIT")
         assert tp["price"] == 64.5
         assert tp["order_id"] == "ex_tp_1"
-        
+
         sl = next(o for o in result["leg_1"] if o["order_type"] == "STOP_LOSS")
         assert sl["price"] == 62.0
         assert sl["order_id"] == "ex_sl_1"
