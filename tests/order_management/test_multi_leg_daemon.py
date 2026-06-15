@@ -291,6 +291,7 @@ def test_daemon_can_route_same_bar_to_two_strategy_runtimes() -> None:
         features={},
     )
     engine_a = FakeEngine()
+    engine_a.holds_real_grid_slot = lambda: True  # chop occupies slot after open
     engine_b = FakeEngine()
     adapter_a = _adapter()
     adapter_b = _adapter()
@@ -309,6 +310,82 @@ def test_daemon_can_route_same_bar_to_two_strategy_runtimes() -> None:
     assert report.rejected_count == 1
     assert engine_a.calls == 1
     assert engine_b.calls == 1
+    adapter_a.execute_actions.assert_called_once()
+    adapter_b.execute_actions.assert_not_called()
+
+
+@dataclass
+class HandoffChopEngine:
+    """Simulates chop holding a slot at bar open then releasing on on_bar."""
+
+    _holds: bool = True
+    calls: int = 0
+
+    def on_bar(self, **kwargs):
+        self.calls += 1
+        actions = []
+        if self._holds:
+            actions.append(
+                {
+                    "action": "market_exit",
+                    "symbol": kwargs["symbol"],
+                    "side": "SHORT",
+                    "quantity": 0.01,
+                    "reason": "regime_exit",
+                }
+            )
+            self._holds = False
+        return actions
+
+    def holds_real_grid_slot(self) -> bool:
+        return self._holds
+
+    def local_order_snapshots(self):
+        return []
+
+    def local_position_snapshots(self):
+        return []
+
+    def on_execution_results(self, results):
+        return None
+
+    def on_reconciliation_report(self, report):
+        return None
+
+
+def test_daemon_allows_trend_place_after_chop_same_bar_handoff() -> None:
+    """Timeline parity: chop regime_exit then trend place on the same 2h bar."""
+    bar = MultiLegBarEvent(
+        symbol="BTCUSDT",
+        timestamp="2026-05-30 22:00:00+00:00",
+        high=101.0,
+        low=99.0,
+        close=100.0,
+        atr=2.0,
+        features={},
+    )
+    engine_a = HandoffChopEngine()
+    engine_b = FakeEngine()
+    adapter_a = _adapter()
+    adapter_b = _adapter()
+    daemon = MultiLegLiveDaemon(
+        bar_provider=FakeProvider([bar]),
+        runtimes=[
+            _runtime("chop_grid", "BTCUSDT", engine_a, adapter_a),
+            _runtime("trend_scalp", "BTCUSDT", engine_b, adapter_b),
+        ],
+    )
+
+    report = daemon.run_once()
+
+    assert report.bars_seen == 2
+    assert report.rejected_count == 0
+    assert engine_a.calls == 1
+    assert engine_b.calls == 1
+    adapter_a.execute_actions.assert_called_once()
+    adapter_b.execute_actions.assert_called_once()
+    trend_actions = adapter_b.execute_actions.call_args.args[0]
+    assert any(str(a.get("action", "")).lower() == "place" for a in trend_actions)
 
 
 def test_daemon_shares_exchange_snapshot_for_same_symbol_and_poll() -> None:
@@ -322,6 +399,7 @@ def test_daemon_shares_exchange_snapshot_for_same_symbol_and_poll() -> None:
         features={},
     )
     engine_a = FakeEngine()
+    engine_a.holds_real_grid_slot = lambda: True
     engine_b = FakeEngine()
     adapter_a = _adapter()
     adapter_b = _adapter()

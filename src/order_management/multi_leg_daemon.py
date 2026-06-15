@@ -166,6 +166,9 @@ class MultiLegLiveDaemon:
                     atr=bar.atr,
                     features=bar.features,
                 )
+                # Refresh from engine slot state so chop regime_exit on this bar
+                # releases the symbol before trend on_bar (timeline parity).
+                self._refresh_symbol_owner(symbol_owner, sym)
                 owner = symbol_owner.get(sym, "")
                 if owner and owner != str(rt.name or ""):
                     dropped = [
@@ -242,11 +245,7 @@ class MultiLegLiveDaemon:
                 if self.stats_collector is not None:
                     self._record_multileg_funnel(rt=rt, actions=actions, report=report)
                 rejected_count += len(report.risk.rejected)
-                if any(
-                    str((a or {}).get("action", "") or "").lower() == "place"
-                    for a in (report.risk.approved_actions or [])
-                ):
-                    symbol_owner[sym] = str(rt.name or "")
+                self._refresh_symbol_owner(symbol_owner, sym)
                 execution_count += len(report.execution_results) + len(
                     report.reconciliation_results
                 )
@@ -420,6 +419,21 @@ class MultiLegLiveDaemon:
                 sc.record_order_placed(rt.symbol, rt.name)
         except Exception:
             logger.debug("multi-leg funnel record skipped", exc_info=True)
+
+    def _refresh_symbol_owner(self, symbol_owner: Dict[str, str], sym: str) -> None:
+        """Rebuild owner from current engine slots (chop runtimes precede trend)."""
+        sym_u = str(sym or "").upper().strip()
+        owner = ""
+        for rt in self.runtimes:
+            if str(rt.symbol or "").upper().strip() != sym_u:
+                continue
+            if self._runtime_holds_symbol(rt):
+                owner = str(rt.name or "")
+                break
+        if owner:
+            symbol_owner[sym_u] = owner
+        else:
+            symbol_owner.pop(sym_u, None)
 
     @staticmethod
     def _runtime_holds_symbol(rt: StrategyRuntime) -> bool:
