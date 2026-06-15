@@ -339,6 +339,10 @@ export function OrdersPage() {
                 <th>强平价</th>
                 <th>开仓时间</th>
                 <th>平仓挂单</th>
+                <th>TP 价格</th>
+                <th>SL 价格</th>
+                <th>保护状态</th>
+                <th>订单号</th>
                 <th>地图</th>
               </tr>
             </thead>
@@ -376,6 +380,20 @@ export function OrdersPage() {
                       </td>
                       <td>{formatUnixTs(r.entry_time)}</td>
                       <td>{Number(r.pending_exit_orders ?? 0) > 0 ? String(r.pending_exit_orders) : '—'}</td>
+                      <td>{r.tp_price != null && Number(r.tp_price) > 0 ? Number(r.tp_price).toFixed(4) : '—'}</td>
+                      <td>{r.sl_price != null && Number(r.sl_price) > 0 ? Number(r.sl_price).toFixed(4) : '—'}</td>
+                      <td>
+                        {r.tp_price != null && Number(r.tp_price) > 0
+                          ? r.sl_price != null && Number(r.sl_price) > 0
+                            ? '✅ TP+SL'
+                            : '✅ 有 TP'
+                          : r.sl_price != null && Number(r.sl_price) > 0
+                            ? '⚠️ 仅 SL'
+                            : '❌ 无保护'}
+                      </td>
+                      <td className="muted" style={{ fontSize: '0.75rem' }}>
+                        {r.position_id || '—'}
+                      </td>
                       <td>
                         {r.entry_marker_id ? (
                           <Link
@@ -393,7 +411,7 @@ export function OrdersPage() {
                 })
               ) : (
                 <tr>
-                  <td colSpan={showSymbol ? 14 : 13} className="muted">
+                  <td colSpan={showSymbol ? 18 : 17} className="muted">
                     无未平仓位
                   </td>
                 </tr>

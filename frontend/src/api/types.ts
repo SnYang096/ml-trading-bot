@@ -142,6 +142,11 @@ export interface OpenPositionRow {
   exchange_liquidation_price?: number | null;
   exchange_margin_type?: string | null;
   exchange_margin_allocated?: boolean;
+  // TP/SL protection fields
+  tp_price?: number | null;
+  tp_order_id?: string | null;
+  sl_price?: number | null;
+  sl_order_id?: string | null;
 }
 
 export interface OpenOrderMarginRow {

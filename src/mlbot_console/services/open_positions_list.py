@@ -118,6 +118,54 @@ def _multileg_pending_exit_counts(
     return out
 
 
+def _get_multileg_tp_sl_orders(
+    db_path: Path, symbol: Optional[str]
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Get TP/SL order details for each position.
+    
+    Returns dict mapping position_id to list of {order_type, price, order_id}.
+    """
+    if not db_path.is_file():
+        return {}
+    
+    where = """
+        WHERE lower(trim(coalesce(status, ''))) IN ({})
+          AND lower(trim(coalesce(purpose, ''))) IN (
+              'take_profit', 'stop_loss'
+          )
+          AND coalesce(trim(leg_id), '') != ''
+    """.format(",".join("?" for _ in _OPEN_ORDER_STATUSES))
+    params: tuple[Any, ...] = tuple(sorted(_OPEN_ORDER_STATUSES))
+    if symbol and not is_all_symbols(symbol):
+        where += " AND symbol = ?"
+        params = (*params, symbol.upper())
+    
+    rows = query_rows(
+        db_path,
+        f"""
+        SELECT leg_id, purpose, price, exchange_order_id
+        FROM multi_leg_orders
+        {where}
+        ORDER BY leg_id, purpose
+        """,
+        params,
+    )
+    
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for row in rows:
+        leg = str(row.get("leg_id") or "").strip()
+        if not leg:
+            continue
+        if leg not in out:
+            out[leg] = []
+        out[leg].append({
+            "order_type": str(row.get("purpose") or "").upper(),
+            "price": float(row.get("price") or 0),
+            "order_id": str(row.get("exchange_order_id") or ""),
+        })
+    return out
+
+
 def _trend_open_rows(
     db_path: Path,
     *,
@@ -274,6 +322,9 @@ def _multileg_open_rows(
             multi_leg_db=db_path,
         )
 
+    # Get TP/SL order details for all positions
+    tp_sl_map = _get_multileg_tp_sl_orders(db_path, symbol)
+
     out: List[Dict[str, Any]] = []
     for sym in symbols:
         raw = query_rows(
@@ -324,6 +375,12 @@ def _multileg_open_rows(
                 row.get("created_at")
             )
             strat = str(row.get("strategy") or "multi_leg").lower()
+            
+            # Extract TP/SL info for this position
+            tp_sl_orders = tp_sl_map.get(leg_key, [])
+            tp_info = next((o for o in tp_sl_orders if o["order_type"] == "TAKE_PROFIT"), None)
+            sl_info = next((o for o in tp_sl_orders if o["order_type"] == "STOP_LOSS"), None)
+            
             out.append(
                 {
                     "position_id": oid,
@@ -339,6 +396,11 @@ def _multileg_open_rows(
                     "entry_time": entry_ts,
                     "pending_exit_orders": int(pending_exits.get(leg_key) or 0),
                     "entry_marker_id": _marker_id("multi_leg", "multi_leg_orders", oid),
+                    # TP/SL fields
+                    "tp_price": tp_info["price"] if tp_info else None,
+                    "tp_order_id": tp_info["order_id"] if tp_info else None,
+                    "sl_price": sl_info["price"] if sl_info else None,
+                    "sl_order_id": sl_info["order_id"] if sl_info else None,
                 }
             )
     return out
