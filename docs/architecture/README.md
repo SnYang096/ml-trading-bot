@@ -38,6 +38,8 @@
 
 | 文档                                                           | 说明                                                                        |
 | -------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| [live_stream/multi_leg_live_daemon.md](live_stream/multi_leg_live_daemon.md) | C multileg 守护进程架构（Feature Bus、orchestrator、对账） |
+| [multi_leg_user_stream_design.md](multi_leg_user_stream_design.md) | Multi-leg **User-stream 现状 + 三层兜底 + 监控/并发 backlog** |
 | [segment-lifecycle.md](segment-lifecycle.md)                   | C multileg **段生命周期专题**（ghost 根因 + P0–P4 实现 + 单测）；可观测性见 abc 文档 |
 | [abc_execution_layer_issues_CN.md](abc_execution_layer_issues_CN.md) | ABC **执行层总账**：近期修复、TruthSync 术语、对账 metrics Phase 0–6、Live 观察 |
 | [trend_position_state_and_truth_sync_CN.md](trend_position_state_and_truth_sync_CN.md) | **B·Trend 持仓三份状态**、2026-06 BNB 事故、补丁与 TrendPositionTruthSync 改进提案 |

@@ -116,6 +116,8 @@ def test_parse_futures_account() -> None:
             "availableBalance": "900.1",
             "totalUnrealizedProfit": "7.7",
             "totalMaintMargin": "120.4",
+            "totalPositionInitialMargin": "80.0",
+            "totalOpenOrderInitialMargin": "28.1",
         }
     )
     assert parsed["wallet_balance_usdt"] == pytest.approx(1000.5)
@@ -124,6 +126,58 @@ def test_parse_futures_account() -> None:
     assert parsed["unrealized_pnl_usdt"] == pytest.approx(7.7)
     assert parsed["maint_margin_usdt"] == pytest.approx(120.4)
     assert parsed["margin_ratio"] == pytest.approx(0.119421, abs=1e-6)
+    assert parsed["position_initial_margin_usdt"] == pytest.approx(80.0)
+    assert parsed["open_order_initial_margin_usdt"] == pytest.approx(28.1)
+    assert parsed["margin_locked_usdt"] == pytest.approx(108.1)
+
+
+def test_parse_futures_account_gross_leverage_from_positions() -> None:
+    legs = [
+        {
+            "symbol": "BTCUSDT",
+            "notional_usdt": 30000.0,
+            "leverage": 10,
+            "initial_margin_usdt": 3000.0,
+        }
+    ]
+    parsed = parse_futures_account(
+        {
+            "totalWalletBalance": "10000",
+            "totalMarginBalance": "10000",
+            "availableBalance": "7000",
+            "totalUnrealizedProfit": "0",
+            "totalMaintMargin": "100",
+            "totalPositionInitialMargin": "3000",
+            "totalOpenOrderInitialMargin": "0",
+        },
+        open_positions=legs,
+    )
+    assert parsed["gross_notional_usdt"] == pytest.approx(30000.0)
+    assert parsed["gross_leverage"] == pytest.approx(3.0)
+
+
+def test_futures_open_positions_includes_leverage_and_margin() -> None:
+    raw = {
+        "positions": [
+            {
+                "symbol": "ETHUSDT",
+                "positionAmt": "1.5",
+                "entryPrice": "3000",
+                "markPrice": "3100",
+                "leverage": "5",
+                "positionInitialMargin": "930",
+                "maintMargin": "120",
+                "marginType": "cross",
+                "unRealizedProfit": "150",
+            },
+        ]
+    }
+    legs = futures_open_positions(raw)
+    assert len(legs) == 1
+    assert legs[0]["leverage"] == 5
+    assert legs[0]["notional_usdt"] == pytest.approx(4650.0)
+    assert legs[0]["initial_margin_usdt"] == pytest.approx(930.0)
+    assert legs[0]["margin_type"] == "cross"
 
 
 def test_parse_futures_account_zero_equity_no_ratio() -> None:

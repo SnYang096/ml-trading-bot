@@ -160,9 +160,18 @@
 
 .pnlBarLabels {
   display: flex;
-  justify-content: space-between;
+  gap: 3px;
   font-size: 0.65rem;
   color: var(--text-muted);
+}
+
+.pnlBarLabel {
+  flex: 1;
+  min-width: 4px;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pnlSubhead {
@@ -176,9 +185,47 @@
   margin-top: 0;
 }
 
+.pnlWeeklyRow {
+  display: grid;
+  grid-template-columns: 1fr minmax(200px, 320px);
+  gap: 12px;
+  align-items: start;
+}
+
+.pnlWeeklyChart {
+  min-width: 0;
+}
+
+.pnlWeeklyTable {
+  justify-self: end;
+  width: 100%;
+}
+
+.pnlChartsRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+.pnlChartCol {
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .pnlWeeklyRow,
+  .pnlChartsRow {
+    grid-template-columns: 1fr;
+  }
+
+  .pnlWeeklyTable {
+    justify-self: stretch;
+  }
+}
+
 .weeklyTable {
-  max-width: 420px;
-  margin-top: 8px;
+  width: 100%;
+  margin-top: 0;
 }
 
 .equityWrap {
@@ -224,9 +271,44 @@
 
 .curveLegend {
   display: flex;
-  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 6px;
   font-size: 0.8rem;
+}
+
+.curveLegendLabels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.curveModeToggle {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+}
+
+.curveModeBtn {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.curveModeBtn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.curveModeBtnActive {
+  border-color: var(--accent);
+  color: var(--accent-cyan);
+  box-shadow: var(--glow);
 }
 
 .legendBalance {
@@ -283,6 +365,81 @@
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 10px;
   margin-bottom: 12px;
+}
+
+.marginPanel {
+  margin-top: 0;
+}
+
+.marginIntro {
+  margin: 0 0 12px;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.marginTotals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.marginScopeGrid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+.marginScopeCard {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  background: var(--surface);
+}
+
+.marginScopeHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.marginScopeHead h4 {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--accent-cyan);
+}
+
+.marginScopeKpis {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.5rem;
+  font-size: 0.8rem;
+  margin-bottom: 6px;
+}
+
+.marginScopeKpis strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.marginScopeNote {
+  margin: 0 0 8px;
+  font-size: 0.72rem;
+}
+
+.marginWarn {
+  color: #e6b800;
+}
+
+.marginPosTable {
+  font-size: 0.74rem;
+}
+
+.marginFooter {
+  margin: 12px 0 0;
+  font-size: 0.72rem;
 }
 
 .riskOk {

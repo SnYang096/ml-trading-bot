@@ -357,6 +357,7 @@ GET /api/regime/cockpit
 | B regime | `live/highcap/config/strategies/tpc/archetypes/regime.yaml` |
 | C chop / scalp | `live/highcap/.../chop_grid|trend_scalp/archetypes/regime.yaml` |
 | 账户 NAV | `src/mlbot_console/services/exchange_balances.py` |
+| 保证金 / 杠杆占用 UI | `/account` · `MarginBreakdownPanel`；详见 [BUSINESS_CONSOLE_DESIGN_CN.md §4.7.2](../deployment/BUSINESS_CONSOLE_DESIGN_CN.md) |
 | classify 实现 | `src/time_series_model/archetype/loader.py` `RegimeConfig` |
 | 离线 drift | `src/monitoring/regime_health.py` |
 

@@ -83,6 +83,29 @@ def _fetch_futures_account_raw(*, api_key: str, api_secret: str) -> Dict[str, An
     return data
 
 
+def _fetch_open_orders_raw(*, api_key: str, api_secret: str, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+    session = _http_session()
+    base = "https://fapi.binance.com"
+    srv = session.get(f"{base}/fapi/v1/time", timeout=8)
+    srv.raise_for_status()
+    server_ts = int(srv.json().get("serverTime", int(time.time() * 1000)))
+    params = {"timestamp": server_ts}
+    if symbol:
+        params["symbol"] = symbol.upper()
+    query = "&".join(f"{k}={v}" for k, v in params.items())
+    sig = hmac.new(api_secret.encode(), query.encode(), hashlib.sha256).hexdigest()
+    resp = session.get(
+        f"{base}/fapi/v1/openOrders?{query}&signature={sig}",
+        headers={"X-MBX-APIKEY": api_key},
+        timeout=12,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if not isinstance(data, list):
+        raise ValueError("unexpected open orders response")
+    return data
+
+
 from mlbot_console.services.symbols import is_all_symbols
 
 
@@ -115,6 +138,13 @@ def _compute_position_unrealized_pnl(pos: Mapping[str, Any]) -> float:
     return float(pos.get("unRealizedProfit") or 0.0)
 
 
+def _parse_float(value: Any) -> float:
+    try:
+        return float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def futures_open_positions(
     data: Mapping[str, Any], *, symbol: Optional[str] = None
 ) -> List[Dict[str, Any]]:
@@ -135,15 +165,27 @@ def futures_open_positions(
             amt = 0.0
         if amt == 0.0:
             continue
+        mark = _parse_float(pos.get("markPrice"))
+        notional = abs(amt) * mark if mark > 0 else _parse_float(pos.get("notional"))
+        lev = int(_parse_float(pos.get("leverage")) or 0)
+        init_margin = _parse_float(
+            pos.get("positionInitialMargin") or pos.get("initialMargin")
+        )
         out.append(
             {
                 "symbol": sym,
                 "side": "long" if amt > 0 else "short",
                 "quantity": abs(amt),
                 "position_amt": amt,
-                "entry_price": float(pos.get("entryPrice") or 0.0),
-                "mark_price": float(pos.get("markPrice") or 0.0),
+                "entry_price": _parse_float(pos.get("entryPrice")),
+                "mark_price": mark,
+                "notional_usdt": round(notional, 4),
+                "leverage": lev if lev > 0 else None,
+                "initial_margin_usdt": init_margin if init_margin > 0 else None,
+                "maint_margin_usdt": _parse_float(pos.get("maintMargin")) or None,
+                "margin_type": str(pos.get("marginType") or "").lower() or None,
                 "unrealized_pnl_usdt": _compute_position_unrealized_pnl(pos),
+                "liquidation_price": _parse_float(pos.get("liquidationPrice")) or None,
             }
         )
     return sorted(out, key=lambda x: (x["symbol"], x["side"]))
@@ -180,20 +222,72 @@ def spot_symbol_holdings_value(
     return total
 
 
-def parse_futures_account(data: Mapping[str, Any]) -> Dict[str, Any]:
-    margin_bal = float(data.get("totalMarginBalance") or 0.0)
-    maint_margin = float(data.get("totalMaintMargin") or 0.0)
+def futures_gross_notional(positions: List[Mapping[str, Any]]) -> float:
+    return round(
+        sum(_parse_float(p.get("notional_usdt")) for p in positions),
+        4,
+    )
+
+
+def parse_futures_account(
+    data: Mapping[str, Any],
+    *,
+    open_positions: Optional[List[Mapping[str, Any]]] = None,
+) -> Dict[str, Any]:
+    margin_bal = _parse_float(data.get("totalMarginBalance"))
+    maint_margin = _parse_float(data.get("totalMaintMargin"))
+    available = _parse_float(data.get("availableBalance"))
+    pos_init = _parse_float(data.get("totalPositionInitialMargin"))
+    order_init = _parse_float(data.get("totalOpenOrderInitialMargin"))
+    margin_locked = max(0.0, margin_bal - available)
+    legs = list(open_positions or [])
+    gross_notional = futures_gross_notional(legs)
+    gross_leverage: Optional[float] = None
+    if margin_bal > 0 and gross_notional > 0:
+        gross_leverage = round(gross_notional / margin_bal, 4)
     margin_ratio: Optional[float] = None
     if margin_bal > 0:
         margin_ratio = round(maint_margin / margin_bal, 6)
     return {
-        "wallet_balance_usdt": float(data.get("totalWalletBalance") or 0.0),
+        "wallet_balance_usdt": _parse_float(data.get("totalWalletBalance")),
         "equity_usdt": margin_bal,
-        "available_usdt": float(data.get("availableBalance") or 0.0),
-        "unrealized_pnl_usdt": float(data.get("totalUnrealizedProfit") or 0.0),
+        "available_usdt": available,
+        "unrealized_pnl_usdt": _parse_float(data.get("totalUnrealizedProfit")),
         "maint_margin_usdt": maint_margin,
         "margin_ratio": margin_ratio,
+        "position_initial_margin_usdt": pos_init,
+        "open_order_initial_margin_usdt": order_init,
+        "margin_locked_usdt": round(margin_locked, 4),
+        "gross_notional_usdt": gross_notional,
+        "gross_leverage": gross_leverage,
     }
+
+
+def parse_open_orders_margin(orders: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Parse initial margin for open orders from Binance raw response."""
+    out: List[Dict[str, Any]] = []
+    for o in orders:
+        sym = str(o.get("symbol") or "").upper()
+        side = str(o.get("side") or "").lower()
+        pos_side = str(o.get("positionSide") or "").upper()
+        oid = str(o.get("orderId") or "")
+        
+        # Binance returns initialMargin in the order object for open orders
+        init_margin = _parse_float(o.get("initialMargin"))
+        
+        out.append({
+            "order_id": oid,
+            "client_order_id": str(o.get("clientOrderId") or ""),
+            "symbol": sym,
+            "side": side,
+            "position_side": pos_side if pos_side in {"LONG", "SHORT"} else None,
+            "type": str(o.get("type") or "").lower(),
+            "price": _parse_float(o.get("price")),
+            "quantity": _parse_float(o.get("origQty")),
+            "initial_margin_usdt": init_margin if init_margin > 0 else None,
+            "status": str(o.get("status") or "").lower(),
+        })
+    return out
 
 
 def _fetch_spot_equity(
@@ -280,6 +374,8 @@ def _fetch_spot_equity(
             })
         
     equity = total_usdt + holdings_value_usdt
+    usdt_locked = max(0.0, total_usdt - free_usdt)
+    margin_locked = max(0.0, equity - free_usdt)
     cash_ratio: Optional[float] = None
     if equity > 0:
         cash_ratio = round(free_usdt / equity, 6)
@@ -291,8 +387,10 @@ def _fetch_spot_equity(
         "unrealized_pnl_usdt": 0.0,
         "cash_ratio": cash_ratio,
         "usdt_cash": total_usdt,
-        "holdings": sorted(holdings, key=lambda x: x["value_usdt"], reverse=True),
+        "usdt_locked_usdt": round(usdt_locked, 4),
         "holdings_value_usdt": holdings_value_usdt,
+        "margin_locked_usdt": round(margin_locked, 4),
+        "holdings": sorted(holdings, key=lambda x: x["value_usdt"], reverse=True),
     }
 
 
@@ -314,6 +412,13 @@ def _snapshot_shell(scope: str) -> Dict[str, Any]:
         "maint_margin_usdt": None,
         "margin_ratio": None,
         "cash_ratio": None,
+        "position_initial_margin_usdt": None,
+        "open_order_initial_margin_usdt": None,
+        "margin_locked_usdt": None,
+        "gross_notional_usdt": None,
+        "gross_leverage": None,
+        "usdt_locked_usdt": None,
+        "holdings_value_usdt": None,
         "fetched_at": None,
     }
 
@@ -341,12 +446,12 @@ def fetch_scope_exchange_balance(
     try:
         if meta["account_type"] == "futures_usdtm":
             raw = _fetch_futures_account_raw(api_key=api_key, api_secret=api_secret)
-            parsed = parse_futures_account(raw)
-            account_upnl = float(parsed.get("unrealized_pnl_usdt") or 0.0)
-            parsed = dict(parsed)
             open_positions = futures_open_positions(
                 raw, symbol=sym_filter if symbol_scoped else None
             )
+            parsed = parse_futures_account(raw, open_positions=open_positions)
+            account_upnl = float(parsed.get("unrealized_pnl_usdt") or 0.0)
+            parsed = dict(parsed)
             parsed["exchange_open_positions"] = open_positions
             parsed["exchange_open_position_count"] = len(open_positions)
             parsed["account_unrealized_pnl_usdt"] = account_upnl
@@ -422,6 +527,10 @@ def build_exchange_ledger(
     wallet_sum = 0.0
     available_sum = 0.0
     exchange_upnl = 0.0
+    margin_locked_sum = 0.0
+    pos_init_sum = 0.0
+    order_init_sum = 0.0
+    gross_notional_sum = 0.0
     ok_count = 0
     for row in accounts:
         if not row.get("ok"):
@@ -430,12 +539,19 @@ def build_exchange_ledger(
         equity_sum += float(row.get("equity_usdt") or 0.0)
         wallet_sum += float(row.get("wallet_balance_usdt") or 0.0)
         available_sum += float(row.get("available_usdt") or 0.0)
+        margin_locked_sum += float(row.get("margin_locked_usdt") or 0.0)
+        pos_init_sum += float(row.get("position_initial_margin_usdt") or 0.0)
+        order_init_sum += float(row.get("open_order_initial_margin_usdt") or 0.0)
+        gross_notional_sum += float(row.get("gross_notional_usdt") or 0.0)
         exchange_upnl += float(
             row.get("account_unrealized_pnl_usdt")
             if row.get("account_unrealized_pnl_usdt") is not None
             else row.get("unrealized_pnl_usdt")
             or 0.0
         )
+    gross_leverage_sum: Optional[float] = None
+    if equity_sum > 0 and gross_notional_sum > 0:
+        gross_leverage_sum = round(gross_notional_sum / equity_sum, 4)
     return {
         "symbol": sym_meta,
         "accounts": accounts,
@@ -443,6 +559,11 @@ def build_exchange_ledger(
             "equity_usdt": equity_sum,
             "wallet_balance_usdt": wallet_sum,
             "available_usdt": available_sum,
+            "margin_locked_usdt": round(margin_locked_sum, 4),
+            "position_initial_margin_usdt": round(pos_init_sum, 4),
+            "open_order_initial_margin_usdt": round(order_init_sum, 4),
+            "gross_notional_usdt": round(gross_notional_sum, 4),
+            "gross_leverage": gross_leverage_sum,
             "exchange_unrealized_pnl_usdt": exchange_upnl,
             "accounts_ok": ok_count,
             "accounts_total": len(accounts),

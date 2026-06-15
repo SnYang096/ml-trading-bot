@@ -127,6 +127,239 @@ function isSymbolScopedFilter(symbolFilter: string): boolean {
 
 const RISK_SCOPE_ORDER = ['spot', 'trend', 'multi_leg'] as const;
 
+function numUsdt(v: unknown): number | null {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function fmtLev(v: unknown): string {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  return `${n.toFixed(n >= 10 ? 0 : 1)}x`;
+}
+
+function scopeLedgerLabel(scope: string, row: Record<string, unknown>): string {
+  return String(row.label || SCOPE_LABELS[scope] || scope);
+}
+
+/** Per-account margin / leverage breakdown from Binance exchange ledger. */
+export function MarginBreakdownPanel({
+  ledger,
+  scopes,
+}: {
+  ledger: { totals?: Record<string, number | null>; accounts?: Array<Record<string, unknown>> } | undefined;
+  scopes?: AccountScopeBlock[];
+}) {
+  const accounts = ledger?.accounts || [];
+  if (!accounts.length) return null;
+
+  const byScope = new Map(accounts.map((a) => [String(a.scope || ''), a]));
+  const localByScope = new Map((scopes || []).map((s) => [String(s.scope || ''), s]));
+  const ordered = RISK_SCOPE_ORDER.map((key) => byScope.get(key)).filter(Boolean) as Array<
+    Record<string, unknown>
+  >;
+  if (!ordered.some((a) => a.ok)) return null;
+
+  const totals = ledger?.totals || {};
+  const totalEquity = numUsdt(totals.equity_usdt);
+  const totalAvail = numUsdt(totals.available_usdt);
+  const totalLocked = numUsdt(totals.margin_locked_usdt);
+  const totalPosInit = numUsdt(totals.position_initial_margin_usdt);
+  const totalOrderInit = numUsdt(totals.open_order_initial_margin_usdt);
+  const totalGrossLev = numUsdt(totals.gross_leverage);
+
+  return (
+    <section className={`panel ${styles.marginPanel}`}>
+      <h3>保证金与杠杆占用</h3>
+      <p className={`muted ${styles.marginIntro}`}>
+        总可用 = 总权益 − 占用。合约占用来自币安持仓/挂单初始保证金；现货占用 = 持仓币市值 + 冻结
+        USDT。杠杆为各品种在币安上的设置，非本系统宪法上限。
+      </p>
+      <div className={styles.marginTotals}>
+        <KpiCard
+          label="总占用"
+          value={totalLocked != null ? `${fmtUsdt(totalLocked)} USDT` : '—'}
+          hint={
+            totalPosInit != null && totalOrderInit != null
+              ? `持仓 ${fmtUsdt(totalPosInit)} + 挂单 ${fmtUsdt(totalOrderInit)}`
+              : '权益 − 可用'
+          }
+        />
+        <KpiCard
+          label="总 Gross 杠杆"
+          value={totalGrossLev != null ? fmtLev(totalGrossLev) : '—'}
+          hint={
+            totalEquity != null && totalAvail != null
+              ? `名义/权益 · 可用 ${fmtUsdt(totalAvail)}`
+              : 'Σ名义 / Σ权益'
+          }
+        />
+        <KpiCard
+          label="占用占比"
+          value={
+            totalLocked != null && totalEquity != null && totalEquity > 0
+              ? fmtPct(totalLocked / totalEquity)
+              : '—'
+          }
+          hint="总占用 / 总权益"
+        />
+      </div>
+
+      <div className={styles.marginScopeGrid}>
+        {ordered.map((acct) => {
+          const scopeKey = String(acct.scope || '');
+          const label = scopeLedgerLabel(scopeKey, acct);
+          const local = localByScope.get(scopeKey);
+          const exOpen = Number(acct.exchange_open_position_count ?? 0);
+          const localOpen = Number(local?.open_positions ?? 0);
+          const isFutures = acct.account_type === 'futures_usdtm';
+          const positions = (acct.exchange_open_positions || []) as Array<Record<string, unknown>>;
+
+          if (!acct.ok) {
+            return (
+              <div key={scopeKey} className={styles.marginScopeCard}>
+                <h4>{label}</h4>
+                <p className="muted">{String(acct.error || '未配置或拉取失败')}</p>
+              </div>
+            );
+          }
+
+          const equity = numUsdt(acct.equity_usdt);
+          const available = numUsdt(acct.available_usdt);
+          const locked = numUsdt(acct.margin_locked_usdt);
+          const posInit = numUsdt(acct.position_initial_margin_usdt);
+          const orderInit = numUsdt(acct.open_order_initial_margin_usdt);
+          const grossLev = numUsdt(acct.gross_leverage);
+          const grossNotional = numUsdt(acct.gross_notional_usdt);
+
+          return (
+            <div key={scopeKey} className={styles.marginScopeCard}>
+              <header className={styles.marginScopeHead}>
+                <h4>{label}</h4>
+                <span className="muted">{String(acct.binance_label || '')}</span>
+              </header>
+              <div className={styles.marginScopeKpis}>
+                <span>
+                  权益 <strong>{fmtUsdt(equity)}</strong>
+                </span>
+                <span>
+                  可用 <strong>{fmtUsdt(available)}</strong>
+                </span>
+                <span>
+                  占用 <strong>{fmtUsdt(locked)}</strong>
+                </span>
+                {isFutures ? (
+                  <>
+                    <span>
+                      Gross <strong>{fmtLev(grossLev)}</strong>
+                    </span>
+                    <span>
+                      名义 <strong>{fmtUsdt(grossNotional)}</strong>
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span>
+                      币占款 <strong>{fmtUsdt(acct.holdings_value_usdt)}</strong>
+                    </span>
+                    <span>
+                      USDT 冻结 <strong>{fmtUsdt(acct.usdt_locked_usdt)}</strong>
+                    </span>
+                  </>
+                )}
+              </div>
+              {isFutures ? (
+                <p className={`muted ${styles.marginScopeNote}`}>
+                  持仓保证金 {fmtUsdt(posInit)} · 挂单保证金 {fmtUsdt(orderInit)} · 交易所持仓{' '}
+                  {exOpen} 腿
+                  {localOpen !== exOpen ? (
+                    <span className={styles.marginWarn}>
+                      {' '}
+                      · 本地未平 {localOpen}（与交易所不一致时请查对账）
+                    </span>
+                  ) : null}
+                </p>
+              ) : (
+                <p className={`muted ${styles.marginScopeNote}`}>
+                  现金占比 {fmtPct(acct.cash_ratio)} · 仅 free USDT 计入可用
+                </p>
+              )}
+
+              {isFutures && positions.length > 0 ? (
+                <div className={styles.tableWrap}>
+                  <table className={`${styles.table} ${styles.marginPosTable}`}>
+                    <thead>
+                      <tr>
+                        <th>品种</th>
+                        <th>方向</th>
+                        <th>数量</th>
+                        <th>名义</th>
+                        <th>杠杆</th>
+                        <th>初始保证金</th>
+                        <th>浮盈</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {positions.map((p) => {
+                        const sym = String(p.symbol || '—');
+                        const side = String(p.side || '—');
+                        const key = `${sym}-${side}-${String(p.position_amt)}`;
+                        return (
+                          <tr key={key}>
+                            <td>{sym}</td>
+                            <td>{side}</td>
+                            <td>{String(p.quantity ?? '—')}</td>
+                            <td>{fmtUsdt(p.notional_usdt)}</td>
+                            <td>{fmtLev(p.leverage)}</td>
+                            <td>{fmtUsdt(p.initial_margin_usdt)}</td>
+                            <td className={pnlClass(p.unrealized_pnl_usdt)}>
+                              {fmtPnl(p.unrealized_pnl_usdt)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : isFutures ? (
+                <p className="muted">无交易所持仓；若占用 &gt; 0，多为挂单锁保证金。</p>
+              ) : (acct.holdings as Array<Record<string, unknown>> | undefined)?.length ? (
+                <div className={styles.tableWrap}>
+                  <table className={`${styles.table} ${styles.marginPosTable}`}>
+                    <thead>
+                      <tr>
+                        <th>资产</th>
+                        <th>数量</th>
+                        <th>市值</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {((acct.holdings as Array<Record<string, unknown>>) || []).map((h) => (
+                        <tr key={String(h.asset)}>
+                          <td>{String(h.asset)}</td>
+                          <td>{String(h.qty)}</td>
+                          <td>{fmtUsdt(h.value_usdt)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="muted">现货无持仓币，占用来自 USDT 冻结（挂单等）。</p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <p className={`muted ${styles.marginFooter}`}>
+        <a href="/orders?view=positions">查看持仓列表</a>
+        {' · '}
+        宪法风控上限见 config/constitution（max_gross_leverage 3.0），与币安品种杠杆滑杆独立。
+      </p>
+    </section>
+  );
+}
+
 /** At-a-glance A/B/C account risk (margin ratio or spot cash ratio). */
 export function AccountRiskStrip({ scopes }: { scopes: AccountScopeBlock[] }) {
   if (!scopes?.length) return null;
@@ -530,16 +763,15 @@ function pnlBars(pts: DailyPnlPoint[], valueKey: 'pnl' | 'cumulative' = 'pnl') {
         })}
       </div>
       <div className={styles.pnlBarLabels}>
-        {pts
-          .filter((_, i) => i === 0 || i === pts.length - 1 || i % step === 0)
-          .map((p) => {
-            const t = p.label || p.week_start || p.date || '';
-            return (
-              <span key={t} title={t}>
-                {String(t).slice(5)}
-              </span>
-            );
-          })}
+        {pts.map((p, i) => {
+          const t = p.label || p.week_start || p.date || '';
+          const show = i === 0 || i === pts.length - 1 || i % step === 0;
+          return (
+            <div key={`${t}-${i}`} className={styles.pnlBarLabel} title={t}>
+              {show ? String(t).slice(5) : ''}
+            </div>
+          );
+        })}
       </div>
     </>
   );
@@ -579,19 +811,26 @@ export function WeeklyPnlTable({ weekly }: { weekly: DailyPnlPoint[] }) {
 }
 
 export function AccountEquityChart({ curves }: { curves: AccountCurves | undefined }) {
+  type CurveMode = 'both' | 'balance' | 'equity';
+  const [mode, setMode] = useState<CurveMode>('both');
+
   const balance = curves?.balance || [];
   const equity = curves?.equity || [];
   if (!balance.length && !equity.length) {
     return <p className="muted">{curves?.note || '无钱包/权益曲线数据'}</p>;
   }
+  const showBalance = mode === 'both' || mode === 'balance';
+  const showEquity = mode === 'both' || mode === 'equity';
   const dates = balance.length >= equity.length ? balance : equity;
   const balByDate = new Map(balance.map((p) => [String(p.date || ''), Number(p.value_usdt) || 0]));
   const eqByDate = new Map(equity.map((p) => [String(p.date || ''), Number(p.value_usdt) || 0]));
   const vals: number[] = [];
   for (const pt of dates) {
     const d = String(pt.date || '');
-    vals.push(balByDate.get(d) ?? 0, eqByDate.get(d) ?? 0);
+    if (showBalance) vals.push(balByDate.get(d) ?? 0);
+    if (showEquity) vals.push(eqByDate.get(d) ?? 0);
   }
+  if (!vals.length) vals.push(0);
   let minV = Math.min(...vals);
   let maxV = Math.max(...vals);
   if (minV === maxV) {
@@ -616,21 +855,46 @@ export function AccountEquityChart({ curves }: { curves: AccountCurves | undefin
       .join(' ');
   const lastBal = balance.length ? Number(balance[balance.length - 1].value_usdt) : 0;
   const lastEq = equity.length ? Number(equity[equity.length - 1].value_usdt) : 0;
+  const metaValue =
+    mode === 'both'
+      ? `钱包 ${fmtUsdt(lastBal)} · 权益 ${fmtUsdt(lastEq)}`
+      : mode === 'balance'
+        ? `钱包 ${fmtUsdt(lastBal)}`
+        : `权益 ${fmtUsdt(lastEq)}`;
+  const modeBtn = (value: CurveMode, label: string) => (
+    <button
+      key={value}
+      type="button"
+      className={`${styles.curveModeBtn} ${mode === value ? styles.curveModeBtnActive : ''}`}
+      onClick={() => setMode(value)}
+    >
+      {label}
+    </button>
+  );
   return (
     <div className={styles.equityWrap}>
       <div className={styles.curveLegend}>
-        <span className={styles.legendBalance}>钱包 balance</span>
-        <span className={styles.legendEquity}>权益 equity</span>
+        <div className={styles.curveLegendLabels}>
+          {showBalance ? <span className={styles.legendBalance}>钱包 balance</span> : null}
+          {showEquity ? <span className={styles.legendEquity}>权益 equity</span> : null}
+        </div>
+        <div className={styles.curveModeToggle}>
+          {modeBtn('both', '双线')}
+          {modeBtn('balance', '钱包')}
+          {modeBtn('equity', '权益')}
+        </div>
       </div>
       <svg className={styles.equitySvg} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" role="img">
-        <polyline className={`${styles.equityLine} ${styles.balanceLine}`} points={lineCoords(balByDate)} />
-        <polyline className={`${styles.equityLine} ${styles.equityEquityLine}`} points={lineCoords(eqByDate)} />
+        {showBalance ? (
+          <polyline className={`${styles.equityLine} ${styles.balanceLine}`} points={lineCoords(balByDate)} />
+        ) : null}
+        {showEquity ? (
+          <polyline className={`${styles.equityLine} ${styles.equityEquityLine}`} points={lineCoords(eqByDate)} />
+        ) : null}
       </svg>
       <div className={styles.equityMeta}>
         <span>{dates[0]?.date || ''}</span>
-        <span>
-          钱包 {fmtUsdt(lastBal)} · 权益 {fmtUsdt(lastEq)}
-        </span>
+        <span>{metaValue}</span>
         <span>{dates[dates.length - 1]?.date || ''}</span>
       </div>
       {curves?.note ? (

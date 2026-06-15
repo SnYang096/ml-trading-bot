@@ -364,6 +364,52 @@ def _exchange_position_map(
     return out
 
 
+def _enrich_with_exchange_legs(
+    rows: List[Dict[str, Any]],
+    exchange_ledger: Optional[Dict[str, Any]],
+) -> None:
+    """Enrich local open positions with exchange-level margin/leverage data."""
+    if not exchange_ledger:
+        return
+
+    # Build a lookup map: (scope, symbol, side) -> first matching exchange leg
+    ex_legs: Dict[tuple, Dict[str, Any]] = {}
+    for acct in exchange_ledger.get("accounts") or []:
+        scope = acct.get("scope", "")
+        for pos in acct.get("exchange_open_positions") or []:
+            sym = str(pos.get("symbol") or "").upper()
+            side = "long" if float(pos.get("position_amt") or 0) > 0 else "short"
+            key = (scope, sym, side)
+            if key not in ex_legs:
+                ex_legs[key] = pos
+
+    for row in rows:
+        scope = str(row.get("scope") or "")
+        sym = str(row.get("symbol") or "").upper()
+        side = str(row.get("side") or "long").lower()
+        key = (scope, sym, side)
+        
+        # For multi-leg, we might need to aggregate or just show the net exchange leg
+        # For now, we try to match exact (scope, symbol, side)
+        ex_pos = ex_legs.get(key)
+        if not ex_pos:
+            # Fallback: try to find any account with this symbol/side (for Trend/Multi-leg cross-account visibility)
+            for acct_scope in ["trend", "multi_leg"]:
+                fallback_key = (acct_scope, sym, side)
+                if fallback_key in ex_legs:
+                    ex_pos = ex_legs[fallback_key]
+                    break
+
+        if ex_pos:
+            row["exchange_leverage"] = ex_pos.get("leverage")
+            row["exchange_notional_usdt"] = ex_pos.get("notional_usdt")
+            row["exchange_initial_margin_usdt"] = ex_pos.get("initial_margin_usdt")
+            row["exchange_maint_margin_usdt"] = ex_pos.get("maint_margin_usdt")
+            row["exchange_liquidation_price"] = ex_pos.get("liquidation_price")
+            row["exchange_margin_type"] = ex_pos.get("margin_type")
+
+
+
 def _exchange_has_position(
     ex_map: Dict[tuple, float],
     symbol: str,
@@ -531,4 +577,8 @@ def collect_open_positions(
         ),
         reverse=True,
     )
+    
+    # Enrich with exchange margin/leverage data
+    _enrich_with_exchange_legs(merged, exchange_ledger)
+    
     return merged[: max(int(limit), 1)]

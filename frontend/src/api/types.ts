@@ -134,6 +134,26 @@ export interface OpenPositionRow {
   pending_exit_orders?: number;
   entry_marker_id?: string;
   leg?: string;
+  // Exchange enrichment fields
+  exchange_leverage?: number | null;
+  exchange_notional_usdt?: number | null;
+  exchange_initial_margin_usdt?: number | null;
+  exchange_maint_margin_usdt?: number | null;
+  exchange_liquidation_price?: number | null;
+  exchange_margin_type?: string | null;
+}
+
+export interface OpenOrderMarginRow {
+  order_id: string;
+  client_order_id?: string;
+  symbol: string;
+  side: string;
+  position_side?: string | null;
+  type: string;
+  price?: number;
+  quantity?: number;
+  initial_margin_usdt?: number | null;
+  status: string;
 }
 
 export interface FunnelStrategyStats {

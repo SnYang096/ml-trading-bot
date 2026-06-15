@@ -13,6 +13,7 @@ import {
   ReconciliationPanels,
   AccountHierarchyTable,
   AccountRiskStrip,
+  MarginBreakdownPanel,
   SpotHoldingsPanel,
   WeeklyPnlChart,
   WeeklyPnlTable,
@@ -114,6 +115,7 @@ export function AccountPage() {
           />
         </div>
         <AccountRiskStrip scopes={global?.scopes || []} />
+        <MarginBreakdownPanel ledger={global?.exchange_ledger} scopes={global?.scopes} />
         {global?.exchange_ledger ? (
           <div className={styles.ledgerStrip}>
             <span>
@@ -225,15 +227,27 @@ export function AccountPage() {
           <p className="muted" style={{ margin: '0 0 12px' }}>
             按 UTC 自然周汇总。累计曲线为交易所钱包/权益（USDT）；历史权益≈钱包，最新点为币安实时值。
           </p>
-          <h4 className={styles.pnlSubhead}>按周统计</h4>
-          <WeeklyPnlChart weekly={scoped?.weekly_realized || []} />
-          <WeeklyPnlTable weekly={scoped?.weekly_realized || []} />
+          <div className={styles.pnlWeeklyRow}>
+            <div className={styles.pnlWeeklyChart}>
+              <h4 className={styles.pnlSubhead}>按周统计</h4>
+              <WeeklyPnlChart weekly={scoped?.weekly_realized || []} />
+            </div>
+            <div className={styles.pnlWeeklyTable}>
+              <WeeklyPnlTable weekly={scoped?.weekly_realized || []} />
+            </div>
+          </div>
           <h4 className={styles.pnlSubhead}>钱包 / 权益曲线</h4>
           <AccountEquityChart curves={scoped?.account_curves} />
-          <h4 className={styles.pnlSubhead}>已实现盈亏（本地 DB · 累计）</h4>
-          <EquityCurveChart curve={scoped?.cumulative_realized || []} />
-          <h4 className={styles.pnlSubhead}>按日明细</h4>
-          <DailyPnlChart daily={scoped?.daily_realized || []} />
+          <div className={styles.pnlChartsRow}>
+            <div className={styles.pnlChartCol}>
+              <h4 className={styles.pnlSubhead}>已实现盈亏（本地 DB · 累计）</h4>
+              <EquityCurveChart curve={scoped?.cumulative_realized || []} />
+            </div>
+            <div className={styles.pnlChartCol}>
+              <h4 className={styles.pnlSubhead}>按日明细</h4>
+              <DailyPnlChart daily={scoped?.daily_realized || []} />
+            </div>
+          </div>
           {scoped?.notes?.length ? (
             <p className={styles.notes}>{scoped.notes.map((n) => `· ${n}`).join('\n')}</p>
           ) : null}

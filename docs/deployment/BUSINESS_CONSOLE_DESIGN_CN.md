@@ -221,7 +221,7 @@ Spot  eligibility 已在 `decision_chain_debug` 打日志；CMS 可解析最近 
 | `/trade-map` | **交易地图** | 全宽 K 线、账户层标记、持仓连线、附图；标记详情为底部抽屉 |
 | `/trade-map-grid` | **多品种地图** | 网格缩略 K 线，链到单品种地图 |
 | `/orders` | **订单** | 全屏订单表、状态筛选、客户端分页、订单/标记详情 |
-| `/account` | **账户总览** | 全局权益 + 策略盈亏 + **对账**（见 §4.7） |
+| `/account` | **账户总览** | 全局权益 + **保证金占用** + 策略盈亏 + **对账**（见 §4.7） |
 | `/regime` | **Regime 运维** | `regime.yaml` 与 drift 报告只读表 |
 | `/monitoring` | **漂移监控** | manifest / drift 卡片（链本地验证命令） |
 | `/` | 重定向 | → `/trade-map` |
@@ -250,10 +250,13 @@ Spot  eligibility 已在 `decision_chain_debug` 打日志；CMS 可解析最近 
 **订单** `/orders`：
 
 ```
+  ├─ 视图：持仓（未平）/ 回合（开平一行）/ 原始订单
   ├─ Symbol + 状态筛选 + 账户层 scope
-  ├─ 全页表格 GET /api/orders/list
+  ├─ 全页表格 GET /api/orders/open-positions | trade-links | list
   └─ 右侧详情；有 marker_id 时附地图深链
 ```
+
+> **规划（P2）**：持仓视图 join 交易所腿字段（杠杆、名义、初始保证金、强平价）+ 页脚与 `exchange_ledger.totals` 对账；见 §4.7.2。
 
 | 模块 | 页面 | 数据源 |
 |------|------|--------|
@@ -262,7 +265,8 @@ Spot  eligibility 已在 `decision_chain_debug` 打日志；CMS 可解析最近 
 | Spot / Trend / Multi-leg 信号 | **策略信号页·概览表** | `GET /api/trade-map/signals`（`by_strategy` 含 `funnel_summary`） |
 | 策略漏斗明细 | **策略信号页·折叠面板** | `GET /api/trend/funnel`（regime/prefilter/direction/gate 分列） |
 | 账户 / 对账 / PnL | **账户总览** `/account` | `GET /api/account/summary`、`GET /api/account/reconciliation/all` |
-| 订单列表 | **Trade Map 底栏**（可折叠）+ **订单页** `/orders` | `/api/orders/list` |
+| 保证金 / 杠杆占用 | **账户总览** `/account` · 全局资产区 | `summary.exchange_ledger`（`exchange_balances.py`） |
+| 订单 / 持仓列表 | **订单页** `/orders` + Trade Map 底栏 | `/api/orders/open-positions`、`/api/orders/list`、`/api/orders/trade-links` |
 
 布局：`mlbot_trade_map_layout_v2`（附图）；`mlbot_console_symbol` / `mlbot_console_scopes`（跨页）。
 
@@ -331,17 +335,100 @@ SPA 的 `index.html` 响应带 `Cache-Control: no-cache`，避免 HTML 缓存指
 
 对标迁移前静态页 `account.html` + `account-page.js`（React 迁移 `b72a5d5f` 曾功能缩水，2026-06-10 已恢复）。
 
+#### 4.7.1 页面区块
+
 | 区块 | 内容 | API / 数据 |
 |------|------|------------|
-| **全局资产** | 币安全账户权益 / 钱包 / 可用 / 合约未实现 | `exchange_ledger`（不受 Symbol 筛选） |
+| **全局资产** | 币安全账户权益 / 钱包 / 可用 / 合约未实现 | `exchange_ledger.totals`（三子账户求和，不受 Symbol 筛选） |
+| **风险条带** | A/B/C 各账户：现货现金占比 或 合约维持保证金比 | `summary.scopes[].exchange` |
+| **保证金与杠杆占用** | 总占用、Gross 杠杆、占用占比；按 scope 分卡 + 合约逐腿表 / 现货持仓表 | `exchange_ledger`（见 §4.7.2） |
 | **策略盈亏** | Symbol + 回看（0/7/14/30/90/365d）筛选下的 KPI、已实现速览 | `GET /api/account/summary` |
-| **账户层表** | A/B/C scopes：交易所列 + 本地已实现/浮盈/平仓数 | `summary.scopes[]` |
-| **策略表** | 各 `scope · strategy` 盈亏与持仓数 | `summary.strategies[]` |
+| **账户层表** | A/B/C scopes：交易所列 + 本地已实现/浮盈/平仓数；可展开策略子行 | `summary.scopes[]`、`summary.strategies[]` |
 | **现货持仓** | 资产明细 + 市值占比条 | `scopes[spot].exchange.holdings` |
-| **已实现 PnL** | 按周柱图 + 周表 + **累计盈利曲线（SVG）** + 按日柱图 | `weekly_realized`、`cumulative_realized`、`daily_realized` |
-| **交易所对账** | 按 scope 分 panel；差异为 **HTML 表格**（类型 / 资产 / 交易所 / 本地 / 差额） | `GET /api/account/reconciliation/all`；页面打开即请求（非「展开才加载」） |
+| **已实现 PnL** | 按周（柱图左 + 周表右）· 钱包/权益曲线（三态切换）· 累计曲线与按日柱图（宽屏两列） | `weekly_realized`、`account_curves`、`cumulative_realized`、`daily_realized` |
+| **交易所对账** | 按 scope 分 panel；差异为 **HTML 表格**（类型 / 资产 / 交易所 / 本地 / 差额） | `GET /api/account/reconciliation/all`；页面打开即请求 |
+
+**已实现 PnL 布局（2026-06）**：
+
+- `pnlWeeklyRow`：按周柱图与周表并排（窄屏单列）
+- `pnlChartsRow`：累计已实现曲线 + 按日柱图宽屏两列
+- 柱图日期标签与柱子等宽 flex 对齐（避免稀疏数据时标签挤在右侧）
+- **钱包 / 权益曲线**（`AccountEquityChart`）：图例右侧三态切换 **双线 / 钱包 / 权益**（默认双线叠加）；Y 轴与底部数值随可见序列重算；数据来自 `account_curves.balance` / `.equity`（无需额外 API）
 
 对账 issue 类型示例：`qty_mismatch`、`position_mismatch`、`unrealized_pnl_mismatch`、`spot_holdings_value_mismatch`、`orphan_local_unrealized`、`strategy_orphan_unrealized` 等（见 `accountViews.tsx` `issueRow`）。
+
+#### 4.7.2 保证金与杠杆占用（`MarginBreakdownPanel`）
+
+**动机**：总权益与总可用差额大时（例如权益 ~27k、可用 ~15k），需解释「占用」来自持仓保证金、挂单保证金还是现货占款；并与币安子账户字段可对账。
+
+**数据源**：`src/mlbot_console/services/exchange_balances.py` → `build_exchange_ledger()`，经 `GET /api/account/summary` 的 `exchange_ledger` 下发（与全局 KPI 同源，刷新账户页即更新）。
+
+**三子账户映射**（独立 API 密钥，非单账户拆分）：
+
+| scope | 币安账户 | `available_usdt` 含义 |
+|-------|----------|------------------------|
+| `trend` | U 本位合约（Trend） | `availableBalance` |
+| `multi_leg` | U 本位合约（Multi-leg） | 同上 |
+| `spot` | 现货 | USDT `free`（持仓币市值不计入可用） |
+
+**账户级字段（合约 `parse_futures_account`）**：
+
+| 字段 | 币安 API | 说明 |
+|------|----------|------|
+| `equity_usdt` | `totalMarginBalance` | 含浮盈的保证金余额 |
+| `wallet_balance_usdt` | `totalWalletBalance` | 不含浮盈的钱包余额 |
+| `available_usdt` | `availableBalance` | 可开新仓余额 |
+| `margin_locked_usdt` | 计算：`equity − available` | 总占用 |
+| `position_initial_margin_usdt` | `totalPositionInitialMargin` | 持仓锁定 |
+| `open_order_initial_margin_usdt` | `totalOpenOrderInitialMargin` | 挂单锁定 |
+| `gross_notional_usdt` | Σ\|positionAmt×mark\| | 持仓名义合计 |
+| `gross_leverage` | `gross_notional / equity` | 账户 Gross 杠杆 |
+| `maint_margin_usdt` / `margin_ratio` | `totalMaintMargin` | 维持保证金与比率 |
+
+**逐腿字段（`futures_open_positions`）**：`symbol`、`side`、`quantity`、`notional_usdt`、`leverage`、`initial_margin_usdt`（`positionInitialMargin`）、`maint_margin_usdt`、`margin_type`（cross/isolated）、`unrealized_pnl_usdt`。
+
+**现货补充**：`holdings_value_usdt`（币占款）、`usdt_locked_usdt`（total − free USDT）、`cash_ratio`（可用/权益）。
+
+**`exchange_ledger.totals` 汇总**：对上述 OK 子账户求和；含 `margin_locked_usdt`、`position_initial_margin_usdt`、`open_order_initial_margin_usdt`、`gross_notional_usdt`、`gross_leverage`。
+
+**前端**：`frontend/src/pages/Account/accountViews.tsx` · `MarginBreakdownPanel`；置于全局资产区 KPI 与 ledger 条带之后。合约卡展示逐腿表；若本地 `open_positions` 与 `exchange_open_position_count` 不一致则黄色提示。页脚链到 `/orders?view=positions`，并注明宪法 `max_gross_leverage`（3.0）与币安品种杠杆滑杆为两层限制。
+
+**与 bot 风控关系**：CMS 只读展示；下单前宪法 `account_risk_limits`（`max_gross_leverage`、`min_projected_available_margin_pct` 等）在 `trade_executor` 独立校验。本仓库 **不** 自动调用 `set_leverage()`；杠杆以币安各品种当前设置为准。
+
+#### 4.7.3 订单页保证金扩展（规划 · P2，未实现）
+
+用户需求：每笔持仓/订单可见杠杆、强平价、占用保证金、保证金比率，且与总账可核对。
+
+**口径约定**（实施前须写进 UI）：
+
+| 粒度 | 可对齐总账？ | 说明 |
+|------|--------------|------|
+| 交易所持仓腿（Trend / Multi-leg 子账户） | **是** | 与 §4.7.2 同源 |
+| 本地持仓行（策略 / leg） | **部分** | Trend 1:1；Multi-leg 多行对净仓位需按比例分摊并标「估算」 |
+| 历史原始订单 | **否** | 仅未平挂单有锁定保证金；已成交单不显示实时强平价 |
+| Spot | 不适用合约字段 | 显示市值 / USDT 冻结 |
+
+**建议实现路径**：
+
+1. `GET /api/orders/open-positions` enrich：join `exchange_ledger` 按 `(scope, symbol, side)` 附加杠杆、名义、初始保证金；补充解析 `liquidationPrice`
+2. 持仓表增列 + 页顶/页脚汇总（Σ 持仓保证金 vs `position_initial_margin_usdt`，差额 ≈ 挂单保证金）
+3. 可选：`GET /api/orders/open-orders-margin` 拉币安 open orders 做挂单占用明细
+4. 回合 / 历史订单视图不强制保证金列
+
+```mermaid
+flowchart TB
+  subgraph accountPage [账户页 已实现]
+    A1[exchange_ledger.totals]
+    A2[MarginBreakdownPanel 逐腿]
+  end
+  subgraph ordersPage [订单页 规划 P2]
+    O1[open-positions join 交易所腿]
+    O2[强平价 liquidationPrice]
+    O3[页脚对账 footer]
+  end
+  A1 --> O3
+  A2 --> O1
+```
 
 ---
 
@@ -353,7 +440,7 @@ SPA 的 `index.html` 响应带 `Cache-Control: no-cache`，避免 HTML 缓存指
 src/mlbot_console/              # FastAPI + 静态 dist（业务后端）
   main.py                       # SPA 路由、/static 挂载、index no-cache
   routers/                      # trade_map, orders, account, regime, monitoring, …
-  services/                     # ohlcv_reader, trade_markers, signal_overview, account_summary, …
+  services/                     # ohlcv_reader, trade_markers, signal_overview, account_summary, exchange_balances, …
   static/dist/                  # make frontend-build 产出（勿手改）
 frontend/                       # React SPA 源码
   src/pages/                    # TradeMap, Signals, Account, Orders, …
@@ -393,7 +480,9 @@ deploy/business-console/        # Dockerfile、compose、systemd
 | GET | `/api/trend/funnel` | `?symbol=&account_layer=&strategy=&limit=48` → 策略漏斗 15min 快照（信号页折叠表） |
 | GET | `/api/trade-map/markers` | `?symbol=&from=&to=&since=&scopes=` 仅成交标记（增量轮询） |
 | GET | `/api/orders/list` | `?symbol=&scopes=trend,spot,multi_leg&status=&limit=` **Trade Map 侧栏订单表**（已实现） |
-| GET | `/api/account/summary` | `?symbol=&lookback_days=0&scopes=trend,spot,multi_leg` → 盈亏、scopes、策略、周/日/累计 PnL |
+| GET | `/api/account/summary` | `?symbol=&lookback_days=0&scopes=trend,spot,multi_leg` → 盈亏、scopes、策略、周/日/累计 PnL、`account_curves`、`exchange_ledger`（含保证金占用字段，§4.7.2） |
+| GET | `/api/orders/open-positions` | `?symbol=&scopes=` → 未平持仓（本地 DB + 交易所 cross-ref；**P2** enrich 杠杆/保证金/强平价） |
+| GET | `/api/orders/trade-links` | 开平回合一行 |
 | GET | `/api/account/reconciliation/all` | `?symbol=&lookback_days=0` → 三 scope 引擎 + PnL 对账合并 |
 | GET | `/api/account/reconciliation` | 单 scope 成交对账 |
 | GET | `/api/account/reconciliation/pnl` | 单 scope PnL 对账 |
@@ -435,7 +524,7 @@ deploy/business-console/        # Dockerfile、compose、systemd
 |------|------|------|
 | **P0** | 部署骨架 + `/api/health` + 首页（DB 可达性、constitution 摘要） | SSH 隧道可开；三库 file exists |
 | **P1** | **Trade Map Live MVP**：全 symbol、默认 **2h** K 线、周期切换（2h/15m/1m/1d）、Trend+Spot **filled** 标记、10s 轮询刷新 | ETH/SOL 上能看到最近开多△与 bus 最新 bar 对齐 |
-| **P2** | Multi-leg 标记、pending 空心标、点击标记订单抽屉、**Trade Map 同页订单列表**（`/api/orders/list`）、增量 `since`、可选 `weekly_ema` 副图 | 三账户层同图或分色可切换；列表与 K 线标记可互跳；新成交 30s 内上图 |
+| **P2** | Multi-leg 标记、pending 空心标、点击标记订单抽屉、**Trade Map 同页订单列表**（`/api/orders/list`）、增量 `since`、可选 `weekly_ema` 副图；**订单页持仓保证金列** + 与 `exchange_ledger` 页脚对账（§4.7.3） | 三账户层同图或分色可切换；列表与 K 线标记可互跳；新成交 30s 内上图；持仓表可见杠杆/强平价 |
 | **P3** | SSE 推送、漏斗副图、链到回测 `trading_map_continuous.html`、审计检索 | 替代 sqlite-web 日常查单 |
 
 **不建议一期做**：下单/撤单、改 constitution、Prometheus 自研、在 CMS 内复刻 Bokeh 全量回测权益曲线（可链出静态 HTML）。
@@ -493,6 +582,7 @@ deploy/business-console/        # Dockerfile、compose、systemd
 | 2026-05-20 | 增补 §4.2 全 symbol 互动 K 线 + 实盘交易地图（周期切换、标记规范、实时刷新、API） |
 | 2026-05-20 | Trade Map：full_range OHLCV、模块化附图/侧栏、`/api/bus/features/columns`、`/api/orders/list` |
 | 2026-06-10 | React SPA parity 收尾：§4.2.5 路由与构建、§4.7 账户对账、账户/漏斗 API；**§11.1** 迁移回归修复清单 |
+| 2026-06-15 | §4.7 扩展：**保证金与杠杆占用**（`MarginBreakdownPanel` + `exchange_balances` 字段）、已实现 PnL 布局与钱包/权益三态切换；§4.7.3 订单页保证金规划（P2） |
 
 ### 11.1 React 迁移后回归与修复清单（2026-05 → 2026-06-10）
 
@@ -536,6 +626,18 @@ deploy/business-console/        # Dockerfile、compose、systemd
 
 **2026-06-10 修复**：`AccountPage.tsx` + `accountViews.tsx` + `AccountPage.module.css` 对齐旧静态页布局。
 
+**2026-06-15 增强**（保证金与 PnL 布局）：
+
+| 能力 | 实现位置 |
+|------|----------|
+| 保证金与杠杆占用面板 | `accountViews.tsx` · `MarginBreakdownPanel`；后端 `exchange_balances.py` |
+| 总占用 / Gross 杠杆 / 按 scope 逐腿表 | `exchange_ledger.totals` + `accounts[].exchange_open_positions` |
+| 已实现 PnL 宽屏网格（按周并排、累计+按日两列） | `AccountPage.tsx` · `pnlWeeklyRow` / `pnlChartsRow` |
+| 钱包/权益曲线三态切换（双线/钱包/权益） | `AccountEquityChart` · `curveModeToggle` |
+| 柱图日期标签与柱子对齐 | `pnlBars` · `pnlBarLabel` |
+
+验收：`/account` 全局区可见占用拆分；切换权益曲线模式；宽屏下 PnL 区块不纵向堆叠过长。
+
 #### 订单 / 导航 / 部署
 
 | 现象 | 根因 / 修复要点 |
@@ -556,5 +658,5 @@ deploy/business-console/        # Dockerfile、compose、systemd
 1. `make frontend-build` → 重启 console → **Ctrl+Shift+R**
 2. `/trade-map`：拖历史不黑屏；开平仓标记与连线贴 K 线；无重复三角
 3. `/signals`：展开漏斗表有 regime/prefilter 数字列
-4. `/account`：scopes 表 + 累计 PnL 曲线 + 对账 HTML 表
+4. `/account`：scopes 表 + 累计 PnL 曲线 + 对账 HTML 表 + **保证金占用面板**（总占用与逐腿杠杆）
 5. 顶栏逐页点击：订单/账户/信号即时切换无 chunk 错误

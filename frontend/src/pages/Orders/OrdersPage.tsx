@@ -1,16 +1,16 @@
 import { apiGet } from '@/api/client.ts';
-import type { OpenPositionRow, OrderRow, SymbolRow, TradeLink } from '@/api/types.ts';
+import type { OpenOrderMarginRow, OpenPositionRow, OrderRow, SymbolRow, TradeLink } from '@/api/types.ts';
 import { usePageVisible, visibleRefetchInterval } from '@/hooks/usePageVisible.ts';
 import {
   SCOPE_LABELS,
   SYMBOL_ALL,
   displayExitKind,
+  displayLinkQty,
   displayOrderAction,
   displayOrderKind,
   displayOrderPrice,
   displayOrderQty,
   displayPositionSideLabel,
-  displayLinkQty,
   fmtPnl,
   formatUnixTs,
   getScopesDefault,
@@ -125,6 +125,24 @@ export function OrdersPage() {
     refetchInterval: visibleRefetchInterval(pageVisible, 15_000),
   });
 
+  const openOrdersMarginQuery = useQuery({
+    queryKey: ['orders-open-orders-margin', layers.trend, layers.multiLeg, symbol],
+    queryFn: async () => {
+      const results = [];
+      if (layers.trend) {
+        const res = await apiGet<OpenOrderMarginRow[]>('/api/orders/open-orders-margin', { scope: 'trend', symbol: isAllSymbols(symbol) ? undefined : symbol });
+        results.push(...(res.data || []));
+      }
+      if (layers.multiLeg) {
+        const res = await apiGet<OpenOrderMarginRow[]>('/api/orders/open-orders-margin', { scope: 'multi_leg', symbol: isAllSymbols(symbol) ? undefined : symbol });
+        results.push(...(res.data || []));
+      }
+      return results;
+    },
+    enabled: viewMode === 'positions',
+    refetchInterval: visibleRefetchInterval(pageVisible, 30_000),
+  });
+
   useEffect(() => {
     if (!strategyFilter) return;
     if (!strategies.some((s) => s.id === strategyFilter)) {
@@ -152,6 +170,7 @@ export function OrdersPage() {
   const orderRows = ordersQuery.data?.data || [];
   const linkRows = linksQuery.data?.data || [];
   const positionRows = positionsQuery.data?.data || [];
+  const openOrderRows = openOrdersMarginQuery.data || [];
   const rows =
     viewMode === 'positions'
       ? positionRows
@@ -303,69 +322,121 @@ export function OrdersPage() {
       )}
 
       {viewMode === 'positions' ? (
-        <table className="data-table">
-          <thead>
-            <tr>
-              {showSymbol ? <th>Symbol</th> : null}
-              <th>Scope</th>
-              <th>Strategy</th>
-              <th>方向</th>
-              <th>Qty</th>
-              <th>开仓价</th>
-              <th>Mark</th>
-              <th>浮盈</th>
-              <th>开仓时间</th>
-              <th>平仓挂单</th>
-              <th>地图</th>
-            </tr>
-          </thead>
-          <tbody>
-            {pagePositionRows.length ? (
-              pagePositionRows.map((r, i) => {
-                const globalIdx = safePage * PAGE_SIZE + i;
-                return (
-                  <tr
-                    key={`${r.position_id}-${globalIdx}`}
-                    className={globalIdx === selectedIdx ? 'selected' : undefined}
-                    onClick={() => setSelectedIdx(globalIdx)}
-                    style={{ cursor: 'pointer' }}
-                  >
-                    {showSymbol ? <td>{r.symbol}</td> : null}
-                    <td>{SCOPE_LABELS[r.scope] || r.scope}</td>
-                    <td>{r.strategy || '—'}</td>
-                    <td>{displayPositionSideLabel(r.side)}</td>
-                    <td>{Number.isFinite(Number(r.quantity)) ? String(r.quantity) : '—'}</td>
-                    <td>{Number.isFinite(Number(r.entry_price)) ? String(r.entry_price) : '—'}</td>
-                    <td>{Number.isFinite(Number(r.mark_price)) ? String(r.mark_price) : '—'}</td>
-                    <td className={pnlClass(r.unrealized_pnl_usdt)}>
-                      {r.unrealized_pnl_usdt != null ? fmtPnl(r.unrealized_pnl_usdt) : '—'}
-                    </td>
-                    <td>{formatUnixTs(r.entry_time)}</td>
-                    <td>{Number(r.pending_exit_orders ?? 0) > 0 ? String(r.pending_exit_orders) : '—'}</td>
-                    <td>
-                      {r.entry_marker_id ? (
-                        <Link
-                          to={`/trade-map?symbol=${encodeURIComponent(r.symbol || symbol)}&marker_id=${encodeURIComponent(String(r.entry_marker_id))}`}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          查看
-                        </Link>
-                      ) : (
-                        '—'
-                      )}
-                    </td>
-                  </tr>
-                );
-              })
-            ) : (
+        <>
+          <table className="data-table">
+            <thead>
               <tr>
-                <td colSpan={showSymbol ? 11 : 10} className="muted">
-                  无未平仓位
-                </td>
+                {showSymbol ? <th>Symbol</th> : null}
+                <th>Scope</th>
+                <th>Strategy</th>
+                <th>方向</th>
+                <th>Qty</th>
+                <th>开仓价</th>
+                <th>Mark</th>
+                <th>浮盈</th>
+                <th>杠杆</th>
+                <th>占用保证金</th>
+                <th>强平价</th>
+                <th>开仓时间</th>
+                <th>平仓挂单</th>
+                <th>地图</th>
               </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {pagePositionRows.length ? (
+                pagePositionRows.map((r, i) => {
+                  const globalIdx = safePage * PAGE_SIZE + i;
+                  return (
+                    <tr
+                      key={`${r.position_id}-${globalIdx}`}
+                      className={globalIdx === selectedIdx ? 'selected' : undefined}
+                      onClick={() => setSelectedIdx(globalIdx)}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      {showSymbol ? <td>{r.symbol}</td> : null}
+                      <td>{SCOPE_LABELS[r.scope] || r.scope}</td>
+                      <td>{r.strategy || '—'}</td>
+                      <td>{displayPositionSideLabel(r.side)}</td>
+                      <td>{Number.isFinite(Number(r.quantity)) ? String(r.quantity) : '—'}</td>
+                      <td>{Number.isFinite(Number(r.entry_price)) ? String(r.entry_price) : '—'}</td>
+                      <td>{Number.isFinite(Number(r.mark_price)) ? String(r.mark_price) : '—'}</td>
+                      <td className={pnlClass(r.unrealized_pnl_usdt)}>
+                        {r.unrealized_pnl_usdt != null ? fmtPnl(r.unrealized_pnl_usdt) : '—'}
+                      </td>
+                      <td>{r.exchange_leverage ?? '—'}</td>
+                      <td>{r.exchange_initial_margin_usdt != null ? Number(r.exchange_initial_margin_usdt).toFixed(2) : '—'}</td>
+                      <td>{r.exchange_liquidation_price != null ? Number(r.exchange_liquidation_price).toFixed(2) : '—'}</td>
+                      <td>{formatUnixTs(r.entry_time)}</td>
+                      <td>{Number(r.pending_exit_orders ?? 0) > 0 ? String(r.pending_exit_orders) : '—'}</td>
+                      <td>
+                        {r.entry_marker_id ? (
+                          <Link
+                            to={`/trade-map?symbol=${encodeURIComponent(r.symbol || symbol)}&marker_id=${encodeURIComponent(String(r.entry_marker_id))}`}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            查看
+                          </Link>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              ) : (
+                <tr>
+                  <td colSpan={showSymbol ? 14 : 13} className="muted">
+                    无未平仓位
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+
+          {openOrderRows.length > 0 && (
+            <div style={{ marginTop: '20px' }}>
+              <h3>未平挂单（保证金占用）</h3>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Symbol</th>
+                    <th>方向</th>
+                    <th>类型</th>
+                    <th>价格</th>
+                    <th>数量</th>
+                    <th>锁定保证金</th>
+                    <th>订单号</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {openOrderRows.map((r) => (
+                    <tr key={r.order_id}>
+                      <td>{r.symbol}</td>
+                      <td>{r.position_side || r.side}</td>
+                      <td>{r.type}</td>
+                      <td>{r.price}</td>
+                      <td>{r.quantity}</td>
+                      <td>{r.initial_margin_usdt != null ? Number(r.initial_margin_usdt).toFixed(2) : '—'}</td>
+                      <td className="muted" style={{ fontSize: '0.8rem' }}>{r.client_order_id || r.order_id}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div style={{ marginTop: '20px', padding: '10px', background: '#f9f9f9', borderRadius: '4px', fontSize: '0.9rem' }}>
+            <strong>页脚对账：</strong>
+            <ul style={{ margin: '5px 0 0 20px' }}>
+              <li>Σ 持仓保证金: {positionRows.reduce((sum, r) => sum + (Number(r.exchange_initial_margin_usdt) || 0), 0).toFixed(2)} USDT</li>
+              <li>Σ 挂单保证金: {openOrderRows.reduce((sum, r) => sum + (Number(r.initial_margin_usdt) || 0), 0).toFixed(2)} USDT</li>
+              <li>总计占用: {(positionRows.reduce((sum, r) => sum + (Number(r.exchange_initial_margin_usdt) || 0), 0) + openOrderRows.reduce((sum, r) => sum + (Number(r.initial_margin_usdt) || 0), 0)).toFixed(2)} USDT</li>
+            </ul>
+            <p className="muted" style={{ fontSize: '0.8rem', marginTop: '5px' }}>
+              注：Multi-leg 本地行可能为估算分摊，总和对齐请以账户总览页 exchange_ledger 为准。
+            </p>
+          </div>
+        </>
       ) : viewMode === 'legs' ? (
         <table className="data-table">
           <thead>
@@ -551,6 +622,20 @@ export function OrdersPage() {
             <dd className={pnlClass(selectedPosition.unrealized_pnl_usdt)}>
               {selectedPosition.unrealized_pnl_usdt != null
                 ? fmtPnl(selectedPosition.unrealized_pnl_usdt)
+                : '—'}
+            </dd>
+            <dt>交易所杠杆</dt>
+            <dd>{selectedPosition.exchange_leverage ?? '—'}</dd>
+            <dt>占用保证金</dt>
+            <dd>
+              {selectedPosition.exchange_initial_margin_usdt != null
+                ? Number(selectedPosition.exchange_initial_margin_usdt).toFixed(2)
+                : '—'}
+            </dd>
+            <dt>强平价</dt>
+            <dd>
+              {selectedPosition.exchange_liquidation_price != null
+                ? Number(selectedPosition.exchange_liquidation_price).toFixed(2)
                 : '—'}
             </dd>
             <dt>地图</dt>

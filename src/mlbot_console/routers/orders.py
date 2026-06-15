@@ -17,6 +17,12 @@ from mlbot_console.services.orders_list import (
 from mlbot_console.services.strategy_registry import strategy_account_layer
 from mlbot_console.services.trade_links import collect_trade_links
 from mlbot_console.services.trend_funnel import fetch_funnel_snapshots
+from mlbot_console.services.exchange_balances import (
+    _fetch_open_orders_raw,
+    parse_open_orders_margin,
+    _env_first,
+    _SCOPE_META,
+)
 
 router = APIRouter(tags=["orders"])
 
@@ -100,6 +106,32 @@ def orders_open_positions(
     )
     sym_meta = "ALL" if is_all_symbols(symbol) else symbol.upper()
     return ok(rows, meta={"count": len(rows), "symbol": sym_meta})
+
+
+@router.get("/api/orders/open-orders-margin")
+def orders_open_orders_margin(
+    scope: str = Query("trend", description="trend | multi_leg"),
+    symbol: Optional[str] = Query(None),
+) -> dict:
+    """Fetch open orders margin from Binance API for a specific scope."""
+    if scope not in _SCOPE_META:
+        return ok([], meta={"error": f"unknown scope: {scope}"})
+    
+    meta = _SCOPE_META[scope]
+    api_key = _env_first(*meta["key_envs"])
+    api_secret = _env_first(*meta["secret_envs"])
+    
+    if not api_key or not api_secret:
+        return ok([], meta={"error": "API keys not configured"})
+    
+    try:
+        raw_orders = _fetch_open_orders_raw(api_key=api_key, api_secret=api_secret, symbol=symbol)
+        parsed = parse_open_orders_margin(raw_orders)
+        return ok(parsed, meta={"count": len(parsed), "scope": scope})
+    except Exception as e:
+        logger = __import__("logging").getLogger(__name__)
+        logger.error(f"Failed to fetch open orders margin for {scope}: {e}")
+        return ok([], meta={"error": str(e)})
 
 
 @router.get("/api/orders/trade-links")
