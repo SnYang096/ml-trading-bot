@@ -243,25 +243,25 @@ export function useTradeMapMainChart(params: MainChartParams) {
           chopBandRef.current.setData(
             spanHighlightCandles(candles, gridSpans) as CandlestickData<Time>[],
           );
-        }
-        const lineSpecs = buildChopGridLineSpecs(
-          payload.chop_grid_overlay || {},
-          candles,
-          gridSpans.length ? gridSpans : null,
-        );
-        for (const spec of lineSpecs) {
-          const line = chart.addSeries(LineSeries, {
-            ...mainChartOverlaySeriesOptions({
-              color: spec.color,
-              lineWidth: spec.lineWidth ?? 1,
-              lineStyle: spec.lineStyle ?? 2,
-            }),
-          });
-          line.setData(
-            spec.points.filter((pt) => Number.isFinite(pt.value)) as LineData<Time>[],
+          const lineSpecs = buildChopGridLineSpecs(
+            payload.chop_grid_overlay || {},
+            candles,
+            gridSpans,
           );
-          overlaySeriesRef.current.push(line);
-          if (spec.label) labels.push(spec.label);
+          for (const spec of lineSpecs) {
+            const line = chart.addSeries(LineSeries, {
+              ...mainChartOverlaySeriesOptions({
+                color: spec.color,
+                lineWidth: spec.lineWidth ?? 1,
+                lineStyle: spec.lineStyle ?? 2,
+              }),
+            });
+            line.setData(
+              spec.points.filter((pt) => Number.isFinite(pt.value)) as LineData<Time>[],
+            );
+            overlaySeriesRef.current.push(line);
+            if (spec.label) labels.push(spec.label);
+          }
         }
       }
       setLabelSpecs((prev) => (labelSpecsEqual(prev, labels) ? prev : labels));

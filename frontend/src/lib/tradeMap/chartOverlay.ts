@@ -19,6 +19,7 @@ export interface ChopGridLabelSpec {
 export interface ChopGridBatch {
   center?: number;
   spacing?: number;
+  active?: boolean;
   levels?: Array<{
     leg?: string;
     side?: string;
@@ -196,15 +197,16 @@ export function buildChopGridLineSpecs(
   candles: Candle[],
   lineSpans: TimeSpan[] | null,
 ): ChopLineSpec[] {
+  if (!lineSpans?.length || !candles.length) return [];
   const specs: ChopLineSpec[] = [];
-  const spans = lineSpans?.length ? lineSpans : null;
+  const spans = lineSpans;
   for (const batch of overlay?.batches || []) {
     const center = Number(batch.center);
     if (center > 0) {
+      const pts = priceLineInSpans(candles, spans, center);
+      if (!pts.length) continue;
       specs.push({
-        points: spans?.length
-          ? priceLineInSpans(candles, spans, center)
-          : fullWidthPriceLine(candles, center),
+        points: pts,
         color: CHART_THEME.text,
         lineWidth: 2,
         lineStyle: 2,
@@ -214,7 +216,7 @@ export function buildChopGridLineSpecs(
           side: 'long',
           kind: 'center',
           color: CHART_THEME.text,
-          spans: spans ? spans.map((s) => ({ start: s.start, end: s.end })) : null,
+          spans: spans.map((s) => ({ start: s.start, end: s.end })),
         },
       });
     }
@@ -224,10 +226,10 @@ export function buildChopGridLineSpecs(
       const gridColor = isLong ? 'rgba(59, 130, 246, 0.55)' : 'rgba(249, 115, 22, 0.55)';
       const gridPx = Number(lv.grid_price);
       if (Number.isFinite(gridPx) && gridPx > 0) {
+        const pts = priceLineInSpans(candles, spans, gridPx);
+        if (!pts.length) continue;
         specs.push({
-          points: spans?.length
-            ? priceLineInSpans(candles, spans, gridPx)
-            : fullWidthPriceLine(candles, gridPx),
+          points: pts,
           color: gridColor,
           lineStyle: 2,
           label: {
@@ -236,7 +238,7 @@ export function buildChopGridLineSpecs(
             side: isLong ? 'long' : 'short',
             kind: 'grid',
             color: gridColor,
-            spans: spans ? spans.map((s) => ({ start: s.start, end: s.end })) : null,
+            spans: spans.map((s) => ({ start: s.start, end: s.end })),
           },
         });
       }
@@ -245,10 +247,10 @@ export function buildChopGridLineSpecs(
         const tpSt = String(lv.tp_status || '').toLowerCase();
         const tpOpen = ['open', 'pending', 'new', 'submitted', 'shadow'].includes(tpSt);
         if (!tpOpen) continue;
+        const pts = priceLineInSpans(candles, spans, tpPx);
+        if (!pts.length) continue;
         specs.push({
-          points: spans?.length
-            ? priceLineInSpans(candles, spans, tpPx)
-            : fullWidthPriceLine(candles, tpPx),
+          points: pts,
           color: CHART_THEME.accentPurple,
           lineStyle: 1,
           label: {
@@ -257,7 +259,7 @@ export function buildChopGridLineSpecs(
             side: isLong ? 'long' : 'short',
             kind: 'tp',
             color: CHART_THEME.accentPurple,
-            spans: spans ? spans.map((s) => ({ start: s.start, end: s.end })) : null,
+            spans: spans.map((s) => ({ start: s.start, end: s.end })),
           },
         });
       }

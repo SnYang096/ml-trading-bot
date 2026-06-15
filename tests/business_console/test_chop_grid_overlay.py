@@ -83,6 +83,23 @@ def test_chop_grid_overlay_from_engine_state(multi_leg_db, engine_data_root):
     assert levels["S2"]["grid_price"] == pytest.approx(643.55 + 6.44 * 2)
 
 
+def test_chop_grid_overlay_skips_inactive_engine_state(multi_leg_db, engine_data_root):
+    state_path = (
+        engine_data_root / "multi_leg_live" / "state" / "chop_grid_BNBUSDT.json"
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["active"] = False
+    state["inventory"] = []
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    out = load_chop_grid_map_overlay(
+        multi_leg_db=multi_leg_db,
+        engine_data_root=engine_data_root,
+        symbol="BNBUSDT",
+    )
+    assert out["batches"] == []
+
+
 def test_s2_short_tp_below_entry_when_tp_order_mispriced(
     multi_leg_db, engine_data_root
 ):

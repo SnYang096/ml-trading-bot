@@ -384,7 +384,7 @@ def load_chop_grid_map_overlay(
         batch = _batch_from_state(
             state, orders, inventory, max_levels=max_levels_per_side
         )
-        if batch and batch.get("grid_id"):
+        if batch and batch.get("grid_id") and batch.get("active"):
             batches.append(batch)
             seen_batches.add(str(batch["grid_id"]))
 

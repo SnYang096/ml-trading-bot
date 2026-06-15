@@ -94,13 +94,28 @@ export function ChopGridLabelLayer({ chart, candleSeries, candles, specs, enable
 
     scheduleLayout();
     const handler = () => scheduleLayout();
-    chart.timeScale().subscribeVisibleLogicalRangeChange(handler);
+
+    const ts = chart.timeScale();
+    ts.subscribeVisibleLogicalRangeChange(handler);
+    ts.subscribeSizeChange(handler);
+    chart.subscribeCrosshairMove(handler);
+
+    const chartEl = chart.chartElement();
+    chartEl.addEventListener('wheel', handler, { passive: true });
+    chartEl.addEventListener('mouseup', handler);
+    chartEl.addEventListener('pointerup', handler);
+
     return () => {
       if (layoutRafRef.current != null) {
         window.cancelAnimationFrame(layoutRafRef.current);
         layoutRafRef.current = null;
       }
-      chart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
+      ts.unsubscribeVisibleLogicalRangeChange(handler);
+      ts.unsubscribeSizeChange(handler);
+      chart.unsubscribeCrosshairMove(handler);
+      chartEl.removeEventListener('wheel', handler);
+      chartEl.removeEventListener('mouseup', handler);
+      chartEl.removeEventListener('pointerup', handler);
     };
   }, [chart, candleSeries, candles, specs, enabled]);
 

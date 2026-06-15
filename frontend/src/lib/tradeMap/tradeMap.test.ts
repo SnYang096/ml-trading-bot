@@ -28,7 +28,7 @@ import {
   snapMarkersToCandleTimes,
 } from '@/lib/tradeMap/markers.ts';
 import { mergeTradeLinks, tradeLinksForDisplay, buildTradeLinkLines, resolveTradeLinkEndpoints } from '@/lib/tradeMap/tradeLinks.ts';
-import { visibleCandleIndexRange } from '@/lib/tradeMap/chartOverlay.ts';
+import { visibleCandleIndexRange, buildChopGridLineSpecs } from '@/lib/tradeMap/chartOverlay.ts';
 import { barSecForTimeframe, orderOnBar, orderRowUnixSec } from '@/lib/tradeMap/orderTime.ts';
 import {
   chopGridMetricsRowCell,
@@ -470,6 +470,31 @@ describe('tradeMap chop regime hysteresis', () => {
       false,
       false,
     ]);
+  });
+
+  it('buildChopGridLineSpecs requires regime spans (no full-width fallback)', () => {
+    const candles = [
+      { time: 1000, open: 1, high: 1.1, low: 0.9, close: 1 },
+      { time: 2000, open: 1, high: 1.1, low: 0.9, close: 1 },
+      { time: 3000, open: 1, high: 1.1, low: 0.9, close: 1 },
+    ];
+    const overlay = {
+      batches: [
+        {
+          center: 100,
+          spacing: 1,
+          active: true,
+          levels: [{ leg: 'L1', side: 'long', grid_price: 95 }],
+        },
+      ],
+    };
+    expect(buildChopGridLineSpecs(overlay, candles, null)).toEqual([]);
+    expect(buildChopGridLineSpecs(overlay, candles, [])).toEqual([]);
+    const specs = buildChopGridLineSpecs(overlay, candles, [{ start: 1000, end: 3000 }]);
+    expect(specs.length).toBeGreaterThan(0);
+    for (const spec of specs) {
+      expect(spec.points.every((p) => p.time >= 1000 && p.time <= 3000)).toBe(true);
+    }
   });
 
   it('stale chop overlay exits after last feature point', () => {
