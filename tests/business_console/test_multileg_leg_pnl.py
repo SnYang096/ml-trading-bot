@@ -677,3 +677,50 @@ def test_multileg_pnl_dust_market_exit_uses_partial_fill_qty(multi_leg_db) -> No
     expected = pytest.approx((59.831 - 60.007) * 0.01, rel=1e-4)
     assert pnl_map[entry_id]["pnl_usdt"] == expected
     assert pnl_map[exit_id]["pnl_usdt"] == expected
+
+
+def test_multileg_pnl_skips_ghost_unrealized_when_positions_table_used(
+    multi_leg_db,
+) -> None:
+    """Filled entries without open multi_leg_positions row must not count as浮盈."""
+    from src.order_management.multi_leg_storage import MultiLegStorage
+
+    storage = MultiLegStorage(str(multi_leg_db))
+    run_id = storage.create_run(
+        mode="testnet",
+        strategies=["chop_grid"],
+        symbols=["HYPEUSDT"],
+        run_id="ml_ghost_upnl",
+    )
+    group = "HYPEUSDT_2026-06-15 12:00:00+00:00"
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": f"{group}_L1",
+            "leg_id": f"{group}_L1",
+            "symbol": "HYPEUSDT",
+            "side": "BUY",
+            "purpose": "entry",
+            "status": "filled",
+            "filled_quantity": 10.0,
+            "average_price": 60.0,
+        }
+    )
+    storage.upsert_position(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "leg_id": f"{group}_L1",
+            "symbol": "HYPEUSDT",
+            "side": "LONG",
+            "entry_price": 60.0,
+            "quantity": 10.0,
+            "status": "closed",
+        }
+    )
+
+    pnl_map = multileg_pnl_by_order_id(
+        multi_leg_db, "HYPEUSDT", mark_prices={"HYPEUSDT": 70.0}
+    )
+    assert f"{group}_L1" not in pnl_map

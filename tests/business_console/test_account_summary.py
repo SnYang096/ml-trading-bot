@@ -402,6 +402,60 @@ def test_account_summary_multileg_realized(
     assert chop["realized_pnl"] == pytest.approx(10.0, rel=1e-4)
 
 
+def test_account_summary_multileg_unrealized_excludes_ghost_legs(
+    trend_db, spot_db, spot_ledger_db, multi_leg_db, bus_root
+) -> None:
+    """Account summary 本地浮盈 must match open_positions ghost filter."""
+    from src.order_management.multi_leg_storage import MultiLegStorage
+
+    storage = MultiLegStorage(str(multi_leg_db))
+    run_id = storage.create_run(
+        mode="testnet",
+        strategies=["chop_grid"],
+        symbols=["HYPEUSDT"],
+        run_id="acct_ghost_upnl",
+    )
+    group = "HYPEUSDT_2026-06-15 12:00:00+00:00"
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "local_order_id": f"{group}_L1",
+            "leg_id": f"{group}_L1",
+            "symbol": "HYPEUSDT",
+            "side": "BUY",
+            "purpose": "entry",
+            "status": "filled",
+            "filled_quantity": 10.0,
+            "average_price": 60.0,
+        }
+    )
+    storage.upsert_position(
+        {
+            "run_id": run_id,
+            "strategy": "chop_grid",
+            "leg_id": f"{group}_L1",
+            "symbol": "HYPEUSDT",
+            "side": "LONG",
+            "entry_price": 60.0,
+            "quantity": 10.0,
+            "status": "closed",
+        }
+    )
+
+    data = build_account_summary(
+        trend_db=trend_db,
+        spot_db=spot_db,
+        spot_ledger_db=spot_ledger_db,
+        multi_leg_db=multi_leg_db,
+        feature_bus_root=bus_root,
+        symbol="HYPEUSDT",
+        lookback_days=0,
+    )
+    ml_scope = next(s for s in data["scopes"] if s["scope"] == "multi_leg")
+    assert ml_scope["unrealized_pnl"] == pytest.approx(0.0)
+
+
 def test_account_summary_filters_by_scopes(
     trend_db, spot_db, spot_ledger_db, multi_leg_db, bus_root
 ) -> None:

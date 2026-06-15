@@ -589,6 +589,13 @@ def multileg_pnl_by_order_id(
 
     by_group = build_leg_link_index(raw)
     mark = float((mark_prices or {}).get(sym) or 0.0)
+    from mlbot_console.services.multileg_position_truth import (
+        multileg_open_leg_ids,
+        multileg_positions_table_used,
+    )
+
+    active_leg_ids = multileg_open_leg_ids(db_path, sym)
+    positions_table_used = multileg_positions_table_used(db_path, sym)
     out: Dict[str, Dict[str, Any]] = {}
 
     pending_entries: List[Dict[str, Any]] = []
@@ -615,6 +622,10 @@ def multileg_pnl_by_order_id(
         entry_key = _order_key(entry)
         if not entry_key or entry_key in out:
             continue
+        if positions_table_used:
+            leg_key = str(entry.get("leg_id") or entry_key).strip()
+            if leg_key not in active_leg_ids:
+                continue
         if mark <= 0:
             continue
         upnl = _unrealized_pnl_usdt(entry, mark)
