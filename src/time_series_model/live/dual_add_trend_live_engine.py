@@ -503,6 +503,7 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
         self._maybe_deactivate_if_fully_closed()
 
         self.save_state()
+        actions.extend(self.pop_pending_actions())
         return actions
 
     def local_order_snapshots(self) -> List[LocalOrderSnapshot]:

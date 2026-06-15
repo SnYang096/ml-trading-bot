@@ -1335,6 +1335,9 @@ class ChopGridLiveEngine(SegmentLifecycleMixin):
         }
         self._emit_chop_bar_outcome(symbol, outcome=outcome)
         self.save_state()
+
+        # Merge protection actions generated from order fills / late fills
+        actions.extend(self.pop_pending_actions())
         return actions
 
     def _start_grid(

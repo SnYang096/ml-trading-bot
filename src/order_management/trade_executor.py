@@ -26,6 +26,7 @@ from src.time_series_model.core.constitution.add_position_rules import (
     validate_add_position_trigger,
 )
 from src.time_series_model.core.constitution.account_risk_guard import (
+    AccountRiskSnapshot,
     evaluate_account_risk,
     resolve_account_risk_limits,
     snapshot_from_binance_balance,
@@ -39,6 +40,9 @@ from src.time_series_model.live.position_logic import build_position_dict
 from src.time_series_model.portfolio.slot_sizing import compute_slot_size_from_risk
 
 logger = logging.getLogger(__name__)
+
+# Must stay aligned with compute_slot_size_from_risk(..., max_leverage=...) in _calc_qty.
+_CONSTITUTION_SIZING_MAX_LEVERAGE = 3.0
 
 
 def _family_key(archetype: str) -> str:
@@ -125,6 +129,9 @@ class TradeExecutor:
         self._rest_equity_cache_value: float = 0.0
         self._rest_equity_cache_ts: float = 0.0
 
+        # Account risk snapshot cache (per _execute_inner call) to avoid duplicate API calls
+        self._cached_risk_snapshot: Optional[AccountRiskSnapshot] = None
+
         # Log sizing mode when TradeExecutor is first created (lazy per symbol).
         if risk_per_slot > 0:
             logger.info(
@@ -183,6 +190,9 @@ class TradeExecutor:
 
     def _execute_inner(self, intent: TradeIntent, features: Dict[str, Any]) -> bool:
         """返回 True = 成功下单，False = qty<=0 跳过"""
+        # Clear per-call cache at start of execution
+        self._cached_risk_snapshot = None
+
         side = OrderSide.BUY if intent.action == "LONG" else OrderSide.SELL
 
         # ── 1. qty 计算 ──
@@ -233,7 +243,12 @@ class TradeExecutor:
             entry_price=entry_price,
             features=features,
         )
-        # ── 2. slot 预留（enforce_before_order 在 place_order 前调用）──
+        self._check_margin_sufficiency(
+            qty=qty,
+            entry_price=entry_price,
+            features=features,
+        )
+        # ── slot 预留（enforce_before_order 在 place_order 前调用）──
         position_id = intent.position_id
         enforce_before_order(
             executor=self.constitution_executor,
@@ -675,15 +690,8 @@ class TradeExecutor:
             features["equity"] = self._rest_equity_cache_value
             return self._rest_equity_cache_value
 
-        api = getattr(self.order_manager, "binance_api", None)
-        if api is None:
-            return 0.0
         try:
-            snap = snapshot_from_binance_balance(
-                balance=api.get_account_balance(),
-                positions=api.get_positions(),
-                features_fallback=features,
-            )
+            snap = self._fetch_risk_snapshot(features=features, use_cache=True)
         except Exception as exc:
             logger.warning("[%s] REST equity fetch failed: %s", self.symbol, exc)
             return 0.0
@@ -752,7 +760,7 @@ class TradeExecutor:
                     price=entry_price,
                     atr=atr,
                     stop_atr=sl_r,
-                    max_leverage=3.0,
+                    max_leverage=_CONSTITUTION_SIZING_MAX_LEVERAGE,
                 )
                 qty = result.qty
                 qty_source = "constitution_risk"
@@ -866,7 +874,7 @@ class TradeExecutor:
 
         fail_closed = bool(cfg.get("fail_closed", True))
         try:
-            snap = self._account_risk_snapshot(features=features)
+            snap = self._fetch_risk_snapshot(features=features, use_cache=True)
         except Exception as exc:
             if fail_closed:
                 raise ConstitutionViolation(
@@ -906,16 +914,127 @@ class TradeExecutor:
                 },
             )
 
-    def _account_risk_snapshot(self, *, features: Mapping[str, Any]):
+    def _fetch_risk_snapshot(
+        self, *, features: Mapping[str, Any], use_cache: bool = True
+    ) -> AccountRiskSnapshot:
+        """REST account snapshot; cached for the duration of one _execute_inner call."""
+        if use_cache and self._cached_risk_snapshot is not None:
+            return self._cached_risk_snapshot
         api = getattr(self.order_manager, "binance_api", None)
         if api is None:
             raise RuntimeError("binance_api unavailable")
-        positions = api.get_positions()
-        balance = api.get_account_balance()
-        return snapshot_from_binance_balance(
-            balance=balance,
-            positions=positions,
+        snap = snapshot_from_binance_balance(
+            balance=api.get_account_balance(),
+            positions=api.get_positions(),
             features_fallback=features,
+        )
+        if use_cache:
+            self._cached_risk_snapshot = snap
+        return snap
+
+    def _account_leverage_for_margin(self, api: Any) -> float:
+        """Account symbol leverage for margin estimate (not exchange max leverage)."""
+        try:
+            lev = api.get_leverage(self.symbol) if hasattr(api, "get_leverage") else None
+            if lev is not None and float(lev) > 0:
+                return max(1.0, float(lev))
+        except Exception:
+            logger.debug(
+                "[%s] get_leverage failed, using sizing cap %.1fx",
+                self.symbol,
+                _CONSTITUTION_SIZING_MAX_LEVERAGE,
+                exc_info=True,
+            )
+        return _CONSTITUTION_SIZING_MAX_LEVERAGE
+
+    def _check_margin_sufficiency(
+        self,
+        *,
+        qty: float,
+        entry_price: Optional[float],
+        features: Mapping[str, Any],
+    ) -> None:
+        """Hard check: available margin must cover proposed order initial margin.
+
+        Prevents Binance API error -2019 (Margin is insufficient) before place_order.
+        """
+        proposed_notional = float(max(0.0, qty) * max(0.0, float(entry_price or 0.0)))
+        if proposed_notional <= 0:
+            return
+
+        api = getattr(self.order_manager, "binance_api", None)
+        if api is None:
+            return
+
+        try:
+            snap = self._fetch_risk_snapshot(features=features, use_cache=True)
+        except Exception as exc:
+            raise ConstitutionViolation(
+                code="MARGIN_SNAPSHOT_UNAVAILABLE",
+                message=f"Margin check snapshot unavailable: {exc}",
+                context={"symbol": self.symbol},
+            ) from exc
+
+        leverage = self._account_leverage_for_margin(api)
+        required_margin = proposed_notional / leverage
+        available_raw = snap.available_margin
+        if available_raw is None:
+            raise ConstitutionViolation(
+                code="MARGIN_UNAVAILABLE",
+                message="Available margin unavailable from REST snapshot",
+                context={
+                    "symbol": self.symbol,
+                    "equity": float(snap.equity),
+                    "proposed_notional": proposed_notional,
+                },
+            )
+        available = float(available_raw)
+
+        if available <= 0:
+            raise ConstitutionViolation(
+                code="MARGIN_UNAVAILABLE",
+                message=f"Available margin ${available:.2f} is zero or negative",
+                context={
+                    "symbol": self.symbol,
+                    "available_margin": available,
+                    "equity": float(snap.equity),
+                    "proposed_notional": proposed_notional,
+                },
+            )
+
+        if required_margin > available:
+            logger.error(
+                "[%s] MARGIN INSUFFICIENT: available=$%.2f required=$%.2f "
+                "(notional=$%.2f leverage=%.1fx) — blocking order to prevent Binance -2019",
+                self.symbol,
+                available,
+                required_margin,
+                proposed_notional,
+                leverage,
+            )
+            raise ConstitutionViolation(
+                code="MARGIN_INSUFFICIENT",
+                message=(
+                    f"Available margin ${available:.2f} < required ${required_margin:.2f} "
+                    f"for notional ${proposed_notional:.2f} at {leverage}x leverage"
+                ),
+                context={
+                    "symbol": self.symbol,
+                    "available_margin": available,
+                    "required_margin": required_margin,
+                    "proposed_notional": proposed_notional,
+                    "account_leverage": leverage,
+                    "equity": float(snap.equity),
+                    "used_initial_margin": float(snap.used_initial_margin),
+                },
+            )
+
+        logger.debug(
+            "[%s] margin check OK: available=$%.2f required=$%.2f (%.1f%% of available)",
+            self.symbol,
+            available,
+            required_margin,
+            (required_margin / available * 100) if available > 0 else 0,
         )
 
     def _release_leaked_slot(self, intent: TradeIntent) -> None:

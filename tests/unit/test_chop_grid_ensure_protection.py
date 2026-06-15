@@ -9,6 +9,7 @@ from src.time_series_model.live.chop_grid_live_engine import (
     ChopGridLiveEngine,
     GridPosition,
 )
+from src.time_series_model.live.segment_lifecycle import SegmentState
 
 
 def _config(tmp_path: Path) -> Path:
@@ -58,6 +59,9 @@ def test_ensure_protection_prunes_stale_inventory_when_exchange_flat(
     engine.state.active = True
     engine.state.symbol = "BNBUSDT"
     engine.state.spacing = 6.4355
+    engine.state.segment_state = (
+        SegmentState.ACTIVE.value
+    )  # Ensure active persists through save_state
     engine.state.inventory.append(
         GridPosition(
             symbol="BNBUSDT",

@@ -81,6 +81,7 @@ def _make_executor(
 ) -> tuple[TradeExecutor, MagicMock, MagicMock, PositionTracker]:
     """创建 TradeExecutor 及其依赖 mock"""
     om = MagicMock()
+    om.binance_api = None
     om.place_order.return_value = _make_mock_order()
 
     ce = MagicMock()
@@ -160,9 +161,13 @@ class TestQtyCalculation:
         ex, om, ce, pt = _make_executor(risk_per_slot=0.01, risk_per_trade=10.0)
         om.binance_api = MagicMock()
         om.binance_api.get_positions.return_value = []
+        om.binance_api.get_leverage.return_value = 10
         om.binance_api.get_account_balance.return_value = {
             "USDT": {"total": 10000.0, "free": 8000.0, "used": 2000.0},
-            "info": {"totalMarginBalance": "10000.0"},
+            "info": {
+                "totalMarginBalance": "10000.0",
+                "availableBalance": "8000.0",
+            },
         }
         intent = _make_intent(stop_loss_r=2.0)
         features = _make_features(close=50000.0, atr=500.0, equity=0.0)
@@ -174,6 +179,27 @@ class TestQtyCalculation:
         qty = om.place_order.call_args_list[0].kwargs["quantity"]
         assert qty > 0.0
         assert om.binance_api.get_account_balance.call_count == 1
+
+    def test_margin_insufficient_blocks_order(self):
+        """Low available margin vs account leverage blocks order before -2019."""
+        ex, om, ce, pt = _make_executor(risk_per_slot=0.01)
+        om.binance_api = MagicMock()
+        om.binance_api.get_leverage.return_value = 2
+        om.binance_api.get_positions.return_value = []
+        om.binance_api.get_account_balance.return_value = {
+            "USDT": {"total": 10000.0, "free": 50.0, "used": 9950.0},
+            "info": {
+                "totalMarginBalance": "10000.0",
+                "availableBalance": "50.0",
+            },
+        }
+        intent = _make_intent(quantity=1.0)
+        features = _make_features(close=50000.0, equity=10000.0)
+
+        result = ex.execute(intent=intent, features=features)
+
+        assert result is False
+        om.place_order.assert_not_called()
 
     def test_constitution_sizing_rest_equity_cache_writeback(self):
         """Cached REST equity is written to features for slot enforcement."""
@@ -246,6 +272,7 @@ class TestAccountRiskLimits:
     @staticmethod
     def _attach_account_snapshot(om, *, gross_notional=0.0, equity=10000.0):
         om.binance_api = MagicMock()
+        om.binance_api.get_leverage.return_value = 10
         om.binance_api.get_positions.return_value = [
             {"symbol": "ETH/USDT:USDT", "notional": gross_notional}
         ]
