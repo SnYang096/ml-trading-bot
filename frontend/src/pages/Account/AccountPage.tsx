@@ -16,7 +16,6 @@ import {
   MarginBreakdownPanel,
   SpotHoldingsPanel,
   WeeklyPnlChart,
-  WeeklyPnlTable,
 } from './accountViews.tsx';
 import styles from './AccountPage.module.css';
 
@@ -228,13 +227,8 @@ export function AccountPage() {
             按 UTC 自然周汇总。累计曲线为交易所钱包/权益（USDT）；历史权益≈钱包，最新点为币安实时值。
           </p>
           <div className={styles.pnlWeeklyRow}>
-            <div className={styles.pnlWeeklyChart}>
-              <h4 className={styles.pnlSubhead}>按周统计</h4>
-              <WeeklyPnlChart weekly={scoped?.weekly_realized || []} />
-            </div>
-            <div className={styles.pnlWeeklyTable}>
-              <WeeklyPnlTable weekly={scoped?.weekly_realized || []} />
-            </div>
+            <h4 className={styles.pnlSubhead}>按周统计</h4>
+            <WeeklyPnlChart weekly={scoped?.weekly_realized || []} />
           </div>
           <div className={styles.pnlDailyRow}>
             <h4 className={styles.pnlSubhead}>按日明细</h4>

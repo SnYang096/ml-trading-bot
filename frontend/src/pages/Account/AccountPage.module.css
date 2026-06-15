@@ -186,38 +186,11 @@
 }
 
 .pnlWeeklyRow {
-  display: grid;
-  grid-template-columns: 1fr minmax(200px, 320px);
-  gap: 12px;
-  align-items: start;
-}
-
-.pnlWeeklyChart {
   min-width: 0;
-}
-
-.pnlWeeklyTable {
-  justify-self: end;
-  width: 100%;
 }
 
 .pnlDailyRow {
   margin-top: 4px;
-}
-
-@media (max-width: 900px) {
-  .pnlWeeklyRow {
-    grid-template-columns: 1fr;
-  }
-
-  .pnlWeeklyTable {
-    justify-self: stretch;
-  }
-}
-
-.weeklyTable {
-  width: 100%;
-  margin-top: 0;
 }
 
 .equityWrap {

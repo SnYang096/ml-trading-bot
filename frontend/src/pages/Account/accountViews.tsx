@@ -795,31 +795,6 @@ export function DailyPnlChart({ daily }: { daily: DailyPnlPoint[] }) {
   return <div className={styles.pnlChart}>{pnlBars(daily || [], 'pnl')}</div>;
 }
 
-export function WeeklyPnlTable({ weekly }: { weekly: DailyPnlPoint[] }) {
-  const pts = weekly || [];
-  if (!pts.length) return null;
-  return (
-    <div className={`${styles.tableWrap} ${styles.weeklyTable}`}>
-      <table className={styles.table}>
-        <thead>
-          <tr>
-            <th>自然周</th>
-            <th>已实现 (USDT)</th>
-          </tr>
-        </thead>
-        <tbody>
-          {[...pts].reverse().map((w) => (
-            <tr key={w.week_start || w.label || w.date}>
-              <td>{w.label || w.week_start || '—'}</td>
-              <td className={pnlClass(w.pnl)}>{fmtPnl(w.pnl)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 export function AccountEquityChart({ curves }: { curves: AccountCurves | undefined }) {
   type CurveMode = 'both' | 'balance' | 'equity';
   const [mode, setMode] = useState<CurveMode>('both');
