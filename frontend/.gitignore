@@ -1,2 +1,7 @@
 node_modules
 dist
+
+# Playwright E2E 测试产物
+test-results/
+playwright-report/
+playwright/.cache/
