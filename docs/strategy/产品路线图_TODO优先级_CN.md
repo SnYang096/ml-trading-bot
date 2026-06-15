@@ -130,6 +130,8 @@ flowchart LR
 
 ### T5 — B 系统：大级别订单墙触发清算 【P1 · 当前主攻】
 
+**设计稿**：[T5_订单墙与清算_scan设计_CN.md](T5_订单墙与清算_scan设计_CN.md)（挂单墙 T5α vs 清算 T5β 拆分；**优先 TPC gate 接入，非 chop 式配对**）
+
 **现状**：FER 策略语义（失败衰竭 / 清算）；特征候选 `liquidation_cluster_score`、`oi_change_zscore`（见 [A2 设计稿](A2_spot_fattail_设计稿_CN.md)）；**未接入 TPC live PCM**。
 
 **目标**：

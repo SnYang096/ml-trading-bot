@@ -87,6 +87,15 @@ a:hover {
   text-shadow: var(--glow-negative, none);
 }
 
+/* Override .data-table td color (higher specificity) */
+.data-table .pnl-pos {
+  color: var(--positive);
+}
+
+.data-table .pnl-neg {
+  color: var(--negative);
+}
+
 .page {
   padding: 16px var(--layout-gutter);
 }

@@ -326,8 +326,8 @@ export function OrdersPage() {
           <table className="data-table">
             <thead>
               <tr>
-                {showSymbol ? <th>Symbol</th> : null}
                 <th>Scope</th>
+                {showSymbol ? <th>Symbol</th> : null}
                 <th>Strategy</th>
                 <th>方向</th>
                 <th>Qty</th>
@@ -357,8 +357,8 @@ export function OrdersPage() {
                       onClick={() => setSelectedIdx(globalIdx)}
                       style={{ cursor: 'pointer' }}
                     >
-                      {showSymbol ? <td>{r.symbol}</td> : null}
                       <td>{SCOPE_LABELS[r.scope] || r.scope}</td>
+                      {showSymbol ? <td>{r.symbol}</td> : null}
                       <td>{r.strategy || '—'}</td>
                       <td>{displayPositionSideLabel(r.side)}</td>
                       <td>{Number.isFinite(Number(r.quantity)) ? String(r.quantity) : '—'}</td>

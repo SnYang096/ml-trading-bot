@@ -611,8 +611,8 @@ def collect_open_positions(
     #     have zero exchange position (stale / fully-closed but unpaired). ──
     if exchange_ledger:
         ex_map = _exchange_position_map(exchange_ledger)
-        logger.warning(
-            "DEBUG exchange_ledger: ex_map size=%d, merged rows=%d",
+        logger.debug(
+            "exchange_ledger cross-validation: ex_map size=%d, merged rows=%d",
             len(ex_map),
             len(merged),
         )
@@ -630,24 +630,24 @@ def collect_open_positions(
                 has_pos = _exchange_has_position(ex_map, sym, side)
                 if not has_pos:
                     dropped_count += 1
-                    logger.warning(
-                        "DEBUG Dropping stale: scope=%s symbol=%s side=%s",
+                    logger.debug(
+                        "Dropping stale position: scope=%s symbol=%s side=%s (exchange=0)",
                         scope,
                         sym,
                         side,
                     )
                 else:
                     filtered.append(row)
-            logger.warning(
-                "DEBUG exchange filter: dropped=%d, kept=%d",
+            logger.debug(
+                "exchange_ledger filter: dropped=%d, kept=%d",
                 dropped_count,
                 len(filtered),
             )
             merged = filtered
         else:
-            logger.warning("DEBUG exchange_ledger provided but ex_map is EMPTY!")
+            logger.warning("exchange_ledger provided but ex_map is empty!")
     else:
-        logger.warning("DEBUG exchange_ledger is NONE - skipping cross-validation")
+        logger.warning("exchange_ledger is None - skipping cross-validation")
 
     # ── Deduplicate: same (scope, symbol, side) with identical qty → keep
     #     most recent entry_time (fixes exchange-sync + bootstrap dupes).
