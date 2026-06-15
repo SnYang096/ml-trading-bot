@@ -1,0 +1,39 @@
+# T5α wall entry ablation — Phase 3 event_backtest
+#
+# 前置：
+#   PYTHONPATH=src:scripts python scripts/research/prepare_t5_wall_entry_snapshots.py
+#
+# 跑法（canonical 三阶段 × BTC/ETH）：
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260615_t5_wall_entry_validate/t5_wall_entry_grid.yaml \
+#     --quiet-signal-logs
+
+experiment_id: t5_wall_entry_validate_20260615
+strategy: tpc
+market_segment_path: config/market_segment.yaml
+data_path: data/parquet_data
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+
+segment_matrix:
+  segments:
+    - bear_2022
+    - bull_2023_2024
+    - recent_range_to_bear
+  variants:
+    - suffix: E0_prod
+      strategies_root: config/strategies
+      output_dir: results/tpc/experiments/t5_wall_entry_20260615/E0_prod
+
+    - suffix: W1_bull_wall2
+      strategies_root: config/experiments/20260615_t5_wall_entry_validate/variants/tpc_wall_W1_bull2_strategies
+      output_dir: results/tpc/experiments/t5_wall_entry_20260615/W1_bull_wall2
+
+    - suffix: W2_asym_wall
+      strategies_root: config/experiments/20260615_t5_wall_entry_validate/variants/tpc_wall_W2_asym_strategies
+      output_dir: results/tpc/experiments/t5_wall_entry_20260615/W2_asym_wall
+
+    - suffix: W4_sym_wall2
+      strategies_root: config/experiments/20260615_t5_wall_entry_validate/variants/tpc_wall_W4_sym2_strategies
+      output_dir: results/tpc/experiments/t5_wall_entry_20260615/W4_sym_wall2

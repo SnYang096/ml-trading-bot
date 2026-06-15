@@ -1,0 +1,197 @@
+# T5 Phase 1c — wall_nearest_dist_atr 牛/熊/中性 × 时间窗 多阶段 scan
+#
+#   PYTHONPATH=src:scripts python scripts/rd_loop.py \
+#     --hypothesis-yaml config/experiments/20260615_t5_btc_eth_scan/rd_loop_t5_phase1c_wall_multiphase.yaml
+
+topic: t5_wall_multiphase_20260615
+strategy: tpc
+output_dir: results/rd_loop/t5_wall_multiphase_20260615
+
+features_parquet: &parquet results/train_final/tpc/t5_btc_eth_v2/tpc/features_labeled.parquet
+label: &label success_no_rr_extreme
+
+tpc_pullback_bull: &tpc_pullback_bull
+  - ema_1200_position>=0.10
+  - tpc_semantic_chop<=0.40
+  - tpc_pullback_depth<=0.85
+
+tpc_pullback_bear: &tpc_pullback_bear
+  - ema_1200_position<=-0.10
+  - tpc_semantic_chop<=0.40
+  - tpc_pullback_depth<=0.85
+
+# EMA1200 死区（非明确牛熊）
+tpc_pullback_neutral: &tpc_pullback_neutral
+  - ema_1200_position>-0.10
+  - ema_1200_position<0.10
+  - tpc_semantic_chop<=0.40
+  - tpc_pullback_depth<=0.85
+
+tpc_prod: &tpc_prod
+  - tpc_pullback_depth<=0.85
+  - tpc_semantic_chop<=0.40
+
+quick_layer_scans:
+  # ── 1) 牛/熊/中性/全 TPC：wall_dist plateau ──
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: entry
+    filter: *tpc_pullback_bull
+    feature: wall_nearest_dist_atr
+    operator: "<="
+    grid: "1.0,1.5,2.0,2.5,3.0,4.0,5.0"
+    out: quick_scan/wall_plateau_bull_pullback.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: entry
+    filter: *tpc_pullback_bear
+    feature: wall_nearest_dist_atr
+    operator: "<="
+    grid: "1.0,1.5,2.0,2.5,3.0,4.0,5.0"
+    out: quick_scan/wall_plateau_bear_pullback.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: entry
+    filter: *tpc_pullback_neutral
+    feature: wall_nearest_dist_atr
+    operator: "<="
+    grid: "1.0,1.5,2.0,2.5,3.0,4.0,5.0"
+    out: quick_scan/wall_plateau_neutral_pullback.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: entry
+    filter: *tpc_prod
+    feature: wall_nearest_dist_atr
+    operator: "<="
+    grid: "1.0,1.5,2.0,2.5,3.0,4.0,5.0"
+    out: quick_scan/wall_plateau_tpc_prod.md
+
+  # ── 2) 牛/熊：wall + bid notional 联合 condition ──
+  - mode: condition-set
+    features_parquet: *parquet
+    label: *label
+    layer: entry
+    filter: *tpc_pullback_bull
+    condition:
+      - "base: tpc_pullback_depth<=0.85"
+      - "w15: wall_nearest_dist_atr<=1.5"
+      - "w20: wall_nearest_dist_atr<=2.0"
+      - "w25: wall_nearest_dist_atr<=2.5"
+      - "w30: wall_nearest_dist_atr<=3.0"
+      - "bid30m: wall_bid_notional_usd_max>=30000000"
+      - "bid50m: wall_bid_notional_usd_max>=50000000"
+    out: quick_scan/wall_condition_bull.md
+
+  - mode: condition-set
+    features_parquet: *parquet
+    label: *label
+    layer: entry
+    filter: *tpc_pullback_bear
+    condition:
+      - "base: tpc_pullback_depth<=0.85"
+      - "w15: wall_nearest_dist_atr<=1.5"
+      - "w20: wall_nearest_dist_atr<=2.0"
+      - "w25: wall_nearest_dist_atr<=2.5"
+      - "w30: wall_nearest_dist_atr<=3.0"
+      - "ask30m: wall_ask_notional_usd_max>=30000000"
+      - "ask50m: wall_ask_notional_usd_max>=50000000"
+    out: quick_scan/wall_condition_bear.md
+
+  # ── 3) 时间窗：牛市 pullback 上 wall≤2 稳定性 ──
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: entry
+    filter: *tpc_pullback_bull
+    feature: wall_nearest_dist_atr
+    operator: "<="
+    grid: "1.5,2.0,2.5,3.0"
+    calendar_window: "2023-01-01,2024-01-01"
+    out: quick_scan/wall_plateau_bull_2023.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: entry
+    filter: *tpc_pullback_bull
+    feature: wall_nearest_dist_atr
+    operator: "<="
+    grid: "1.5,2.0,2.5,3.0"
+    calendar_window: "2024-01-01,2025-01-01"
+    out: quick_scan/wall_plateau_bull_2024.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: entry
+    filter: *tpc_pullback_bull
+    feature: wall_nearest_dist_atr
+    operator: "<="
+    grid: "1.5,2.0,2.5,3.0"
+    calendar_window: "2025-01-01,2026-06-01"
+    out: quick_scan/wall_plateau_bull_2025.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: entry
+    filter: *tpc_pullback_bear
+    feature: wall_nearest_dist_atr
+    operator: "<="
+    grid: "1.5,2.0,2.5,3.0"
+    calendar_window: "2023-01-01,2024-01-01"
+    out: quick_scan/wall_plateau_bear_2023.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: entry
+    filter: *tpc_pullback_bear
+    feature: wall_nearest_dist_atr
+    operator: "<="
+    grid: "1.5,2.0,2.5,3.0"
+    calendar_window: "2024-01-01,2025-01-01"
+    out: quick_scan/wall_plateau_bear_2024.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: entry
+    filter: *tpc_pullback_bear
+    feature: wall_nearest_dist_atr
+    operator: "<="
+    grid: "1.5,2.0,2.5,3.0"
+    calendar_window: "2025-01-01,2026-06-01"
+    out: quick_scan/wall_plateau_bear_2025.md
+
+  # ── 4) IC：牛/熊/中性 pullback 子样本 ──
+  - mode: ic-decay
+    features_parquet: *parquet
+    target: forward_rr
+    features: wall_nearest_dist_atr,wall_bid_notional_usd_max,wall_ask_notional_usd_max
+    horizons: "1,3,5,10,20"
+    filter: *tpc_pullback_bull
+    out: quick_scan/wall_ic_bull_pullback.md
+
+  - mode: ic-decay
+    features_parquet: *parquet
+    target: forward_rr
+    features: wall_nearest_dist_atr,wall_bid_notional_usd_max,wall_ask_notional_usd_max
+    horizons: "1,3,5,10,20"
+    filter: *tpc_pullback_bear
+    out: quick_scan/wall_ic_bear_pullback.md
+
+  - mode: ic-decay
+    features_parquet: *parquet
+    target: forward_rr
+    features: wall_nearest_dist_atr,wall_bid_notional_usd_max,wall_ask_notional_usd_max
+    horizons: "1,3,5,10,20"
+    filter: *tpc_pullback_neutral
+    out: quick_scan/wall_ic_neutral_pullback.md

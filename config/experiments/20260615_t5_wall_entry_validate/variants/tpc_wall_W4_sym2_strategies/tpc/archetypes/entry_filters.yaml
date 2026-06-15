@@ -1,0 +1,29 @@
+filters:
+- id: tpc_deep_pullback_vol_confirm
+  enabled: true
+  description: 缩量回踩确认（量能维度）
+  conditions:
+  - feature: tpc_vol_pullback_confirm
+    operator: '>='
+    value: 0.45
+  tier: EXPERIMENT
+  notes: Pass1 snotio 0.45
+- id: tpc_deep_pullback_delta_absorb
+  enabled: false
+  disabled_reason: only 1 valid threshold point (25 trades), no plateau — insufficient
+    evidence for promote
+  description: 回踩段 delta 吸收（订单流维度）
+  conditions:
+  - feature: bpc_pullback_delta_absorption
+    operator: '>='
+    value: 0.15
+  tier: EXPERIMENT
+- id: t5_wall_near_2atr
+  enabled: true
+  description: T5α 对称：近端墙 ≤2 ATR（对照）
+  conditions:
+  - feature: wall_nearest_dist_atr
+    operator: <=
+    value: 2.0
+  tier: EXPERIMENT
+combination_mode: and

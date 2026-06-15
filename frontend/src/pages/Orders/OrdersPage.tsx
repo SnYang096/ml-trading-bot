@@ -1,10 +1,14 @@
+import {
+  ExitKindColumnHeader,
+  ExitKindLabel,
+  useExitKindLegend,
+} from '@/components/ExitKindLabel.tsx';
 import { apiGet } from '@/api/client.ts';
 import type { OpenOrderMarginRow, OpenPositionRow, OrderRow, SymbolRow, TradeLink } from '@/api/types.ts';
 import { usePageVisible, visibleRefetchInterval } from '@/hooks/usePageVisible.ts';
 import {
   SCOPE_LABELS,
   SYMBOL_ALL,
-  displayExitKind,
   displayLinkQty,
   displayOrderAction,
   displayOrderKind,
@@ -65,6 +69,7 @@ export function OrdersPage() {
   const [strategyFilter, setStrategyFilter] = useState('');
   const [page, setPage] = useState(0);
   const [selectedIdx, setSelectedIdx] = useState(-1);
+  const { legendOpen, toggleLegend, legendPanel } = useExitKindLegend();
 
   const strategies = useMemo(
     () =>
@@ -475,7 +480,9 @@ export function OrdersPage() {
           </div>
         </>
       ) : viewMode === 'legs' ? (
-        <table className="data-table">
+        <>
+          {legendPanel}
+          <table className="data-table">
           <thead>
             <tr>
               {showSymbol ? <th>Symbol</th> : null}
@@ -487,7 +494,7 @@ export function OrdersPage() {
               <th>开仓价</th>
               <th>平仓价</th>
               <th>PNL</th>
-              <th>平仓方式</th>
+              <ExitKindColumnHeader legendOpen={legendOpen} onToggleLegend={toggleLegend} />
               <th>开仓时间</th>
               <th>平仓时间</th>
             </tr>
@@ -514,7 +521,9 @@ export function OrdersPage() {
                     <td className={pnlClass(r.pnl_usdt)}>
                       {r.pnl_usdt != null ? fmtPnl(r.pnl_usdt) : '—'}
                     </td>
-                    <td>{displayExitKind(r.exit_kind)}</td>
+                    <td>
+                      <ExitKindLabel kind={r.exit_kind} />
+                    </td>
                     <td>{formatUnixTs(r.entry_time)}</td>
                     <td>{formatUnixTs(r.exit_time)}</td>
                   </tr>
@@ -529,6 +538,7 @@ export function OrdersPage() {
             )}
           </tbody>
         </table>
+        </>
       ) : (
         <table className="data-table">
           <thead>

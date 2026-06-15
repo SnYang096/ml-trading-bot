@@ -1,9 +1,9 @@
+import { ExitKindColumnHeader, ExitKindLabel } from '@/components/ExitKindLabel.tsx';
 import { apiGet } from '@/api/client.ts';
 import type { OrderRow, TradeLink } from '@/api/types.ts';
 import { usePageVisible, visibleRefetchInterval } from '@/hooks/usePageVisible.ts';
 import {
   SCOPE_LABELS,
-  displayExitKind,
   displayLinkQty,
   displayPositionSideLabel,
   fmtPnl,
@@ -177,7 +177,7 @@ export function OrdersDock({
                 <th>开仓价</th>
                 <th>平仓价</th>
                 <th>PNL</th>
-                <th>平仓</th>
+                <ExitKindColumnHeader />
                 <th>开仓时间</th>
                 <th>平仓时间</th>
               </tr>
@@ -218,7 +218,9 @@ export function OrdersDock({
                       <td className={pnlClass(r.pnl_usdt)}>
                         {r.pnl_usdt != null ? fmtPnl(r.pnl_usdt) : '—'}
                       </td>
-                      <td>{displayExitKind(r.exit_kind)}</td>
+                      <td>
+                        <ExitKindLabel kind={r.exit_kind} />
+                      </td>
                       <td>{formatUnixTs(r.entry_time)}</td>
                       <td>{formatUnixTs(r.exit_time)}</td>
                     </tr>

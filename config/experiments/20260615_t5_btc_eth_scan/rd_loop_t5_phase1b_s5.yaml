@@ -1,0 +1,120 @@
+# T5 Phase 1b — S5 TPC 子样本 + bull IC（修 ema_1200 后重跑）
+#
+# 前置 parquet：t5_btc_eth_v2（含 ema_1200_value_f）
+#
+#   PYTHONPATH=src:scripts python scripts/rd_loop.py \
+#     --hypothesis-yaml config/experiments/20260615_t5_btc_eth_scan/rd_loop_t5_phase1b_s5.yaml
+
+topic: t5_btc_eth_phase1b_s5
+strategy: tpc
+output_dir: results/rd_loop/t5_btc_eth_phase1b_s5
+
+features_parquet: &parquet results/train_final/tpc/t5_btc_eth_v2/tpc/features_labeled.parquet
+label: &label success_no_rr_extreme
+
+# prod prefilter 近似（locked τ≈0.85）
+tpc_prod: &tpc_prod
+  - tpc_pullback_depth<=0.85
+  - tpc_semantic_chop<=0.40
+
+bull_filter: &bull_filter
+  - ema_1200_position>=0.10
+  - tpc_semantic_chop<=0.40
+
+bear_filter: &bear_filter
+  - ema_1200_position<=-0.10
+  - tpc_semantic_chop<=0.40
+
+tpc_pullback_bull: &tpc_pullback_bull
+  - ema_1200_position>=0.10
+  - tpc_semantic_chop<=0.40
+  - tpc_pullback_depth<=0.85
+
+tpc_pullback_bear: &tpc_pullback_bear
+  - ema_1200_position<=-0.10
+  - tpc_semantic_chop<=0.40
+  - tpc_pullback_depth<=0.85
+
+quick_layer_scans:
+  # prod 子样本（不分多空）— 最宽可用 TPC 语境
+  - mode: condition-set
+    features_parquet: *parquet
+    label: *label
+    layer: prefilter
+    filter: *tpc_prod
+    condition:
+      - "base: tpc_pullback_depth<=0.85"
+      - "oi_z20: oi_flow_zscore>=2.0"
+      - "crowd05: funding_oi_crowding_score>=0.5"
+      - "liq04: liquidation_cluster_score>=0.4"
+      - "wall2: wall_nearest_dist_atr<=2.0"
+      - "wall3: wall_nearest_dist_atr<=3.0"
+    out: quick_scan/s5_tpc_prod_all.md
+
+  - mode: condition-set
+    features_parquet: *parquet
+    label: *label
+    layer: prefilter
+    filter: *tpc_pullback_bull
+    condition:
+      - "base: tpc_pullback_depth<=0.85"
+      - "oi_z20: oi_flow_zscore>=2.0"
+      - "crowd05: funding_oi_crowding_score>=0.5"
+      - "liq04: liquidation_cluster_score>=0.4"
+      - "wall2: wall_nearest_dist_atr<=2.0"
+    out: quick_scan/s5_tpc_bull.md
+
+  - mode: condition-set
+    features_parquet: *parquet
+    label: *label
+    layer: prefilter
+    filter: *tpc_pullback_bear
+    condition:
+      - "base: tpc_pullback_depth<=0.85"
+      - "oi_z20: oi_flow_zscore>=2.0"
+      - "crowd05: funding_oi_crowding_score>=0.5"
+      - "liq04: liquidation_cluster_score>=0.4"
+      - "wall2: wall_nearest_dist_atr<=2.0"
+    out: quick_scan/s5_tpc_bear.md
+
+  # gate 向：高 oi_z 作 veto（全样本 Scan 显示负 lift）
+  - mode: condition-set
+    features_parquet: *parquet
+    label: *label
+    layer: gate
+    filter: *tpc_pullback_bull
+    condition:
+      - "base: tpc_pullback_depth<=0.85"
+      - "oi_veto20: oi_flow_zscore>=2.0"
+      - "oi_veto25: oi_flow_zscore>=2.5"
+    out: quick_scan/s5_bull_oi_veto.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: entry
+    filter: *tpc_pullback_bull
+    feature: wall_nearest_dist_atr
+    operator: "<="
+    grid: "1.0,1.5,2.0,2.5,3.0"
+    out: quick_scan/s5_bull_wall_dist_plateau.md
+
+  - mode: ic-decay
+    features_parquet: *parquet
+    target: forward_rr
+    features: >-
+      liquidation_cluster_score,liquidation_cascade_proxy_score,
+      wall_nearest_dist_atr,wall_bid_notional_usd_max,funding_oi_crowding_score
+    horizons: "1,3,5,10,20"
+    filter: *bull_filter
+    out: quick_scan/s5_ic_decay_bull.md
+
+  - mode: ic-decay
+    features_parquet: *parquet
+    target: forward_rr
+    features: >-
+      liquidation_cluster_score,liquidation_cascade_proxy_score,
+      wall_nearest_dist_atr,wall_bid_notional_usd_max,funding_oi_crowding_score
+    horizons: "1,3,5,10,20"
+    filter: *bear_filter
+    out: quick_scan/s5_ic_decay_bear.md

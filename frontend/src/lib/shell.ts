@@ -178,17 +178,7 @@ export function formatUnixTs(ts: unknown): string {
   return new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
 }
 
-export function displayExitKind(kind: unknown): string {
-  const k = String(kind || '').toLowerCase();
-  if (k.includes('take_profit') || k === 'tp') return '止盈';
-  if (k.includes('regime')) return 'Regime平';
-  if (k.includes('cross_strategy') || k.includes('foreign_flatten')) return '跨策略平';
-  if (k.includes('market_exit')) return '市价平';
-  if (k === 'sell') return '卖出';
-  if (k.includes('stop')) return '止损';
-  if (k === 'exit') return '平仓';
-  return k ? k : '—';
-}
+export { displayExitKind, exitKindMeta, exitKindTip, exitKindGuideText } from '@/lib/exitKind.ts';
 
 export function setSymbol(sym: string): void {
   if (sym && !isAllSymbols(sym)) localStorage.setItem(SYMBOL_KEY, sym);
