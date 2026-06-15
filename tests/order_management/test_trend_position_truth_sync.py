@@ -7,6 +7,10 @@
   4. storage_factory=None 时 graceful fallback
   5. project_position_object 便捷方法
   6. project_position_object CLOSED 透传 exit_price/exit_reason
+  7. P2: bootstrap_position_from_exchange 保守默认
+  8. P2: on_restart 统一恢复入口
+  9. P3: periodic_reconcile 各场景
+ 10. P4: list_open_projections 只读投影
 """
 
 from __future__ import annotations
@@ -277,3 +281,297 @@ def test_project_to_sqlite_side_short():
     assert result == "BTC:002"
     record = storage.create_position.call_args[0][0]
     assert record.side == PositionSide.SHORT
+
+
+# ─── P2: bootstrap_position_from_exchange ─────────────────────────────────
+
+
+def test_bootstrap_position_from_exchange_conservative():
+    """无 execution.yaml → 保守默认 (1% ATR, 1.5R stop, 3R target)。"""
+    pid, pos = TrendPositionTruthSync.bootstrap_position_from_exchange(
+        symbol="ETHUSDT",
+        side="long",
+        entry_price=2000.0,
+        qty=1.5,
+    )
+    assert pid.startswith("ETH:live_")
+    assert pos["side"] == "LONG"
+    assert pos["entry_price"] == 2000.0
+    assert pos["qty"] == 1.5
+    assert pos["stop_loss_price"] is not None
+    assert pos["take_profit_price"] is not None
+    assert pos["_bootstrap_from_exchange"] is True
+    # Conservative: 1.5R stop = 1.5 * 1% * 2000 = 30
+    assert abs(pos["stop_loss_price"] - 1970.0) < 1.0
+
+
+def test_bootstrap_position_from_exchange_short_side():
+    """SHORT side: SL 在上方，TP 在下方。"""
+    pid, pos = TrendPositionTruthSync.bootstrap_position_from_exchange(
+        symbol="BTCUSDT",
+        side="short",
+        entry_price=60000.0,
+        qty=0.1,
+    )
+    assert pos["side"] == "SHORT"
+    assert pos["stop_loss_price"] > 60000.0  # SL above for short
+    assert pos["take_profit_price"] < 60000.0  # TP below for short
+
+
+def test_bootstrap_position_from_exchange_invalid_raises():
+    """无效参数 → ValueError。"""
+    with pytest.raises(ValueError):
+        TrendPositionTruthSync.bootstrap_position_from_exchange(
+            symbol="",
+            side="long",
+            entry_price=100.0,
+            qty=1.0,
+        )
+    with pytest.raises(ValueError):
+        TrendPositionTruthSync.bootstrap_position_from_exchange(
+            symbol="BTC",
+            side="long",
+            entry_price=0.0,
+            qty=1.0,
+        )
+
+
+def test_bootstrap_position_from_exchange_writes_json(tmp_path):
+    """state_path 指定时写入 JSON 文件。"""
+    state_path = tmp_path / "BTCUSDT.json"
+    pid, pos = TrendPositionTruthSync.bootstrap_position_from_exchange(
+        symbol="BTCUSDT",
+        side="long",
+        entry_price=50000.0,
+        qty=0.5,
+        state_path=state_path,
+    )
+    assert state_path.exists()
+    import json
+
+    data = json.loads(state_path.read_text())
+    assert data["symbol"] == "BTCUSDT"
+    assert data["_bootstrap_from_exchange"] is True
+    assert pid in data["positions"]
+
+
+def test_make_pid_format():
+    """pid 格式: {BASE}:live_{uuid12}。"""
+    pid = TrendPositionTruthSync._make_pid("ETHUSDT")
+    assert pid.startswith("ETH:live_")
+    assert len(pid.split("live_")[1]) == 12
+
+
+# ─── P2: on_restart ───────────────────────────────────────────────────────
+
+
+def test_on_restart_bootstrap_from_exchange():
+    """tracker 空 + 交易所有仓 → bootstrap。"""
+    storage = _make_storage()
+    tts = TrendPositionTruthSync(symbol="ETHUSDT", storage_factory=lambda: storage)
+    api = MagicMock()
+    api.get_positions.return_value = [
+        {"symbol": "ETH/USDT:USDT", "side": "long", "size": 2.0, "entry_price": 2100.0},
+    ]
+    tracker = MagicMock()
+    tracker.__len__ = Mock(return_value=0)
+    tracker._positions = {}
+    tracker.restore_from_disk.return_value = 0
+
+    report = tts.on_restart(
+        api=api,
+        tracker=tracker,
+        state_path=MagicMock(),
+    )
+    assert report["bootstrapped"] == 1
+    assert len(tracker._positions) == 1
+
+
+def test_on_restart_bootstrap_missing_side_only():
+    """tracker 有 long + exchange 有 long+short → 只 bootstrap short。"""
+    storage = _make_storage()
+    tts = TrendPositionTruthSync(symbol="ETHUSDT", storage_factory=lambda: storage)
+    api = MagicMock()
+    api.get_positions.return_value = [
+        {"symbol": "ETH/USDT:USDT", "side": "long", "size": 2.0, "entry_price": 2100.0},
+        {
+            "symbol": "ETH/USDT:USDT",
+            "side": "short",
+            "size": 1.0,
+            "entry_price": 2150.0,
+        },
+    ]
+    tracker = MagicMock()
+    tracker._positions = {
+        "ETH:001": {"side": "LONG", "qty": 2.0, "entry_price": 2100.0},
+    }
+    tracker.restore_from_disk.return_value = 1
+
+    report = tts.on_restart(
+        api=api,
+        tracker=tracker,
+        state_path=MagicMock(),
+    )
+    assert report["bootstrapped"] == 1
+    assert len(tracker._positions) == 2
+    sides = {str(p.get("side", "")).upper() for p in tracker._positions.values()}
+    assert sides == {"LONG", "SHORT"}
+    api.get_positions.assert_called_once()
+
+
+def test_on_restart_force_exchange_clears_stale_memory():
+    """force_exchange 清空旧 tracker 内存后再 bootstrap。"""
+    storage = _make_storage()
+    tts = TrendPositionTruthSync(symbol="ETHUSDT", storage_factory=lambda: storage)
+    api = MagicMock()
+    api.get_positions.return_value = [
+        {"symbol": "ETH/USDT:USDT", "side": "long", "size": 1.5, "entry_price": 2100.0},
+    ]
+    tracker = MagicMock()
+    tracker._positions = {
+        "ETH:stale": {"side": "LONG", "qty": 99.0},
+    }
+
+    report = tts.on_restart(
+        api=api,
+        tracker=tracker,
+        state_path=MagicMock(),
+        force_exchange=True,
+    )
+    assert report["bootstrapped"] == 1
+    assert "ETH:stale" not in tracker._positions
+    assert len(tracker._positions) == 1
+    assert tracker._positions[next(iter(tracker._positions))]["qty"] == 1.5
+    tracker.restore_from_disk.assert_not_called()
+
+
+# ─── P3: periodic_reconcile ──────────────────────────────────────────────
+
+
+def test_periodic_reconcile_no_issues():
+    """exchange 和 tracker 一致 → 无 issue。"""
+    storage = _make_storage()
+    storage.get_open_positions.return_value = [
+        Position(
+            position_id="ETH:001",
+            symbol="ETHUSDT",
+            side=PositionSide.LONG,
+            entry_time=datetime.now(timezone.utc),
+            entry_price=2000.0,
+            current_size=2.0,
+            initial_size=2.0,
+            status=PositionStatus.OPEN,
+        ),
+    ]
+    tts = TrendPositionTruthSync(symbol="ETHUSDT", storage_factory=lambda: storage)
+    api = MagicMock()
+    api.get_positions.return_value = [
+        {"symbol": "ETH/USDT:USDT", "side": "long", "size": 2.0, "entry_price": 2000.0},
+    ]
+    tracker = MagicMock()
+    tracker._positions = {
+        "ETH:001": {"side": "LONG", "qty": 2.0},
+    }
+
+    issues = tts.periodic_reconcile(api=api, tracker=tracker)
+    assert issues == {}
+
+
+def test_periodic_reconcile_orphan_open():
+    """exchange flat + SQLite open → sqlite_orphan_open + auto-close。"""
+    storage = _make_storage()
+    orphan = Position(
+        position_id="ETH:ORPHAN",
+        symbol="ETHUSDT",
+        side=PositionSide.LONG,
+        entry_time=datetime.now(timezone.utc),
+        entry_price=2000.0,
+        current_size=1.0,
+        initial_size=1.0,
+        status=PositionStatus.OPEN,
+    )
+    storage.get_open_positions.return_value = [orphan]
+    storage.get_position.return_value = orphan
+    tts = TrendPositionTruthSync(symbol="ETHUSDT", storage_factory=lambda: storage)
+    api = MagicMock()
+    api.get_positions.return_value = []  # exchange flat
+    tracker = MagicMock()
+    tracker._positions = {}
+
+    issues = tts.periodic_reconcile(api=api, tracker=tracker)
+    assert issues.get("sqlite_orphan_open", 0) >= 1
+    # Auto-close should call update_position with CLOSED
+    storage.update_position.assert_called()
+
+
+def test_periodic_reconcile_exchange_api_error():
+    """exchange 查询失败 → api_error。"""
+    tts = TrendPositionTruthSync(
+        symbol="ETHUSDT", storage_factory=lambda: _make_storage()
+    )
+    api = MagicMock()
+    api.get_positions.side_effect = RuntimeError("timeout")
+    tracker = MagicMock()
+
+    issues = tts.periodic_reconcile(api=api, tracker=tracker)
+    assert issues.get("api_error", 0) >= 1
+
+
+def test_periodic_reconcile_tracker_missing():
+    """exchange 有仓但 tracker 空 → bootstrap_from_exchange。"""
+    storage = _make_storage()
+    storage.get_open_positions.return_value = []
+    tts = TrendPositionTruthSync(symbol="ETHUSDT", storage_factory=lambda: storage)
+    api = MagicMock()
+    api.get_positions.return_value = [
+        {"symbol": "ETH/USDT:USDT", "side": "long", "size": 1.0, "entry_price": 2000.0},
+    ]
+    tracker = MagicMock()
+    tracker._positions = {}  # tracker empty
+
+    issues = tts.periodic_reconcile(api=api, tracker=tracker)
+    assert issues.get("bootstrap_from_exchange", 0) >= 1
+
+
+# ─── P4: list_open_projections ────────────────────────────────────────────
+
+
+def test_list_open_projections_basic():
+    """正常读取 open positions。"""
+    storage = _make_storage()
+    storage.get_open_positions.return_value = [
+        Position(
+            position_id="ETH:001",
+            symbol="ETHUSDT",
+            side=PositionSide.LONG,
+            entry_time=datetime(2026, 6, 14, tzinfo=timezone.utc),
+            entry_price=2000.0,
+            current_size=2.0,
+            initial_size=2.0,
+            status=PositionStatus.OPEN,
+            archetype="tpc",
+        ),
+    ]
+
+    rows = TrendPositionTruthSync.list_open_projections(storage, symbol="ETHUSDT")
+    assert len(rows) == 1
+    assert rows[0]["position_id"] == "ETH:001"
+    assert rows[0]["symbol"] == "ETHUSDT"
+    assert rows[0]["side"] == "long"
+    assert rows[0]["quantity"] == 2.0
+    assert rows[0]["scope"] == "trend"
+
+
+def test_list_open_projections_empty_storage():
+    """storage=None → 空列表。"""
+    rows = TrendPositionTruthSync.list_open_projections(None)
+    assert rows == []
+
+
+def test_list_open_projections_symbol_filter():
+    """symbol 过滤生效。"""
+    storage = _make_storage()
+    storage.get_open_positions.return_value = []
+
+    TrendPositionTruthSync.list_open_projections(storage, symbol="BTCUSDT")
+    storage.get_open_positions.assert_called_with("BTCUSDT")

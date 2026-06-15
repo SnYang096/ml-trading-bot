@@ -136,3 +136,23 @@ def test_reconciliation_buckets_are_stable_tuple() -> None:
     assert len(RECONCILIATION_ISSUE_BUCKETS) == len(
         UNRESOLVED_RECONCILIATION_ISSUES
     ) + len(SELF_HEALING_RECONCILIATION_ISSUES)
+
+
+def test_p3_trend_buckets_present() -> None:
+    """P3: Trend-specific buckets are in RECONCILIATION_ISSUE_BUCKETS."""
+    assert "bootstrap_from_exchange" in RECONCILIATION_ISSUE_BUCKETS
+    assert "duplicate_position_row_closed" in RECONCILIATION_ISSUE_BUCKETS
+    assert "sqlite_orphan_open" in RECONCILIATION_ISSUE_BUCKETS
+    assert "tracker_exchange_qty_mismatch" in RECONCILIATION_ISSUE_BUCKETS
+
+
+def test_p3_duplicate_position_row_closed_is_self_healing() -> None:
+    """P3: duplicate_position_row_closed is self-healing (does not flip ok=False)."""
+    assert "duplicate_position_row_closed" in SELF_HEALING_RECONCILIATION_ISSUES
+    assert reconciliation_ok_from_issues({"duplicate_position_row_closed": 5})
+
+
+def test_p3_sqlite_orphan_open_is_unresolved() -> None:
+    """P3: sqlite_orphan_open is unresolved (flips ok=False)."""
+    assert "sqlite_orphan_open" in UNRESOLVED_RECONCILIATION_ISSUES
+    assert not reconciliation_ok_from_issues({"sqlite_orphan_open": 1})

@@ -236,8 +236,13 @@ def _bootstrap_missing_position_trackers(
 ) -> int:
     """Auto-bootstrap PositionTracker from exchange when JSON snapshots are missing.
 
+    Uses ``TrendPositionTruthSync.bootstrap_position_from_exchange()`` which
+    prefers ``execution.yaml`` over conservative defaults.
+
     Returns count of successfully bootstrapped symbols.
     """
+    from src.order_management.trend_position_truth_sync import TrendPositionTruthSync
+
     if order_manager is None:
         return 0
     api = getattr(order_manager, "binance_api", None)
@@ -248,6 +253,10 @@ def _bootstrap_missing_position_trackers(
     except Exception as e:
         logger.warning("auto-bootstrap: 查询 Binance 持仓失败: %s", e)
         return 0
+
+    # Execution yaml path (env-configurable)
+    _exec_yaml_env = os.getenv("MLBOT_EXECUTION_YAML", "")
+    execution_yaml = Path(_exec_yaml_env) if _exec_yaml_env else None
 
     ex_by_symbol: dict[str, list] = {}
     for p in exchange_positions:
@@ -267,8 +276,16 @@ def _bootstrap_missing_position_trackers(
         if listener is None:
             continue
         tracker = getattr(listener, "_position_tracker", None)
-        if tracker is None or not hasattr(tracker, "bootstrap_from_exchange_position"):
+        if tracker is None:
             continue
+
+        # Per-symbol TTS instance
+        _storage = getattr(order_manager, "storage", None)
+        tts = TrendPositionTruthSync(
+            symbol=sym.upper(),
+            storage_factory=lambda s=_storage: s,
+        )
+
         for leg in legs:
             qty = abs(float(leg.get("size") or leg.get("contracts") or 0))
             if qty <= 0:
@@ -277,17 +294,48 @@ def _bootstrap_missing_position_trackers(
             entry = float(leg.get("entry_price") or 0.0)
             if entry <= 0:
                 continue
-            pid = tracker.bootstrap_from_exchange_position(
-                symbol=sym.upper(),
-                side=side,
-                entry_price=entry,
-                qty=qty,
-            )
-            if pid:
-                bootstrapped += 1
+
+            ccxt_sym = str(leg.get("symbol", ""))
+            state_path = getattr(tracker, "state_path", None)
+
+            try:
+                pid, pos_dict = TrendPositionTruthSync.bootstrap_position_from_exchange(
+                    symbol=sym.upper(),
+                    side=side,
+                    entry_price=entry,
+                    qty=qty,
+                    execution_yaml=execution_yaml,
+                    api=api,
+                    ccxt_symbol=ccxt_sym,
+                    state_path=state_path,
+                )
+            except Exception:
+                logger.warning(
+                    "auto-bootstrap: failed for %s side=%s",
+                    sym.upper(),
+                    side,
+                    exc_info=True,
+                )
+                continue
+
+            # Load into tracker memory + persist
+            if hasattr(tracker, "_positions"):
+                tracker._positions[pid] = pos_dict
+                if hasattr(tracker, "_persist_state"):
+                    tracker._persist_state()
+
+            # Project to SQLite via TTS
+            canonical = tts.project_to_sqlite(pid, pos_dict)
+            if hasattr(tracker, "_rekey_in_memory") and canonical != pid:
+                tracker._rekey_in_memory(pid, canonical, pos_dict)
+                if hasattr(tracker, "_persist_state"):
+                    tracker._persist_state()
+
+            bootstrapped += 1
+
     if bootstrapped:
         logger.warning(
-            "auto-bootstrap: 为 %d 个缺失快照的 symbol 从交易所重建了 PositionTracker",
+            "auto-bootstrap: 为 %d 个缺失快照的 symbol 从交易所重建了 PositionTracker (TTS unified)",
             bootstrapped,
         )
     return bootstrapped
@@ -1127,9 +1175,59 @@ async def _run_external_feature_bus_mode(
                 logger.warning("重训检测异常: %s", exc)
             await asyncio.sleep(6 * 3600)
 
+    async def _periodic_trend_reconcile() -> None:
+        """P3: Periodic position reconcile every 10 minutes."""
+        from src.order_management.trend_position_truth_sync import (
+            TrendPositionTruthSync,
+        )
+
+        await asyncio.sleep(60)  # startup delay
+        while True:
+            try:
+                om = getattr(manager, "order_manager", None)
+                api = getattr(om, "binance_api", None) if om else None
+                _storage = getattr(om, "storage", None) if om else None
+                if api is None:
+                    await asyncio.sleep(600)
+                    continue
+                # Execution yaml path (env-configurable)
+                _exec_yaml_env = os.getenv("MLBOT_EXECUTION_YAML", "")
+                _exec_yaml = Path(_exec_yaml_env) if _exec_yaml_env else None
+                for sym in symbols:
+                    try:
+                        listener = manager.get_listener(sym)
+                    except Exception:
+                        continue
+                    tracker = (
+                        getattr(listener, "_position_tracker", None)
+                        if listener
+                        else None
+                    )
+                    if tracker is None:
+                        continue
+                    tts = TrendPositionTruthSync(
+                        symbol=sym,
+                        storage_factory=lambda s=_storage: s,
+                    )
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(
+                        None,
+                        lambda t=tracker, a=api, ts=tts, ey=_exec_yaml: ts.periodic_reconcile(
+                            api=a,
+                            tracker=t,
+                            execution_yaml=ey,
+                        ),
+                    )
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.warning("periodic trend reconcile 异常: %s", exc)
+            await asyncio.sleep(600)  # 10 minutes
+
     market_task = asyncio.create_task(_periodic_market_update())
     funding_oi_task = asyncio.create_task(_daily_funding_oi_refresh())
     retrain_task = asyncio.create_task(_periodic_retrain_check())
+    trend_reconcile_task = asyncio.create_task(_periodic_trend_reconcile())
 
     terminal_backfill_task: Optional[asyncio.Task] = None
     om = getattr(manager, "order_manager", None)
@@ -1202,6 +1300,7 @@ async def _run_external_feature_bus_mode(
         market_task.cancel()
         funding_oi_task.cancel()
         retrain_task.cancel()
+        trend_reconcile_task.cancel()
         if terminal_backfill_task is not None:
             terminal_backfill_task.cancel()
         if bg_gap_task:

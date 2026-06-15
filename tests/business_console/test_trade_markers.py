@@ -125,7 +125,7 @@ def test_trend_markers_sql_pushdown_keeps_in_window_under_limit(trend_db):
             INSERT INTO positions VALUES (
                 ?, 'ETHUSDT', 'long',
                 '2020-01-01T00:00:00+00:00', '2020-01-01T01:00:00+00:00',
-                1.0, 1.1, 0.0, 'closed', 'tpc', NULL, NULL, 1.0
+                1.0, 1.1, 0.0, 'closed', 'tpc', NULL, NULL, 1.0, NULL
             )
             """,
             (f"old_{i}",),

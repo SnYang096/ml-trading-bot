@@ -19,11 +19,16 @@ RECONCILIATION_ISSUE_BUCKETS: tuple[str, ...] = (
     "position_mismatch",
     "api_error",
     "open_reconcile_updated",
+    # P3: Trend-specific buckets
+    "bootstrap_from_exchange",
+    "duplicate_position_row_closed",
+    "sqlite_orphan_open",
+    "tracker_exchange_qty_mismatch",
 )
 
 # Self-healing actions; do not alone flip reconciliation_ok to 0.
 SELF_HEALING_RECONCILIATION_ISSUES: frozenset[str] = frozenset(
-    {"open_reconcile_updated"}
+    {"open_reconcile_updated", "duplicate_position_row_closed"}
 )
 
 UNRESOLVED_RECONCILIATION_ISSUES: frozenset[str] = frozenset(

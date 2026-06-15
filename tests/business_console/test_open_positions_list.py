@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 import pytest
 
@@ -106,6 +107,45 @@ def test_open_positions_api(client, trend_db, bus_root) -> None:
     assert payload["meta"]["symbol"] == "ETHUSDT"
     rows = payload["data"]
     assert any(x["position_id"] == "p_api" and x["side"] == "short" for x in rows)
+
+
+# ── TTS projection (P4) ─────────────────────────────────────
+
+
+@patch("src.order_management.storage.Storage")
+def test_collect_open_positions_trend_empty_uses_projection_not_stale_sql(
+    mock_storage_cls,
+    trend_db,
+    spot_db,
+    multi_leg_db,
+    bus_root,
+) -> None:
+    """零持仓 projection 成功时返回 []，不应 fallback 到宽 SQL 捞 stale 行。"""
+    mock_storage_cls.return_value.get_open_positions.return_value = []
+    conn = sqlite3.connect(trend_db)
+    conn.execute(
+        """
+        INSERT INTO positions VALUES (
+            'p_stale', 'ETHUSDT', 'long',
+            '2024-01-02T10:00:00+00:00', NULL,
+            100.0, NULL, NULL, 'closed', 'tpc', 98.5, 106.0, 0.5, NULL
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    rows = collect_open_positions(
+        trend_db=trend_db,
+        spot_db=spot_db,
+        multi_leg_db=multi_leg_db,
+        symbol="ETHUSDT",
+        scopes=["trend"],
+        limit=50,
+        feature_bus_root=bus_root,
+    )
+    assert rows == []
+    mock_storage_cls.return_value.get_open_positions.assert_called()
 
 
 # ── Exchange cross-reference helpers ──────────────────────────

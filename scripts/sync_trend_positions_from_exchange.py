@@ -93,6 +93,7 @@ def _group_local(
 
 
 def _bootstrap_position_id(symbol: str) -> str:
+    # DEPRECATED (P2): prefer TrendPositionTruthSync._make_pid()
     base = symbol.removesuffix("USDT") if symbol.endswith("USDT") else symbol
     return f"{base}:exchange_sync_{int(datetime.now(timezone.utc).timestamp() * 1e6)}"
 
@@ -102,6 +103,7 @@ def _make_open_position(
     leg: Mapping[str, Any],
     strategy_id: str,
 ) -> Position:
+    # DEPRECATED (P2): prefer TrendPositionTruthSync.bootstrap_position_from_exchange()
     sym = str(leg["symbol"])
     side = PositionSide.LONG if leg["side"] == "long" else PositionSide.SHORT
     qty = float(leg["quantity"])
@@ -367,6 +369,106 @@ def _write_json_snapshots(
     )
 
 
+def disaster_recovery(
+    *,
+    api: BinanceAPI,
+    db_path: Path,
+    state_dir: Path,
+    execution_yaml: Path,
+    archetype: str = "tpc",
+    bar_minutes: int = 120,
+    dry_run: bool = True,
+) -> Dict[str, Any]:
+    """DR mode: rebuild all JSON + SQLite from exchange using TTS.on_restart()."""
+    storage = Storage(str(db_path))
+    exchange_positions = api.get_positions() or []
+
+    report: Dict[str, Any] = {
+        "mode": "disaster_recovery",
+        "dry_run": dry_run,
+        "exchange_legs": len(exchange_positions),
+        "bootstrapped": [],
+    }
+
+    for pos in exchange_positions:
+        raw_sym = _raw_symbol(str(pos.get("symbol") or ""))
+        if not raw_sym:
+            continue
+        qty = abs(float(pos.get("size") or pos.get("contracts") or 0))
+        if qty <= 0:
+            continue
+        side = "short" if str(pos.get("side", "")).lower() == "short" else "long"
+        entry = float(pos.get("entry_price") or 0.0)
+        if entry <= 0:
+            continue
+
+        ccxt_sym = str(pos.get("symbol", ""))
+        tts = TrendPositionTruthSync(
+            symbol=raw_sym,
+            storage_factory=lambda: storage,
+        )
+
+        state_path = state_dir / f"{raw_sym}.json"
+        exec_yaml = execution_yaml if execution_yaml.is_file() else None
+
+        if dry_run:
+            pid = TrendPositionTruthSync._make_pid(raw_sym)
+            report["bootstrapped"].append(
+                {
+                    "symbol": raw_sym,
+                    "side": side,
+                    "quantity": qty,
+                    "entry_price": entry,
+                    "position_id": pid,
+                    "dry_run": True,
+                }
+            )
+            logger.info(
+                "DR DRY RUN %s: pid=%s side=%s qty=%.6f entry=%.4f",
+                raw_sym,
+                pid,
+                side,
+                qty,
+                entry,
+            )
+            continue
+
+        pid, pos_dict = TrendPositionTruthSync.bootstrap_position_from_exchange(
+            symbol=raw_sym,
+            side=side,
+            entry_price=entry,
+            qty=qty,
+            execution_yaml=exec_yaml,
+            archetype=archetype,
+            bar_minutes=bar_minutes,
+            api=api,
+            ccxt_symbol=ccxt_sym,
+            state_path=state_path,
+        )
+        tts.project_to_sqlite(pid, pos_dict)
+        report["bootstrapped"].append(
+            {
+                "symbol": raw_sym,
+                "side": side,
+                "quantity": qty,
+                "entry_price": entry,
+                "position_id": pid,
+            }
+        )
+        logger.info(
+            "DR %s: pid=%s side=%s qty=%.6f entry=%.4f sl=%s",
+            raw_sym,
+            pid,
+            side,
+            qty,
+            entry,
+            pos_dict.get("stop_loss_price"),
+        )
+
+    report["summary"] = {"bootstrapped": len(report["bootstrapped"])}
+    return report
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     p = argparse.ArgumentParser(description=__doc__)
@@ -404,6 +506,11 @@ def main() -> None:
     p.add_argument("--bar-minutes", type=int, default=120)
     p.add_argument("--atr-pct", type=float, default=0.01)
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument(
+        "--disaster-recovery",
+        action="store_true",
+        help="DR mode: rebuild all JSON + SQLite from exchange via TTS.on_restart()",
+    )
     args = p.parse_args()
 
     api_key = os.getenv("BINANCE_API_KEY") or os.getenv("BINANCE_FUTURES_API_KEY", "")
@@ -414,24 +521,36 @@ def main() -> None:
         raise SystemExit("BINANCE_API_KEY / BINANCE_API_SECRET not set")
 
     api = BinanceAPI(api_key, api_secret, testnet=False)
-    report = sync_trend_positions(
-        api=api,
-        db_path=Path(args.db_path),
-        strategy_id=str(args.strategy_id).lower().strip(),
-        qty_tol_pct=float(args.qty_tol_pct),
-        dry_run=bool(args.dry_run),
-        close_stale=not bool(args.no_close_stale),
-    )
-    if args.write_json:
-        report["json_written"] = _write_json_snapshots(
+
+    if args.disaster_recovery:
+        report = disaster_recovery(
             api=api,
+            db_path=Path(args.db_path),
             state_dir=Path(args.state_dir),
             execution_yaml=Path(args.execution_yaml),
             archetype=str(args.archetype).lower().strip(),
             bar_minutes=int(args.bar_minutes),
-            atr_pct=float(args.atr_pct),
             dry_run=bool(args.dry_run),
         )
+    else:
+        report = sync_trend_positions(
+            api=api,
+            db_path=Path(args.db_path),
+            strategy_id=str(args.strategy_id).lower().strip(),
+            qty_tol_pct=float(args.qty_tol_pct),
+            dry_run=bool(args.dry_run),
+            close_stale=not bool(args.no_close_stale),
+        )
+        if args.write_json:
+            report["json_written"] = _write_json_snapshots(
+                api=api,
+                state_dir=Path(args.state_dir),
+                execution_yaml=Path(args.execution_yaml),
+                archetype=str(args.archetype).lower().strip(),
+                bar_minutes=int(args.bar_minutes),
+                atr_pct=float(args.atr_pct),
+                dry_run=bool(args.dry_run),
+            )
     print(json.dumps(report, indent=2, ensure_ascii=False))
 
 

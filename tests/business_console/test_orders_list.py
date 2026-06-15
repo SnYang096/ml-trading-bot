@@ -479,7 +479,7 @@ def test_collect_orders_open_trend_position_shows_unrealized_pnl(
         INSERT INTO positions VALUES (
             'p_open', 'ETHUSDT', 'long',
             '2026-05-19T08:00:00+00:00', NULL,
-            2100.0, NULL, NULL, 'open', 'tpc', 2095.0, NULL, 0.5
+            2100.0, NULL, NULL, 'open', 'tpc', 2095.0, NULL, 0.5, NULL
         )
         """
     )
@@ -524,7 +524,7 @@ def test_collect_orders_trend_stop_loss_pnl_when_realized_null(
         INSERT INTO positions VALUES (
             'p_sl', 'XRPUSDT', 'long',
             '2026-05-15T10:00:00+00:00', '2026-05-15T12:00:00+00:00',
-            2.50, 2.30, NULL, 'closed', 'tpc', 2.30, NULL, 0.0
+            2.50, 2.30, NULL, 'closed', 'tpc', 2.30, NULL, 0.0, NULL
         )
         """
     )

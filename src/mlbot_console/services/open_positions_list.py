@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -15,6 +16,8 @@ from mlbot_console.services.db import query_rows
 from mlbot_console.services.spot_pnl import compute_spot_order_pnl
 from mlbot_console.services.symbols import is_all_symbols
 from mlbot_console.services.trade_markers import _marker_id, _parse_ts
+
+logger = logging.getLogger(__name__)
 
 _OPEN_ORDER_STATUSES = frozenset(
     {"open", "new", "pending", "submitted", "partially_filled", "shadow"}
@@ -407,15 +410,59 @@ def collect_open_positions(
 
     merged: List[Dict[str, Any]] = []
     if "trend" in scope_set:
-        pending = _trend_pending_exit_counts(trend_db, sym_filter)
-        merged.extend(
-            _trend_open_rows(
-                trend_db,
-                symbol=sym_filter,
-                mark_prices=marks,
-                pending_exits=pending,
+        # P4: Try TTS list_open_projections first (read-only SQLite projection).
+        # Fallback to _trend_open_rows + dedup if TTS unavailable.
+        # Distinguish "successfully got []" (zero holdings) from "projection failed".
+        _projection_ok = False
+        try:
+            from src.order_management.storage import Storage
+            from src.order_management.trend_position_truth_sync import (
+                TrendPositionTruthSync,
             )
-        )
+            _storage = Storage(str(trend_db))
+            projection = TrendPositionTruthSync.list_open_projections(
+                _storage, symbol=sym_filter,
+            )
+            _projection_ok = True  # list_open_projections succeeded (even if [])
+            if projection:
+                pending = _trend_pending_exit_counts(trend_db, sym_filter)
+            for row in projection:
+                # Normalize entry_time to int timestamp (same as _trend_open_rows)
+                row["entry_time"] = _parse_ts(row.get("entry_time")) or 0
+                sym = str(row.get("symbol") or "")
+                mark = marks.get(sym)
+                if mark and mark > 0 and float(row.get("entry_price") or 0) > 0:
+                    qty = float(row.get("quantity") or 0)
+                    side = str(row.get("side") or "long")
+                    entry = float(row["entry_price"])
+                    if side == "long":
+                        row["unrealized_pnl_usdt"] = (mark - entry) * qty
+                    else:
+                        row["unrealized_pnl_usdt"] = (entry - mark) * qty
+                    row["mark_price"] = mark
+                pid = str(row.get("position_id") or "")
+                row["pending_exit_orders"] = int(pending.get(pid) or 0)
+                row["entry_marker_id"] = _marker_id(
+                    "trend", "positions", pid,
+                )
+            merged.extend(projection)
+            logger.debug(
+                "Used TTS projection for trend open positions (rows=%d)",
+                len(projection),
+            )
+        except Exception:
+            logger.warning("P4 TTS projection path failed, falling back", exc_info=True)
+
+        if not _projection_ok:
+            pending = _trend_pending_exit_counts(trend_db, sym_filter)
+            merged.extend(
+                _trend_open_rows(
+                    trend_db,
+                    symbol=sym_filter,
+                    mark_prices=marks,
+                    pending_exits=pending,
+                )
+            )
     if "spot" in scope_set:
         merged.extend(_spot_open_rows(spot_db, symbol=sym_filter, mark_prices=marks))
     if "multi_leg" in scope_set:
@@ -452,7 +499,9 @@ def collect_open_positions(
             merged = filtered
 
     # ── Deduplicate: same (scope, symbol, side) with identical qty → keep
-    #     most recent entry_time (fixes exchange-sync + bootstrap dupes). ──
+    #     most recent entry_time (fixes exchange-sync + bootstrap dupes).
+    #     P4 门禁: P1 唯一写入口 + P3 连续 3 日无 duplicate_position_row_closed > 0
+    #     满足后可删除此 dedup 逻辑。 ──
     dedup: Dict[tuple, Dict[str, Any]] = {}
     for row in merged:
         scope = str(row.get("scope") or "")
