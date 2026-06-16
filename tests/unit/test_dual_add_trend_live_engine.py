@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.order_management.grid_execution_adapter import GridExecutionResult
+from src.order_management.grid_execution_adapter import (
+    GridExecutionResult,
+    derive_multileg_client_order_id,
+)
 from src.order_management.multi_leg_reconciliation import (
     PositionMismatch,
     ReconciliationReport,
@@ -967,20 +970,19 @@ def test_ensure_protection_non_basket_mode_sl_and_tp(tmp_path: Path) -> None:
 
 
 def test_ensure_protection_dedup_by_client_order_id(tmp_path: Path) -> None:
-    """If the expected client_order_id already exists on exchange, skip."""
+    """If the deterministic client_order_id already exists on exchange, skip."""
     engine = _make_engine_with_position(tmp_path, protection_order_ids=[])
 
-    # The SL action's order_id is "long_0_sl" — the adapter would derive a
-    # client_order_id from it.  Simulate that ID existing on exchange.
-    # We don't know the exact hash, so instead test that when the
-    # order_id matches a clientOrderId on exchange, it's skipped.
+    # The SL action's order_id is "long_0_sl" — derive_multileg_client_order_id
+    # hashes it the same way MultiLegExecutionAdapter does.  Simulate the
+    # hashed clientOrderId existing on exchange.
     actions_no_dedup = engine.actions_ensure_protection(
         exchange_positions=[], exchange_orders=[]
     )
     assert len(actions_no_dedup) == 1
 
-    # Now put the expected order_id as a clientOrderId on exchange
-    expected_cid = actions_no_dedup[0]["order_id"]  # "long_0_sl"
+    # Compute the hashed client_order_id, put it on exchange, re-run
+    expected_cid = derive_multileg_client_order_id(actions_no_dedup[0])
     actions = engine.actions_ensure_protection(
         exchange_positions=[],
         exchange_orders=[

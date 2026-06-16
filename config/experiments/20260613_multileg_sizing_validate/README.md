@@ -43,3 +43,5 @@ results/multileg_joint/sizing_072_20260613_timeline/
 ├── timeline/{segment}/      # 每段 summary.json
 └── joint/summary.json       # 四段汇总
 ```
+
+**回测 vs 实盘对齐结论（2026-06-16）：** [BACKTEST_LIVE_ALIGNMENT_CN.md](./BACKTEST_LIVE_ALIGNMENT_CN.md)

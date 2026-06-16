@@ -26,7 +26,10 @@ from src.time_series_model.live.segment_lifecycle import (
     segment_occupies_slot,
 )
 from src.config.strategy_layout import resolve_strategy_config_input
-from src.order_management.grid_execution_adapter import GridExecutionResult
+from src.order_management.grid_execution_adapter import (
+    GridExecutionResult,
+    derive_multileg_client_order_id,
+)
 from src.order_management.multi_leg_reconciliation import (
     LocalOrderSnapshot,
     LocalPositionSnapshot,
@@ -741,10 +744,13 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
             # Generate fresh SL (and TP if not basket mode)
             new_actions = self._protection_actions(pos=pos, timestamp=ts)
             for action in new_actions:
-                expected_cid = str(action.get("order_id") or "")
                 # Skip if the deterministic client_order_id already exists
                 # on the exchange (idempotent re-place after restart).
-                if expected_cid and expected_cid in open_client_ids:
+                # Must hash the action the same way MultiLegExecutionAdapter
+                # does, via derive_multileg_client_order_id.  Matching on
+                # raw action["order_id"] against exchange clientOrderId is
+                # incorrect — exchange ids are sha1-derived.
+                if derive_multileg_client_order_id(action) in open_client_ids:
                     continue
                 actions.append(action)
 

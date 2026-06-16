@@ -407,10 +407,19 @@ def _multileg_open_rows(
             # Only apply this filter when the positions table has *active* open
             # legs; an empty active set (e.g. after engine restart wiped the
             # table) should fall back to order-based detection.
+            #
+            # trend_scalp (dual_add_trend) appends _fill{N} to position
+            # leg_ids while orders use the bare leg_id.  Accept a match
+            # when any active leg_id is the order leg_key prefixed with
+            # the _fill suffix.
             if (
                 positions_table_used
                 and active_leg_ids
                 and leg_key not in active_leg_ids
+                and not any(
+                    al.startswith(leg_key + "_fill")
+                    for al in active_leg_ids
+                )
             ):
                 continue
             entry_ts = _parse_ts(row.get("filled_at")) or _parse_ts(
