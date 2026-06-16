@@ -42,6 +42,7 @@ from src.order_management.multi_leg_risk_governor import (
     RiskCheckResult,
 )
 from src.order_management.execution_truth_sync import publish_reconciliation_metrics
+from src.monitoring.telegram import send_telegram_message
 
 logger = logging.getLogger(__name__)
 
@@ -309,6 +310,16 @@ class MultiLegLiveOrchestrator:
                     len(report.orphan_exchange_orders),
                     len(report.position_mismatches),
                 )
+        # ── Telegram alert for orphan positions (engine inventory empty
+        #     but exchange holds positions — CMS won't show them either) ──
+        if report.position_mismatches and not _call_snapshot(
+            self.engine, "local_position_snapshots"
+        ):
+            _notify_orphan_positions(
+                strategy=self.strategy_name,
+                symbol=self.symbol,
+                mismatches=report.position_mismatches,
+            )
         _call_optional(self.engine, "on_reconciliation_report", report)
         self._persist_reconciliation(report)
 
@@ -549,6 +560,35 @@ class MultiLegLiveOrchestrator:
                 active_leg_ids=active_leg_ids,
                 run_id=self.run_id,
             )
+
+
+def _notify_orphan_positions(
+    *,
+    strategy: str,
+    symbol: str,
+    mismatches: List[Any],
+) -> None:
+    """Send TG alert when exchange has positions the engine does not track."""
+    lines = [
+        "⚠️ 多腿孤儿仓位检测",
+        f"策略: {strategy or '?'}  |  币种: {symbol or '?'}",
+        "引擎库存为空，但交易所存在仓位（CMS 也无法显示）:",
+    ]
+    for m in mismatches[:5]:
+        sym = getattr(m, "symbol", "?")
+        side = getattr(m, "side", "?")
+        local = getattr(m, "local_quantity", 0)
+        ex = getattr(m, "exchange_quantity", 0)
+        lines.append(f"  {sym} {side}: 引擎={local}  交易所={ex}")
+    if len(mismatches) > 5:
+        lines.append(f"  ... 还有 {len(mismatches) - 5} 个")
+    lines.append("可能原因: 引擎崩溃/重启导致 DB 对账清空，或手动在交易所开仓")
+
+    send_telegram_message(
+        "\n".join(lines),
+        stamp_key=f"hedge:orphan:{symbol or 'ALL'}",
+        cooldown_sec=900,  # 15 min cooldown to avoid spam on restart loops
+    )
 
 
 def _call_optional(target: object, method_name: str, arg: object) -> None:
