@@ -459,6 +459,7 @@ class MultiLegExecutionAdapter:
                 price=price,
                 client_order_id=client_order_id,
                 time_in_force=time_in_force,
+                post_only=bool(action.get("post_only")),
             )
         except Exception as exc:
             if _is_invalid_order_size_error(exc):
@@ -828,6 +829,7 @@ class MultiLegExecutionAdapter:
                     "purpose": purpose,
                     "local_order_id": action.get("order_id"),
                     "leg_id": action.get("leg_id") or action.get("order_id"),
+                    "maker_exit": bool(action.get("maker_exit")),
                 },
             )
             self._persist_order_result(action, result, purpose=purpose)
@@ -954,6 +956,7 @@ class MultiLegExecutionAdapter:
                 "purpose": purpose,
                 "local_order_id": action.get("order_id"),
                 "leg_id": action.get("leg_id") or action.get("order_id"),
+                "maker_exit": bool(action.get("maker_exit")),
             },
         )
         self._persist_order_result(action, result, purpose=purpose)

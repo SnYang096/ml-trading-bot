@@ -417,3 +417,24 @@ class TestMakerTakerFeeModel:
         # taker trigger: 0.1 * 50500 * 5bps = 2.525, attributed to reduce_taker
         assert api.fee_breakdown["reduce_taker"] == pytest.approx(2.525)
         assert api.fee_breakdown["reduce_maker"] == 0.0
+
+    def test_post_only_entry_limit_is_maker(self) -> None:
+        api = MockBinanceAPI(
+            initial_wallet_usdt=100_000.0, maker_fee_bps=2.0, taker_fee_bps=5.0
+        )
+        api.set_price("BTCUSDT", 50_000.0)
+        # Passive post-only entry BUY LIMIT at the touch (maker entry).
+        api.place_order(
+            "BTCUSDT",
+            "BUY",
+            "limit",
+            0.1,
+            price=50_000.0,
+            position_side="LONG",
+            post_only=True,
+        )
+        fills = api.match_pending_orders("BTCUSDT", high=50_100.0, low=49_900.0)
+        assert len(fills) == 1
+        # maker: 0.1 * 50000 * 2bps = 1.0, attributed to open_maker
+        assert api.fee_breakdown["open_maker"] == pytest.approx(1.0)
+        assert api.fee_breakdown["open_taker"] == 0.0

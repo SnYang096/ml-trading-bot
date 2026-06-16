@@ -425,4 +425,29 @@ export interface AccountReconciliationAll {
     totals?: Record<string, number | null>;
     fetched_at?: string;
   };
+  realized?: AccountRealizedReconciliation;
+}
+
+export interface AccountRealizedReconciliation {
+  ok?: boolean;
+  scope?: string;
+  lookback_days?: number;
+  issues?: AccountReconIssue[];
+  exchange?: {
+    realized_pnl?: number;
+    commission?: number;
+    funding_fee?: number;
+    net_income?: number;
+    record_count?: number;
+    by_symbol?: Record<string, {
+      realized_pnl?: number;
+      commission?: number;
+      funding_fee?: number;
+    }>;
+    fetched_at?: string;
+  };
+  local?: {
+    realized_pnl?: number;
+    commission?: number;
+  };
 }

@@ -573,7 +573,9 @@ class MultiLegLiveOrchestrator:
         if not phantom_leg_ids:
             return
         phantom_set = set(phantom_leg_ids)
-        inventory = list(getattr(getattr(self.engine, "state", None), "inventory", []) or [])
+        inventory = list(
+            getattr(getattr(self.engine, "state", None), "inventory", []) or []
+        )
         cancel_actions: List[Dict[str, Any]] = []
         for pos in inventory:
             lid = str(getattr(pos, "leg_id", "") or "")
@@ -583,22 +585,27 @@ class MultiLegLiveOrchestrator:
                 oid_s = str(oid).strip()
                 if not oid_s:
                     continue
-                cancel_actions.append({
-                    "action": "cancel_protection",
-                    "order_id": oid_s,
-                    "exchange_order_id": oid_s,
-                    "symbol": getattr(pos, "symbol", self.symbol) or self.symbol,
-                    "leg_id": lid,
-                    "reason": "phantom_cleanup",
-                    "timestamp": time.time(),
-                })
+                cancel_actions.append(
+                    {
+                        "action": "cancel_protection",
+                        "order_id": oid_s,
+                        "exchange_order_id": oid_s,
+                        "symbol": getattr(pos, "symbol", self.symbol) or self.symbol,
+                        "leg_id": lid,
+                        "reason": "phantom_cleanup",
+                        "timestamp": time.time(),
+                    }
+                )
         if not cancel_actions:
             return
         kind = "shadow" if getattr(self.adapter, "shadow", False) else "live"
         logger.info(
             "phantom cleanup: cancelling %d exchange protection orders (%s) "
             "for strategy=%s legs=%s",
-            len(cancel_actions), kind, self.strategy_name, phantom_leg_ids,
+            len(cancel_actions),
+            kind,
+            self.strategy_name,
+            phantom_leg_ids,
         )
         try:
             self.adapter.execute_actions(cancel_actions)
@@ -606,7 +613,8 @@ class MultiLegLiveOrchestrator:
             logger.exception(
                 "phantom cleanup: exchange cancel_protection failed "
                 "(orders may remain orphaned) — strategy=%s legs=%s",
-                self.strategy_name, phantom_leg_ids,
+                self.strategy_name,
+                phantom_leg_ids,
             )
 
     def _sync_phantom_positions(

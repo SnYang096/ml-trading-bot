@@ -1,4 +1,8 @@
-"""Reconcile local PnL books vs exchange equity / unrealized (A/B/C scopes)."""
+"""Reconcile local PnL books vs exchange equity / unrealized / realized (A/B/C scopes).
+
+Extended to compare local DB realized PnL against Binance income history
+(REALIZED_PNL + COMMISSION + FUNDING_FEE) for each futures scope.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
 from mlbot_console.services.account_summary import build_account_summary
+from mlbot_console.services.exchange_income import fetch_scope_income
 from mlbot_console.services.symbols import is_all_symbols
 
 logger = logging.getLogger(__name__)
@@ -268,7 +273,9 @@ def reconcile_pnl_vs_exchange(
 
     totals = summary.get("totals") or {}
     ledger_totals = ledger.get("totals") or {}
-    local_u_sum = sum(float(s.get("local", {}).get("unrealized_pnl") or 0) for s in per_scope.values())
+    local_u_sum = sum(
+        float(s.get("local", {}).get("unrealized_pnl") or 0) for s in per_scope.values()
+    )
     ex_u_sum = float(ledger_totals.get("exchange_unrealized_pnl_usdt") or 0.0)
     global_delta = ex_u_sum - local_u_sum
     global_tol = _tol_usdt(
@@ -323,4 +330,165 @@ def reconcile_pnl_vs_exchange(
             "global_unrealized_delta": global_delta,
         },
         "fetched_at": ledger.get("fetched_at"),
+    }
+
+
+def reconcile_realized_pnl(
+    *,
+    scope: str,
+    local_realized_pnl: float,
+    local_commission: float = 0.0,
+    symbol: str = "*",
+    start_time_ms: Optional[int] = None,
+    end_time_ms: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Compare local DB realized PnL against Binance income history.
+
+    The Binance ``/fapi/v1/income`` endpoint returns every income event:
+    REALIZED_PNL (trade P&L), COMMISSION (fees), and FUNDING_FEE (funding).
+    The "net income" from the exchange is::
+
+        exchange_net = REALIZED_PNL + COMMISSION + FUNDING_FEE
+
+    The local DB computes PnL from entry/exit ``average_price`` pairs, which
+    does **not** subtract commissions or include funding.  So the expected
+    relationship is::
+
+        local_realized_pnl ≈ exchange_realized_pnl
+
+    Any significant gap may indicate:
+    - Phantom positions inflating local PnL
+    - Missed fill reports
+    - Price rounding differences
+    - Commission not being tracked locally
+
+    Returns a dict with ``ok``, ``issues``, ``exchange``, and ``local`` keys.
+    """
+    issues: List[Dict[str, Any]] = []
+
+    try:
+        income = fetch_scope_income(
+            scope,
+            symbol=symbol,
+            start_time_ms=start_time_ms,
+            end_time_ms=end_time_ms,
+        )
+    except Exception as exc:
+        logger.warning(
+            "reconcile_realized_pnl: fetch failed for scope=%s: %s", scope, exc
+        )
+        return {
+            "ok": False,
+            "scope": scope,
+            "issues": [
+                _issue(
+                    kind="income_fetch_failed",
+                    scope=scope,
+                    message=f"交易所收入流水获取失败: {exc}",
+                )
+            ],
+            "exchange": {},
+            "local": {
+                "realized_pnl": local_realized_pnl,
+                "commission": local_commission,
+            },
+        }
+
+    if not income.get("available"):
+        return {
+            "ok": False,
+            "scope": scope,
+            "issues": [
+                _issue(
+                    kind="income_unavailable",
+                    scope=scope,
+                    message=f"交易所收入流水不可用: {income.get('error', 'unknown')}",
+                )
+            ],
+            "exchange": income.get("total", {}),
+            "local": {
+                "realized_pnl": local_realized_pnl,
+                "commission": local_commission,
+            },
+        }
+
+    ex_total = income.get("total", {})
+    ex_realized = float(ex_total.get("realized_pnl", 0.0))
+    ex_commission = float(ex_total.get("commission", 0.0))
+    ex_funding = float(ex_total.get("funding_fee", 0.0))
+    ex_net = float(ex_total.get("net_income", 0.0))
+
+    # Compare local realized PnL vs exchange realized PnL
+    # Local PnL = sum of (exit_price - entry_price) * qty, no commission
+    # Exchange PnL = sum of REALIZED_PNL income events (net of nothing, commission is separate)
+    delta_realized = local_realized_pnl - ex_realized
+    tol_realized = max(5.0, abs(ex_realized) * 0.02)  # 2% tolerance, floor 5 USDT
+
+    if abs(delta_realized) > tol_realized:
+        issues.append(
+            _issue(
+                kind="realized_pnl_mismatch",
+                scope=scope,
+                message=(
+                    f"已实现盈亏: 本地 {local_realized_pnl:+.2f} vs 交易所 {ex_realized:+.2f} "
+                    f"(Δ={delta_realized:+.2f}, tol={tol_realized:.2f})"
+                ),
+                local_realized_pnl=local_realized_pnl,
+                exchange_realized_pnl=ex_realized,
+                delta=delta_realized,
+                tolerance_usdt=tol_realized,
+            )
+        )
+
+    # Compare local commission vs exchange commission
+    # The local DB has a commission field per order but PnL doesn't subtract it
+    delta_commission = local_commission - ex_commission
+    if abs(ex_commission) > 1.0 and abs(delta_commission) > max(
+        2.0, abs(ex_commission) * 0.1
+    ):
+        issues.append(
+            _issue(
+                kind="commission_mismatch",
+                scope=scope,
+                message=(
+                    f"手续费: 本地 {local_commission:+.2f} vs 交易所 {ex_commission:+.2f} "
+                    f"(Δ={delta_commission:+.2f})"
+                ),
+                local_commission=local_commission,
+                exchange_commission=ex_commission,
+                delta=delta_commission,
+            )
+        )
+
+    # Check if funding fees are significant (informational)
+    if abs(ex_funding) > 10.0:
+        issues.append(
+            _issue(
+                kind="funding_fee_significant",
+                scope=scope,
+                message=(
+                    f"资金费率费用累计 {ex_funding:+.2f} USDT（交易所），"
+                    "本地 PnL 未纳入此项"
+                ),
+                exchange_funding_fee=ex_funding,
+            )
+        )
+
+    return {
+        "ok": len(issues) == 0,
+        "scope": scope,
+        "issues": issues,
+        "exchange": {
+            "realized_pnl": ex_realized,
+            "commission": ex_commission,
+            "funding_fee": ex_funding,
+            "net_income": ex_net,
+            "record_count": income.get("record_count", 0),
+            "by_symbol": income.get("by_symbol", {}),
+            "fetched_at": income.get("fetched_at"),
+        },
+        "local": {
+            "realized_pnl": local_realized_pnl,
+            "commission": local_commission,
+        },
     }

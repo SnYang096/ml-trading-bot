@@ -276,10 +276,13 @@ class MockBinanceAPI:
             if fill_price is not None:
                 qty = order["quantity"]
                 pside = order["position_side"]
-                # Maker only for a passive resting reduce-only LIMIT (the
-                # maker-first TP close).  Marketable/IOC entry limits and
-                # STOP/TP-market triggers cross the book → taker.
-                is_maker = otype == "limit" and bool(order.get("reduce_only"))
+                # Maker for any passive resting LIMIT: explicit post_only
+                # (maker entries / exits) or a reduce-only LIMIT (chop TP).
+                # Marketable/IOC entry limits and STOP/TP-market triggers
+                # cross the book → taker.
+                is_maker = bool(order.get("post_only")) or (
+                    otype == "limit" and bool(order.get("reduce_only"))
+                )
                 if order["reduce_only"]:
                     pos = self._hedge_positions.get(self._pos_key(symbol, pside))
                     if pos and float(pos.get("qty", 0)) > 0:
@@ -373,6 +376,7 @@ class MockBinanceAPI:
                 "reduce_only": bool(reduce_only or close_position),
                 "close_position": bool(close_position),
                 "position_side": pside,
+                "post_only": bool(post_only),
                 "created_at": datetime.now().timestamp(),
             }
             self._pending_orders.append(pending)

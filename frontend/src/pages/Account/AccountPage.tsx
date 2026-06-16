@@ -1,23 +1,24 @@
-import { useQuery } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router-dom';
-import { useState } from 'react';
 import { apiGet } from '@/api/client.ts';
 import type { AccountReconciliationAll, AccountSummary, SymbolRow } from '@/api/types.ts';
 import { fmtPnl, isAllSymbols, pnlClass, resolveConsoleSymbol, setSymbol, SYMBOL_ALL } from '@/lib/shell.ts';
+import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import styles from './AccountPage.module.css';
 import {
-  DailyPnlChart,
-  EquityCurveChart,
   AccountEquityChart,
-  fmtUsdt,
-  KpiCard,
-  ReconciliationPanels,
   AccountHierarchyTable,
   AccountRiskStrip,
+  DailyPnlChart,
+  EquityCurveChart,
+  fmtUsdt,
+  KpiCard,
   MarginBreakdownPanel,
+  RealizedReconPanel,
+  ReconciliationPanels,
   SpotHoldingsPanel,
   WeeklyPnlChart,
 } from './accountViews.tsx';
-import styles from './AccountPage.module.css';
 
 export function AccountPage() {
   const [searchParams] = useSearchParams();
@@ -266,6 +267,14 @@ export function AccountPage() {
             <ReconciliationPanels recon={recon} />
           </>
         )}
+
+        <header style={{ marginTop: 32 }}>
+          <h2>已实现盈亏对账</h2>
+          <p className={`muted ${styles.sectionNote}`}>
+            比对本地 DB 已实现盈亏与币安实际收入流水 (REALIZED_PNL + COMMISSION + FUNDING_FEE)。
+          </p>
+        </header>
+        <RealizedReconPanel data={recon?.realized} loading={reconQuery.isFetching} error={reconQuery.isError ? String(reconQuery.error) : undefined} />
       </section>
 
       <p className="status-line">

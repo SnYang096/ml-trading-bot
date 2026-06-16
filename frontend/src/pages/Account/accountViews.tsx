@@ -1,5 +1,6 @@
 import type {
   AccountCurves,
+  AccountRealizedReconciliation,
   AccountReconciliationAll,
   AccountReconIssue,
   AccountScopeBlock,
@@ -532,36 +533,36 @@ export function AccountHierarchyTable({
                 </tr>
                 {isOpen
                   ? childRows.map((st) => {
-                      const inactive =
-                        (st.realized_pnl ?? 0) === 0 &&
-                        (st.unrealized_pnl ?? 0) === 0 &&
-                        (st.closed_trades ?? 0) === 0 &&
-                        (st.open_positions ?? 0) === 0;
-                      const title = st.strategy_title || st.strategy || dash;
-                      return (
-                        <tr
-                          key={`${scopeKey}-${st.strategy}`}
-                          className={`${styles.strategyRow} ${inactive ? 'muted' : ''}`}
-                        >
-                          <td>
-                            <div className={styles.strategyNameCell}>{title}</div>
-                          </td>
-                          <td className={styles.inheritedDash}>{dash}</td>
-                          <td className={styles.inheritedDash}>{dash}</td>
-                          <td className={styles.inheritedDash}>{dash}</td>
-                          <td className={styles.inheritedDash}>{dash}</td>
-                          <td className={styles.inheritedDash}>{dash}</td>
-                          {symbolScoped ? <td className={styles.inheritedDash}>{dash}</td> : null}
-                          <td className={styles.inheritedDash}>{dash}</td>
-                          <td className={pnlClass(st.realized_pnl)}>{fmtPnl(st.realized_pnl)}</td>
-                          <td className={pnlClass(st.unrealized_pnl)}>
-                            {fmtPnl(st.unrealized_pnl)}
-                          </td>
-                          <td>{String(st.closed_trades ?? 0)}</td>
-                          <td>{String(st.open_positions ?? 0)}</td>
-                        </tr>
-                      );
-                    })
+                    const inactive =
+                      (st.realized_pnl ?? 0) === 0 &&
+                      (st.unrealized_pnl ?? 0) === 0 &&
+                      (st.closed_trades ?? 0) === 0 &&
+                      (st.open_positions ?? 0) === 0;
+                    const title = st.strategy_title || st.strategy || dash;
+                    return (
+                      <tr
+                        key={`${scopeKey}-${st.strategy}`}
+                        className={`${styles.strategyRow} ${inactive ? 'muted' : ''}`}
+                      >
+                        <td>
+                          <div className={styles.strategyNameCell}>{title}</div>
+                        </td>
+                        <td className={styles.inheritedDash}>{dash}</td>
+                        <td className={styles.inheritedDash}>{dash}</td>
+                        <td className={styles.inheritedDash}>{dash}</td>
+                        <td className={styles.inheritedDash}>{dash}</td>
+                        <td className={styles.inheritedDash}>{dash}</td>
+                        {symbolScoped ? <td className={styles.inheritedDash}>{dash}</td> : null}
+                        <td className={styles.inheritedDash}>{dash}</td>
+                        <td className={pnlClass(st.realized_pnl)}>{fmtPnl(st.realized_pnl)}</td>
+                        <td className={pnlClass(st.unrealized_pnl)}>
+                          {fmtPnl(st.unrealized_pnl)}
+                        </td>
+                        <td>{String(st.closed_trades ?? 0)}</td>
+                        <td>{String(st.open_positions ?? 0)}</td>
+                      </tr>
+                    );
+                  })
                   : null}
               </Fragment>
             );
@@ -1086,5 +1087,161 @@ export function ReconciliationPanels({ recon }: { recon: AccountReconciliationAl
         );
       })}
     </div>
+  );
+}
+
+
+function fmtIncome(v: number | undefined | null): string {
+  if (v == null) return '—';
+  return v >= 0 ? `+${v.toFixed(2)}` : v.toFixed(2);
+}
+
+
+/** Panel showing realized PnL reconciliation: local DB vs Binance income history. */
+export function RealizedReconPanel({
+  data,
+  loading,
+  error,
+}: {
+  data?: AccountRealizedReconciliation;
+  loading?: boolean;
+  error?: string;
+}) {
+  if (loading) return <p className="muted">加载已实现盈亏对账…</p>;
+  if (error) return <p className="pnl-neg">对账加载失败：{error}</p>;
+  if (!data) return null;
+
+  const ex = data.exchange || {};
+  const lo = data.local || {};
+  const issues = data.issues || [];
+
+  const delta = (lo.realized_pnl ?? 0) - (ex.realized_pnl ?? 0);
+
+  return (
+    <section className={`panel ${styles.reconPanel}`}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+        <h3 style={{ margin: 0 }}>
+          Multi-leg 已实现盈亏对账
+          {data.ok ? null : (
+            <span className={`pnl-neg ${styles.reconWarn}`}>(⚠ {issues.length} 项差异)</span>
+          )}
+        </h3>
+        <span className="muted" style={{ fontSize: '0.8rem' }}>
+          回看 {data.lookback_days ?? 90} 天 · 交易所流水 {ex.record_count ?? 0} 条
+        </span>
+      </div>
+
+      {/* Summary KPIs */}
+      <div className={styles.kpiRow} style={{ marginBottom: 12 }}>
+        <KpiCard
+          label="本地已实现"
+          value={`${fmtPnl(lo.realized_pnl)} USDT`}
+          hint="本地 DB 计算"
+          valueClass={pnlClass(lo.realized_pnl)}
+        />
+        <KpiCard
+          label="交易所REALIZED_PNL"
+          value={`${fmtIncome(ex.realized_pnl)} USDT`}
+          hint="币安收入流水"
+          valueClass={pnlClass(ex.realized_pnl)}
+        />
+        <KpiCard
+          label="手续费(交易所)"
+          value={`${fmtIncome(ex.commission)} USDT`}
+          hint="COMMISSION"
+        />
+        <KpiCard
+          label="资金费率"
+          value={`${fmtIncome(ex.funding_fee)} USDT`}
+          hint="FUNDING_FEE"
+        />
+      </div>
+
+      {/* Delta summary */}
+      <div className={styles.kpiRow} style={{ marginBottom: 12 }}>
+        <KpiCard
+          label="本地vs交易所 REALIZED_PNL"
+          value={`${fmtPnl(delta)} USDT`}
+          hint="差额"
+          valueClass={pnlClass(delta)}
+        />
+        <KpiCard
+          label="交易所净收入"
+          value={`${fmtIncome(ex.net_income)} USDT`}
+          hint="PNL+Commission+Funding"
+          valueClass={pnlClass(ex.net_income)}
+        />
+      </div>
+
+      {/* Issues table */}
+      {issues.length > 0 && (
+        <div className={styles.tableWrap}>
+          <table className={`${styles.table} ${styles.reconTable}`}>
+            <thead>
+              <tr>
+                <th>类型</th>
+                <th>详情</th>
+              </tr>
+            </thead>
+            <tbody>
+              {issues.map((iss, idx) => (
+                <tr key={idx}>
+                  <td><code>{iss.kind}</code></td>
+                  <td>{iss.message}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Per-symbol breakdown from exchange */}
+      {ex.by_symbol && Object.keys(ex.by_symbol).length > 0 && (
+        <details style={{ marginTop: 12 }}>
+          <summary style={{ cursor: 'pointer', fontSize: '0.9rem', color: 'var(--muted)' }}>
+            交易所按品种明细 ({Object.keys(ex.by_symbol).length} 个品种)
+          </summary>
+          <div className={styles.tableWrap} style={{ marginTop: 8 }}>
+            <table className={`${styles.table} ${styles.reconTable}`}>
+              <thead>
+                <tr>
+                  <th>品种</th>
+                  <th>REALIZED_PNL</th>
+                  <th>COMMISSION</th>
+                  <th>FUNDING_FEE</th>
+                  <th>净收入</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(ex.by_symbol)
+                  .sort((a, b) => {
+                    const aNet = (a[1].realized_pnl ?? 0) + (a[1].commission ?? 0) + (a[1].funding_fee ?? 0);
+                    const bNet = (b[1].realized_pnl ?? 0) + (b[1].commission ?? 0) + (b[1].funding_fee ?? 0);
+                    return bNet - aNet;
+                  })
+                  .map(([sym, v]) => {
+                    const net = (v.realized_pnl ?? 0) + (v.commission ?? 0) + (v.funding_fee ?? 0);
+                    return (
+                      <tr key={sym}>
+                        <td>{sym}</td>
+                        <td className={pnlClass(v.realized_pnl)}>{fmtIncome(v.realized_pnl)}</td>
+                        <td>{fmtIncome(v.commission)}</td>
+                        <td>{fmtIncome(v.funding_fee)}</td>
+                        <td className={pnlClass(net)}>{fmtIncome(net)}</td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      )}
+
+      {ex.fetched_at ? (
+        <p className="muted" style={{ marginTop: 8, fontSize: '0.8rem' }}>
+          数据获取时间: {ex.fetched_at}
+        </p>
+      ) : null}
+    </section>
   );
 }

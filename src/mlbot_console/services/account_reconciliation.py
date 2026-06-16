@@ -15,7 +15,9 @@ from mlbot_console.services.symbols import is_all_symbols
 logger = logging.getLogger(__name__)
 
 
-def _spot_tracked_assets(spot_db: Optional[Path], spot_ledger_db: Optional[Path]) -> Set[str]:
+def _spot_tracked_assets(
+    spot_db: Optional[Path], spot_ledger_db: Optional[Path]
+) -> Set[str]:
     """Assets the spot strategy ledger / orders care about (not full wallet)."""
     assets: Set[str] = set()
     if spot_ledger_db and spot_ledger_db.is_file():
@@ -102,7 +104,7 @@ def reconcile_account(
     symbol: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Reconcile exchange state with local state for a given scope."""
-    
+
     # Fetch exchange state
     exchange = fetch_scope_exchange_balance(
         scope, mark_prices=mark_prices, symbol=symbol
@@ -116,10 +118,10 @@ def reconcile_account(
             "exchange_snapshot": exchange,
             "local_snapshot": {},
         }
-        
+
     issues = []
     local_snapshot = {}
-    
+
     if scope == "spot":
         from mlbot_console.services.spot_ledger_book import fetch_spot_ledger_holdings
 
@@ -139,14 +141,19 @@ def reconcile_account(
         if sym and not is_all_symbols(sym) and sym.endswith("USDT"):
             base = sym[:-4]
             if base:
-                compare_assets = {base} if not compare_assets else compare_assets & {base}
+                compare_assets = (
+                    {base} if not compare_assets else compare_assets & {base}
+                )
 
         for asset in compare_assets:
             ex_h = exchange_holdings.get(asset) or {"qty": 0.0, "value_usdt": 0.0}
             loc_h = local_holdings.get(asset) or {"qty": 0.0, "value_usdt": 0.0}
 
             qty_diff = float(ex_h.get("qty") or 0) - float(loc_h.get("qty") or 0)
-            tol = max(1e-6, max(float(ex_h.get("qty") or 0), float(loc_h.get("qty") or 0)) * 0.001)
+            tol = max(
+                1e-6,
+                max(float(ex_h.get("qty") or 0), float(loc_h.get("qty") or 0)) * 0.001,
+            )
 
             if abs(qty_diff) > tol:
                 issues.append(
@@ -188,7 +195,9 @@ def reconcile_account(
                 """,
             )
             if not rows:
-                local_snapshot = {"note": "尚无引擎对账快照（multi_leg 进程运行后会写入）"}
+                local_snapshot = {
+                    "note": "尚无引擎对账快照（multi_leg 进程运行后会写入）"
+                }
             else:
                 row = rows[0]
                 local_snapshot = {
@@ -241,7 +250,7 @@ def reconcile_account(
                         "Failed to parse multi_leg_reconciliation_snapshots: %s", exc
                     )
                     local_snapshot["parse_error"] = str(exc)
-                    
+
     elif scope == "trend":
         local_positions = _local_trend_open_positions(
             Path(str(trend_db)) if trend_db else None,
@@ -310,10 +319,14 @@ def reconcile_all_accounts(
     symbol: str = "*",
     lookback_days: int = 0,
 ) -> Dict[str, Any]:
-    """Run engine reconciliation (spot/multi_leg) + PnL vs exchange for A/B/C."""
+    """Run engine reconciliation (spot/multi_leg) + PnL vs exchange + realized PnL for A/B/C."""
+    import time
+
     from mlbot_console.services.account_pnl_reconciliation import (
         reconcile_pnl_vs_exchange,
+        reconcile_realized_pnl,
     )
+    from mlbot_console.services.account_summary import build_account_summary
 
     engine_by_scope: Dict[str, Any] = {}
     engine_issues: List[Dict[str, Any]] = []
@@ -334,22 +347,95 @@ def reconcile_all_accounts(
     pnl = reconcile_pnl_vs_exchange(
         trend_db=Path(str(trend_db)) if trend_db else Path("/dev/null"),
         spot_db=Path(str(spot_db)) if spot_db else Path("/dev/null"),
-        spot_ledger_db=Path(str(spot_ledger_db)) if spot_ledger_db else Path("/dev/null"),
+        spot_ledger_db=(
+            Path(str(spot_ledger_db)) if spot_ledger_db else Path("/dev/null")
+        ),
         multi_leg_db=Path(str(multi_leg_db)) if multi_leg_db else Path("/dev/null"),
-        feature_bus_root=Path(str(feature_bus_root)) if feature_bus_root else Path("/dev/null"),
+        feature_bus_root=(
+            Path(str(feature_bus_root)) if feature_bus_root else Path("/dev/null")
+        ),
         symbol=symbol,
         lookback_days=lookback_days,
     )
     pnl_issues = [{**i, "layer": "pnl"} for i in (pnl.get("issues") or [])]
 
-    all_issues = engine_issues + pnl_issues
+    # Realized PnL reconciliation for multi_leg scope
+    now_ms = int(time.time() * 1000)
+    effective_lookback = lookback_days if lookback_days > 0 else 90
+    start_ms = now_ms - effective_lookback * 86_400_000
+
+    realized_recon: Dict[str, Any] = {"ok": True, "scope": "multi_leg", "issues": []}
+    try:
+        summary = build_account_summary(
+            trend_db=Path(str(trend_db)) if trend_db else Path("/dev/null"),
+            spot_db=Path(str(spot_db)) if spot_db else Path("/dev/null"),
+            spot_ledger_db=(
+                Path(str(spot_ledger_db)) if spot_ledger_db else Path("/dev/null")
+            ),
+            multi_leg_db=Path(str(multi_leg_db)) if multi_leg_db else Path("/dev/null"),
+            feature_bus_root=(
+                Path(str(feature_bus_root)) if feature_bus_root else Path("/dev/null")
+            ),
+            symbol="*",
+            lookback_days=lookback_days,
+        )
+        local_realized = 0.0
+        for s in summary.get("scopes") or []:
+            if str(s.get("scope")) == "multi_leg":
+                local_realized = float(s.get("realized_pnl") or 0.0)
+                break
+
+        local_commission = 0.0
+        if multi_leg_db:
+            from mlbot_console.services.db import query_rows as _qr
+
+            rows = _qr(
+                Path(str(multi_leg_db)),
+                "SELECT COALESCE(SUM(commission), 0) as total_commission "
+                "FROM multi_leg_orders "
+                "WHERE status IN ('FILLED', 'PARTIALLY_FILLED') "
+                "AND error_message IS DISTINCT FROM 'bug' "
+                "AND filled_at >= datetime('now', ?)",
+                (f"-{effective_lookback} days",),
+            )
+            if rows:
+                local_commission = abs(float(rows[0].get("total_commission") or 0.0))
+
+        realized_recon = reconcile_realized_pnl(
+            scope="multi_leg",
+            local_realized_pnl=local_realized,
+            local_commission=local_commission,
+            symbol="*",
+            start_time_ms=start_ms,
+            end_time_ms=now_ms,
+        )
+    except Exception as exc:
+        logger.warning("reconcile_all_accounts: realized recon failed: %s", exc)
+        realized_recon = {
+            "ok": False,
+            "scope": "multi_leg",
+            "issues": [
+                {
+                    "kind": "realized_recon_error",
+                    "scope": "multi_leg",
+                    "message": str(exc),
+                }
+            ],
+        }
+
+    realized_issues = [
+        {**i, "layer": "realized"} for i in (realized_recon.get("issues") or [])
+    ]
+
+    all_issues = engine_issues + pnl_issues + realized_issues
     ok = len(all_issues) == 0
     if not ok:
         logger.warning(
-            "reconcile_all_accounts: %d issue(s) (engine=%d pnl=%d)",
+            "reconcile_all_accounts: %d issue(s) (engine=%d pnl=%d realized=%d)",
             len(all_issues),
             len(engine_issues),
             len(pnl_issues),
+            len(realized_issues),
         )
 
     return {
@@ -359,4 +445,5 @@ def reconcile_all_accounts(
         "issues": all_issues,
         "engine": engine_by_scope,
         "pnl": pnl,
+        "realized": realized_recon,
     }

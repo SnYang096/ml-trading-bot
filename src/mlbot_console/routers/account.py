@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Optional
 
 from fastapi import APIRouter, Query
@@ -12,8 +13,12 @@ from mlbot_console.services.account_reconciliation import (
     reconcile_account,
     reconcile_all_accounts,
 )
-from mlbot_console.services.account_pnl_reconciliation import reconcile_pnl_vs_exchange
+from mlbot_console.services.account_pnl_reconciliation import (
+    reconcile_pnl_vs_exchange,
+    reconcile_realized_pnl,
+)
 from mlbot_console.services.account_summary import build_account_summary
+from mlbot_console.services.db import query_rows
 from mlbot_console.services.mark_prices import fetch_mark_prices
 from mlbot_console.services.universe import load_universe_symbols
 
@@ -55,7 +60,7 @@ def account_reconciliation(
 ) -> dict:
     symbols = load_universe_symbols(SETTINGS.universe_yaml)
     marks = fetch_mark_prices(SETTINGS.feature_bus_root, symbols)
-    
+
     data = reconcile_account(
         scope=scope,
         trend_db=SETTINGS.trend_order_db,
@@ -101,4 +106,69 @@ def account_reconciliation_all(
         symbol=symbol,
         lookback_days=lookback_days,
     )
+    return ok(data)
+
+
+@router.get("/api/account/reconciliation/realized")
+def account_realized_reconciliation(
+    scope: str = Query("multi_leg", description="trend or multi_leg"),
+    lookback_days: int = Query(
+        90,
+        ge=1,
+        le=365,
+        description="How many days of income to compare (default 90)",
+    ),
+) -> dict:
+    """Compare local DB realized PnL vs Binance /fapi/v1/income for a scope.
+
+    Returns the gap between local PnL calculation and exchange-reported
+    realized PnL, commission, and funding fees.
+    """
+    now_ms = int(time.time() * 1000)
+    start_ms = now_ms - lookback_days * 86_400_000
+
+    # Get local realized PnL from account summary
+    summary = build_account_summary(
+        trend_db=SETTINGS.trend_order_db,
+        spot_db=SETTINGS.spot_order_db,
+        spot_ledger_db=SETTINGS.spot_ledger_db,
+        multi_leg_db=SETTINGS.multi_leg_db,
+        feature_bus_root=SETTINGS.feature_bus_root,
+        symbol="*",
+        lookback_days=lookback_days,
+    )
+
+    local_realized = 0.0
+    local_commission = 0.0
+    for s in summary.get("scopes") or []:
+        if str(s.get("scope")) == scope:
+            local_realized = float(s.get("realized_pnl") or 0.0)
+            break
+
+    # Also sum commission from multi_leg_orders if scope is multi_leg
+    if scope == "multi_leg":
+        try:
+            rows = query_rows(
+                SETTINGS.multi_leg_db,
+                "SELECT COALESCE(SUM(commission), 0) as total_commission "
+                "FROM multi_leg_orders "
+                "WHERE status IN ('FILLED', 'PARTIALLY_FILLED') "
+                "AND error_message IS DISTINCT FROM 'bug' "
+                "AND filled_at >= datetime('now', ?)",
+                (f"-{lookback_days} days",),
+            )
+            if rows:
+                local_commission = abs(float(rows[0].get("total_commission") or 0.0))
+        except Exception:
+            pass
+
+    data = reconcile_realized_pnl(
+        scope=scope,
+        local_realized_pnl=local_realized,
+        local_commission=local_commission,
+        symbol="*",
+        start_time_ms=start_ms,
+        end_time_ms=now_ms,
+    )
+    data["lookback_days"] = lookback_days
     return ok(data)
