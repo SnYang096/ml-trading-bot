@@ -551,7 +551,7 @@ class MultiLegStorage:
         run_id: Optional[str] = None,
     ) -> int:
         """Close open DB rows no longer present in the engine inventory snapshot.
-        
+
         Also closes corresponding entry/inventory orders in multi_leg_orders
         whose leg_id is no longer active, so CMS won't display ghost positions.
         """

@@ -122,12 +122,12 @@ def _get_multileg_tp_sl_orders(
     db_path: Path, symbol: Optional[str]
 ) -> Dict[str, List[Dict[str, Any]]]:
     """Get TP/SL order details for each position.
-    
+
     Returns dict mapping position_id to list of {order_type, price, order_id}.
     """
     if not db_path.is_file():
         return {}
-    
+
     where = """
         WHERE lower(trim(coalesce(status, ''))) IN ({})
           AND lower(trim(coalesce(purpose, ''))) IN (
@@ -139,7 +139,7 @@ def _get_multileg_tp_sl_orders(
     if symbol and not is_all_symbols(symbol):
         where += " AND symbol = ?"
         params = (*params, symbol.upper())
-    
+
     rows = query_rows(
         db_path,
         f"""
@@ -150,7 +150,7 @@ def _get_multileg_tp_sl_orders(
         """,
         params,
     )
-    
+
     out: Dict[str, List[Dict[str, Any]]] = {}
     for row in rows:
         leg = str(row.get("leg_id") or "").strip()
@@ -158,11 +158,13 @@ def _get_multileg_tp_sl_orders(
             continue
         if leg not in out:
             out[leg] = []
-        out[leg].append({
-            "order_type": str(row.get("purpose") or "").upper(),
-            "price": float(row.get("price") or 0),
-            "order_id": str(row.get("exchange_order_id") or ""),
-        })
+        out[leg].append(
+            {
+                "order_type": str(row.get("purpose") or "").upper(),
+                "price": float(row.get("price") or 0),
+                "order_id": str(row.get("exchange_order_id") or ""),
+            }
+        )
     return out
 
 
@@ -398,25 +400,33 @@ def _multileg_open_rows(
             else:
                 side = _normalize_side(row.get("side"))
             leg_key = str(row.get("leg_id") or oid)
-            
+
             # Filter ghost positions: live hedge persists open legs in
             # multi_leg_positions. Pruned legs leave filled orders in
             # multi_leg_orders (status filled/closed) — hide unless still open.
             # Only apply this filter when the positions table has *active* open
             # legs; an empty active set (e.g. after engine restart wiped the
             # table) should fall back to order-based detection.
-            if positions_table_used and active_leg_ids and leg_key not in active_leg_ids:
+            if (
+                positions_table_used
+                and active_leg_ids
+                and leg_key not in active_leg_ids
+            ):
                 continue
             entry_ts = _parse_ts(row.get("filled_at")) or _parse_ts(
                 row.get("created_at")
             )
             strat = str(row.get("strategy") or "multi_leg").lower()
-            
+
             # Extract TP/SL info for this position
             tp_sl_orders = tp_sl_map.get(leg_key, [])
-            tp_info = next((o for o in tp_sl_orders if o["order_type"] == "TAKE_PROFIT"), None)
-            sl_info = next((o for o in tp_sl_orders if o["order_type"] == "STOP_LOSS"), None)
-            
+            tp_info = next(
+                (o for o in tp_sl_orders if o["order_type"] == "TAKE_PROFIT"), None
+            )
+            sl_info = next(
+                (o for o in tp_sl_orders if o["order_type"] == "STOP_LOSS"), None
+            )
+
             out.append(
                 {
                     "position_id": oid,
@@ -521,11 +531,12 @@ def _enrich_with_exchange_legs(
                 row["exchange_initial_margin_usdt"] = ex_pos.get("initial_margin_usdt")
             maint = _parse_float(ex_pos.get("maint_margin_usdt"))
             row["exchange_maint_margin_usdt"] = (
-                round(maint * share, 4) if maint > 0 and n > 1 else ex_pos.get("maint_margin_usdt")
+                round(maint * share, 4)
+                if maint > 0 and n > 1
+                else ex_pos.get("maint_margin_usdt")
             )
             row["exchange_liquidation_price"] = ex_pos.get("liquidation_price")
             row["exchange_margin_type"] = ex_pos.get("margin_type")
-
 
 
 def _exchange_has_position(
@@ -583,9 +594,11 @@ def collect_open_positions(
             from src.order_management.trend_position_truth_sync import (
                 TrendPositionTruthSync,
             )
+
             _storage = Storage(str(trend_db))
             projection = TrendPositionTruthSync.list_open_projections(
-                _storage, symbol=sym_filter,
+                _storage,
+                symbol=sym_filter,
             )
             _projection_ok = True  # list_open_projections succeeded (even if [])
             if projection:
@@ -607,7 +620,9 @@ def collect_open_positions(
                 pid = str(row.get("position_id") or "")
                 row["pending_exit_orders"] = int(pending.get(pid) or 0)
                 row["entry_marker_id"] = _marker_id(
-                    "trend", "positions", pid,
+                    "trend",
+                    "positions",
+                    pid,
                 )
             merged.extend(projection)
             logger.debug(
@@ -718,8 +733,8 @@ def collect_open_positions(
         ),
         reverse=True,
     )
-    
+
     # Enrich with exchange margin/leverage data
     _enrich_with_exchange_legs(merged, exchange_ledger)
-    
+
     return merged[: max(int(limit), 1)]

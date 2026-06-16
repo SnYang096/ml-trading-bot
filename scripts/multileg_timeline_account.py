@@ -97,7 +97,10 @@ class MultilegTimelineAccount:
                 delta = rp - prev
                 if abs(delta) > 1e-12:
                     self.mock.wallet_usdt += delta
-                    self.ledger.realized_pnl_usdt += delta
+                    # NOTE: do NOT add to ledger here — the same P&L is
+                    # already recorded by close_lot() in record_pending_fills
+                    # or record_execution_results.  Adding it again causes
+                    # ledger_realized_pnl to double-count TP/SL exits.
                     self._engine_realized_baseline[key] = rp
 
     def record_execution_results(

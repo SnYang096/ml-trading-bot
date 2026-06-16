@@ -72,9 +72,7 @@ def _display_row_as_raw(row: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _unrealized_pnl_usdt(
-    entry_row: Dict[str, Any], mark_px: float
-) -> Optional[float]:
+def _unrealized_pnl_usdt(entry_row: Dict[str, Any], mark_px: float) -> Optional[float]:
     qty = float(entry_row.get("filled_quantity") or entry_row.get("quantity") or 0.0)
     if qty <= 0 or mark_px <= 0:
         return None
@@ -214,11 +212,12 @@ def _chop_grid_exit_for_entry(
         matched = False
         if exit_lid and (exit_lid == ekey or exit_lid == ent_oid):
             matched = True
-        elif "stop_loss" in purpose and _stop_loss_matches_entry(
-            row, ent_oid, ekey
-        ):
+        elif "stop_loss" in purpose and _stop_loss_matches_entry(row, ent_oid, ekey):
             matched = True
-        elif "market_exit" in purpose and market_exit_closing_position_side(row) == ent_side:
+        elif (
+            "market_exit" in purpose
+            and market_exit_closing_position_side(row) == ent_side
+        ):
             # Batch flatten in segment group (legacy chop_grid path).
             matched = True
         elif exit_oid and ent_oid and exit_oid == ent_oid:
@@ -449,9 +448,7 @@ def _filled_exit_row(
     return None
 
 
-def _stop_loss_closes_entry(
-    sl_row: Dict[str, Any], entry_row: Dict[str, Any]
-) -> bool:
+def _stop_loss_closes_entry(sl_row: Dict[str, Any], entry_row: Dict[str, Any]) -> bool:
     ent_side = _entry_position_side(entry_row)
     if ent_side is None:
         return False
