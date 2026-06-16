@@ -13,9 +13,11 @@ import hashlib
 import hmac
 import logging
 import time
+import threading
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlencode
 
 from mlbot_console.services.exchange_balances import (
     _env_first,
@@ -45,10 +47,10 @@ def _fetch_income_raw(
     """Fetch one page of /fapi/v1/income."""
     session = _http_session()
     base = "https://fapi.binance.com"
-    srv = session.get(f"{base}/fapi/v1/time", timeout=8)
-    srv.raise_for_status()
-    server_ts = int(srv.json().get("serverTime", int(time.time() * 1000)))
-    params: Dict[str, Any] = {"timestamp": server_ts, "limit": limit}
+    params: Dict[str, Any] = {
+        "timestamp": int(time.time() * 1000),
+        "limit": limit,
+    }
     if symbol:
         params["symbol"] = symbol.upper()
     if income_type:
@@ -57,7 +59,7 @@ def _fetch_income_raw(
         params["startTime"] = int(start_time_ms)
     if end_time_ms is not None:
         params["endTime"] = int(end_time_ms)
-    query = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+    query = urlencode(sorted(params.items()))
     sig = hmac.new(api_secret.encode(), query.encode(), hashlib.sha256).hexdigest()
     resp = session.get(
         f"{base}/fapi/v1/income?{query}&signature={sig}",
@@ -195,6 +197,14 @@ def aggregate_income_total(
     return total
 
 
+# --- TTL cache for fetch_scope_income (avoids Binance rate-limit on dashboard refresh) ---
+_income_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_income_cache_ttl = 60  # seconds
+_income_cache_lock = threading.Lock()
+
+_INCOME_CACHE_KEY_TPL = "{scope}|{symbol}|{start}|{end}"
+
+
 def fetch_scope_income(
     scope: str,
     *,
@@ -203,6 +213,9 @@ def fetch_scope_income(
     end_time_ms: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Fetch and aggregate income for a scope (trend / multi_leg).
+
+    Results are cached for 60 seconds to avoid Binance rate-limit
+    bursts when the dashboard auto-refreshes.
 
     Returns::
 
@@ -216,10 +229,26 @@ def fetch_scope_income(
             "period": {"start_ms": ..., "end_ms": ...},
         }
     """
+    cache_key = _INCOME_CACHE_KEY_TPL.format(
+        scope=scope,
+        symbol=symbol or "*",
+        start=start_time_ms or "",
+        end=end_time_ms or "",
+    )
+    now = time.time()
+
+    # Check cache
+    with _income_cache_lock:
+        if cache_key in _income_cache:
+            cached_ts, cached_val = _income_cache[cache_key]
+            if now - cached_ts < _income_cache_ttl:
+                return cached_val
+
+    # Fetch fresh data
     try:
         api_key, api_secret = _scope_api_keys(scope)
     except ValueError as exc:
-        return {
+        result = {
             "scope": scope,
             "available": False,
             "error": str(exc),
@@ -227,6 +256,9 @@ def fetch_scope_income(
             "by_symbol": {},
             "record_count": 0,
         }
+        with _income_cache_lock:
+            _income_cache[cache_key] = (now, result)
+        return result
 
     try:
         records = fetch_all_income(
@@ -238,7 +270,7 @@ def fetch_scope_income(
         )
     except Exception as exc:
         logger.warning("fetch_scope_income failed for scope=%s: %s", scope, exc)
-        return {
+        result = {
             "scope": scope,
             "available": False,
             "error": str(exc),
@@ -246,8 +278,11 @@ def fetch_scope_income(
             "by_symbol": {},
             "record_count": 0,
         }
+        with _income_cache_lock:
+            _income_cache[cache_key] = (now, result)
+        return result
 
-    return {
+    result = {
         "scope": scope,
         "available": True,
         "total": aggregate_income_total(records),
@@ -256,3 +291,6 @@ def fetch_scope_income(
         "fetched_at": datetime.now(timezone.utc).isoformat(),
         "period": {"start_ms": start_time_ms, "end_ms": end_time_ms},
     }
+    with _income_cache_lock:
+        _income_cache[cache_key] = (now, result)
+    return result
