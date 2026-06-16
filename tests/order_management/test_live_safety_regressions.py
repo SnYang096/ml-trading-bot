@@ -22,7 +22,9 @@ import pytest
 from src.order_management.multi_leg_orchestrator import (
     MultiLegLiveOrchestrator,
     _notify_orphan_positions,
+    _notify_phantom_positions,
 )
+from src.order_management.multi_leg_reconciliation import LocalPositionSnapshot
 from src.order_management.multi_leg_reconciliation import (
     MultiLegReconciler,
     ReconciliationPolicy,
@@ -212,4 +214,222 @@ def test_notify_orphan_positions_sends_telegram_with_cooldown() -> None:
     assert "XRPUSDT" in message
     assert "5931" in message
     assert send.call_args.kwargs["stamp_key"] == "hedge:orphan:XRPUSDT"
+    assert send.call_args.kwargs["cooldown_sec"] == 900
+
+
+# ── Plan A: phantom positions (engine/DB say open, exchange flat) ────────────
+
+
+@dataclass
+class _Leg:
+    leg_id: str
+    symbol: str
+    side: str
+    quantity: float
+    entry_price: float = 1.0
+    protection_order_ids: list = field(default_factory=list)
+
+
+class _InventoryState:
+    def __init__(self, legs: list[_Leg]) -> None:
+        self.inventory = list(legs)
+
+
+class _PhantomEngine:
+    """Minimal engine exposing inventory + remove_inventory_legs hook."""
+
+    def __init__(self, legs: list[_Leg]) -> None:
+        self.state = _InventoryState(legs)
+
+    def local_position_snapshots(self) -> list[LocalPositionSnapshot]:
+        return [
+            LocalPositionSnapshot(p.symbol, p.side, p.quantity)
+            for p in self.state.inventory
+        ]
+
+    def remove_inventory_legs(self, leg_ids) -> int:
+        targets = {str(x) for x in leg_ids}
+        before = len(self.state.inventory)
+        self.state.inventory = [
+            p for p in self.state.inventory if p.leg_id not in targets
+        ]
+        return before - len(self.state.inventory)
+
+
+def _seed_open_leg(storage: MultiLegStorage, leg_id: str = "dat_1_fill0") -> None:
+    storage.upsert_position(
+        {
+            "run_id": "run_safety",
+            "strategy": "trend_scalp",
+            "leg_id": leg_id,
+            "symbol": "XRPUSDT",
+            "side": "LONG",
+            "entry_price": 1.28,
+            "quantity": 5931.0,
+            "status": "open",
+        }
+    )
+
+
+def _pos_status(storage: MultiLegStorage, leg_id: str) -> str:
+    conn = sqlite3.connect(storage.db_path)
+    try:
+        return conn.execute(
+            "SELECT status FROM multi_leg_positions WHERE leg_id = ?",
+            (leg_id,),
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+
+def test_close_positions_by_leg_ids_closes_even_when_all_phantom(tmp_path) -> None:
+    """Explicit allow-list close works even when engine inventory is empty."""
+    storage = MultiLegStorage(str(tmp_path / "multi_leg.db"))
+    _seed_open_leg(storage)
+
+    changed = storage.close_positions_by_leg_ids(
+        strategy="trend_scalp",
+        symbol="XRPUSDT",
+        leg_ids=["dat_1_fill0"],
+        reason="exchange_sync_phantom",
+        run_id="run_safety",
+    )
+    assert changed == 1
+    assert _pos_status(storage, "dat_1_fill0") == "closed"
+
+    conn = sqlite3.connect(storage.db_path)
+    try:
+        raw = conn.execute(
+            "SELECT raw_json FROM multi_leg_positions WHERE leg_id = ?",
+            ("dat_1_fill0",),
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert "exchange_sync_phantom" in (raw or "")
+
+
+def test_phantom_positions_cleaned_after_confirmation(tmp_path, monkeypatch) -> None:
+    """Engine holds a leg the exchange reports flat → cleaned after confirm cycles."""
+    monkeypatch.setenv("MLBOT_MULTI_LEG_PHANTOM_CONFIRM_CYCLES", "2")
+    storage = MultiLegStorage(str(tmp_path / "multi_leg.db"))
+    _seed_open_leg(storage)
+    engine = _PhantomEngine([_Leg("dat_1_fill0", "XRPUSDT", "LONG", 5931.0)])
+    orch = _minimal_orchestrator(engine=engine, storage=storage)
+    orch._inventory_synced = True
+
+    with patch("src.order_management.multi_leg_orchestrator.send_telegram_message"):
+        # Cycle 1: observed phantom once (threshold 2) → no cleanup yet.
+        orch.reconcile(exchange_orders=[], exchange_positions=[])
+        assert len(engine.state.inventory) == 1
+        assert _pos_status(storage, "dat_1_fill0") == "open"
+
+        # Cycle 2: confirmed → engine leg dropped + DB row closed.
+        orch.reconcile(exchange_orders=[], exchange_positions=[])
+
+    assert engine.state.inventory == []
+    assert _pos_status(storage, "dat_1_fill0") == "closed"
+
+
+def test_phantom_cleanup_skipped_before_inventory_synced(tmp_path) -> None:
+    """No cleanup until the first exchange sync has happened."""
+    storage = MultiLegStorage(str(tmp_path / "multi_leg.db"))
+    _seed_open_leg(storage)
+    engine = _PhantomEngine([_Leg("dat_1_fill0", "XRPUSDT", "LONG", 5931.0)])
+    orch = _minimal_orchestrator(engine=engine, storage=storage)
+    assert orch._inventory_synced is False
+
+    cleaned = orch._sync_phantom_positions([])
+    assert cleaned == []
+    assert len(engine.state.inventory) == 1
+    assert _pos_status(storage, "dat_1_fill0") == "open"
+
+
+def test_phantom_not_cleaned_when_exchange_has_position(tmp_path, monkeypatch) -> None:
+    """A leg the exchange still holds must never be treated as phantom."""
+    monkeypatch.setenv("MLBOT_MULTI_LEG_PHANTOM_CONFIRM_CYCLES", "1")
+    storage = MultiLegStorage(str(tmp_path / "multi_leg.db"))
+    _seed_open_leg(storage)
+    engine = _PhantomEngine([_Leg("dat_1_fill0", "XRPUSDT", "LONG", 5931.0)])
+    orch = _minimal_orchestrator(engine=engine, storage=storage)
+    orch._inventory_synced = True
+
+    exchange_positions = [
+        {"symbol": "XRPUSDT", "position_side": "LONG", "position_amount": 5931.0}
+    ]
+    with patch("src.order_management.multi_leg_orchestrator.send_telegram_message"):
+        cleaned = orch._sync_phantom_positions(exchange_positions)
+
+    assert cleaned == []
+    assert len(engine.state.inventory) == 1
+    assert _pos_status(storage, "dat_1_fill0") == "open"
+
+
+def test_phantom_confirmation_resets_when_position_reappears(
+    tmp_path, monkeypatch
+) -> None:
+    """A single empty snapshot must not wipe; reappearing position resets counter."""
+    monkeypatch.setenv("MLBOT_MULTI_LEG_PHANTOM_CONFIRM_CYCLES", "2")
+    storage = MultiLegStorage(str(tmp_path / "multi_leg.db"))
+    _seed_open_leg(storage)
+    engine = _PhantomEngine([_Leg("dat_1_fill0", "XRPUSDT", "LONG", 5931.0)])
+    orch = _minimal_orchestrator(engine=engine, storage=storage)
+    orch._inventory_synced = True
+    present = [
+        {"symbol": "XRPUSDT", "position_side": "LONG", "position_amount": 5931.0}
+    ]
+
+    with patch("src.order_management.multi_leg_orchestrator.send_telegram_message"):
+        orch._sync_phantom_positions([])  # transient empty (count=1)
+        orch._sync_phantom_positions(present)  # position back → counter reset
+        cleaned = orch._sync_phantom_positions([])  # count back to 1, not cleaned
+
+    assert cleaned == []
+    assert len(engine.state.inventory) == 1
+    assert _pos_status(storage, "dat_1_fill0") == "open"
+
+
+def test_phantom_sudden_exchange_collapse_skips_one_cycle(
+    tmp_path, monkeypatch
+) -> None:
+    """N>0 → 0 in one step is a suspect API glitch: skip without advancing confirm."""
+    monkeypatch.setenv("MLBOT_MULTI_LEG_PHANTOM_CONFIRM_CYCLES", "1")
+    storage = MultiLegStorage(str(tmp_path / "multi_leg.db"))
+    _seed_open_leg(storage)
+    engine = _PhantomEngine([_Leg("dat_1_fill0", "XRPUSDT", "LONG", 5931.0)])
+    orch = _minimal_orchestrator(engine=engine, storage=storage)
+    orch._inventory_synced = True
+    present = [
+        {"symbol": "XRPUSDT", "position_side": "LONG", "position_amount": 5931.0}
+    ]
+
+    with patch("src.order_management.multi_leg_orchestrator.send_telegram_message"):
+        orch._sync_phantom_positions(present)  # observe 1 position
+        # Sudden collapse to empty → skipped this cycle even at threshold 1.
+        cleaned_glitch = orch._sync_phantom_positions([])
+        assert cleaned_glitch == []
+        assert len(engine.state.inventory) == 1
+        assert _pos_status(storage, "dat_1_fill0") == "open"
+        # Next empty cycle is no longer a sudden drop (prev=0) → cleaned.
+        cleaned_confirmed = orch._sync_phantom_positions([])
+
+    assert cleaned_confirmed == ["dat_1_fill0"]
+    assert engine.state.inventory == []
+    assert _pos_status(storage, "dat_1_fill0") == "closed"
+
+
+def test_notify_phantom_positions_sends_telegram_with_cooldown() -> None:
+    with patch(
+        "src.order_management.multi_leg_orchestrator.send_telegram_message"
+    ) as send:
+        _notify_phantom_positions(
+            strategy="trend_scalp",
+            symbol="XRPUSDT",
+            leg_ids=["dat_1_fill0"],
+        )
+
+    send.assert_called_once()
+    (message,) = send.call_args[0]
+    assert "幻影仓位" in message
+    assert "dat_1_fill0" in message
+    assert send.call_args.kwargs["stamp_key"] == "hedge:phantom:XRPUSDT"
     assert send.call_args.kwargs["cooldown_sec"] == 900

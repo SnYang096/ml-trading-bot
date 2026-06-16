@@ -34,6 +34,8 @@ from src.order_management.multi_leg_reconciliation import (
     LocalPositionSnapshot,
     MultiLegReconciler,
     ReconciliationReport,
+    _exchange_position_quantities,
+    _normalize_symbol,
 )
 from src.order_management.multi_leg_risk_governor import (
     Action,
@@ -54,6 +56,20 @@ def _reconcile_not_ok_warn_cooldown_s() -> float:
         return v if v >= 0.0 else 300.0
     except (TypeError, ValueError):
         return 300.0
+
+
+def _phantom_confirm_cycles() -> int:
+    """Consecutive reconciles a (symbol, side) must look phantom before cleanup.
+
+    Guards against wiping live positions on a transient empty exchange snapshot
+    (e.g. a single failed/empty ``sync_positions`` call).
+    """
+    raw = os.environ.get("MLBOT_MULTI_LEG_PHANTOM_CONFIRM_CYCLES", "2")
+    try:
+        v = int(float(raw))
+        return v if v >= 1 else 2
+    except (TypeError, ValueError):
+        return 2
 
 
 @runtime_checkable
@@ -115,6 +131,10 @@ class MultiLegLiveOrchestrator:
         self.drawdown_pct_provider = drawdown_pct_provider
         self._last_reconcile_not_ok_warn_at: float = 0.0
         self._inventory_synced: bool = False
+        # (symbol, side) -> consecutive cycles observed phantom (exchange flat).
+        self._phantom_confirm: Dict[tuple, int] = {}
+        # Last observed count of exchange position groups (suspect-snapshot guard).
+        self._last_exchange_pos_count: int = 0
 
     def run_actions(
         self,
@@ -320,6 +340,8 @@ class MultiLegLiveOrchestrator:
                 symbol=self.symbol,
                 mismatches=report.position_mismatches,
             )
+        # ── Plan A: prune phantom positions (engine/DB say open, exchange flat) ──
+        self._sync_phantom_positions(positions)
         _call_optional(self.engine, "on_reconciliation_report", report)
         self._persist_reconciliation(report)
 
@@ -526,6 +548,123 @@ class MultiLegLiveOrchestrator:
         if callable(apply_fn):
             apply_fn(payload)
 
+    def _engine_inventory_legs(self) -> List[tuple]:
+        """Return [(leg_id, normalized_symbol, side_upper, abs_qty), ...]."""
+        state = getattr(self.engine, "state", None)
+        inventory = list(getattr(state, "inventory", []) or [])
+        legs: List[tuple] = []
+        for pos in inventory:
+            leg_id = str(getattr(pos, "leg_id", "") or "")
+            if not leg_id:
+                continue
+            sym = _normalize_symbol(getattr(pos, "symbol", "") or "")
+            side = str(getattr(pos, "side", "") or "").upper()
+            qty = abs(float(getattr(pos, "quantity", 0.0) or 0.0))
+            legs.append((leg_id, sym, side, qty))
+        return legs
+
+    def _sync_phantom_positions(
+        self, exchange_positions: Iterable[Mapping[str, Any]]
+    ) -> List[str]:
+        """Close engine + DB legs that no longer exist on the exchange (Plan A).
+
+        Only the unambiguous case is handled: a (symbol, side) the engine still
+        holds while the exchange reports flat (qty ~ 0). Zero exchange qty is
+        safe even for shared-symbol configs because *no* engine may legitimately
+        hold a position the exchange does not have. A (symbol, side) must look
+        phantom for ``_phantom_confirm_cycles()`` consecutive reconciles before
+        cleanup, guarding against a transient empty exchange snapshot.
+
+        Two layers of false-positive protection against a flaky exchange API:
+        1. Suspect-snapshot guard — if *all* exchange positions collapse to empty
+           in one step (count N>0 → 0), skip this cycle (do not advance the
+           confirmation counter); a wholesale disappearance is far more likely an
+           API glitch than a simultaneous close of every leg.
+        2. Confirmation counter — see ``_phantom_confirm_cycles()``.
+
+        Runs only after the first exchange sync (``_inventory_synced``), matching
+        the close_absent_positions gate.
+        """
+        if not self._inventory_synced:
+            return []
+        prev_exchange_count = self._last_exchange_pos_count
+        ex_qty = _exchange_position_quantities(list(exchange_positions or []))
+        legs = self._engine_inventory_legs()
+        if not legs:
+            self._phantom_confirm.clear()
+            self._last_exchange_pos_count = len(ex_qty)
+            return []
+        # Layer 1: ignore a one-step wholesale collapse to empty (suspect API).
+        if not ex_qty and prev_exchange_count > 0:
+            logger.warning(
+                "multi-leg phantom check skipped: exchange snapshot empty after "
+                "%d positions (suspect API glitch) — strategy=%s symbol=%s",
+                prev_exchange_count,
+                self.strategy_name,
+                self.symbol,
+            )
+            self._last_exchange_pos_count = 0
+            return []
+        self._last_exchange_pos_count = len(ex_qty)
+        tol = float(getattr(self.reconciler.policy, "quantity_tolerance", 1e-9))
+        phantom_keys = {
+            (sym, side)
+            for (_leg, sym, side, _q) in legs
+            if ex_qty.get((sym, side), 0.0) <= tol
+        }
+        # Reset counters for keys that are no longer phantom (position reappeared).
+        for key in list(self._phantom_confirm.keys()):
+            if key not in phantom_keys:
+                del self._phantom_confirm[key]
+        threshold = _phantom_confirm_cycles()
+        for key in phantom_keys:
+            self._phantom_confirm[key] = self._phantom_confirm.get(key, 0) + 1
+        confirmed = {k for k in phantom_keys if self._phantom_confirm[k] >= threshold}
+        if not confirmed:
+            return []
+        phantom_leg_ids = [
+            leg for (leg, sym, side, _q) in legs if (sym, side) in confirmed
+        ]
+        if not phantom_leg_ids:
+            return []
+
+        _call_optional(self.engine, "remove_inventory_legs", phantom_leg_ids)
+        db_closed = 0
+        if self.storage is not None:
+            closer = getattr(self.storage, "close_positions_by_leg_ids", None)
+            if callable(closer):
+                try:
+                    db_closed = closer(
+                        strategy=self.strategy_name,
+                        symbol=self.symbol or None,
+                        leg_ids=phantom_leg_ids,
+                        reason="exchange_sync_phantom",
+                        run_id=self.run_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "phantom DB cleanup failed: strategy=%s symbol=%s legs=%s",
+                        self.strategy_name,
+                        self.symbol,
+                        phantom_leg_ids,
+                    )
+        for key in confirmed:
+            self._phantom_confirm.pop(key, None)
+        logger.warning(
+            "multi-leg phantom cleanup: strategy=%s symbol=%s legs=%s db_closed=%d "
+            "(engine/DB held positions the exchange reports flat)",
+            self.strategy_name,
+            self.symbol,
+            phantom_leg_ids,
+            db_closed,
+        )
+        _notify_phantom_positions(
+            strategy=self.strategy_name,
+            symbol=self.symbol,
+            leg_ids=phantom_leg_ids,
+        )
+        return phantom_leg_ids
+
     def _persist_positions(self) -> None:
         if self.storage is None:
             return
@@ -587,6 +726,31 @@ def _notify_orphan_positions(
     send_telegram_message(
         "\n".join(lines),
         stamp_key=f"hedge:orphan:{symbol or 'ALL'}",
+        cooldown_sec=900,  # 15 min cooldown to avoid spam on restart loops
+    )
+
+
+def _notify_phantom_positions(
+    *,
+    strategy: str,
+    symbol: str,
+    leg_ids: List[str],
+) -> None:
+    """Send TG alert when engine/DB held positions the exchange reports flat."""
+    lines = [
+        "⚠️ 多腿幻影仓位清理",
+        f"策略: {strategy or '?'}  |  币种: {symbol or '?'}",
+        "引擎/DB 标记为持仓，但交易所已无对应仓位，已自动平账:",
+    ]
+    for leg in leg_ids[:5]:
+        lines.append(f"  leg_id={leg}")
+    if len(leg_ids) > 5:
+        lines.append(f"  ... 还有 {len(leg_ids) - 5} 个")
+    lines.append("可能原因: 执行回报丢失/重启对账，仓位已在交易所平掉但本地未同步")
+
+    send_telegram_message(
+        "\n".join(lines),
+        stamp_key=f"hedge:phantom:{symbol or 'ALL'}",
         cooldown_sec=900,  # 15 min cooldown to avoid spam on restart loops
     )
 

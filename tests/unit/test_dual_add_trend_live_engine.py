@@ -623,6 +623,44 @@ def test_exit_all_preserves_pending_orders(tmp_path: Path) -> None:
     assert engine.holds_real_grid_slot() is True
 
 
+def test_exit_all_cancels_position_protection_orders(tmp_path: Path) -> None:
+    """Regime exit must cancel the position's live SL/TP so they don't outlive it."""
+    engine = _make_engine_with_position(
+        tmp_path,
+        protection_order_ids=["ex_sl_111", "ex_tp_222"],
+    )
+
+    actions = engine._exit_all(100.0, "2026-01-01T01:00:00Z", reason="regime_exit")
+
+    market_exits = [a for a in actions if a.get("action") == "market_exit"]
+    cancel_prot = [a for a in actions if a.get("action") == "cancel_protection"]
+    assert len(market_exits) == 1
+    assert {a["exchange_order_id"] for a in cancel_prot} == {"ex_sl_111", "ex_tp_222"}
+    for a in cancel_prot:
+        assert a["symbol"] == "BTCUSDT"
+        assert a["leg_id"] == "long_0"
+    assert engine.state.inventory == []
+
+
+def test_target_exit_cancels_position_protection_orders(tmp_path: Path) -> None:
+    """Internal TP hit must cancel the leg's exchange protection in the same bar."""
+    engine = _make_engine_with_position(
+        tmp_path,
+        protection_order_ids=["ex_sl_333"],
+        take_profit_mode="per_leg",
+    )
+    # entry 100, atr 2, tp_atr_mult 0.25 → tp distance 0.5 → LONG TP at 100.5
+    actions = engine._target_exits(
+        high=101.0, low=100.0, close=100.6, timestamp="2026-01-01T02:00:00Z"
+    )
+
+    market_exits = [a for a in actions if a.get("action") == "market_exit"]
+    cancel_prot = [a for a in actions if a.get("action") == "cancel_protection"]
+    assert len(market_exits) == 1
+    assert [a["exchange_order_id"] for a in cancel_prot] == ["ex_sl_333"]
+    assert engine.state.inventory == []
+
+
 def test_on_execution_results_cleans_cancelled_and_archives(
     tmp_path: Path,
 ) -> None:

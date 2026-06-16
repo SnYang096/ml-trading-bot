@@ -535,6 +535,28 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
             for p in self.state.inventory
         ]
 
+    def remove_inventory_legs(self, leg_ids: Iterable[str]) -> int:
+        """Drop in-memory inventory legs (phantom-position cleanup by orchestrator).
+
+        Called when exchange truth shows a (symbol, side) the engine still holds
+        is actually flat. Removing the legs lets persistence + close_absent reflect
+        reality instead of re-writing the phantom as ``open`` every cycle.
+        """
+        targets = {str(x) for x in leg_ids if str(x)}
+        if not targets:
+            return 0
+        before = len(self.state.inventory)
+        self.state.inventory = [
+            p
+            for p in self.state.inventory
+            if str(getattr(p, "leg_id", "")) not in targets
+        ]
+        removed = before - len(self.state.inventory)
+        if removed:
+            self._maybe_deactivate_if_fully_closed()
+            self.save_state()
+        return removed
+
     def on_execution_results(self, results: Iterable[GridExecutionResult]) -> None:
         inventory_changed = False
         for result in results:
@@ -934,10 +956,12 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
                 actions.append(
                     self._market_exit(pos, pos.entry_price + tp, timestamp, "tp")
                 )
+                actions.extend(self._cancel_protection_actions(pos, timestamp, "tp"))
             elif pos.side == "SHORT" and low <= pos.entry_price - tp:
                 actions.append(
                     self._market_exit(pos, pos.entry_price - tp, timestamp, "tp")
                 )
+                actions.extend(self._cancel_protection_actions(pos, timestamp, "tp"))
             else:
                 remaining.append(pos)
         self.state.inventory = remaining
@@ -997,10 +1021,10 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
             len(self.state.inventory),
             close,
         )
-        actions = [
-            self._market_exit(pos, close, timestamp, reason)
-            for pos in self.state.inventory
-        ]
+        actions: List[Dict[str, Any]] = []
+        for pos in self.state.inventory:
+            actions.append(self._market_exit(pos, close, timestamp, reason))
+            actions.extend(self._cancel_protection_actions(pos, timestamp, reason))
         # ── Defer pending_orders clear to on_execution_results ──
         # Previously we cleared pending_orders[] unconditionally BEFORE the
         # cancel actions were executed.  If the exchange rejected a cancel
@@ -1120,6 +1144,36 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
             "reason": reason,
             "timestamp": timestamp,
         }
+
+    def _cancel_protection_actions(
+        self, pos: DualAddPosition, timestamp: str, reason: str
+    ) -> List[Dict[str, Any]]:
+        """Cancel the position's live exchange SL/TP orders on engine-driven exit.
+
+        Without this, a reduce-only protection order (SL/TP) outlives the
+        position it guarded until the next 60s reconcile flags it as an orphan.
+        In that window a freshly opened same-side position could be partially
+        closed by the stale reduce-only order.  Emitting cancel_protection in
+        the same bar as the market_exit closes that window.
+        """
+        actions: List[Dict[str, Any]] = []
+        for pid in pos.protection_order_ids:
+            oid = str(pid or "").strip()
+            if not oid:
+                continue
+            actions.append(
+                {
+                    "action": "cancel_protection",
+                    "order_id": oid,
+                    "exchange_order_id": oid,
+                    "symbol": pos.symbol,
+                    "leg_id": pos.leg_id,
+                    "reason": reason,
+                    "timestamp": timestamp,
+                }
+            )
+        pos.protection_order_ids = []
+        return actions
 
     def _handle_protection_fill(self, report: Dict[str, Any]) -> bool:
         """Detect SL/TP protection fills and remove the position from inventory.

@@ -221,6 +221,15 @@ jobs:
             -q --tb=short
           echo "✅ 6b3d59d9 partial-SL core assertion gated"
 
+      - name: 👻 Verify phantom-position cleanup tests gated (Plan A)
+        run: |
+          set -euo pipefail
+          export PYTHONPATH=src:scripts
+          pytest tests/order_management/test_live_safety_regressions.py \
+            -k "phantom" \
+            -q --tb=short
+          echo "✅ phantom-position cleanup (exchange-sync) assertions gated"
+
       - name: 📊 Test summary
         if: always()
         run: echo "### 🧪 Live-critical regression tests completed" >> $GITHUB_STEP_SUMMARY

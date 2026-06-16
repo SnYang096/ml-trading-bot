@@ -542,6 +542,75 @@ class MultiLegStorage:
         finally:
             conn.close()
 
+    def close_positions_by_leg_ids(
+        self,
+        *,
+        strategy: str,
+        symbol: Optional[str],
+        leg_ids: Iterable[str],
+        reason: str = "exchange_sync_phantom",
+        run_id: Optional[str] = None,
+    ) -> int:
+        """Close specific open DB rows by leg_id (phantom-position cleanup).
+
+        Unlike ``close_absent_positions`` this targets an explicit allow-list,
+        so it works even when the engine inventory becomes empty (all legs are
+        phantom).  The ``reason`` is stamped into ``raw_json.close_reason`` for
+        forensics without a schema change.  Entry/inventory orders for the same
+        legs are also closed so CMS won't show ghost rows.
+        """
+        legs = [str(x) for x in leg_ids if str(x)]
+        if not legs:
+            return 0
+        placeholders = ",".join("?" for _ in legs)
+        conn = self._connect()
+        try:
+            pos_params: list[Any] = [run_id, reason, str(strategy), *legs]
+            sym_clause = ""
+            if symbol:
+                sym_clause = " AND symbol = ? "
+                pos_params.append(str(symbol))
+            cur = conn.execute(
+                f"""
+                UPDATE multi_leg_positions
+                SET status = 'closed',
+                    run_id = COALESCE(?, run_id),
+                    closed_at = COALESCE(closed_at, CURRENT_TIMESTAMP),
+                    raw_json = json_set(
+                        COALESCE(NULLIF(raw_json, ''), '{{}}'),
+                        '$.close_reason', ?
+                    ),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE strategy = ?
+                  AND LOWER(TRIM(COALESCE(status, ''))) = 'open'
+                  AND leg_id IN ({placeholders})
+                  {sym_clause}
+                """,
+                pos_params,
+            )
+            order_params: list[Any] = [str(strategy), *legs]
+            order_sym_clause = ""
+            if symbol:
+                order_sym_clause = " AND symbol = ? "
+                order_params.append(str(symbol))
+            conn.execute(
+                f"""
+                UPDATE multi_leg_orders
+                SET status = 'closed',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE strategy = ?
+                  AND LOWER(TRIM(COALESCE(purpose, ''))) IN ('entry', 'inventory')
+                  AND LOWER(TRIM(COALESCE(status, ''))) = 'filled'
+                  AND leg_id IN ({placeholders})
+                  {order_sym_clause}
+                """,
+                order_params,
+            )
+            conn.commit()
+            return int(cur.rowcount or 0)
+        finally:
+            conn.close()
+
     def close_absent_positions(
         self,
         *,

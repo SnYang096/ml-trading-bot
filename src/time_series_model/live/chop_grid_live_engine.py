@@ -433,6 +433,27 @@ class ChopGridLiveEngine(SegmentLifecycleMixin):
             for p in self.state.inventory
         ]
 
+    def remove_inventory_legs(self, leg_ids: Iterable[str]) -> int:
+        """Drop in-memory inventory legs (phantom-position cleanup by orchestrator).
+
+        Called when exchange truth shows a (symbol, side) the engine still holds
+        is actually flat. Removing the legs lets persistence + close_absent reflect
+        reality instead of re-writing the phantom as ``open`` every cycle.
+        """
+        targets = {str(x) for x in leg_ids if str(x)}
+        if not targets:
+            return 0
+        before = len(self.state.inventory)
+        self.state.inventory = [
+            p
+            for p in self.state.inventory
+            if str(getattr(p, "leg_id", "")) not in targets
+        ]
+        removed = before - len(self.state.inventory)
+        if removed:
+            self.save_state()
+        return removed
+
     def on_execution_results(self, results: Iterable[GridExecutionResult]) -> None:
         """Persist exchange/client ids returned by the execution adapter."""
         for result in results:
