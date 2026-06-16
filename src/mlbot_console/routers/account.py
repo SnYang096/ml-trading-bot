@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import time
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Query
 
 from mlbot_console.config import SETTINGS
+
+logger = logging.getLogger(__name__)
 from mlbot_console.responses import ok
 from mlbot_console.services.account_reconciliation import (
     reconcile_account,
@@ -159,8 +162,11 @@ def account_realized_reconciliation(
             )
             if rows:
                 local_commission = abs(float(rows[0].get("total_commission") or 0.0))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "account_realized_reconciliation: failed to query local commission: %s",
+                exc,
+            )
 
     data = reconcile_realized_pnl(
         scope=scope,

@@ -318,6 +318,7 @@ def reconcile_all_accounts(
     mark_prices: Optional[Dict[str, float]] = None,
     symbol: str = "*",
     lookback_days: int = 0,
+    _account_summary: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Run engine reconciliation (spot/multi_leg) + PnL vs exchange + realized PnL for A/B/C."""
     import time
@@ -366,19 +367,23 @@ def reconcile_all_accounts(
 
     realized_recon: Dict[str, Any] = {"ok": True, "scope": "multi_leg", "issues": []}
     try:
-        summary = build_account_summary(
-            trend_db=Path(str(trend_db)) if trend_db else Path("/dev/null"),
-            spot_db=Path(str(spot_db)) if spot_db else Path("/dev/null"),
-            spot_ledger_db=(
-                Path(str(spot_ledger_db)) if spot_ledger_db else Path("/dev/null")
-            ),
-            multi_leg_db=Path(str(multi_leg_db)) if multi_leg_db else Path("/dev/null"),
-            feature_bus_root=(
-                Path(str(feature_bus_root)) if feature_bus_root else Path("/dev/null")
-            ),
-            symbol="*",
-            lookback_days=lookback_days,
-        )
+        # Reuse pre-built summary if available to avoid duplicate DB queries
+        if _account_summary is None:
+            summary = build_account_summary(
+                trend_db=Path(str(trend_db)) if trend_db else Path("/dev/null"),
+                spot_db=Path(str(spot_db)) if spot_db else Path("/dev/null"),
+                spot_ledger_db=(
+                    Path(str(spot_ledger_db)) if spot_ledger_db else Path("/dev/null")
+                ),
+                multi_leg_db=Path(str(multi_leg_db)) if multi_leg_db else Path("/dev/null"),
+                feature_bus_root=(
+                    Path(str(feature_bus_root)) if feature_bus_root else Path("/dev/null")
+                ),
+                symbol="*",
+                lookback_days=lookback_days,
+            )
+        else:
+            summary = _account_summary
         local_realized = 0.0
         for s in summary.get("scopes") or []:
             if str(s.get("scope")) == "multi_leg":
