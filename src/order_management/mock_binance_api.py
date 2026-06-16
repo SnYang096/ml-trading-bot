@@ -175,7 +175,7 @@ class MockBinanceAPI:
                 continue
 
             otype = order["type"]
-            side = order["side"]
+            side = str(order["side"]).upper()
             trigger_px = order["trigger_price"]
             fill_price: Optional[float] = None
 

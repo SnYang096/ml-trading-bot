@@ -446,6 +446,36 @@ class ChopGridLiveEngine(SegmentLifecycleMixin):
                     order.exchange_order_id = result.order_id
                     order.client_order_id = result.client_order_id
                     order.status = str(result.status or "submitted")
+                    st = order.status.lower()
+                    if st in {"canceled", "expired", "rejected"}:
+                        order.status = "canceled"
+                    elif st in {"closed", "filled"} and result.order_id:
+                        # ── Bridge to on_execution_report for inventory ──
+                        filled_qty = _as_float(
+                            raw.get("filled_quantity") or raw.get("filled"),
+                            order.quantity,
+                        )
+                        if filled_qty <= 0:
+                            filled_qty = order.quantity
+                        fill_px = _as_float(
+                            raw.get("average_price") or raw.get("price"),
+                            order.price,
+                        )
+                        self.on_execution_report(
+                            {
+                                "order_id": str(result.order_id),
+                                "client_order_id": str(
+                                    result.client_order_id
+                                    or order.client_order_id
+                                    or ""
+                                ),
+                                "status": "FILLED",
+                                "filled_qty": filled_qty,
+                                "last_filled_price": fill_px,
+                                "trade_time": raw.get("trade_time")
+                                or self.state.last_timestamp,
+                            }
+                        )
             elif result.action == "cancel":
                 order = self._find_order(
                     local_id=local_id,
@@ -460,6 +490,7 @@ class ChopGridLiveEngine(SegmentLifecycleMixin):
                 if pos is not None and result.order_id:
                     pos.protection_order_ids.append(result.order_id)
             elif result.action == "market_exit":
+                # ── Remove position from inventory (align with trend engine) ──
                 leg_id = str(raw.get("leg_id") or "")
                 if not leg_id:
                     order_id = str(
@@ -469,6 +500,9 @@ class ChopGridLiveEngine(SegmentLifecycleMixin):
                         leg_id = order_id[: -len("_dust")]
                 status = str(result.status or "").lower()
                 if status in {"skipped_no_position", "filled", "closed"}:
+                    pos = self._find_position(leg_id)
+                    if pos is not None:
+                        self.state.inventory.remove(pos)
                     self._clear_pending_dust_exit(leg_id)
         self.state.pending_orders = [
             o for o in self.state.pending_orders if o.status != "canceled"

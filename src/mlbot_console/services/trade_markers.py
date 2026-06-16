@@ -645,6 +645,7 @@ def multi_leg_markers(
                    stop_price, leg_id
             FROM multi_leg_orders
             WHERE symbol = ?{ml_time_clause}
+              AND local_order_id NOT LIKE '%late_fill_cleanup%'
             ORDER BY COALESCE(filled_at, created_at) ASC
             LIMIT {_MARKER_QUERY_LIMIT}
         """

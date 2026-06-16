@@ -1028,6 +1028,7 @@ def multi_leg_orders_list(
                    client_order_id, raw_json
             FROM multi_leg_orders
             WHERE 1=1{status_clause}{status_match}{strategy_clause}
+              AND local_order_id NOT LIKE '%late_fill_cleanup%'
             ORDER BY COALESCE(filled_at, created_at) DESC
             LIMIT ?
         """
@@ -1045,6 +1046,7 @@ def multi_leg_orders_list(
                    client_order_id, raw_json
             FROM multi_leg_orders
             WHERE symbol = ?{status_clause}{status_match}{strategy_clause}
+              AND local_order_id NOT LIKE '%late_fill_cleanup%'
             ORDER BY COALESCE(filled_at, created_at) DESC
             LIMIT ?
         """
