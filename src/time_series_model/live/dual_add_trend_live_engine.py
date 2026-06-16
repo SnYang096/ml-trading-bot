@@ -671,6 +671,94 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
         self.state.last_reconciliation_issues = issues
         self.save_state()
 
+    # ── Reconcile: re-place missing catastrophic SL ────────────────────
+    def actions_ensure_protection(
+        self,
+        *,
+        exchange_positions: Iterable[Any],
+        exchange_orders: Iterable[Any],
+    ) -> List[Dict[str, Any]]:
+        """Re-place missing catastrophic SL for open inventory legs.
+
+        Called by the orchestrator during reconcile.  Addresses the gap
+        where the one-shot SL placement at fill time fails / is rejected
+        and is never retried — leaving the leg naked until the engine
+        proactively exits.
+        """
+        if not self.state.active:
+            return []
+        if self._segment_winding_down():
+            return []
+        if self.cfg.protection_stop_mode == "none":
+            return []
+        sym = str(self.state.symbol or "").upper()
+        if not sym or not self.state.inventory:
+            return []
+
+        # Build set of open exchange order IDs for dedup
+        open_orders = [dict(o) for o in exchange_orders]
+        open_exchange_ids: set[str] = set()
+        open_client_ids: set[str] = set()
+        for o in open_orders:
+            oid = str(o.get("orderId") or o.get("order_id") or "").strip()
+            if oid:
+                open_exchange_ids.add(oid)
+            for key in (
+                o.get("clientOrderId"),
+                o.get("client_order_id"),
+                (
+                    (o.get("info") or {}).get("clientOrderId")
+                    if isinstance(o.get("info"), dict)
+                    else None
+                ),
+                (
+                    (o.get("info") or {}).get("clientAlgoId")
+                    if isinstance(o.get("info"), dict)
+                    else None
+                ),
+            ):
+                cid = str(key or "").strip()
+                if cid:
+                    open_client_ids.add(cid)
+
+        actions: List[Dict[str, Any]] = []
+        ts = self.state.last_timestamp or ""
+
+        for pos in self.state.inventory:
+            if str(pos.symbol or "").upper() != sym:
+                continue
+
+            # Check if at least one protection order for this leg is still
+            # live on the exchange.  protection_order_ids stores exchange
+            # orderIds populated by on_execution_results("place_protection").
+            has_live_protection = bool(
+                set(str(pid) for pid in pos.protection_order_ids if str(pid))
+                & open_exchange_ids
+            )
+            if has_live_protection:
+                continue
+
+            # Generate fresh SL (and TP if not basket mode)
+            new_actions = self._protection_actions(pos=pos, timestamp=ts)
+            for action in new_actions:
+                expected_cid = str(action.get("order_id") or "")
+                # Skip if the deterministic client_order_id already exists
+                # on the exchange (idempotent re-place after restart).
+                if expected_cid and expected_cid in open_client_ids:
+                    continue
+                actions.append(action)
+
+        if actions:
+            logger.info(
+                "dual_add_trend ensure_protection: symbol=%s inventory=%d "
+                "actions=%d",
+                sym,
+                len(self.state.inventory),
+                len(actions),
+            )
+            self.save_state()
+        return actions
+
     def on_execution_report(self, report: Dict[str, Any]) -> None:
         """Apply normalized user-stream fill updates to local pending inventory."""
         if self._handle_protection_fill(report):

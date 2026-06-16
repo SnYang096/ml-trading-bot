@@ -447,8 +447,8 @@ def run_timeline_backtest(
         mock.set_price(sym, close)
         fills = mock.match_pending_orders(sym, high, low)
         if fills:
-            account.record_pending_fills(fills)
-            # Feed fill events to the engine that placed the order
+            # Feed fill events to the engine that placed the order. The mock
+            # wallet (source of truth) is already updated by match_pending_orders.
             for fill in fills:
                 cid = str(fill.get("client_order_id", ""))
                 for rt in runtimes:
@@ -548,11 +548,6 @@ def run_timeline_backtest(
 
             report = rt.orchestrator.run_actions(actions, reconcile=False)
             account.record_orchestration(report, symbol_conflict_drops=dropped)
-            account.record_execution_results(
-                report.execution_results,
-                strategy=rt.name,
-                fee_bps=rt.fee_bps,
-            )
             refresh_symbol_owner(runtimes, symbol_owner, sym)
 
         if dry_run:

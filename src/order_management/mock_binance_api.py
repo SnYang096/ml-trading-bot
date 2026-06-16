@@ -37,6 +37,7 @@ class MockBinanceAPI:
         self._pending_orders: List[Dict[str, Any]] = []
         self.wallet_usdt = float(initial_wallet_usdt or 0.0)
         self.default_fee_bps = float(fee_bps or 0.0)
+        self.total_fees_usdt = 0.0
         self.hedge_mode: bool = False
         self.hedge_mode_probe_error: Optional[str] = None
 
@@ -114,6 +115,7 @@ class MockBinanceAPI:
         key = self._pos_key(symbol, position_side)
         fee = self._fee_usdt(qty * fill_price, fee_bps)
         self.wallet_usdt -= fee
+        self.total_fees_usdt += fee
         pos = self._hedge_positions.get(key)
         if pos is None or float(pos.get("qty") or 0) <= 0:
             self._hedge_positions[key] = {
@@ -149,6 +151,7 @@ class MockBinanceAPI:
             gross = (entry - fill_price) * close_qty
         fee = self._fee_usdt(close_qty * fill_price, fee_bps)
         self.wallet_usdt += gross - fee
+        self.total_fees_usdt += fee
         pos["qty"] = float(pos["qty"]) - close_qty
         if float(pos["qty"]) <= 1e-12:
             self._hedge_positions.pop(key, None)

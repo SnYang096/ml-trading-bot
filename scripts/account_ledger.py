@@ -199,31 +199,6 @@ class AccountLedger:
         lot.entry_fee_usdt += add_fee
         return True, filled, ""
 
-    def close_lot_by_symbol(
-        self,
-        *,
-        symbol: str,
-        side: str,
-        exit_price: float,
-        fee_rate: float = 0.0,
-    ) -> Optional[CloseResult]:
-        """Close the first open lot matching *symbol* + *side*.
-
-        Used by ``record_pending_fills`` when the exit fill's
-        ``client_order_id`` does not match the entry lot_id (e.g.
-        TP/SL protection orders generated with a different id scheme).
-        """
-        sym = str(symbol).upper()
-        sd = str(side).upper()
-        for lot in self._lots.values():
-            if lot.symbol.upper() == sym and lot.side.upper() == sd:
-                return self.close_lot(
-                    lot_id=lot.lot_id,
-                    exit_price=exit_price,
-                    fee_rate=fee_rate,
-                )
-        return None
-
     def close_lot(
         self,
         *,

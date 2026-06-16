@@ -779,6 +779,250 @@ def test_on_execution_results_market_exit_persists_when_segment_inactive(
     assert reloaded.state.inventory == []
 
 
+# =========================================================================
+# actions_ensure_protection tests
+# =========================================================================
+
+
+def _make_engine_with_position(
+    tmp_path: Path,
+    *,
+    leg_id: str = "long_0",
+    side: str = "LONG",
+    protection_order_ids: list[str] | None = None,
+    active: bool = True,
+    segment_state: str = SegmentState.ENTERING.value,
+    protection_stop_mode: str = "catastrophic",
+    take_profit_mode: str = "basket",
+) -> DualAddTrendLiveEngine:
+    """Helper: create an engine with one inventory position."""
+    cfg_text = f"""
+regime:
+  entry_min: 0.80
+  exit_below: 0.50
+  max_semantic_chop_entry: 0.25
+  max_semantic_chop_hold: 0.40
+  exclude_box_prefilter: true
+inventory:
+  flip_action: close_offside_all
+  max_adds_per_side: 3
+  max_gross_exposure_units: 4
+  max_net_exposure_units: 2
+add_spacing:
+  atr_mult: 0.50
+take_profit:
+  atr_mult: 0.25
+  min_pct: 0.0005
+  min_abs: 0.0
+  mode: {take_profit_mode}
+risk:
+  diagnostic_fee_bps: 4.0
+  max_loss_per_segment: 0.01
+  protection_stop_mode: {protection_stop_mode}
+order_model:
+  entry_order_type: marketable_limit
+  add_order_type: marketable_limit
+  max_slippage_bps: 5.0
+  pending_timeout_bars: 1
+"""
+    cfg_path = tmp_path / "dual_add.yaml"
+    cfg_path.write_text(cfg_text, encoding="utf-8")
+    engine = DualAddTrendLiveEngine(
+        config_path=cfg_path,
+        state_path=tmp_path / "state.json",
+        unit_notional=100.0,
+    )
+    engine.state.active = active
+    engine.state.symbol = "BTCUSDT"
+    engine.state.segment_id = "seg"
+    engine.state.center = 100.0
+    engine.state.atr = 2.0
+    engine.state.trend_side = side
+    engine.state.segment_state = segment_state
+    engine.state.last_timestamp = "2026-01-01T00:00:00Z"
+    engine.state.inventory = [
+        DualAddPosition(
+            leg_id=leg_id,
+            symbol="BTCUSDT",
+            side=side,
+            entry_price=100.0,
+            quantity=1.0,
+            seq=0,
+            entry_time="2026-01-01T00:00:00Z",
+            protection_order_ids=list(protection_order_ids or []),
+        ),
+    ]
+    return engine
+
+
+def test_ensure_protection_returns_sl_when_no_protection_exists(
+    tmp_path: Path,
+) -> None:
+    """Freshly filled position with no SL placed → reconcile re-places it."""
+    engine = _make_engine_with_position(tmp_path, protection_order_ids=[])
+
+    actions = engine.actions_ensure_protection(
+        exchange_positions=[],
+        exchange_orders=[],
+    )
+
+    assert len(actions) == 1
+    assert actions[0]["action"] == "place_protection"
+    assert actions[0]["protection_type"] == "stop_loss"
+    assert actions[0]["leg_id"] == "long_0"
+    assert actions[0]["order_id"] == "long_0_sl"
+
+
+def test_ensure_protection_returns_empty_when_sl_live_on_exchange(
+    tmp_path: Path,
+) -> None:
+    """SL order still live on exchange → no re-place needed."""
+    engine = _make_engine_with_position(tmp_path, protection_order_ids=["ex_sl_123"])
+
+    actions = engine.actions_ensure_protection(
+        exchange_positions=[],
+        exchange_orders=[
+            {"orderId": "ex_sl_123", "clientOrderId": "dat_abc", "status": "NEW"},
+        ],
+    )
+
+    assert actions == []
+
+
+def test_ensure_protection_returns_sl_when_sl_filled_on_exchange(
+    tmp_path: Path,
+) -> None:
+    """SL was filled/canceled on exchange → not in open orders → re-place."""
+    engine = _make_engine_with_position(tmp_path, protection_order_ids=["ex_sl_old"])
+
+    # Exchange has no open orders (SL was filled and removed)
+    actions = engine.actions_ensure_protection(
+        exchange_positions=[],
+        exchange_orders=[],
+    )
+
+    assert len(actions) == 1
+    assert actions[0]["order_id"] == "long_0_sl"
+
+
+def test_ensure_protection_skips_when_not_active(tmp_path: Path) -> None:
+    engine = _make_engine_with_position(tmp_path, active=False)
+
+    actions = engine.actions_ensure_protection(
+        exchange_positions=[],
+        exchange_orders=[],
+    )
+
+    assert actions == []
+
+
+def test_ensure_protection_skips_when_winding_down(tmp_path: Path) -> None:
+    engine = _make_engine_with_position(
+        tmp_path, segment_state=SegmentState.CLOSING.value
+    )
+
+    actions = engine.actions_ensure_protection(
+        exchange_positions=[],
+        exchange_orders=[],
+    )
+
+    assert actions == []
+
+
+def test_ensure_protection_skips_when_stop_mode_none(tmp_path: Path) -> None:
+    engine = _make_engine_with_position(tmp_path, protection_stop_mode="none")
+
+    actions = engine.actions_ensure_protection(
+        exchange_positions=[],
+        exchange_orders=[],
+    )
+
+    assert actions == []
+
+
+def test_ensure_protection_basket_mode_no_tp(tmp_path: Path) -> None:
+    """basket TP mode → only SL placed, no TP on exchange."""
+    engine = _make_engine_with_position(tmp_path, take_profit_mode="basket")
+
+    actions = engine.actions_ensure_protection(
+        exchange_positions=[],
+        exchange_orders=[],
+    )
+
+    assert len(actions) == 1
+    assert actions[0]["protection_type"] == "stop_loss"
+
+
+def test_ensure_protection_non_basket_mode_sl_and_tp(tmp_path: Path) -> None:
+    """Non-basket TP mode → both SL and TP placed on exchange."""
+    engine = _make_engine_with_position(tmp_path, take_profit_mode="per_leg")
+
+    actions = engine.actions_ensure_protection(
+        exchange_positions=[],
+        exchange_orders=[],
+    )
+
+    types = {a["protection_type"] for a in actions}
+    assert types == {"stop_loss", "take_profit"}
+
+
+def test_ensure_protection_dedup_by_client_order_id(tmp_path: Path) -> None:
+    """If the expected client_order_id already exists on exchange, skip."""
+    engine = _make_engine_with_position(tmp_path, protection_order_ids=[])
+
+    # The SL action's order_id is "long_0_sl" — the adapter would derive a
+    # client_order_id from it.  Simulate that ID existing on exchange.
+    # We don't know the exact hash, so instead test that when the
+    # order_id matches a clientOrderId on exchange, it's skipped.
+    actions_no_dedup = engine.actions_ensure_protection(
+        exchange_positions=[], exchange_orders=[]
+    )
+    assert len(actions_no_dedup) == 1
+
+    # Now put the expected order_id as a clientOrderId on exchange
+    expected_cid = actions_no_dedup[0]["order_id"]  # "long_0_sl"
+    actions = engine.actions_ensure_protection(
+        exchange_positions=[],
+        exchange_orders=[
+            {"clientOrderId": expected_cid, "status": "NEW"},
+        ],
+    )
+    assert actions == []
+
+
+def test_ensure_protection_multiple_positions(tmp_path: Path) -> None:
+    """Two positions, one has SL, other doesn't → only missing SL returned."""
+    engine = _make_engine_with_position(
+        tmp_path,
+        leg_id="long_0",
+        protection_order_ids=["ex_sl_existing"],
+    )
+    engine.state.inventory.append(
+        DualAddPosition(
+            leg_id="short_0",
+            symbol="BTCUSDT",
+            side="SHORT",
+            entry_price=101.0,
+            quantity=1.0,
+            seq=1,
+            entry_time="2026-01-01T01:00:00Z",
+            protection_order_ids=[],
+        )
+    )
+
+    actions = engine.actions_ensure_protection(
+        exchange_positions=[],
+        exchange_orders=[
+            {"orderId": "ex_sl_existing", "status": "NEW"},
+        ],
+    )
+
+    # Only the SHORT position missing SL
+    assert len(actions) == 1
+    assert actions[0]["leg_id"] == "short_0"
+    assert actions[0]["order_id"] == "short_0_sl"
+
+
 def test_on_execution_results_market_exit_parses_leg_id_from_order_id(
     tmp_path: Path,
 ) -> None:

@@ -1,59 +1,26 @@
-"""Account tracking for multileg timeline backtest (ledger + mock wallet)."""
+"""Account tracking for multileg timeline backtest.
+
+Equity is sourced entirely from the mock wallet (``mock.wallet_usdt`` +
+unrealized P&L), which is updated per-fill by ``MockBinanceAPI._apply_open`` /
+``_apply_reduce`` using real fill qty/price. There is no separate ledger
+double-entry: a side ledger keyed by client_order_id could not reliably pair
+TP/SL exits back to their entry lots, so it was removed to avoid a misleading
+``ledger_realized_pnl`` that diverged from the authoritative wallet equity.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any, Dict, Iterable, Mapping, Optional
+from typing import Any, Dict, Optional
 
-from scripts.account_ledger import AccountLedger
-from src.order_management.grid_execution_adapter import MultiLegExecutionResult
 from src.order_management.mock_binance_api import MockBinanceAPI
 from src.order_management.multi_leg_orchestrator import OrchestrationReport
-
-
-def _fill_price(raw: Mapping[str, Any], action: Mapping[str, Any]) -> float:
-    for key in ("average_price", "price", "avgPrice", "exit_price", "mark_price"):
-        val = raw.get(key) if key in raw else action.get(key)
-        if val is None:
-            continue
-        try:
-            px = float(val)
-        except (TypeError, ValueError):
-            continue
-        if px > 0:
-            return px
-    return 0.0
-
-
-def _filled_qty(raw: Mapping[str, Any], action: Mapping[str, Any]) -> float:
-    for key in ("filled_quantity", "filled", "executedQty", "quantity"):
-        val = raw.get(key) if key in raw else action.get(key)
-        if val is None:
-            continue
-        try:
-            qty = float(val)
-        except (TypeError, ValueError):
-            continue
-        if qty > 0:
-            return qty
-    return 0.0
-
-
-def _lot_id(action: Mapping[str, Any], result: MultiLegExecutionResult) -> str:
-    raw = dict(result.raw or {})
-    for key in ("local_order_id", "order_id", "client_order_id"):
-        val = raw.get(key) or action.get(key) or getattr(result, key, None)
-        if val:
-            return str(val)
-    return f"{result.symbol}:{result.action}:{id(result)}"
 
 
 @dataclass
 class MultilegTimelineAccount:
     initial_equity: float
     mock: MockBinanceAPI
-    ledger: AccountLedger = field(init=False)
     peak_equity: float = 0.0
     daily_pnl: float = 0.0
     current_day: str = ""
@@ -66,10 +33,6 @@ class MultilegTimelineAccount:
     _day_start_equity: float = 0.0
 
     def __post_init__(self) -> None:
-        self.ledger = AccountLedger(
-            account="multileg_timeline",
-            initial_cash_usdt=float(self.initial_equity),
-        )
         self.mock.set_wallet(float(self.initial_equity))
         self.peak_equity = float(self.initial_equity)
         self._day_start_equity = float(self.initial_equity)
@@ -97,115 +60,7 @@ class MultilegTimelineAccount:
                 delta = rp - prev
                 if abs(delta) > 1e-12:
                     self.mock.wallet_usdt += delta
-                    # NOTE: do NOT add to ledger here — the same P&L is
-                    # already recorded by close_lot() in record_pending_fills
-                    # or record_execution_results.  Adding it again causes
-                    # ledger_realized_pnl to double-count TP/SL exits.
                     self._engine_realized_baseline[key] = rp
-
-    def record_execution_results(
-        self,
-        results: Iterable[MultiLegExecutionResult],
-        *,
-        strategy: str,
-        fee_bps: float,
-    ) -> None:
-        fee_rate = max(0.0, float(fee_bps or 0.0)) / 10000.0
-        for result in results:
-            status = str(result.status or "").lower()
-            if status not in {"filled", "submitted"} and result.action != "market_exit":
-                continue
-            action = dict(result.raw or {})
-            if result.action == "place" and status == "filled":
-                px = _fill_price(action, action)
-                qty = _filled_qty(action, action)
-                if px <= 0 or qty <= 0:
-                    continue
-                notional = px * qty
-                side = str(action.get("side", "") or "").upper()
-                lot_side = "LONG" if side == "BUY" else "SHORT"
-                lid = _lot_id(action, result)
-                if self.ledger.get_lot(lid) is None:
-                    self.ledger.open_lot(
-                        lot_id=lid,
-                        strategy=strategy,
-                        symbol=str(result.symbol or action.get("symbol", "")),
-                        side=lot_side,
-                        notional_usdt=notional,
-                        entry_price=px,
-                        fee_rate=fee_rate,
-                        cash_mode="fee_only",
-                        opened_at=datetime.utcnow(),
-                    )
-                else:
-                    self.ledger.merge_lot(
-                        lot_id=lid,
-                        add_notional_usdt=notional,
-                        add_price=px,
-                        fee_rate=fee_rate,
-                    )
-            elif result.action == "market_exit" and status in {
-                "filled",
-                "submitted",
-                "skipped_no_position",
-            }:
-                px = _fill_price(action, action)
-                if px <= 0:
-                    px = _fill_price(action, action) or float(
-                        action.get("exit_price") or 0.0
-                    )
-                if px <= 0:
-                    continue
-                lid = _lot_id(action, result)
-                if self.ledger.get_lot(lid) is not None:
-                    self.ledger.close_lot(lot_id=lid, exit_price=px, fee_rate=fee_rate)
-
-    def record_pending_fills(self, fills: list) -> None:
-        """Record fills from MockBinanceAPI.match_pending_orders in the ledger.
-
-        Entry LIMIT fills → open lot; reduce-only (TP/SL) fills → close lot.
-        Wallet state is already correct (updated by mock._apply_*); this
-        keeps the ledger approximately in sync for PnL/fee reporting.
-        """
-        fee_rate = max(0.0, float(self.mock.default_fee_bps)) / 10000.0
-        for fill in fills:
-            qty = float(fill.get("quantity", 0) or 0)
-            px = float(fill.get("average_price", 0) or fill.get("price", 0) or 0)
-            if qty <= 0 or px <= 0:
-                continue
-            symbol = str(fill.get("symbol", ""))
-            side = str(fill.get("side", "")).upper()
-            reduce_only = bool(fill.get("reduce_only", False))
-            cid = str(fill.get("client_order_id", ""))
-            if reduce_only:
-                # TP/SL fill: close lot.  Primary key is client_order_id.
-                if self.ledger.get_lot(cid) is not None:
-                    self.ledger.close_lot(lot_id=cid, exit_price=px, fee_rate=fee_rate)
-                else:
-                    # Fallback: close first open lot by symbol + inferred
-                    # lot side (SELL fill closes LONG, BUY fills close SHORT).
-                    lot_side = "LONG" if side == "SELL" else "SHORT"
-                    self.ledger.close_lot_by_symbol(
-                        symbol=symbol,
-                        side=lot_side,
-                        exit_price=px,
-                        fee_rate=fee_rate,
-                    )
-            else:
-                # Entry LIMIT fill: open lot.
-                if self.ledger.get_lot(cid) is None:
-                    lot_side = "LONG" if side == "BUY" else "SHORT"
-                    self.ledger.open_lot(
-                        lot_id=cid,
-                        strategy="pending_fill",
-                        symbol=symbol,
-                        side=lot_side,
-                        notional_usdt=qty * px,
-                        entry_price=px,
-                        fee_rate=fee_rate,
-                        cash_mode="fee_only",
-                        opened_at=datetime.utcnow(),
-                    )
 
     def record_orchestration(
         self,
@@ -260,6 +115,6 @@ class MultilegTimelineAccount:
             "trades_rej": self.trades_rej,
             "halted": self.halted,
             "halt_reason": self.halt_reason,
-            "ledger_realized_pnl": self.ledger.realized_pnl_usdt,
-            "total_fees_usdt": self.ledger.total_fees_usdt,
+            "realized_pnl": self.current - self.initial_equity,
+            "total_fees_usdt": self.mock.total_fees_usdt,
         }
