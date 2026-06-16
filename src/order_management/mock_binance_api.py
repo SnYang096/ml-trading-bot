@@ -34,6 +34,7 @@ class MockBinanceAPI:
         self._positions: Dict[str, Dict[str, Any]] = {}
         self._open_orders: Dict[str, Dict[str, Any]] = {}
         self._last_prices: Dict[str, float] = {}
+        self._pending_orders: List[Dict[str, Any]] = []
         self.wallet_usdt = float(initial_wallet_usdt or 0.0)
         self.default_fee_bps = float(fee_bps or 0.0)
         self.hedge_mode: bool = False
@@ -153,6 +154,88 @@ class MockBinanceAPI:
             self._hedge_positions.pop(key, None)
         return gross - fee
 
+    # ------------------------------------------------------------------
+    # Bar-level pending order matching
+    # ------------------------------------------------------------------
+
+    def match_pending_orders(
+        self, symbol: str, high: float, low: float
+    ) -> List[Dict[str, Any]]:
+        """Match pending LIMIT / STOP orders against bar high/low.
+
+        Called once per 1m bar by the backtest loop.  Returns a list of
+        fill-result dicts for orders that were matched this bar.
+        """
+        filled_results: List[Dict[str, Any]] = []
+        remaining: List[Dict[str, Any]] = []
+
+        for order in self._pending_orders:
+            if order["symbol"] != symbol:
+                remaining.append(order)
+                continue
+
+            otype = order["type"]
+            side = order["side"]
+            trigger_px = order["trigger_price"]
+            fill_price: Optional[float] = None
+
+            if otype == "limit":
+                if side == "BUY" and low <= order["price"]:
+                    fill_price = order["price"]
+                elif side == "SELL" and high >= order["price"]:
+                    fill_price = order["price"]
+            elif otype == "stop_market":
+                # Stop-loss: triggers when price moves AGAINST position
+                if side == "SELL" and low <= trigger_px:
+                    # LONG stop-loss: price drops to stop level
+                    fill_price = trigger_px
+                elif side == "BUY" and high >= trigger_px:
+                    # SHORT stop-loss: price rises to stop level
+                    fill_price = trigger_px
+            elif otype == "take_profit_market":
+                # Take-profit: triggers when price moves IN FAVOR of position
+                if side == "SELL" and high >= trigger_px:
+                    # LONG take-profit: price rises to TP level
+                    fill_price = trigger_px
+                elif side == "BUY" and low <= trigger_px:
+                    # SHORT take-profit: price drops to TP level
+                    fill_price = trigger_px
+
+            if fill_price is not None:
+                qty = order["quantity"]
+                pside = order["position_side"]
+                if order["reduce_only"]:
+                    pos = self._hedge_positions.get(self._pos_key(symbol, pside))
+                    if pos and float(pos.get("qty", 0)) > 0:
+                        self._apply_reduce(
+                            symbol=symbol,
+                            position_side=pside,
+                            qty=qty,
+                            fill_price=fill_price,
+                        )
+                    else:
+                        # No position to reduce — discard order
+                        continue
+                else:
+                    self._apply_open(
+                        symbol=symbol,
+                        position_side=pside,
+                        qty=qty,
+                        fill_price=fill_price,
+                    )
+                filled_results.append({
+                    **order,
+                    "filled": qty,
+                    "filled_quantity": qty,
+                    "average_price": fill_price,
+                    "status": "filled",
+                })
+            else:
+                remaining.append(order)
+
+        self._pending_orders = remaining
+        return filled_results
+
     def place_order(
         self,
         symbol: str,
@@ -170,7 +253,12 @@ class MockBinanceAPI:
         price_protect: Optional[bool] = None,
         post_only: Optional[bool] = None,
     ) -> Dict[str, Any]:
-        """Simulate placing an order — instant fill at current price."""
+        """Simulate placing an order.
+
+        MARKET orders fill instantly at current price.
+        LIMIT / STOP_MARKET / TAKE_PROFIT_MARKET orders are stored in the
+        pending order book and matched bar-by-bar via ``match_pending_orders``.
+        """
         fill_price = float(price or self._last_prices.get(symbol, 0.0) or 0.0)
         order_id = f"mock_{uuid.uuid4().hex[:12]}"
         cid = client_order_id or f"mcid_{uuid.uuid4().hex[:10]}"
@@ -186,6 +274,42 @@ class MockBinanceAPI:
             else:
                 pside = "LONG" if side_val.upper() == "BUY" else "SHORT"
 
+        # --- Non-instant orders: store in pending book ---
+        if type_val in {"limit", "stop_market", "take_profit_market"}:
+            trigger_px = float(stop_price or price or 0.0)
+            pending = {
+                "order_id": order_id,
+                "client_order_id": cid,
+                "symbol": symbol,
+                "side": side_val,
+                "type": type_val,
+                "quantity": qty,
+                "price": fill_price,
+                "trigger_price": trigger_px,
+                "reduce_only": bool(reduce_only or close_position),
+                "close_position": bool(close_position),
+                "position_side": pside,
+                "created_at": datetime.now().timestamp(),
+            }
+            self._pending_orders.append(pending)
+            return {
+                "order_id": order_id,
+                "id": order_id,
+                "client_order_id": cid,
+                "symbol": symbol,
+                "side": side_val,
+                "type": type_val,
+                "quantity": quantity,
+                "price": fill_price,
+                "average_price": fill_price,
+                "filled": 0,
+                "filled_quantity": 0,
+                "status": "new",
+                "created_at": pending["created_at"],
+                "position_side": pside,
+            }
+
+        # --- MARKET orders: instant fill ---
         if qty > 0 and fill_price > 0:
             if reduce_only or close_position:
                 self._apply_reduce(
@@ -219,15 +343,44 @@ class MockBinanceAPI:
             "position_side": pside,
         }
 
+    def cancel_all_pending_entries(self) -> int:
+        """Cancel all non-reduce_only pending orders (entry LIMITs).
+
+        Called when the account is halted so entry orders don't fill post-halt.
+        Returns the number of orders cancelled.
+        """
+        before = len(self._pending_orders)
+        self._pending_orders = [
+            o for o in self._pending_orders if o.get("reduce_only")
+        ]
+        return before - len(self._pending_orders)
+
     def cancel_order(self, order_id: str, symbol: str) -> bool:
         self._open_orders.pop(order_id, None)
+        self._pending_orders = [
+            o for o in self._pending_orders
+            if o["order_id"] != order_id and o.get("client_order_id") != order_id
+        ]
         return True
 
     def cancel_algo_order(self, order_id: str, symbol: str) -> bool:
         self._open_orders.pop(order_id, None)
+        self._pending_orders = [
+            o for o in self._pending_orders
+            if o["order_id"] != order_id and o.get("client_order_id") != order_id
+        ]
         return True
 
     def get_order(self, order_id: str, symbol: str) -> Optional[Dict[str, Any]]:
+        for o in self._pending_orders:
+            if o["order_id"] == order_id or o.get("client_order_id") == order_id:
+                return {
+                    "order_id": o["order_id"],
+                    "status": "new",
+                    "filled": 0,
+                    "average_price": o.get("price", 0),
+                    "created_at": o.get("created_at", 0),
+                }
         return {
             "order_id": order_id,
             "status": "filled",
@@ -237,7 +390,23 @@ class MockBinanceAPI:
         }
 
     def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
-        return []
+        out: List[Dict[str, Any]] = []
+        for o in self._pending_orders:
+            if symbol and o["symbol"] != symbol:
+                continue
+            out.append({
+                "order_id": o["order_id"],
+                "client_order_id": o.get("client_order_id", ""),
+                "symbol": o["symbol"],
+                "side": o["side"],
+                "type": o["type"],
+                "quantity": o["quantity"],
+                "price": o.get("price", 0),
+                "stopPrice": o.get("trigger_price", 0),
+                "status": "new",
+                "position_side": o.get("position_side", ""),
+            })
+        return out
 
     def get_positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
@@ -303,4 +472,17 @@ class MockBinanceAPI:
         }
 
     def get_open_orders_for_sl_cleanup(self, symbol: str) -> List[Dict[str, Any]]:
-        return []
+        return [
+            {
+                "order_id": o["order_id"],
+                "client_order_id": o.get("client_order_id", ""),
+                "symbol": o["symbol"],
+                "side": o["side"],
+                "type": o["type"],
+                "quantity": o["quantity"],
+                "stopPrice": o.get("trigger_price", 0),
+                "status": "new",
+            }
+            for o in self._pending_orders
+            if o["symbol"] == symbol and o.get("reduce_only")
+        ]

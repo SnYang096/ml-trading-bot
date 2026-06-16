@@ -135,12 +135,15 @@ def _aggregate_2h_ohlc(
     tmp["bar_2h"] = tmp.index.floor("2h")
     out: Dict[Tuple[str, pd.Timestamp], Dict[str, float]] = {}
     for (sym, bar_2h), grp in tmp.groupby(["symbol", "bar_2h"], sort=False):
+        c = float(grp["close"].iloc[-1])
         out[(str(sym), pd.Timestamp(bar_2h))] = {
             "open": float(grp["open"].iloc[0]),
             "high": float(grp["high"].max()),
             "low": float(grp["low"].min()),
-            "close": float(grp["close"].iloc[-1]),
-            "atr14": float(grp.get("atr14", grp["close"] * 0.02).iloc[-1]),
+            "close": c,
+            "atr14": (
+                float(grp["atr14"].iloc[-1]) if "atr14" in grp.columns else c * 0.02
+            ),
         }
     return out
 
@@ -152,6 +155,7 @@ class TimelineRuntime:
     engine: Any
     orchestrator: Any
     fee_bps: float
+    client_id_prefix: str = ""
 
 
 def clean_bt_state(
@@ -211,7 +215,10 @@ def run_timeline_backtest(
         sync_multileg_timeline_sizing,
     )
     from src.order_management.chop_grid_concurrency import MultiLegConcurrencyGate
-    from src.order_management.grid_execution_adapter import MultiLegExecutionAdapter
+    from src.order_management.grid_execution_adapter import (
+        MultiLegExecutionAdapter,
+        MultiLegExecutionResult,
+    )
     from src.order_management.mock_binance_api import MockBinanceAPI
     from src.order_management.multi_leg_orchestrator import MultiLegLiveOrchestrator
     from src.order_management.multi_leg_reconciliation import (
@@ -345,6 +352,7 @@ def run_timeline_backtest(
                 engine=engine,
                 orchestrator=orchestrator,
                 fee_bps=_fee_bps(engine),
+                client_id_prefix=prefix,
             )
         )
 
@@ -407,6 +415,21 @@ def run_timeline_backtest(
 
     if progress:
         print(f"=== Timeline Backtest ({len(bars_1m)} bars) ===\n")
+
+    def _pending_fill_to_result(fill: Dict[str, Any]) -> MultiLegExecutionResult:
+        """Convert a match_pending_orders fill dict to MultiLegExecutionResult."""
+        return MultiLegExecutionResult(
+            action="market_exit" if fill.get("reduce_only") else "place",
+            status="filled",
+            symbol=str(fill.get("symbol", "")),
+            order_id=str(fill.get("order_id", "")),
+            client_order_id=str(fill.get("client_order_id", "")),
+            raw={
+                **fill,
+                "local_order_id": fill.get("client_order_id", fill.get("order_id", "")),
+            },
+        )
+
     t0 = time.monotonic()
     last_2h: Dict[str, pd.Timestamp] = {}
     symbol_owner: Dict[str, str] = {}
@@ -416,9 +439,29 @@ def run_timeline_backtest(
     for idx, row in bars_1m.iterrows():
         n_1m += 1
         sym = str(row["symbol"])
+        high = float(row["high"])
+        low = float(row["low"])
         close = float(row["close"])
-        mock.set_price(sym, close)
 
+        # --- Every 1m bar: update price & match pending orders ---
+        mock.set_price(sym, close)
+        fills = mock.match_pending_orders(sym, high, low)
+        if fills:
+            account.record_pending_fills(fills)
+            # Feed fill events to the engine that placed the order
+            for fill in fills:
+                cid = str(fill.get("client_order_id", ""))
+                for rt in runtimes:
+                    if rt.symbol == sym and cid.startswith(f"{rt.client_id_prefix}_"):
+                        try:
+                            rt.engine.on_execution_results(
+                                [_pending_fill_to_result(fill)]
+                            )
+                        except Exception:
+                            pass
+                        break
+
+        # --- Only process engine on_bar at 2h boundaries ---
         bar_2h = idx.floor("2h")
         if sym in last_2h and bar_2h <= last_2h[sym]:
             continue
@@ -528,14 +571,20 @@ def run_timeline_backtest(
             )
 
         day_key = str(idx.date())
+        was_halted_before = account.halted
         account.on_bar_close(
             day_key=day_key,
             max_dd=max_dd,
             daily_loss_limit=daily_loss,
             ts_label=str(bar_2h),
         )
-        if account.halted:
-            break
+        # On fresh halt: cancel all non-reduce_only pending orders (entry LIMITs)
+        # so they don't fill after the account is already dead.
+        if account.halted and not was_halted_before:
+            mock.cancel_all_pending_entries()
+        # Don't break on halt — continue so pending orders can still match
+        # and market_exit/cancel actions can execute on future bars.
+        # The governor already blocks risk-increasing actions when halted.
         if progress and n_2h % 200 == 0:
             dd = account.drawdown_pct() * 100.0
             print(f"  [{bar_2h}] eq={account.current:.0f} dd={dd:.1f}%")
