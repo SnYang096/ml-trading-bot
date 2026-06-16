@@ -361,7 +361,6 @@ def _multileg_open_rows(
                    leg_id
             FROM multi_leg_orders
             WHERE symbol = ?
-              AND local_order_id NOT LIKE '%late_fill_cleanup%'
             """,
             (sym,),
         )

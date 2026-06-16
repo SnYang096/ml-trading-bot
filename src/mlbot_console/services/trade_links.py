@@ -54,7 +54,6 @@ def _order_rows(db_path: Path, symbol: str) -> List[Dict[str, Any]]:
                quantity, stop_price, leg_id, raw_json
         FROM multi_leg_orders
         WHERE symbol = ?
-          AND local_order_id NOT LIKE '%late_fill_cleanup%'
         ORDER BY COALESCE(filled_at, created_at) ASC
     """
     rows = query_rows(db_path, sql, (symbol.upper(),))
