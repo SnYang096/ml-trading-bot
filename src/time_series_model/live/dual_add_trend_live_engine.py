@@ -1164,15 +1164,16 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
                 close_qty = filled_qty if filled_qty > 0 else float(pos.quantity or 0.0)
                 remaining = max(0.0, float(pos.quantity or 0.0) - close_qty)
                 if remaining > 1e-8:
-                    # Partial fill: shrink the position but keep it alive
+                    # Partial fill: shrink the position but keep it alive.
+                    # Clear all protection_order_ids — the remaining TP/SL
+                    # orders are now sized for the original quantity and
+                    # must be re-placed at the new size via
+                    # actions_ensure_protection on the next reconcile.
                     pos.quantity = remaining
-                    if ex_id:
-                        pos.protection_order_ids = [
-                            pid for pid in pos.protection_order_ids if str(pid) != ex_id
-                        ]
+                    pos.protection_order_ids = []
                     logger.info(
                         "dual_add_trend partial %s fill: leg_id=%s closed_qty=%.8f "
-                        "remaining=%.8f",
+                        "remaining=%.8f (cleared all protection IDs for re-place)",
                         kind,
                         pos.leg_id,
                         close_qty,

@@ -71,7 +71,7 @@ class MockBinanceAPI:
 
     def set_price(self, symbol: str, price: float) -> None:
         """Update the mock price for a symbol (called each bar by backtest)."""
-        self._last_prices[symbol] = float(price)
+        self._last_prices[str(symbol).upper()] = float(price)
 
     def set_position(
         self,
@@ -226,13 +226,15 @@ class MockBinanceAPI:
                         qty=qty,
                         fill_price=fill_price,
                     )
-                filled_results.append({
-                    **order,
-                    "filled": qty,
-                    "filled_quantity": qty,
-                    "average_price": fill_price,
-                    "status": "filled",
-                })
+                filled_results.append(
+                    {
+                        **order,
+                        "filled": qty,
+                        "filled_quantity": qty,
+                        "average_price": fill_price,
+                        "status": "filled",
+                    }
+                )
             else:
                 remaining.append(order)
 
@@ -353,23 +355,24 @@ class MockBinanceAPI:
         Returns the number of orders cancelled.
         """
         before = len(self._pending_orders)
-        self._pending_orders = [
-            o for o in self._pending_orders if o.get("reduce_only")
-        ]
+        self._pending_orders = [o for o in self._pending_orders if o.get("reduce_only")]
         return before - len(self._pending_orders)
 
     def cancel_order(self, order_id: str, symbol: str) -> bool:
+        sym = str(symbol or "").upper()
         self._open_orders.pop(order_id, None)
         self._pending_orders = [
-            o for o in self._pending_orders
-            if o["order_id"] != order_id and o.get("client_order_id") != order_id
+            o
+            for o in self._pending_orders
+            if not (o["order_id"] == order_id or o.get("client_order_id") == order_id)
         ]
         return True
 
     def cancel_algo_order(self, order_id: str, symbol: str) -> bool:
         self._open_orders.pop(order_id, None)
         self._pending_orders = [
-            o for o in self._pending_orders
+            o
+            for o in self._pending_orders
             if o["order_id"] != order_id and o.get("client_order_id") != order_id
         ]
         return True
@@ -384,31 +387,31 @@ class MockBinanceAPI:
                     "average_price": o.get("price", 0),
                     "created_at": o.get("created_at", 0),
                 }
-        return {
-            "order_id": order_id,
-            "status": "filled",
-            "filled": 0,
-            "average_price": 0,
-            "created_at": datetime.now().timestamp(),
-        }
+        # Order not found in pending — return None to match real exchange
+        # behaviour (Binance returns error for unknown orders).  Do NOT
+        # return a bogus {"status": "filled"} — it creates phantom fills.
+        return None
 
     def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
+        sym_norm = str(symbol).upper() if symbol else None
         for o in self._pending_orders:
-            if symbol and o["symbol"] != symbol:
+            if sym_norm and str(o["symbol"] or "").upper() != sym_norm:
                 continue
-            out.append({
-                "order_id": o["order_id"],
-                "client_order_id": o.get("client_order_id", ""),
-                "symbol": o["symbol"],
-                "side": o["side"],
-                "type": o["type"],
-                "quantity": o["quantity"],
-                "price": o.get("price", 0),
-                "stopPrice": o.get("trigger_price", 0),
-                "status": "new",
-                "position_side": o.get("position_side", ""),
-            })
+            out.append(
+                {
+                    "order_id": o["order_id"],
+                    "client_order_id": o.get("client_order_id", ""),
+                    "symbol": o["symbol"],
+                    "side": o["side"],
+                    "type": o["type"],
+                    "quantity": o["quantity"],
+                    "price": o.get("price", 0),
+                    "stopPrice": o.get("trigger_price", 0),
+                    "status": "new",
+                    "position_side": o.get("position_side", ""),
+                }
+            )
         return out
 
     def get_positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:

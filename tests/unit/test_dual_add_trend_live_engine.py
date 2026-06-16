@@ -13,6 +13,7 @@ from src.order_management.multi_leg_reconciliation import (
 from src.time_series_model.live.dual_add_trend_live_engine import (
     DualAddPosition,
     DualAddTrendLiveEngine,
+    _normalize_entry_leg_id,
 )
 from src.time_series_model.live.segment_lifecycle import SegmentState
 
@@ -1145,3 +1146,357 @@ def test_on_execution_results_market_exit_shadow_does_not_clear_inventory(
 
     # shadow = paper mode, no real fill → inventory must remain
     assert engine.state.inventory == [pos]
+
+
+# =========================================================================
+# _handle_protection_fill tests
+# =========================================================================
+
+
+def _engine_with_position_and_protection(
+    tmp_path: Path,
+    *,
+    leg_id: str = "long_0",
+    side: str = "LONG",
+    quantity: float = 1.0,
+    entry_price: float = 100.0,
+    protection_order_ids: list[str] | None = None,
+    atr: float = 2.0,
+) -> DualAddTrendLiveEngine:
+    """Helper: engine with ACTIVE segment + inventory + protection IDs."""
+    engine = _make_engine_with_position(
+        tmp_path,
+        leg_id=leg_id,
+        side=side,
+        protection_order_ids=list(protection_order_ids or []),
+        segment_state=SegmentState.ACTIVE.value,
+        take_profit_mode="per_leg",
+    )
+    engine.state.inventory[0].quantity = quantity
+    engine.state.inventory[0].entry_price = entry_price
+    engine.state.atr = atr
+    return engine
+
+
+def test_protection_fill_removes_position_on_full_fill(tmp_path: Path) -> None:
+    """Full SL fill removes the position from inventory."""
+    engine = _engine_with_position_and_protection(
+        tmp_path, protection_order_ids=["ex_sl_abc"]
+    )
+    assert len(engine.state.inventory) == 1
+
+    handled = engine._handle_protection_fill(
+        {
+            "order_id": "ex_sl_abc",
+            "client_order_id": "",
+            "status": "FILLED",
+            "filled_qty": 1.0,
+            "last_filled_price": 98.0,
+            "protection_type": "stop_loss",
+        }
+    )
+
+    assert handled is True
+    assert engine.state.inventory == []
+
+
+def test_protection_fill_partial_shrinks_position(tmp_path: Path) -> None:
+    """Partial SL fill (filled_qty < position.quantity) shrinks the position."""
+    engine = _engine_with_position_and_protection(
+        tmp_path, protection_order_ids=["ex_sl_partial"], quantity=1.0
+    )
+    pos = engine.state.inventory[0]
+    assert float(pos.quantity) == 1.0
+
+    handled = engine._handle_protection_fill(
+        {
+            "order_id": "ex_sl_partial",
+            "status": "FILLED",
+            "filled_qty": 0.3,
+            "last_filled_price": 98.0,
+            "protection_type": "stop_loss",
+        }
+    )
+
+    assert handled is True
+    assert len(engine.state.inventory) == 1
+    assert float(engine.state.inventory[0].quantity) == 0.7
+    # Filled protection ID removed from list
+    assert "ex_sl_partial" not in engine.state.inventory[0].protection_order_ids
+
+
+def test_protection_fill_partial_keeps_other_protection_ids(tmp_path: Path) -> None:
+    """Partial SL fill: ALL protection IDs cleared — TP must be re-placed at new size."""
+    engine = _engine_with_position_and_protection(
+        tmp_path,
+        protection_order_ids=["ex_sl_aaa", "ex_tp_bbb"],
+        quantity=1.0,
+    )
+
+    engine._handle_protection_fill(
+        {
+            "order_id": "ex_sl_aaa",
+            "status": "FILLED",
+            "filled_qty": 0.4,
+            "last_filled_price": 98.0,
+            "protection_type": "stop_loss",
+        }
+    )
+
+    pos = engine.state.inventory[0]
+    # Partial fill shrinks position and clears ALL protection IDs.
+    # TP at original size is now unsafe → must be re-placed via ensure_protection.
+    assert pos.protection_order_ids == []
+    assert float(pos.quantity) == 0.6
+
+
+def test_protection_fill_leg_hint_match_strips_sl_suffix(tmp_path: Path) -> None:
+    """Fill with leg_id="long_0_sl" → strips _sl → matches leg_id="long_0"."""
+    engine = _engine_with_position_and_protection(
+        tmp_path, leg_id="long_0", protection_order_ids=[]
+    )
+
+    # protection_order_ids empty, but leg_id hint matches after stripping _sl
+    handled = engine._handle_protection_fill(
+        {
+            "order_id": "",
+            "client_order_id": "",
+            "leg_id": "long_0_sl",
+            "status": "FILLED",
+            "filled_qty": 1.0,
+            "last_filled_price": 98.0,
+            "protection_type": "stop_loss",
+        }
+    )
+
+    assert handled is True
+    assert engine.state.inventory == []
+
+
+def test_protection_fill_leg_hint_match_strips_tp_suffix(tmp_path: Path) -> None:
+    """Fill with leg_id="long_0_tp" → strips _tp → matches leg_id="long_0"."""
+    engine = _engine_with_position_and_protection(
+        tmp_path, leg_id="short_1", side="SHORT"
+    )
+
+    handled = engine._handle_protection_fill(
+        {
+            "order_id": "",
+            "client_order_id": "",
+            "leg_id": "short_1_tp",
+            "status": "FILLED",
+            "filled_qty": 1.0,
+            "last_filled_price": 102.0,
+            "protection_type": "take_profit",
+        }
+    )
+
+    assert handled is True
+    assert engine.state.inventory == []
+
+
+def test_protection_fill_ignores_non_filled_status(tmp_path: Path) -> None:
+    """NEW/CANCELED status → not handled as protection fill."""
+    engine = _engine_with_position_and_protection(
+        tmp_path, protection_order_ids=["ex_sl_xxx"]
+    )
+
+    handled = engine._handle_protection_fill(
+        {
+            "order_id": "ex_sl_xxx",
+            "status": "NEW",
+            "filled_qty": 1.0,
+            "protection_type": "stop_loss",
+        }
+    )
+
+    assert handled is False
+    assert len(engine.state.inventory) == 1
+
+
+def test_protection_fill_full_close_clears_entire_position(tmp_path: Path) -> None:
+    """filled_qty >= pos.quantity → full close, position removed."""
+    engine = _engine_with_position_and_protection(
+        tmp_path,
+        protection_order_ids=["ex_sl_full"],
+        quantity=0.5,
+    )
+
+    handled = engine._handle_protection_fill(
+        {
+            "order_id": "ex_sl_full",
+            "status": "FILLED",
+            "filled_qty": 0.5,
+            "last_filled_price": 98.0,
+            "protection_type": "stop_loss",
+        }
+    )
+
+    assert handled is True
+    assert engine.state.inventory == []
+
+
+def test_protection_fill_no_match_no_leg_hint_returns_false(tmp_path: Path) -> None:
+    """order_id/cliend_id don't match, leg_id doesn't match → False."""
+    engine = _engine_with_position_and_protection(
+        tmp_path,
+        leg_id="long_5",
+        protection_order_ids=["ex_sl_zzz"],
+    )
+
+    handled = engine._handle_protection_fill(
+        {
+            "order_id": "ex_other",
+            "client_order_id": "cl_other",
+            "leg_id": "unrelated_leg",
+            "status": "FILLED",
+            "filled_qty": 1.0,
+            "protection_type": "stop_loss",
+        }
+    )
+
+    assert handled is False
+    assert len(engine.state.inventory) == 1
+
+
+# =========================================================================
+# actions_ensure_protection → on_execution_results closed loop
+# =========================================================================
+
+
+def test_ensure_protection_on_execution_results_closed_loop(tmp_path: Path) -> None:
+    """Full round-trip: ensure → execute → on_execution_results → ensure again→[]"""
+    engine = _make_engine_with_position(
+        tmp_path,
+        leg_id="loop_leg",
+        protection_order_ids=[],
+        segment_state=SegmentState.ACTIVE.value,
+    )
+
+    # Phase 1: ensure_protection returns SL action
+    actions = engine.actions_ensure_protection(
+        exchange_positions=[], exchange_orders=[]
+    )
+    assert len(actions) == 1
+    assert actions[0]["leg_id"] == "loop_leg"
+    assert actions[0]["protection_type"] == "stop_loss"
+
+    # Phase 2: adapter executed the SL, now feed back via on_execution_results
+    engine.on_execution_results(
+        [
+            GridExecutionResult(
+                action="place_protection",
+                status="open",
+                symbol="BTCUSDT",
+                order_id="ex_loop_sl",
+                client_order_id=derive_multileg_client_order_id(actions[0]),
+                raw={**actions[0], "leg_id": "loop_leg"},
+            )
+        ]
+    )
+
+    # protection_order_ids now has the exchange ID
+    pos = engine._find_position("loop_leg")
+    assert pos is not None
+    assert "ex_loop_sl" in pos.protection_order_ids
+
+    # Phase 3: ensure_protection again → should skip (SL is live on exchange)
+    actions2 = engine.actions_ensure_protection(
+        exchange_positions=[],
+        exchange_orders=[
+            {"orderId": "ex_loop_sl", "status": "NEW"},
+        ],
+    )
+    assert actions2 == []
+
+
+def test_ensure_protection_closed_loop_multiple_legs(tmp_path: Path) -> None:
+    """Two legs, one gets SL placed via ensure→execute→results cycle, other still missing."""
+    engine = _make_engine_with_position(
+        tmp_path,
+        leg_id="leg_a",
+        protection_order_ids=[],
+        segment_state=SegmentState.ACTIVE.value,
+    )
+    engine.state.inventory.append(
+        DualAddPosition(
+            leg_id="leg_b",
+            symbol="BTCUSDT",
+            side="SHORT",
+            entry_price=101.0,
+            quantity=1.0,
+            seq=1,
+            entry_time="2026-01-01T01:00:00Z",
+            protection_order_ids=[],
+        )
+    )
+
+    # Phase 1: ensure → returns SL for both (neither has protection)
+    actions = engine.actions_ensure_protection(
+        exchange_positions=[], exchange_orders=[]
+    )
+    action_leg_ids = {a["leg_id"] for a in actions}
+    assert action_leg_ids == {"leg_a", "leg_b"}
+
+    # Phase 2: only leg_a's SL got executed successfully
+    leg_a_action = next(a for a in actions if a["leg_id"] == "leg_a")
+    engine.on_execution_results(
+        [
+            GridExecutionResult(
+                action="place_protection",
+                status="open",
+                symbol="BTCUSDT",
+                order_id="ex_leg_a_sl",
+                client_order_id=derive_multileg_client_order_id(leg_a_action),
+                raw={**leg_a_action, "leg_id": "leg_a"},
+            )
+        ]
+    )
+
+    # Phase 3: ensure again — only leg_b missing
+    actions2 = engine.actions_ensure_protection(
+        exchange_positions=[],
+        exchange_orders=[
+            {"orderId": "ex_leg_a_sl", "status": "NEW"},
+        ],
+    )
+    assert len(actions2) == 1
+    assert actions2[0]["leg_id"] == "leg_b"
+
+
+def test_on_execution_results_place_protection_rejected_no_order_id(
+    tmp_path: Path,
+) -> None:
+    """Rejected protection placement → no order_id → not added to protection_order_ids."""
+    engine = _make_engine_with_position(
+        tmp_path,
+        leg_id="rejected_leg",
+        protection_order_ids=[],
+        segment_state=SegmentState.ACTIVE.value,
+    )
+
+    engine.on_execution_results(
+        [
+            GridExecutionResult(
+                action="place_protection",
+                status="rejected",
+                symbol="BTCUSDT",
+                order_id="",  # no order_id on rejection
+                client_order_id="cl_rejected",
+                raw={"leg_id": "rejected_leg", "order_id": "rejected_leg_sl"},
+            )
+        ]
+    )
+
+    pos = engine._find_position("rejected_leg")
+    assert pos is not None
+    assert pos.protection_order_ids == []  # still empty, no ID to add
+
+
+def test__normalize_entry_leg_id_strips_suffixes() -> None:
+    """Unit-test the helper directly."""
+    assert _normalize_entry_leg_id("long_0_sl") == "long_0"
+    assert _normalize_entry_leg_id("short_1_tp") == "short_1"
+    assert _normalize_entry_leg_id("bare_leg") == "bare_leg"
+    assert _normalize_entry_leg_id("") == ""
+    assert _normalize_entry_leg_id("odd_sl_tp") == "odd_sl"
