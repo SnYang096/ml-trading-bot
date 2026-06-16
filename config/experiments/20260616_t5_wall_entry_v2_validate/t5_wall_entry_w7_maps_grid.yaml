@@ -1,0 +1,29 @@
+# W7 vs E0 trading maps — canonical 三阶段（segment grid 内嵌 map）
+#
+#   bash config/experiments/20260616_t5_wall_entry_v2_validate/run_trading_maps.sh
+#
+# 产物：results/tpc/experiments/t5_wall_entry_v2_20260616/<variant>/<segment>/trading_map_tpc_event.html
+
+experiment_id: t5_wall_entry_w7_maps_20260616
+decision_doc: config/experiments/20260616_t5_wall_entry_v2_validate/DECISION.md
+strategy: tpc
+market_segment_path: config/market_segment.yaml
+data_path: data/parquet_data
+trading_map: true
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+
+segment_matrix:
+  segments:
+    - bear_2022
+    - bull_2023_2024
+    - recent_range_to_bear
+  variants:
+    - suffix: E0_prod
+      strategies_root: config/strategies
+      output_dir: results/tpc/experiments/t5_wall_entry_v2_20260616/E0_prod
+
+    - suffix: W7_or_regime_asym
+      strategies_root: config/experiments/20260616_t5_wall_entry_v2_validate/variants/tpc_wall_W7_or_regime_asym_strategies
+      output_dir: results/tpc/experiments/t5_wall_entry_v2_20260616/W7_or_regime_asym
