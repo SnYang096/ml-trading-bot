@@ -84,6 +84,8 @@ on:
       - 'src/time_series_model/live/**'
       - 'config/strategies/**'
       - 'live/highcap/universe.yaml'
+      - 'tests/order_management/test_live_safety_regressions.py'
+      - 'tests/business_console/test_multileg_position_truth.py'
 
 # 同一时间只允许一个部署
 concurrency:
@@ -159,12 +161,55 @@ jobs:
           fi
 
   # ============================================
+  # Job 0b: 资金/安全回归单测（部署前必过，mock only）
+  # ============================================
+  safety-regression-tests:
+    name: 🧪 Safety regression tests
+    runs-on: ubuntu-latest
+    needs: [validate-secrets]
+    timeout-minutes: 12
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: 📦 Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: 🧪 Run live safety regression suite
+        run: |
+          set -euo pipefail
+          export PYTHONPATH=src:scripts
+          pytest tests/order_management/test_live_safety_regressions.py \
+            tests/order_management/test_multi_leg_kill_switch.py \
+            tests/order_management/test_multi_leg_risk_governor.py \
+            tests/business_console/test_multileg_position_truth.py \
+            tests/business_console/test_multileg_leg_pnl.py::test_multileg_pnl_accepts_trend_scalp_fill_suffix_leg_id \
+            tests/business_console/test_multileg_leg_pnl.py::test_multileg_pnl_skips_ghost_unrealized_when_positions_table_used \
+            -q --tb=short
+          pytest tests/order_management/test_multi_leg_orchestrator.py -k kill_switch -q --tb=short
+          pytest tests/unit/test_dual_add_trend_live_engine.py \
+            -k "late_fill or ensure_protection or winding_down" -q --tb=short
+          pytest tests/unit/test_segment_lifecycle.py \
+            -k "late_fill or winding_down" -q --tb=short
+
+      - name: 📊 Test summary
+        if: always()
+        run: echo "### 🧪 Safety regression tests completed" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================
   # Job 1: 构建并推送 Docker 镜像
   # ============================================
   build:
     name: 🐳 Build & Push Image
     runs-on: ubuntu-latest
-    needs: [validate-secrets]
+    needs: [validate-secrets, safety-regression-tests]
     if: ${{ github.event.inputs.skip_build != 'true' }}
     permissions:
       contents: read
@@ -216,7 +261,7 @@ jobs:
   deploy:
     name: 🚀 Deploy to Server
     runs-on: ubuntu-latest
-    needs: [validate-secrets, build]
+    needs: [validate-secrets, safety-regression-tests, build]
     if: |
       always() &&
       needs.validate-secrets.result == 'success' &&

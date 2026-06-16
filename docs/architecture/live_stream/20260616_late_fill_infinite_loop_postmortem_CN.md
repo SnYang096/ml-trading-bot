@@ -281,3 +281,29 @@ flowchart TB
 | 容器状态                              | `running`, `restarts=0`, `OOMKilled=false` ✅ |
 
 **结论**：三重修复（断环 + 信号 dedup + 日 cap）生效，无限循环已停止，卡住的 segment 已自动清理。
+
+---
+
+## 8. 同日关联事故：重启清库 + CMS 不可见（非 late-fill 主因）
+
+> **与 §1–7 独立**：late-fill churn 是 **手续费磨本金**；本节是 **引擎重启后 DB 被误清** → CMS 看不到持仓 → 交易所孤儿仓裸奔。
+
+### 8.1 发生了什么
+
+- 引擎崩溃/重启后，`close_absent_positions()` 在 `active_leg_ids=[]` 时执行 `NOT IN ()` 等价于 **关闭全部 open 行 + 标记 entry 为 closed**
+- CMS「未平持仓」依赖 DB；清库后 **HYPE / XRP 等交易所真实持仓在 CMS 不可见**
+- trend_scalp 持仓 leg 带 `_fill0` 后缀、订单 leg 无后缀 → ghost 过滤误隐藏
+
+### 8.2 修复
+
+| Commit     | 作用 |
+| ---------- | ---- |
+| `df89dc09` | `close_absent_positions` 空 active 直接 return 0 |
+| `ce2c7e57` | orchestrator `_inventory_synced`：首次 reconcile 前不调 close_absent |
+| `68f6a8fa` | CMS 接受 `_fill{N}` leg_id 后缀 |
+| `113c61b4` | 共享 `leg_key_is_pruned_ghost`；closed 行隐藏 + 无行时重启回退 |
+| `4df3e4c6` | trend_scalp reconcile 期补挂 catastrophic SL |
+
+### 8.3 回归测试
+
+见 [account_safety_gate_CN.md §12](../account_safety_gate_CN.md#12-jun-16-回归测试矩阵部署前必跑) — CI job `safety-regression-tests` 在 build/deploy 前执行。
