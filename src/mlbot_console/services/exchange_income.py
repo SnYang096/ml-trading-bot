@@ -51,7 +51,7 @@ def _fetch_income_raw(
         "timestamp": int(time.time() * 1000),
         "limit": limit,
     }
-    if symbol:
+    if symbol and symbol != "*":
         params["symbol"] = symbol.upper()
     if income_type:
         params["incomeType"] = income_type

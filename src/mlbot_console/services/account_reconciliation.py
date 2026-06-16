@@ -398,8 +398,8 @@ def reconcile_all_accounts(
                 Path(str(multi_leg_db)),
                 "SELECT COALESCE(SUM(commission), 0) as total_commission "
                 "FROM multi_leg_orders "
-                "WHERE status IN ('FILLED', 'PARTIALLY_FILLED') "
-                "AND error_message IS DISTINCT FROM 'bug' "
+                "WHERE lower(status) IN ('filled', 'partially_filled') "
+                "AND (error_message IS NULL OR error_message NOT LIKE '%bug%') "
                 "AND filled_at >= datetime('now', ?)",
                 (f"-{effective_lookback} days",),
             )
