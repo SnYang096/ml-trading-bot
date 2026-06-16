@@ -28,8 +28,22 @@ class MockBinanceAPI:
       - PositionManager.update_stop_loss()
     """
 
-    def __init__(self, *, initial_wallet_usdt: float = 10000.0, fee_bps: float = 4.0):
-        """Initialize mock with empty state."""
+    def __init__(
+        self,
+        *,
+        initial_wallet_usdt: float = 10000.0,
+        fee_bps: float = 4.0,
+        maker_fee_bps: Optional[float] = None,
+        taker_fee_bps: Optional[float] = None,
+    ):
+        """Initialize mock with empty state.
+
+        ``maker_fee_bps`` / ``taker_fee_bps`` enable a maker/taker fee split.
+        When left ``None`` both roles fall back to ``fee_bps`` (legacy flat
+        model), so existing callers/tests are unaffected.  Fill role is
+        inferred at fill time: resting LIMIT fills are charged maker; MARKET
+        fills and STOP/TP-market trigger fills are charged taker.
+        """
         self._hedge_positions: Dict[HedgeKey, Dict[str, Any]] = {}
         self._positions: Dict[str, Dict[str, Any]] = {}
         self._open_orders: Dict[str, Dict[str, Any]] = {}
@@ -37,7 +51,22 @@ class MockBinanceAPI:
         self._pending_orders: List[Dict[str, Any]] = []
         self.wallet_usdt = float(initial_wallet_usdt or 0.0)
         self.default_fee_bps = float(fee_bps or 0.0)
+        self.maker_fee_bps = None if maker_fee_bps is None else float(maker_fee_bps)
+        self.taker_fee_bps = None if taker_fee_bps is None else float(taker_fee_bps)
         self.total_fees_usdt = 0.0
+        # Fee / notional attribution split by fill role for fee-model analysis.
+        self.fee_breakdown: Dict[str, float] = {
+            "open_maker": 0.0,
+            "open_taker": 0.0,
+            "reduce_maker": 0.0,
+            "reduce_taker": 0.0,
+        }
+        self.notional_breakdown: Dict[str, float] = {
+            "open_maker": 0.0,
+            "open_taker": 0.0,
+            "reduce_maker": 0.0,
+            "reduce_taker": 0.0,
+        }
         self.hedge_mode: bool = False
         self.hedge_mode_probe_error: Optional[str] = None
 
@@ -47,9 +76,32 @@ class MockBinanceAPI:
     def set_fee_bps(self, fee_bps: float) -> None:
         self.default_fee_bps = float(fee_bps or 0.0)
 
+    def set_maker_taker_fee_bps(self, maker_bps: float, taker_bps: float) -> None:
+        self.maker_fee_bps = float(maker_bps)
+        self.taker_fee_bps = float(taker_bps)
+
     @staticmethod
     def _pos_key(symbol: str, position_side: str) -> HedgeKey:
         return (str(symbol).upper(), str(position_side).upper())
+
+    def _role_fee_bps(self, *, maker: bool) -> float:
+        if maker and self.maker_fee_bps is not None:
+            return self.maker_fee_bps
+        if not maker and self.taker_fee_bps is not None:
+            return self.taker_fee_bps
+        return self.default_fee_bps
+
+    def _charge_fee(
+        self, *, notional: float, reduce: bool, maker: bool
+    ) -> float:
+        """Apply a fee for one fill and attribute it by (open/reduce, maker/taker)."""
+        bps = self._role_fee_bps(maker=maker)
+        fee = abs(notional) * max(0.0, bps) / 10000.0
+        self.total_fees_usdt += fee
+        key = f"{'reduce' if reduce else 'open'}_{'maker' if maker else 'taker'}"
+        self.fee_breakdown[key] += fee
+        self.notional_breakdown[key] += abs(notional)
+        return fee
 
     def _fee_usdt(self, notional: float, fee_bps: Optional[float] = None) -> float:
         bps = self.default_fee_bps if fee_bps is None else float(fee_bps)
@@ -111,6 +163,7 @@ class MockBinanceAPI:
         qty: float,
         fill_price: float,
         fee_bps: Optional[float] = None,
+        maker: bool = False,
     ) -> bool:
         # Margin gate: a broke account (no free equity) cannot open new risk.
         # Real exchanges reject the order; without this the mock keeps opening
@@ -119,9 +172,12 @@ class MockBinanceAPI:
         if self.wallet_usdt + self.unrealized_pnl_usdt() <= 0:
             return False
         key = self._pos_key(symbol, position_side)
-        fee = self._fee_usdt(qty * fill_price, fee_bps)
+        if fee_bps is not None:
+            fee = self._fee_usdt(qty * fill_price, fee_bps)
+            self.total_fees_usdt += fee
+        else:
+            fee = self._charge_fee(notional=qty * fill_price, reduce=False, maker=maker)
         self.wallet_usdt -= fee
-        self.total_fees_usdt += fee
         pos = self._hedge_positions.get(key)
         if pos is None or float(pos.get("qty") or 0) <= 0:
             self._hedge_positions[key] = {
@@ -145,6 +201,7 @@ class MockBinanceAPI:
         qty: float,
         fill_price: float,
         fee_bps: Optional[float] = None,
+        maker: bool = False,
     ) -> float:
         key = self._pos_key(symbol, position_side)
         pos = self._hedge_positions.get(key)
@@ -156,9 +213,14 @@ class MockBinanceAPI:
             gross = (fill_price - entry) * close_qty
         else:
             gross = (entry - fill_price) * close_qty
-        fee = self._fee_usdt(close_qty * fill_price, fee_bps)
+        if fee_bps is not None:
+            fee = self._fee_usdt(close_qty * fill_price, fee_bps)
+            self.total_fees_usdt += fee
+        else:
+            fee = self._charge_fee(
+                notional=close_qty * fill_price, reduce=True, maker=maker
+            )
         self.wallet_usdt += gross - fee
-        self.total_fees_usdt += fee
         pos["qty"] = float(pos["qty"]) - close_qty
         if float(pos["qty"]) <= 1e-12:
             self._hedge_positions.pop(key, None)
@@ -214,6 +276,10 @@ class MockBinanceAPI:
             if fill_price is not None:
                 qty = order["quantity"]
                 pside = order["position_side"]
+                # Maker only for a passive resting reduce-only LIMIT (the
+                # maker-first TP close).  Marketable/IOC entry limits and
+                # STOP/TP-market triggers cross the book → taker.
+                is_maker = otype == "limit" and bool(order.get("reduce_only"))
                 if order["reduce_only"]:
                     pos = self._hedge_positions.get(self._pos_key(symbol, pside))
                     if pos and float(pos.get("qty", 0)) > 0:
@@ -222,6 +288,7 @@ class MockBinanceAPI:
                             position_side=pside,
                             qty=qty,
                             fill_price=fill_price,
+                            maker=is_maker,
                         )
                     else:
                         # No position to reduce — discard order
@@ -232,6 +299,7 @@ class MockBinanceAPI:
                         position_side=pside,
                         qty=qty,
                         fill_price=fill_price,
+                        maker=is_maker,
                     )
                     if not opened:
                         # Margin gate rejected the entry — drop the order

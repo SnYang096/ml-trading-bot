@@ -208,6 +208,8 @@ def run_timeline_backtest(
     progress: bool = True,
     run_id: Optional[str] = None,
     compound_sizing: bool = True,
+    maker_fee_bps: Optional[float] = None,
+    taker_fee_bps: Optional[float] = None,
 ) -> Tuple[Any, Dict[str, Any]]:
     from scripts.multileg_timeline_account import MultilegTimelineAccount
     from scripts.multileg_timeline_sizing import (
@@ -287,6 +289,8 @@ def run_timeline_backtest(
     daily_loss = float(ks.get("daily_loss_limit", 0.06)) * equity
 
     mock = MockBinanceAPI(initial_wallet_usdt=equity)
+    if maker_fee_bps is not None and taker_fee_bps is not None:
+        mock.set_maker_taker_fee_bps(float(maker_fee_bps), float(taker_fee_bps))
     mock.hedge_mode = True
     account = MultilegTimelineAccount(initial_equity=equity, mock=mock)
     governor = MultiLegPortfolioRiskGovernor(
@@ -603,7 +607,17 @@ def run_timeline_backtest(
         "trend_config": str(trend_config),
         "constitution_yaml": str(constitution_yaml),
         "compound_sizing": compound_sizing,
+        "fee_breakdown_usdt": dict(mock.fee_breakdown),
+        "notional_breakdown_usdt": dict(mock.notional_breakdown),
     }
+    # Ceiling estimate: if every taker reduce (exit) fill instead rested as a
+    # maker LIMIT, fees saved = reduce-taker notional × (taker − maker) bps.
+    if maker_fee_bps is not None and taker_fee_bps is not None:
+        spread_bps = max(0.0, float(taker_fee_bps) - float(maker_fee_bps))
+        meta["maker_taker_fee_bps"] = [float(maker_fee_bps), float(taker_fee_bps)]
+        meta["est_maker_tp_savings_usdt"] = (
+            mock.notional_breakdown["reduce_taker"] * spread_bps / 10000.0
+        )
     if progress:
         ret = (account.current - equity) / max(equity, 1.0) * 100.0
         print(f"\n=== Results ({elapsed:.0f}s) ===")
@@ -653,6 +667,19 @@ def main():
         help="Keep initial-equity sizing (no compound refresh per bar)",
     )
     ap.add_argument(
+        "--maker-fee-bps",
+        type=float,
+        default=None,
+        help="Maker fee (bps) for resting reduce-only LIMIT fills; "
+        "requires --taker-fee-bps. Default: flat fee model.",
+    )
+    ap.add_argument(
+        "--taker-fee-bps",
+        type=float,
+        default=None,
+        help="Taker fee (bps) for MARKET / STOP / TP-market / entry fills.",
+    )
+    ap.add_argument(
         "--no-clean-state",
         action="store_true",
         help="Do not delete /tmp/bt_*.json engine state before run",
@@ -682,6 +709,8 @@ def main():
         clean_state=not args.no_clean_state,
         progress=True,
         compound_sizing=not args.no_compound_sizing,
+        maker_fee_bps=args.maker_fee_bps,
+        taker_fee_bps=args.taker_fee_bps,
     )
 
     if args.summary_json:

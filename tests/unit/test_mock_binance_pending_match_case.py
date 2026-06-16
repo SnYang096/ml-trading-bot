@@ -337,3 +337,83 @@ class TestMarginGate:
         )
         assert res["status"] == "filled"
         assert api._hedge_positions
+
+
+class TestMakerTakerFeeModel:
+    """maker fee applies only to resting reduce-only LIMIT fills; else taker."""
+
+    def test_flat_model_unchanged_by_default(self) -> None:
+        api = MockBinanceAPI(initial_wallet_usdt=100_000.0, fee_bps=4.0)
+        api.set_price("BTCUSDT", 50_000.0)
+        api.place_order(
+            "BTCUSDT", "BUY", "market", 0.1, price=50_000.0, position_side="LONG"
+        )
+        # 0.1 * 50000 * 4bps = 2.0
+        assert api.total_fees_usdt == pytest.approx(2.0)
+
+    def test_market_open_is_taker(self) -> None:
+        api = MockBinanceAPI(
+            initial_wallet_usdt=100_000.0, maker_fee_bps=2.0, taker_fee_bps=5.0
+        )
+        api.set_price("BTCUSDT", 50_000.0)
+        api.place_order(
+            "BTCUSDT", "BUY", "market", 0.1, price=50_000.0, position_side="LONG"
+        )
+        # taker: 0.1 * 50000 * 5bps = 2.5, attributed to open_taker
+        assert api.fee_breakdown["open_taker"] == pytest.approx(2.5)
+        assert api.fee_breakdown["open_maker"] == 0.0
+
+    def test_reduce_only_limit_fill_is_maker(self) -> None:
+        api = MockBinanceAPI(
+            initial_wallet_usdt=100_000.0, maker_fee_bps=2.0, taker_fee_bps=5.0
+        )
+        api.set_price("BTCUSDT", 50_000.0)
+        api.place_order(
+            "BTCUSDT", "BUY", "market", 0.1, price=50_000.0, position_side="LONG"
+        )
+        # Resting reduce-only SELL LIMIT at 50500 (maker TP close)
+        api._pending_orders.append(
+            {
+                "symbol": "BTCUSDT",
+                "type": "limit",
+                "side": "sell",
+                "price": 50_500.0,
+                "quantity": 0.1,
+                "position_side": "LONG",
+                "reduce_only": True,
+                "order_id": "tp-maker-1",
+                "trigger_price": 0.0,
+            }
+        )
+        fills = api.match_pending_orders("BTCUSDT", high=50_600.0, low=50_000.0)
+        assert len(fills) == 1
+        # maker: 0.1 * 50500 * 2bps = 1.01, attributed to reduce_maker
+        assert api.fee_breakdown["reduce_maker"] == pytest.approx(1.01)
+        assert api.fee_breakdown["reduce_taker"] == 0.0
+
+    def test_tp_market_trigger_is_taker(self) -> None:
+        api = MockBinanceAPI(
+            initial_wallet_usdt=100_000.0, maker_fee_bps=2.0, taker_fee_bps=5.0
+        )
+        api.set_price("BTCUSDT", 50_000.0)
+        api.place_order(
+            "BTCUSDT", "BUY", "market", 0.1, price=50_000.0, position_side="LONG"
+        )
+        api._pending_orders.append(
+            {
+                "symbol": "BTCUSDT",
+                "type": "take_profit_market",
+                "side": "sell",
+                "price": 0.0,
+                "quantity": 0.1,
+                "position_side": "LONG",
+                "reduce_only": True,
+                "order_id": "tp-market-1",
+                "trigger_price": 50_500.0,
+            }
+        )
+        fills = api.match_pending_orders("BTCUSDT", high=50_600.0, low=50_000.0)
+        assert len(fills) == 1
+        # taker trigger: 0.1 * 50500 * 5bps = 2.525, attributed to reduce_taker
+        assert api.fee_breakdown["reduce_taker"] == pytest.approx(2.525)
+        assert api.fee_breakdown["reduce_maker"] == 0.0

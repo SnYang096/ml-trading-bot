@@ -131,7 +131,7 @@ python -m scripts.event_backtest \
 |----|------|------|-------|---------|------|------|
 | bear_2022 | 2022-01 → 2023-11 | **+128.3%** | -81.9% | 9459 / 17699 | ✅ 2022-06-14 | halt 后仍继续跑（仅 block 新开仓） |
 | bull_2023_2024 | 2023-06 → 2025-01 | **+56.9%** | -16.4% | 20542 / 12384 | ❌ | 全程未触发 kill switch |
-| recent_range_to_bear | 2025-01 → 2026-05 | **-144.0%** | -131.1% | 1867 / 16976 | ✅ 2025-02-03 | ⚠️ equity_end **-4,396**（mock 无 margin gate） |
+| recent_range_to_bear | 2025-01 → 2026-05 | ~~**-144.0%**~~ → **+4.87%** | ~~-131.1%~~ → -26.6% | 14093 / 13643 | ✅ 2025-02-03 | 修复 A+B 后 equity_end **+10,487**（见 §8）；旧穿仓数已废弃 |
 | recent_6m_oos | 2025-12 → 2026-05 | **+104.8%** | -11.6% | 8073 / 2384 | ❌ | 与 sanity 一致 |
 
 **解读：**
@@ -222,7 +222,17 @@ Halt 后成交统计：**0** 笔 entry fill、**8** 笔 reduce fill（instrument
 
 单测：`tests/unit/test_dual_add_trend_live_engine.py`（`test_exit_all_cancels_position_protection_orders` / `test_target_exit_cancels_position_protection_orders`）、`tests/unit/test_mock_binance_pending_match_case.py::TestMarginGate`（4 例）。
 
-A 的有效性由 `recent_range_to_bear` 重跑验证（halt 后持仓被及时降险平掉，`equity_end` 不再穿零）。
+A 的有效性由 `recent_range_to_bear` 重跑验证（halt 后持仓被及时降险平掉，`equity_end` 不再穿零）：
+
+| 指标 | 修复前 | 修复后（A+B） |
+|------|--------|---------------|
+| `equity_end` | **-4,396** | **+10,487** |
+| `return_pct` | **-144.0%** | **+4.87%** |
+| `max_drawdown_pct` | -131.1% | -26.6% |
+| `trades_ok` | 1,867 | 14,093 |
+| halt | 2025-02-03 04:00 | 2025-02-03 04:00（同点） |
+
+同一 DD halt 触发点，但 halt 后 `market_exit`/`cancel` 进 orchestrator → 持仓被及时平掉，权益稳定在小幅正收益，而非 16 个月 mark 亏损至 -4,396。该段仍**不建议用于 promotion**（compound sizing 在峰值放大 + DD halt 的极端段），但已不再是穿仓 artifact。
 
 ### 8.2 记录不改（设计性差异 / 超范围）
 
