@@ -581,7 +581,12 @@ def run_timeline_backtest(
         # On fresh halt: cancel all non-reduce_only pending orders (entry LIMITs)
         # so they don't fill after the account is already dead.
         if account.halted and not was_halted_before:
-            mock.cancel_all_pending_entries()
+            n_cancelled = mock.cancel_all_pending_entries()
+            if progress and n_cancelled:
+                print(
+                    f"  [HALT {bar_2h}] {account.halt_reason} "
+                    f"— cancelled {n_cancelled} pending entries"
+                )
         # Don't break on halt — continue so pending orders can still match
         # and market_exit/cancel actions can execute on future bars.
         # The governor already blocks risk-increasing actions when halted.
