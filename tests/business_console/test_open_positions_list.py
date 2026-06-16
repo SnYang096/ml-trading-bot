@@ -55,6 +55,7 @@ def temp_db(tmp_path: Path) -> Path:
             average_price REAL,
             leg_id TEXT,
             exchange_order_id TEXT,
+            error_message TEXT,
             filled_at TIMESTAMP,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )

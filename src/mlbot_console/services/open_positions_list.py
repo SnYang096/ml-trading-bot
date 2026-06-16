@@ -335,6 +335,10 @@ def _multileg_open_rows(
         _is_filled_row as ml_is_filled,
         hydrate_multileg_fill_fields,
     )
+    from mlbot_console.services.multileg_position_truth import (
+        leg_key_is_pruned_ghost,
+        multileg_closed_leg_ids,
+    )
 
     symbols: List[str]
     if symbol and not is_all_symbols(symbol):
@@ -351,6 +355,7 @@ def _multileg_open_rows(
 
     # Get active leg_ids from positions table (ground truth after reconcile)
     active_leg_ids = _multileg_open_leg_ids(db_path, symbol)
+    closed_leg_ids = multileg_closed_leg_ids(db_path, symbol)
     positions_table_used = _multileg_positions_table_used(db_path, symbol)
 
     out: List[Dict[str, Any]] = []
@@ -406,20 +411,14 @@ def _multileg_open_rows(
             # multi_leg_orders (status filled/closed) — hide unless still open.
             # Only apply this filter when the positions table has *active* open
             # legs; an empty active set (e.g. after engine restart wiped the
-            # table) should fall back to order-based detection.
-            #
-            # trend_scalp (dual_add_trend) appends _fill{N} to position
-            # leg_ids while orders use the bare leg_id.  Accept a match
-            # when any active leg_id is the order leg_key prefixed with
-            # the _fill suffix.
-            if (
-                positions_table_used
-                and active_leg_ids
-                and leg_key not in active_leg_ids
-                and not any(
-                    al.startswith(leg_key + "_fill")
-                    for al in active_leg_ids
-                )
+            # table) should fall back to order-based detection.  The helper
+            # also accepts trend_scalp's {leg_id}_fill{N} position suffix and
+            # hides legs explicitly closed in multi_leg_positions.
+            if leg_key_is_pruned_ghost(
+                leg_key,
+                positions_table_used=positions_table_used,
+                active_leg_ids=active_leg_ids,
+                closed_leg_ids=closed_leg_ids,
             ):
                 continue
             entry_ts = _parse_ts(row.get("filled_at")) or _parse_ts(

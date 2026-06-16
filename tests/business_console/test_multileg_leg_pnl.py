@@ -726,6 +726,55 @@ def test_multileg_pnl_skips_ghost_unrealized_when_positions_table_used(
     assert f"{group}_L1" not in pnl_map
 
 
+def test_multileg_pnl_accepts_trend_scalp_fill_suffix_leg_id(
+    multi_leg_db,
+) -> None:
+    """Entry leg_id without _fill{N} must match open position row with suffix."""
+    from src.order_management.multi_leg_storage import MultiLegStorage
+
+    storage = MultiLegStorage(str(multi_leg_db))
+    run_id = storage.create_run(
+        mode="testnet",
+        strategies=["trend_scalp"],
+        symbols=["HYPEUSDT"],
+        run_id="ml_trend_fill_suffix",
+    )
+    order_leg = "HYPEUSDT_2026-06-16 03:26:52+00:00_initial_trend_BUY_0_0"
+    pos_leg = f"{order_leg}_fill0"
+    storage.upsert_order(
+        {
+            "run_id": run_id,
+            "strategy": "trend_scalp",
+            "local_order_id": order_leg,
+            "leg_id": order_leg,
+            "symbol": "HYPEUSDT",
+            "side": "BUY",
+            "purpose": "entry",
+            "status": "filled",
+            "filled_quantity": 29.71,
+            "average_price": 68.93,
+        }
+    )
+    storage.upsert_position(
+        {
+            "run_id": run_id,
+            "strategy": "trend_scalp",
+            "leg_id": pos_leg,
+            "symbol": "HYPEUSDT",
+            "side": "LONG",
+            "entry_price": 68.93,
+            "quantity": 29.71,
+            "status": "open",
+        }
+    )
+
+    pnl_map = multileg_pnl_by_order_id(
+        multi_leg_db, "HYPEUSDT", mark_prices={"HYPEUSDT": 70.0}
+    )
+    assert order_leg in pnl_map
+    assert pnl_map[order_leg].get("unrealized_pnl") is not None
+
+
 # ---------------------------------------------------------------------------
 # Orphan-open-position fallback tests
 # Tests for _multileg_stats() when multi_leg_positions has open legs
