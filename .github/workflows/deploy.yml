@@ -48,64 +48,64 @@ on:
   workflow_dispatch:
     inputs:
       restart_service:
-        description: '部署后重启 live services'
+        description: "部署后重启 live services"
         type: boolean
         default: true
       skip_build:
-        description: '跳过构建，只重启服务（用于配置变更）'
+        description: "跳过构建，只重启服务（用于配置变更）"
         type: boolean
         default: false
       skip_warmup_prepare:
-        description: '不重跑 Vision prepare（宿主 ticks/bars 已就绪 / prepare 已 active exited）。仍会 pull + 重启 bus 与 consumers。'
+        description: "不重跑 Vision prepare（宿主 ticks/bars 已就绪 / prepare 已 active exited）。仍会 pull + 重启 bus 与 consumers。"
         type: boolean
         default: false
 
   push:
     branches: [main]
     paths:
-      - 'src/**'
-      - 'scripts/**'
-      - 'config/**'
-      - 'live/highcap/config/**'
-      - 'live/scripts/**'
-      - 'docker/Dockerfile.live'
-      - 'requirements.txt'
-      - '.github/workflows/deploy.yml'
-      - 'deploy/monitoring/**'
-      - 'deploy/business-console/**'
-      - 'deploy/systemd/quant-business-console.service'
-      - 'deploy/systemd/mlbot-monitor-docker-run.sh'
-      - 'deploy/systemd/mlbot-account-watch-docker-run.sh'
-      - 'etc/systemd/mlbot-monitor-*.service'
-      - 'etc/systemd/mlbot-monitor-*.timer'
-      - 'etc/systemd/mlbot-monitor-notify@.service'
-      - 'src/mlbot_console/**'
-      - 'frontend/**'
-      - 'src/time_series_model/live/**'
-      - 'config/strategies/**'
-      - 'live/highcap/universe.yaml'
-      - 'tests/order_management/**'
-      - 'tests/business_console/test_account*.py'
-      - 'tests/business_console/test_multileg*.py'
-      - 'tests/business_console/test_spot*.py'
-      - 'tests/business_console/test_exchange_balances*.py'
-      - 'tests/business_console/test_open_positions_list.py'
-      - 'tests/business_console/test_multi_leg_reconcile.py'
-      - 'tests/unit/test_live_*.py'
-      - 'tests/unit/test_safety_*.py'
-      - 'tests/unit/test_dual_add_trend_live_engine.py'
-      - 'tests/unit/test_segment_lifecycle.py'
-      - 'tests/unit/test_chop*.py'
-      - 'tests/unit/test_spot_*.py'
-      - 'tests/unit/test_trade_executor.py'
-      - 'tests/unit/test_execution_truth_sync.py'
-      - 'tests/unit/test_order_flow_listener_execution_sync.py'
-      - 'tests/unit/test_multileg_*.py'
-      - 'tests/unit/test_risk_position_sizing.py'
-      - 'tests/order_management/test_binance_user_stream.py'
-      - 'tests/order_management/test_spot_order_manager.py'
-      - 'tests/order_management/test_multileg_user_stream_routing.py'
-      - 'Makefile'
+      - "src/**"
+      - "scripts/**"
+      - "config/**"
+      - "live/highcap/config/**"
+      - "live/scripts/**"
+      - "docker/Dockerfile.live"
+      - "requirements.txt"
+      - ".github/workflows/deploy.yml"
+      - "deploy/monitoring/**"
+      - "deploy/business-console/**"
+      - "deploy/systemd/quant-business-console.service"
+      - "deploy/systemd/mlbot-monitor-docker-run.sh"
+      - "deploy/systemd/mlbot-account-watch-docker-run.sh"
+      - "etc/systemd/mlbot-monitor-*.service"
+      - "etc/systemd/mlbot-monitor-*.timer"
+      - "etc/systemd/mlbot-monitor-notify@.service"
+      - "src/mlbot_console/**"
+      - "frontend/**"
+      - "src/time_series_model/live/**"
+      - "config/strategies/**"
+      - "live/highcap/universe.yaml"
+      - "tests/order_management/**"
+      - "tests/business_console/test_account*.py"
+      - "tests/business_console/test_multileg*.py"
+      - "tests/business_console/test_spot*.py"
+      - "tests/business_console/test_exchange_balances*.py"
+      - "tests/business_console/test_open_positions_list.py"
+      - "tests/business_console/test_multi_leg_reconcile.py"
+      - "tests/unit/test_live_*.py"
+      - "tests/unit/test_safety_*.py"
+      - "tests/unit/test_dual_add_trend_live_engine.py"
+      - "tests/unit/test_segment_lifecycle.py"
+      - "tests/unit/test_chop*.py"
+      - "tests/unit/test_spot_*.py"
+      - "tests/unit/test_trade_executor.py"
+      - "tests/unit/test_execution_truth_sync.py"
+      - "tests/unit/test_order_flow_listener_execution_sync.py"
+      - "tests/unit/test_multileg_*.py"
+      - "tests/unit/test_risk_position_sizing.py"
+      - "tests/order_management/test_binance_user_stream.py"
+      - "tests/order_management/test_spot_order_manager.py"
+      - "tests/order_management/test_multileg_user_stream_routing.py"
+      - "Makefile"
 
 # 同一时间只允许一个部署
 concurrency:
@@ -299,7 +299,6 @@ jobs:
       (needs.build.result == 'success' ||
         (needs.build.result == 'skipped' && github.event.inputs.skip_build == 'true'))
     timeout-minutes: 25
-
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
@@ -987,7 +986,7 @@ jobs:
               chmod 600 /opt/quant-engine/.env
               echo "✅ 已修正 /opt/quant-engine/.env 属主为 $(whoami)"
             fi
-            
+
             # 断言必备密钥
             if ! grep -q "BINANCE_API_KEY=" /opt/quant-engine/.env; then
               echo "::error::/opt/quant-engine/.env 缺少 BINANCE_API_KEY，请重新运行 deploy 的 Write API keys 步骤。"

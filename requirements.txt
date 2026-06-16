@@ -74,12 +74,11 @@ cvxpy>=1.4.0
 numba>=0.60.0
 llvmlite>=0.43.0
 
-# Deep Learning
-torch>=2.0.0
-mamba-ssm>=1.0.0  # Requires CUDA compilation (30-60 min first time)
-causal-conv1d>=1.2.0  # mamba-ssm dependency
-tensorboard==2.15.1
-# flash-attn>=2.0.0  # Optional: requires compilation
+# Deep Learning (torch/mamba-ssm not needed for CI or live Docker image)
+# torch>=2.0.0
+# mamba-ssm>=1.0.0
+# causal-conv1d>=1.2.0
+# tensorboard==2.15.1
 
 # Monitoring
 prometheus_client>=0.20.0
