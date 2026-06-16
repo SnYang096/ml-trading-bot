@@ -433,3 +433,64 @@ def test_notify_phantom_positions_sends_telegram_with_cooldown() -> None:
     assert "dat_1_fill0" in message
     assert send.call_args.kwargs["stamp_key"] == "hedge:phantom:XRPUSDT"
     assert send.call_args.kwargs["cooldown_sec"] == 900
+
+
+def test_phantom_cleanup_cancels_exchange_protection_orders(
+    tmp_path, monkeypatch
+) -> None:
+    """Phantom legs' SL/TP orders must be cancelled on the exchange."""
+    monkeypatch.setenv("MLBOT_MULTI_LEG_PHANTOM_CONFIRM_CYCLES", "1")
+    storage = MultiLegStorage(str(tmp_path / "multi_leg.db"))
+    _seed_open_leg(storage)
+    leg = _Leg(
+        "dat_1_fill0",
+        "XRPUSDT",
+        "LONG",
+        5931.0,
+        protection_order_ids=["sl_123", "tp_456"],
+    )
+    engine = _PhantomEngine([leg])
+    orch = _minimal_orchestrator(engine=engine, storage=storage)
+    orch._inventory_synced = True
+
+    with patch("src.order_management.multi_leg_orchestrator.send_telegram_message"):
+        orch.reconcile(exchange_orders=[], exchange_positions=[])
+
+    # Engine leg should be removed.
+    assert engine.state.inventory == []
+    # Adapter should have received cancel_protection actions.
+    adapter = orch.adapter
+    cancel_calls = [
+        c
+        for c in adapter.execute_actions.call_args_list
+        if any(
+            a.get("action") == "cancel_protection" for a in (c[0][0] if c[0] else [])
+        )
+    ]
+    assert len(cancel_calls) >= 1
+    cancelled_ids = {
+        a["order_id"]
+        for call in cancel_calls
+        for a in call[0][0]
+        if a.get("action") == "cancel_protection"
+    }
+    assert cancelled_ids == {"sl_123", "tp_456"}
+
+
+def test_phantom_cleanup_skips_cancel_when_no_protection_orders(
+    tmp_path, monkeypatch
+) -> None:
+    """Phantom legs without protection orders must not crash."""
+    monkeypatch.setenv("MLBOT_MULTI_LEG_PHANTOM_CONFIRM_CYCLES", "1")
+    storage = MultiLegStorage(str(tmp_path / "multi_leg.db"))
+    _seed_open_leg(storage)
+    leg = _Leg("dat_1_fill0", "XRPUSDT", "LONG", 5931.0)  # no protection ids
+    engine = _PhantomEngine([leg])
+    orch = _minimal_orchestrator(engine=engine, storage=storage)
+    orch._inventory_synced = True
+
+    with patch("src.order_management.multi_leg_orchestrator.send_telegram_message"):
+        orch.reconcile(exchange_orders=[], exchange_positions=[])
+
+    assert engine.state.inventory == []
+    assert _pos_status(storage, "dat_1_fill0") == "closed"

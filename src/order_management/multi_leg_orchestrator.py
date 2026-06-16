@@ -563,6 +563,52 @@ class MultiLegLiveOrchestrator:
             legs.append((leg_id, sym, side, qty))
         return legs
 
+    # ── Cancel exchange SL/TP orders for phantom legs ──────────────────
+    def _cancel_phantom_protection_orders(self, phantom_leg_ids: List[str]) -> None:
+        """Cancel any open SL/TP orders on the exchange for phantom legs.
+
+        Must be called *before* ``remove_inventory_legs`` so the engine
+        inventory still carries ``protection_order_ids``.
+        """
+        if not phantom_leg_ids:
+            return
+        phantom_set = set(phantom_leg_ids)
+        inventory = list(getattr(getattr(self.engine, "state", None), "inventory", []) or [])
+        cancel_actions: List[Dict[str, Any]] = []
+        for pos in inventory:
+            lid = str(getattr(pos, "leg_id", "") or "")
+            if lid not in phantom_set:
+                continue
+            for oid in list(getattr(pos, "protection_order_ids", None) or []):
+                oid_s = str(oid).strip()
+                if not oid_s:
+                    continue
+                cancel_actions.append({
+                    "action": "cancel_protection",
+                    "order_id": oid_s,
+                    "exchange_order_id": oid_s,
+                    "symbol": getattr(pos, "symbol", self.symbol) or self.symbol,
+                    "leg_id": lid,
+                    "reason": "phantom_cleanup",
+                    "timestamp": time.time(),
+                })
+        if not cancel_actions:
+            return
+        kind = "shadow" if getattr(self.adapter, "shadow", False) else "live"
+        logger.info(
+            "phantom cleanup: cancelling %d exchange protection orders (%s) "
+            "for strategy=%s legs=%s",
+            len(cancel_actions), kind, self.strategy_name, phantom_leg_ids,
+        )
+        try:
+            self.adapter.execute_actions(cancel_actions)
+        except Exception:
+            logger.exception(
+                "phantom cleanup: exchange cancel_protection failed "
+                "(orders may remain orphaned) — strategy=%s legs=%s",
+                self.strategy_name, phantom_leg_ids,
+            )
+
     def _sync_phantom_positions(
         self, exchange_positions: Iterable[Mapping[str, Any]]
     ) -> List[str]:
@@ -627,6 +673,11 @@ class MultiLegLiveOrchestrator:
         ]
         if not phantom_leg_ids:
             return []
+
+        # Cancel exchange SL/TP orders for phantom legs before removing them
+        # from engine inventory (protection_order_ids are only accessible while
+        # the position still exists in-memory).
+        self._cancel_phantom_protection_orders(phantom_leg_ids)
 
         _call_optional(self.engine, "remove_inventory_legs", phantom_leg_ids)
         db_closed = 0
