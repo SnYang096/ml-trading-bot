@@ -1,0 +1,48 @@
+inventory:
+  initial_legs:
+  - TREND
+  add_mode: trend
+  trend_direction_source: dynamic_bar
+  flip_action: close_offside_all
+  reseed_on_flip: false
+  max_adds_per_side: 3
+  max_gross_exposure_units: 4
+  max_net_exposure_units: 2
+  max_loser_hold_bars: 24
+add_spacing:
+  primary: atr
+  atr_mult: 0.75
+take_profit:
+  mode: basket
+  fee_aware: true
+  distance: max
+  atr_mult: 0.6
+  min_pct: 0.0012
+  min_abs: 0.0
+  # Maker-only: basket/per-leg TP closes are reduce-only post-only LIMITs.
+  exit_order_type: limit
+order_model:
+  # Maker-only execution: entries/adds rest as passive post-only LIMITs at the
+  # touch; unfilled orders are re-pegged across bars and MISSED (never taker).
+  maker_execution: true
+  entry_order_type: marketable_limit
+  add_order_type: marketable_limit
+  max_slippage_bps: 5.0
+  pending_timeout_bars: 1
+  # Passive entry waits at the signal touch for up to N signal bars, then
+  # misses (never taker).  No upward chase in a trend (avoids adverse fills).
+  maker_entry_max_wait_bars: 2
+  # 0 = entries never re-peg (pure wait-for-pullback); resting EXIT limits
+  # still re-peg every bar (floored to 1) so closes don't get stuck.
+  maker_repeg_bars: 0
+  simulated_entry_slippage_bps: 2.0
+  simulated_add_slippage_bps: 2.0
+risk:
+  min_segment_bars: 6
+  max_segment_bars: 120
+  force_exit_on_regime_loss: true
+  risk_stop_mode: regime_only
+  max_loss_per_segment: 0.02
+  protection_stop_mode: catastrophic
+  catastrophic_stop_atr_mult: 8.0
+  catastrophic_stop_tp_mult: 8.0

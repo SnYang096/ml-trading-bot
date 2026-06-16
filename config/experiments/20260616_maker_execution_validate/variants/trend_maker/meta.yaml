@@ -1,0 +1,10 @@
+# trend_scalp — maker-only execution variant (entries/adds + TP/regime/flip exits
+# as passive post-only LIMITs; catastrophic STOP_MARKET unaffected).
+# Mirrors trend_prod regime/prefilter/thresholds; only execution.yaml differs.
+strategy:
+  name: trend-scalp-120T
+  archetype: TrendScalp
+  timeframe: "120T"
+  bidirectional: true
+  symbol_include: [BTCUSDT, ETHUSDT, BNBUSDT, SOLUSDT, XRPUSDT, HYPEUSDT]
+  symbol_exclude: []

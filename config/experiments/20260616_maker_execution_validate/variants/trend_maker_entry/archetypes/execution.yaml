@@ -1,0 +1,43 @@
+inventory:
+  initial_legs:
+  - TREND
+  add_mode: trend
+  trend_direction_source: dynamic_bar
+  flip_action: close_offside_all
+  reseed_on_flip: false
+  max_adds_per_side: 3
+  max_gross_exposure_units: 4
+  max_net_exposure_units: 2
+  max_loser_hold_bars: 24
+add_spacing:
+  primary: atr
+  atr_mult: 0.75
+take_profit:
+  mode: basket
+  fee_aware: true
+  distance: max
+  atr_mult: 0.6
+  min_pct: 0.0012
+  min_abs: 0.0
+  # Hybrid: TAKER exits (immediate risk-off cuts; no chasing in adverse moves).
+  exit_order_type: market
+order_model:
+  # Hybrid: maker (passive) ENTRIES + taker exits.
+  maker_execution: true
+  entry_order_type: marketable_limit
+  add_order_type: marketable_limit
+  max_slippage_bps: 5.0
+  pending_timeout_bars: 1
+  maker_entry_max_wait_bars: 2
+  maker_repeg_bars: 0
+  simulated_entry_slippage_bps: 2.0
+  simulated_add_slippage_bps: 2.0
+risk:
+  min_segment_bars: 6
+  max_segment_bars: 120
+  force_exit_on_regime_loss: true
+  risk_stop_mode: regime_only
+  max_loss_per_segment: 0.02
+  protection_stop_mode: catastrophic
+  catastrophic_stop_atr_mult: 8.0
+  catastrophic_stop_tp_mult: 8.0
