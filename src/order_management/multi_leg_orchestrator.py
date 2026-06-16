@@ -113,6 +113,7 @@ class MultiLegLiveOrchestrator:
         self.symbol = symbol
         self.drawdown_pct_provider = drawdown_pct_provider
         self._last_reconcile_not_ok_warn_at: float = 0.0
+        self._inventory_synced: bool = False
 
     def run_actions(
         self,
@@ -190,6 +191,10 @@ class MultiLegLiveOrchestrator:
                 exchange_orders=reconcile_orders,
                 exchange_positions=reconcile_positions,
             )
+            # Mark inventory as synced after the first successful exchange
+            # reconciliation.  Until this flag is set close_absent_positions
+            # is skipped (engine inventory is not yet trustworthy).
+            self._inventory_synced = True
         self._persist_positions()
         return OrchestrationReport(
             risk=risk,
@@ -537,7 +542,7 @@ class MultiLegLiveOrchestrator:
                 }
             )
         close_absent = getattr(self.storage, "close_absent_positions", None)
-        if callable(close_absent):
+        if callable(close_absent) and self._inventory_synced:
             close_absent(
                 strategy=self.strategy_name,
                 symbol=self.symbol,

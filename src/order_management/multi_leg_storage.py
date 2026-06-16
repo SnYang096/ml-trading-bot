@@ -9,10 +9,13 @@ append-only audit events for restart/reconciliation.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import uuid
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class MultiLegStorage:
@@ -555,11 +558,20 @@ class MultiLegStorage:
         active = [str(x) for x in active_leg_ids if str(x)]
         conn = self._connect()
         try:
-            # Guard: an empty active list means the engine has no inventory
-            # (e.g. just after restart).  Closing *all* open positions in that
-            # case would wipe legitimate exchange holdings that the engine has
-            # not yet discovered.  Return 0 (nothing closed) instead.
+            # Guard: an empty active list means the engine has no inventory.
+            # This normally happens before the first exchange sync (orchestrator
+            # skips close_absent_positions until _inventory_synced is True).
+            # If we reach here with an empty list it is a safety-net fallback —
+            # closing *all* open positions would be destructive, so we bail out.
             if not active:
+                logger.warning(
+                    "close_absent_positions called with empty active_leg_ids "
+                    "(strategy=%s symbol=%s) — skipping to avoid wiping all "
+                    "positions.  This is expected on first start; if it "
+                    "persists the engine inventory may be stuck.",
+                    strategy,
+                    symbol,
+                )
                 return 0
 
             params: list[Any] = [run_id, str(strategy), str(symbol), *active]
