@@ -42,6 +42,7 @@ _MULTILEG_ORDER_SQL = """
            leg_id, client_order_id, filled_at, created_at, raw_json
     FROM multi_leg_orders
     WHERE symbol = ?
+      AND (error_message IS NULL OR error_message != 'bug')
 """
 
 

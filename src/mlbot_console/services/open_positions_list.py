@@ -361,6 +361,7 @@ def _multileg_open_rows(
                    leg_id
             FROM multi_leg_orders
             WHERE symbol = ?
+              AND (error_message IS NULL OR error_message != 'bug')
             """,
             (sym,),
         )
