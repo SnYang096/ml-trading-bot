@@ -1,0 +1,44 @@
+# TPC Regime — ADX(50) 牛熊分类（2026-06-11 E22 promote）
+# labeled schema: bull/bear/neutral 各有独立规则，供 execution.exit_by_regime 引用
+allowed_regimes:
+  bull:
+    description: 强趋势市 — ADX50>25 且 EMA1200>0.1，适合结构退出（不 trailing）
+    match: all
+    rules:
+    - feature: adx_50
+      operator: '>='
+      value: 25
+    - feature: ema_1200_position
+      operator: '>='
+      value: 0.1
+  bear:
+    description: 弱势/下跌/震荡 — ADX50≤20 或 EMA1200 下方，必须 trailing 保护
+    match: any
+    rules:
+    - feature: adx_50
+      operator: <=
+      value: 20
+    - feature: ema_1200_position
+      operator: <=
+      value: -0.1
+  neutral:
+    description: 震荡/无方向 — 默认回退，trailing 保护
+    match: any
+    rules:
+    - feature: adx_50
+      operator: <=
+      value: 25
+allowed_sides:
+- long
+- short
+locked: true
+lock_reason: E22 ADX(50) regime — Phase 3 验证 bull+recent +88% vs baseline; bear trailing 必须保留（E23 ablation 证明 bear 关 trailing = -6.14R）
+
+last_calibration:
+  timestamp: '2026-06-11T12:08:35.991440+00:00'
+  data_source: results/monitoring/tier0/tpc_20260612/features_labeled_recent_6m_oos.parquet
+  regime_shares:
+    bull: 0.0
+    bear: 0.8210772833723653
+    neutral: 0.17892271662763465
+  rules_hash: 64705543d32dc56010f6f386982fcd9732177593

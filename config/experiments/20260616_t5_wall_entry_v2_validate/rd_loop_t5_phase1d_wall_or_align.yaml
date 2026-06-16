@@ -1,0 +1,55 @@
+# T5 Phase 1d — v3 parquet 上复验 S5 wall plateau（Track B，可选）
+#
+# 前置：修 ema_1200 pipeline 后 prepare-only → t5_btc_eth_v3 parquet
+#
+#   PYTHONPATH=src:scripts python scripts/rd_loop.py \
+#     --hypothesis-yaml config/experiments/20260616_t5_wall_entry_v2_validate/rd_loop_t5_phase1d_wall_or_align.yaml
+
+topic: t5_wall_or_align_20260616
+strategy: tpc
+output_dir: results/rd_loop/t5_wall_or_align_20260616
+
+# 替换为 v3 parquet 路径（ema_1200_position 修复后）
+features_parquet: &parquet results/train_final/tpc/t5_btc_eth_v3/tpc/features_labeled.parquet
+label: &label success_no_rr_extreme
+
+tpc_pullback_bull: &tpc_pullback_bull
+  - ema_1200_position>=0.10
+  - tpc_semantic_chop<=0.40
+  - tpc_pullback_depth<=0.85
+
+tpc_pullback_bear: &tpc_pullback_bear
+  - ema_1200_position<=-0.10
+  - tpc_semantic_chop<=0.40
+  - tpc_pullback_depth<=0.85
+
+quick_layer_scans:
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: entry
+    filter: *tpc_pullback_bull
+    feature: wall_nearest_dist_atr
+    operator: "<="
+    grid: "1.5,2.0,2.5,3.0"
+    out: quick_scan/wall_plateau_bull_s5_v3.md
+
+  - mode: feature-plateau
+    features_parquet: *parquet
+    label: *label
+    layer: entry
+    filter: *tpc_pullback_bear
+    feature: wall_nearest_dist_atr
+    operator: "<="
+    grid: "2.0,2.5,3.0,3.5"
+    out: quick_scan/wall_plateau_bear_s5_v3.md
+
+  - mode: condition-set
+    features_parquet: *parquet
+    label: *label
+    layer: entry
+    filter: *tpc_pullback_bull
+    conditions:
+      - wall_nearest_dist_atr<=2.0
+      - tpc_vol_pullback_confirm>=0.45
+    out: quick_scan/wall_vol_combo_bull_s5_v3.md
