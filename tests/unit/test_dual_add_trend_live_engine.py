@@ -1225,7 +1225,9 @@ def test_protection_fill_partial_shrinks_position(tmp_path: Path) -> None:
     assert "ex_sl_partial" not in engine.state.inventory[0].protection_order_ids
 
 
-def test_protection_fill_partial_keeps_other_protection_ids(tmp_path: Path) -> None:
+def test_protection_fill_partial_clears_all_protection_ids_for_re_place(
+    tmp_path: Path,
+) -> None:
     """Partial SL fill: ALL protection IDs cleared — TP must be re-placed at new size."""
     engine = _engine_with_position_and_protection(
         tmp_path,
@@ -1500,3 +1502,132 @@ def test__normalize_entry_leg_id_strips_suffixes() -> None:
     assert _normalize_entry_leg_id("bare_leg") == "bare_leg"
     assert _normalize_entry_leg_id("") == ""
     assert _normalize_entry_leg_id("odd_sl_tp") == "odd_sl"
+
+
+# =========================================================================
+# Kill switch does NOT block place_protection
+# =========================================================================
+
+
+def test_kill_switch_does_not_block_place_protection() -> None:
+    """place_protection must not be in _RISK_INCREASING_ACTIONS so that
+    existing positions retain exchange-side SL/TP during halt."""
+    from src.order_management.multi_leg_kill_switch import (
+        MultiLegKillSwitchConfig,
+        MultiLegKillSwitchTracker,
+        _RISK_INCREASING_ACTIONS,
+    )
+
+    assert "place_protection" not in _RISK_INCREASING_ACTIONS
+    assert "place" in _RISK_INCREASING_ACTIONS
+
+
+def test_kill_switch_allows_protection_during_halt(tmp_path: Path) -> None:
+    """Even when the kill switch is halted, place_protection is not blocked."""
+    from src.order_management.multi_leg_kill_switch import (
+        MultiLegKillSwitchConfig,
+        MultiLegKillSwitchTracker,
+    )
+
+    tracker = MultiLegKillSwitchTracker(
+        config=MultiLegKillSwitchConfig(enabled=True, max_dd=0.01),
+        state_path=tmp_path / "ks_state.json",
+    )
+    # Simulate halt by setting peak high and equity low
+    tracker.peak_equity = 1000.0
+    tracker.last_equity = 1000.0
+    tracker.day_start_equity = 1000.0
+    tracker.update_from_equity(950.0)  # 5% drawdown > 1% limit → halted
+    assert tracker.is_halted()
+
+    # place must be blocked
+    block_reason = tracker.blocks_action("place")
+    assert block_reason is not None
+
+    # place_protection must NOT be blocked
+    prot_reason = tracker.blocks_action("place_protection")
+    assert prot_reason is None
+
+
+# =========================================================================
+# leg_hint fallback handles partial fill
+# =========================================================================
+
+
+def test_protection_fill_leg_hint_partial_shrinks_position(tmp_path: Path) -> None:
+    """leg_hint fallback with filled_qty < pos.quantity shrinks the position."""
+    engine = _engine_with_position_and_protection(
+        tmp_path,
+        leg_id="hint_part",
+        protection_order_ids=[],  # empty → forces leg_hint fallback
+        quantity=1.0,
+    )
+
+    handled = engine._handle_protection_fill(
+        {
+            "order_id": "",
+            "client_order_id": "",
+            "leg_id": "hint_part_sl",
+            "status": "FILLED",
+            "filled_qty": 0.4,
+            "last_filled_price": 98.0,
+            "protection_type": "stop_loss",
+        }
+    )
+
+    assert handled is True
+    assert len(engine.state.inventory) == 1
+    assert float(engine.state.inventory[0].quantity) == 0.6
+    assert engine.state.inventory[0].protection_order_ids == []
+
+
+def test_protection_fill_leg_hint_full_fill_removes_position(tmp_path: Path) -> None:
+    """leg_hint fallback with filled_qty >= pos.quantity removes the position."""
+    engine = _engine_with_position_and_protection(
+        tmp_path,
+        leg_id="hint_full",
+        protection_order_ids=[],
+        quantity=0.5,
+    )
+
+    handled = engine._handle_protection_fill(
+        {
+            "order_id": "",
+            "client_order_id": "",
+            "leg_id": "hint_full_tp",
+            "status": "FILLED",
+            "filled_qty": 0.5,
+            "last_filled_price": 102.0,
+            "protection_type": "take_profit",
+        }
+    )
+
+    assert handled is True
+    assert engine.state.inventory == []
+
+
+def test_protection_fill_leg_hint_zero_filled_qty_removes_position(
+    tmp_path: Path,
+) -> None:
+    """leg_hint fallback with filled_qty=0 (default to full close) removes position."""
+    engine = _engine_with_position_and_protection(
+        tmp_path,
+        leg_id="hint_zero",
+        protection_order_ids=[],
+        quantity=0.3,
+    )
+
+    handled = engine._handle_protection_fill(
+        {
+            "order_id": "",
+            "client_order_id": "",
+            "leg_id": "hint_zero_sl",
+            "status": "FILLED",
+            "filled_qty": 0,  # not provided → default to full close
+            "last_filled_price": 98.0,
+            "protection_type": "stop_loss",
+        }
+    )
+
+    assert handled is True
+    assert engine.state.inventory == []

@@ -15,11 +15,14 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass, field
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.order_management.multi_leg_orchestrator import MultiLegLiveOrchestrator
+from src.order_management.multi_leg_orchestrator import (
+    MultiLegLiveOrchestrator,
+    _notify_orphan_positions,
+)
 from src.order_management.multi_leg_reconciliation import (
     MultiLegReconciler,
     ReconciliationPolicy,
@@ -183,3 +186,30 @@ def test_orchestrator_empty_inventory_after_sync_still_no_wipe(tmp_path) -> None
     finally:
         conn.close()
     assert status == "open"
+
+
+def test_notify_orphan_positions_sends_telegram_with_cooldown() -> None:
+    """Empty engine inventory + exchange position → TG alert (Jun 16 CMS blind spot)."""
+    mismatch = MagicMock(
+        symbol="XRPUSDT",
+        side="LONG",
+        local_quantity=0.0,
+        exchange_quantity=5931.0,
+    )
+
+    with patch(
+        "src.order_management.multi_leg_orchestrator.send_telegram_message"
+    ) as send:
+        _notify_orphan_positions(
+            strategy="trend_scalp",
+            symbol="XRPUSDT",
+            mismatches=[mismatch],
+        )
+
+    send.assert_called_once()
+    (message,) = send.call_args[0]
+    assert "孤儿仓位" in message
+    assert "XRPUSDT" in message
+    assert "5931" in message
+    assert send.call_args.kwargs["stamp_key"] == "hedge:orphan:XRPUSDT"
+    assert send.call_args.kwargs["cooldown_sec"] == 900

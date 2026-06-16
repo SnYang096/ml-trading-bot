@@ -1161,23 +1161,12 @@ test-fast:
 	@echo "🧪 Running fast tests (exclude slow + integration)..."
 	pytest -q -m "not slow and not integration"
 
-.PHONY: test-live-safety
-test-live-safety:
-	@echo "🛡️  Running Jun-16 live safety regression suite (mock, no exchange)..."
-	PYTHONPATH=src $(PYTHON) -m pytest \
-		tests/order_management/test_live_safety_regressions.py \
-		tests/order_management/test_multi_leg_kill_switch.py \
-		tests/order_management/test_multi_leg_risk_governor.py \
-		tests/business_console/test_multileg_position_truth.py \
-		tests/business_console/test_multileg_leg_pnl.py::test_multileg_pnl_accepts_trend_scalp_fill_suffix_leg_id \
-		tests/business_console/test_multileg_leg_pnl.py::test_multileg_pnl_skips_ghost_unrealized_when_positions_table_used \
-		-q --tb=short
-	PYTHONPATH=src $(PYTHON) -m pytest tests/order_management/test_multi_leg_orchestrator.py -k kill_switch -q --tb=short
-	PYTHONPATH=src $(PYTHON) -m pytest tests/unit/test_dual_add_trend_live_engine.py \
-		-k "late_fill or ensure_protection or winding_down" -q --tb=short
-	PYTHONPATH=src $(PYTHON) -m pytest tests/unit/test_segment_lifecycle.py \
-		-k "late_fill or winding_down" -q --tb=short
-	@echo "✅ test-live-safety completed"
+.PHONY: test-live-safety test-live-critical
+test-live-critical:
+	@bash scripts/run_live_critical_tests.sh
+
+test-live-safety: test-live-critical
+	@echo "ℹ️  test-live-safety is an alias for test-live-critical"
 
 test-all:
 	@echo "🧪 Running full test suite..."

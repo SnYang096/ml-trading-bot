@@ -38,7 +38,7 @@ def test_daily_loss_blocks_place_allows_market_exit(tmp_path: Path) -> None:
     assert tracker.is_halted()
     assert "daily_loss_limit" in tracker.halt_reasons()
     assert tracker.blocks_action("place") == "kill_switch:daily_loss_limit"
-    assert tracker.blocks_action("place_protection") == "kill_switch:daily_loss_limit"
+    assert tracker.blocks_action("place_protection") is None  # reduce-only, allowed
     assert tracker.blocks_action("market_exit") is None
     assert tracker.blocks_action("cancel") is None
 
@@ -68,6 +68,38 @@ def test_persistence_reloads_halt(tmp_path: Path) -> None:
     reloaded.load()
     assert reloaded.is_halted()
     assert reloaded.peak_equity == pytest.approx(10_000.0)
+
+
+def test_weekly_loss_blocks_place(tmp_path: Path) -> None:
+    tracker = _tracker(tmp_path)
+    week_start = datetime(2026, 6, 16, 0, 0, tzinfo=timezone.utc)
+    tracker.begin_batch()
+    tracker.update_from_equity(10_000.0, now=week_start)
+    # Same ISO week, -9% from week anchor (> 8% weekly limit)
+    later = datetime(2026, 6, 18, 12, 0, tzinfo=timezone.utc)
+    tracker.begin_batch()
+    tracker.update_from_equity(9_100.0, now=later)
+
+    assert tracker.is_halted()
+    assert "weekly_loss_limit" in tracker.halt_reasons()
+    assert tracker.blocks_action("place") == "kill_switch:weekly_loss_limit"
+    assert tracker.blocks_action("market_exit") is None
+
+
+def test_monthly_loss_blocks_place(tmp_path: Path) -> None:
+    tracker = _tracker(tmp_path)
+    month_start = datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc)
+    tracker.begin_batch()
+    tracker.update_from_equity(10_000.0, now=month_start)
+    # Same calendar month, -13% from month anchor (> 12% monthly limit)
+    later = datetime(2026, 6, 20, 12, 0, tzinfo=timezone.utc)
+    tracker.begin_batch()
+    tracker.update_from_equity(8_700.0, now=later)
+
+    assert tracker.is_halted()
+    assert "monthly_loss_limit" in tracker.halt_reasons()
+    assert tracker.blocks_action("place") == "kill_switch:monthly_loss_limit"
+    assert tracker.blocks_action("market_exit") is None
 
 
 def test_utc_day_reset_clears_daily_loss_metric(tmp_path: Path) -> None:

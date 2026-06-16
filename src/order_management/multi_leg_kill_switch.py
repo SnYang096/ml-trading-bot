@@ -30,7 +30,11 @@ from src.time_series_model.core.constitution.safety_runtime import (
 
 logger = logging.getLogger(__name__)
 
-_RISK_INCREASING_ACTIONS = frozenset({"place", "place_protection"})
+# place_protection is intentionally excluded: it is a reduce-only order that
+# *decreases* portfolio risk.  Blocking it during halt leaves existing
+# positions unprotected on the exchange (no SL/TP), which is far more
+# dangerous than allowing the re-placement.
+_RISK_INCREASING_ACTIONS = frozenset({"place"})
 
 
 def _loss_fraction(anchor: float, equity: float) -> float:
@@ -64,7 +68,9 @@ class MultiLegKillSwitchConfig:
     kill_on_any_hard_violation: bool = True
 
     @classmethod
-    def from_constitution_yaml(cls, constitution_yaml: str | Path) -> MultiLegKillSwitchConfig:
+    def from_constitution_yaml(
+        cls, constitution_yaml: str | Path
+    ) -> MultiLegKillSwitchConfig:
         raw = load_constitution_dict(constitution_yaml)
         cfg = load_constitution_config(constitution_yaml)
         sim = resolve_multileg_sim_limits(
@@ -106,7 +112,9 @@ class MultiLegKillSwitchTracker:
     last_equity: float = 0.0
     safety: SafetyRuntimeState = field(default_factory=SafetyRuntimeState)
     drawdown_override: Optional[float] = None
-    on_halt_change: Optional[Any] = None   # callback(was_halted: bool, is_halted: bool, reasons: list[str])
+    on_halt_change: Optional[Any] = (
+        None  # callback(was_halted: bool, is_halted: bool, reasons: list[str])
+    )
     _updated_this_batch: bool = field(default=False, repr=False)
 
     def load(self) -> None:
@@ -116,7 +124,9 @@ class MultiLegKillSwitchTracker:
             raw = json.loads(self.state_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             logger.warning(
-                "multi-leg kill-switch: failed to load %s", self.state_path, exc_info=True
+                "multi-leg kill-switch: failed to load %s",
+                self.state_path,
+                exc_info=True,
             )
             return
         self.peak_equity = float(raw.get("peak_equity") or 0.0)

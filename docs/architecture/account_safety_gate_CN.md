@@ -303,34 +303,48 @@ pytest tests/order_management/test_multi_leg_kill_switch.py \
 | 2026-06-16 | 初稿：统一 Gate 设计；C Phase 0 已实现；B/A/TG 路线图 |
 | 2026-06-16 | 修订 §7：拆分 Phase 表 vs rollout 顺序；补 Phase 0 范围、shadow 限制、验收状态列； turnover 配置说明 |
 | 2026-06-16 | §12：Jun 16 回归测试矩阵 + CI `safety-regression-tests` 门禁 |
+| 2026-06-16 | §12 扩展：全 tier 实盘关键路径 ~530 测例；`scripts/run_live_critical_tests.sh` + `make test-live-critical` |
 
 ---
 
-## 12. Jun 16 回归测试矩阵（部署前必跑）
+## 12. 实盘关键路径回归矩阵（部署前必跑）
 
 > **事故复盘**：[20260616_late_fill_infinite_loop_postmortem_CN.md](live_stream/20260616_late_fill_infinite_loop_postmortem_CN.md)（§1–7 late-fill churn；§8 重启清库/CMS）
 
 CI 在 **build / deploy 之前** 跑 `safety-regression-tests` job（见 `.github/workflows/deploy.yml`）。本地等价：
 
 ```bash
-make test-live-safety
+make test-live-critical
 # 或
-PYTHONPATH=src:scripts pytest tests/order_management/test_live_safety_regressions.py \
-  tests/order_management/test_multi_leg_kill_switch.py \
-  tests/order_management/test_multi_leg_risk_governor.py \
-  tests/order_management/test_multi_leg_orchestrator.py -k kill_switch \
-  tests/business_console/test_multileg_position_truth.py \
-  tests/unit/test_dual_add_trend_live_engine.py -k "late_fill or ensure_protection or winding_down" \
-  tests/unit/test_segment_lifecycle.py -k "late_fill or winding_down" -q
+bash scripts/run_live_critical_tests.sh
 ```
+
+**规模**：约 **560** 个 mock 单测（~50s），覆盖 C/B/A/CMS 五层；排除 `hype_replay`（慢 replay）。
+
+**Tier 0b 重点**：`test_dual_add_trend_live_engine.py` **整文件 48 测**（非 `-k` 子集），含 6b3d59d9 partial SL 清空全部 protection ID、`ensure_protection` 闭环、late-fill；CI 另有显式断言 `protection_fill_partial_clears_all_protection_ids`。
+
+### Tier 分层
+
+| Tier | 范围 | 代表文件 |
+|------|------|----------|
+| **0** | Jun 16 事故回归 | `test_live_safety_regressions.py` |
+| **1** | C 层：kill-switch、governor、storage、orchestrator、reconcile | `test_multi_leg_*.py` |
+| **2** | B 层：safety runtime、live enforcement、order guard、sizing | `test_safety_*.py`, `test_live_enforcement.py` |
+| **3** | 引擎：trend_scalp / chop_grid protection、late-fill、executor sync | `test_dual_add_trend_live_engine.py`, `test_chop_grid_*.py` |
+| **4** | A 层 spot：balance gate、recovery、pending reconcile | `test_spot_*.py` |
+| **5** | CMS：positions、leg PnL、account reconcile、exchange balances | `test_multileg_*.py`, `test_account_*.py` |
+
+### Jun 16 事故对照
 
 | 事故类 | 症状 | 回归测试（mock，无需交易所） | 文件 |
 |--------|------|------------------------------|------|
 | **Late-fill 无限循环** | 1h 内 300+ 开平、本金 -87% | winding_down 不挂 SL/TP；只 market_exit | `test_dual_add_trend_live_engine.py`, `test_segment_lifecycle.py` |
-| **宪法未接线** | 日亏 -87% 仍 place | halt 后 block `place` / allow `market_exit` | `test_multi_leg_kill_switch.py`, `test_multi_leg_orchestrator.py -k kill_switch` |
+| **宪法未接线** | 日/周/月亏仍 place | halt 后 block `place` / allow `market_exit` | `test_multi_leg_kill_switch.py`, `test_multi_leg_orchestrator.py` |
 | **重启清库** | CMS 空、交易所有仓 | `close_absent([])` no-op；sync 前不调 close_absent | `test_live_safety_regressions.py` |
 | **CMS leg_id 错位** | trend_scalp 未平不显示 | `_fill{N}` 匹配 + closed 行 ghost | `test_multileg_position_truth.py`, `test_multileg_leg_pnl.py` |
+| **Partial SL 超量 TP** | partial SL 后 TP 仍原数量 | 清空全部 protection ID → ensure 重挂 | `test_protection_fill_partial_clears_all_protection_ids_for_re_place` |
+| **孤儿仓位不可见** | 引擎空、交易所有仓、无 TG | `_notify_orphan_positions` 发 TG + cooldown | `test_live_safety_regressions.py` |
 
 **为何用 mock**：上述路径均可在内存 SQLite + `MagicMock` adapter 下验证，**无需 mainnet 密钥**；速度快、可进 CI。集成/E2E（真实 user-stream）仍属 Phase 5 观察项，不阻塞 deploy。
 
-**不纳入本矩阵**：turnover/cost runtime（§8 非目标）、B 层 balance 驱动 daily_loss（Phase 2 待做）。
+**已知缺口（不阻塞 deploy，待补）**：chop_grid partial SL 与 trend_scalp 行为未对齐（待统一）；真实 WebSocket 长连 E2E 仍属 Phase 5 观察项。

@@ -84,8 +84,28 @@ on:
       - 'src/time_series_model/live/**'
       - 'config/strategies/**'
       - 'live/highcap/universe.yaml'
-      - 'tests/order_management/test_live_safety_regressions.py'
-      - 'tests/business_console/test_multileg_position_truth.py'
+      - 'tests/order_management/**'
+      - 'tests/business_console/test_account*.py'
+      - 'tests/business_console/test_multileg*.py'
+      - 'tests/business_console/test_spot*.py'
+      - 'tests/business_console/test_exchange_balances*.py'
+      - 'tests/business_console/test_open_positions_list.py'
+      - 'tests/business_console/test_multi_leg_reconcile.py'
+      - 'tests/unit/test_live_*.py'
+      - 'tests/unit/test_safety_*.py'
+      - 'tests/unit/test_dual_add_trend_live_engine.py'
+      - 'tests/unit/test_segment_lifecycle.py'
+      - 'tests/unit/test_chop*.py'
+      - 'tests/unit/test_spot_*.py'
+      - 'tests/unit/test_trade_executor.py'
+      - 'tests/unit/test_execution_truth_sync.py'
+      - 'tests/unit/test_order_flow_listener_execution_sync.py'
+      - 'tests/unit/test_multileg_*.py'
+      - 'tests/unit/test_risk_position_sizing.py'
+      - 'tests/order_management/test_binance_user_stream.py'
+      - 'tests/order_management/test_spot_order_manager.py'
+      - 'tests/order_management/test_multileg_user_stream_routing.py'
+      - 'Makefile'
 
 # 同一时间只允许一个部署
 concurrency:
@@ -164,10 +184,10 @@ jobs:
   # Job 0b: 资金/安全回归单测（部署前必过，mock only）
   # ============================================
   safety-regression-tests:
-    name: 🧪 Safety regression tests
+    name: 🧪 Live-critical tests (pre-deploy)
     runs-on: ubuntu-latest
     needs: [validate-secrets]
-    timeout-minutes: 12
+    timeout-minutes: 15
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
@@ -182,26 +202,28 @@ jobs:
       - name: 📦 Install dependencies
         run: pip install -r requirements.txt
 
-      - name: 🧪 Run live safety regression suite
+      - name: 🧪 Run live-critical regression suite (~560 tests, mock only)
+        run: bash scripts/run_live_critical_tests.sh
+
+      - name: 🔒 Verify trend_scalp protection tests collected (6b3d59d9 gate)
         run: |
           set -euo pipefail
           export PYTHONPATH=src:scripts
-          pytest tests/order_management/test_live_safety_regressions.py \
-            tests/order_management/test_multi_leg_kill_switch.py \
-            tests/order_management/test_multi_leg_risk_governor.py \
-            tests/business_console/test_multileg_position_truth.py \
-            tests/business_console/test_multileg_leg_pnl.py::test_multileg_pnl_accepts_trend_scalp_fill_suffix_leg_id \
-            tests/business_console/test_multileg_leg_pnl.py::test_multileg_pnl_skips_ghost_unrealized_when_positions_table_used \
-            -q --tb=short
-          pytest tests/order_management/test_multi_leg_orchestrator.py -k kill_switch -q --tb=short
+          count="$(pytest tests/unit/test_dual_add_trend_live_engine.py --collect-only -q 2>/dev/null | tail -1 | grep -oE '[0-9]+ tests collected' || true)"
+          echo "${count}"
+          n="$(echo "${count}" | grep -oE '^[0-9]+')"
+          if [ -z "${n}" ] || [ "${n}" -lt 40 ]; then
+            echo "::error::Expected >=40 tests in test_dual_add_trend_live_engine.py, got: ${count}"
+            exit 1
+          fi
           pytest tests/unit/test_dual_add_trend_live_engine.py \
-            -k "late_fill or ensure_protection or winding_down" -q --tb=short
-          pytest tests/unit/test_segment_lifecycle.py \
-            -k "late_fill or winding_down" -q --tb=short
+            -k "protection_fill_partial_clears_all_protection_ids" \
+            -q --tb=short
+          echo "✅ 6b3d59d9 partial-SL core assertion gated"
 
       - name: 📊 Test summary
         if: always()
-        run: echo "### 🧪 Safety regression tests completed" >> $GITHUB_STEP_SUMMARY
+        run: echo "### 🧪 Live-critical regression tests completed" >> $GITHUB_STEP_SUMMARY
 
   # ============================================
   # Job 1: 构建并推送 Docker 镜像

@@ -577,7 +577,7 @@ class FollowUpEngine(FakeEngine):
         return out
 
 
-def test_follow_up_place_protection_blocked_when_kill_switch_halted(
+def test_follow_up_place_protection_allowed_when_kill_switch_halted(
     tmp_path,
 ) -> None:
     from datetime import datetime, timezone
@@ -655,5 +655,5 @@ def test_follow_up_place_protection_blocked_when_kill_switch_halted(
         for a in call.args[0]
     ]
     assert "market_exit" in executed
-    assert "place_protection" not in executed
-    assert any("kill_switch" in r.reason for r in report.risk.rejected)
+    assert "place_protection" in executed
+    assert not any("kill_switch" in r.reason for r in report.risk.rejected)

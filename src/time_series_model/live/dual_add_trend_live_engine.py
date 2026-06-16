@@ -1195,12 +1195,32 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
         if leg_hint:
             for pos in list(self.state.inventory):
                 if str(pos.leg_id) == leg_hint:
-                    self.state.inventory.remove(pos)
-                    logger.info(
-                        "dual_add_trend protection fill by leg_hint: leg_id=%s side=%s",
-                        pos.leg_id,
-                        pos.side,
+                    close_qty = (
+                        filled_qty if filled_qty > 0 else float(pos.quantity or 0.0)
                     )
+                    remaining = max(0.0, float(pos.quantity or 0.0) - close_qty)
+                    if remaining > 1e-8:
+                        # Partial fill via leg_hint: shrink position and
+                        # clear protection IDs for re-placement at new size.
+                        pos.quantity = remaining
+                        pos.protection_order_ids = []
+                        logger.info(
+                            "dual_add_trend partial %s fill by leg_hint: "
+                            "leg_id=%s closed_qty=%.8f remaining=%.8f",
+                            kind,
+                            pos.leg_id,
+                            close_qty,
+                            remaining,
+                        )
+                    else:
+                        self.state.inventory.remove(pos)
+                        logger.info(
+                            "dual_add_trend protection fill by leg_hint: "
+                            "leg_id=%s side=%s qty=%.8f",
+                            pos.leg_id,
+                            pos.side,
+                            close_qty,
+                        )
                     return True
         return False
 

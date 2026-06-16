@@ -78,6 +78,7 @@ def _make_executor(
     trade_size=None,
     slot_active_pids=None,
     account_risk_limits=None,
+    per_strategy_limits=None,
 ) -> tuple[TradeExecutor, MagicMock, MagicMock, PositionTracker]:
     """创建 TradeExecutor 及其依赖 mock"""
     om = MagicMock()
@@ -106,6 +107,7 @@ def _make_executor(
         risk_per_slot=risk_per_slot,
         risk_per_trade=risk_per_trade,
         trade_size=trade_size,
+        per_strategy_limits=per_strategy_limits,
         account_risk_limits=account_risk_limits,
     )
     return ex, om, ce, pt
@@ -265,6 +267,39 @@ class TestQtyCalculation:
 
         qty = om.place_order.call_args_list[0].kwargs["quantity"]
         assert abs(qty - 0.123) < 1e-9
+
+    def test_per_strategy_max_risk_caps_constitution_sizing(self):
+        """LV max_risk_per_trade=0.5% caps global risk_per_slot=1%."""
+        ex, om, ce, pt = _make_executor(
+            risk_per_slot=0.01,
+            per_strategy_limits={"lv": {"max_risk_per_trade": 0.005}},
+        )
+        intent = _make_intent(archetype="lv", stop_loss_r=2.0)
+        features = _make_features(close=50000.0, atr=500.0, equity=10_000.0)
+
+        ex.execute(intent=intent, features=features)
+
+        capped_qty = om.place_order.call_args_list[0].kwargs["quantity"]
+
+        ex2, om2, _, _ = _make_executor(risk_per_slot=0.01)
+        ex2.execute(
+            intent=_make_intent(archetype="bpc", stop_loss_r=2.0),
+            features=features,
+        )
+        global_qty = om2.place_order.call_args_list[0].kwargs["quantity"]
+
+        assert capped_qty == pytest.approx(global_qty / 2.0)
+
+    def test_risk_calc_below_trade_size_falls_back_to_trade_size(self):
+        """Tiny equity → risk qty < trade_size → use trade_size."""
+        ex, om, ce, pt = _make_executor(risk_per_slot=0.01, trade_size=0.001)
+        intent = _make_intent(stop_loss_r=2.0)
+        features = _make_features(close=50000.0, atr=500.0, equity=0.05)
+
+        ex.execute(intent=intent, features=features)
+
+        qty = om.place_order.call_args_list[0].kwargs["quantity"]
+        assert qty == pytest.approx(0.001)
 
 
 class TestAccountRiskLimits:
