@@ -10,9 +10,11 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+HedgeKey = Tuple[str, str]
 
 
 class MockBinanceAPI:
@@ -26,21 +28,48 @@ class MockBinanceAPI:
       - PositionManager.update_stop_loss()
     """
 
-    def __init__(self):
+    def __init__(self, *, initial_wallet_usdt: float = 10000.0, fee_bps: float = 4.0):
         """Initialize mock with empty state."""
-        self._positions: Dict[str, Dict[str, Any]] = {}  # symbol → position info
-        self._open_orders: Dict[str, Dict[str, Any]] = {}  # order_id → order
-        self._last_prices: Dict[str, float] = {}  # symbol → last known price
-        # Multi-leg live (`GridExecutionAdapter.sync_positions`) expects this flag;
-        # `scripts/run_multi_leg_live.py` sets hedge_mode=True for shadow runs.
+        self._hedge_positions: Dict[HedgeKey, Dict[str, Any]] = {}
+        self._positions: Dict[str, Dict[str, Any]] = {}
+        self._open_orders: Dict[str, Dict[str, Any]] = {}
+        self._last_prices: Dict[str, float] = {}
+        self.wallet_usdt = float(initial_wallet_usdt or 0.0)
+        self.default_fee_bps = float(fee_bps or 0.0)
         self.hedge_mode: bool = False
         self.hedge_mode_probe_error: Optional[str] = None
 
-    # ─── Price feed (called by backtest to update current prices) ───
+    def set_wallet(self, amount: float) -> None:
+        self.wallet_usdt = float(amount or 0.0)
+
+    def set_fee_bps(self, fee_bps: float) -> None:
+        self.default_fee_bps = float(fee_bps or 0.0)
+
+    @staticmethod
+    def _pos_key(symbol: str, position_side: str) -> HedgeKey:
+        return (str(symbol).upper(), str(position_side).upper())
+
+    def _fee_usdt(self, notional: float, fee_bps: Optional[float] = None) -> float:
+        bps = self.default_fee_bps if fee_bps is None else float(fee_bps)
+        return abs(notional) * max(0.0, bps) / 10000.0
+
+    def unrealized_pnl_usdt(self) -> float:
+        total = 0.0
+        for (sym, side), pos in self._hedge_positions.items():
+            qty = float(pos.get("qty") or 0.0)
+            if qty <= 0:
+                continue
+            entry = float(pos.get("entry_price") or 0.0)
+            mark = float(self._last_prices.get(sym, entry) or entry)
+            if side == "LONG":
+                total += (mark - entry) * qty
+            else:
+                total += (entry - mark) * qty
+        return total
 
     def set_price(self, symbol: str, price: float) -> None:
         """Update the mock price for a symbol (called each bar by backtest)."""
-        self._last_prices[symbol] = price
+        self._last_prices[symbol] = float(price)
 
     def set_position(
         self,
@@ -49,26 +78,86 @@ class MockBinanceAPI:
         size: float,
         entry_price: float,
     ) -> None:
-        """Update mock position state (called when PositionSimulator changes)."""
-        if size == 0:
+        """Update mock position state (legacy single-side API)."""
+        pside = str(side or "").upper()
+        if pside not in {"LONG", "SHORT"}:
+            pside = "LONG" if float(size or 0) >= 0 else "SHORT"
+        if float(size or 0) == 0:
+            self._hedge_positions.pop(self._pos_key(symbol, pside), None)
             self._positions.pop(symbol, None)
         else:
+            self._hedge_positions[self._pos_key(symbol, pside)] = {
+                "symbol": symbol,
+                "side": pside,
+                "qty": abs(float(size)),
+                "entry_price": float(entry_price),
+            }
             self._positions[symbol] = {
                 "symbol": symbol,
-                "side": side,
-                "size": size,
-                "contracts": size,
-                "entry_price": entry_price,
+                "side": pside,
+                "size": abs(float(size)),
+                "contracts": abs(float(size)),
+                "entry_price": float(entry_price),
                 "mark_price": self._last_prices.get(symbol, entry_price),
             }
 
-    # ─── BinanceAPI interface (used by OrderManager / PositionManager) ───
+    def _apply_open(
+        self,
+        *,
+        symbol: str,
+        position_side: str,
+        qty: float,
+        fill_price: float,
+        fee_bps: Optional[float] = None,
+    ) -> None:
+        key = self._pos_key(symbol, position_side)
+        fee = self._fee_usdt(qty * fill_price, fee_bps)
+        self.wallet_usdt -= fee
+        pos = self._hedge_positions.get(key)
+        if pos is None or float(pos.get("qty") or 0) <= 0:
+            self._hedge_positions[key] = {
+                "symbol": symbol,
+                "side": position_side,
+                "qty": qty,
+                "entry_price": fill_price,
+            }
+            return
+        old_qty = float(pos["qty"])
+        new_qty = old_qty + qty
+        pos["entry_price"] = (pos["entry_price"] * old_qty + fill_price * qty) / new_qty
+        pos["qty"] = new_qty
+
+    def _apply_reduce(
+        self,
+        *,
+        symbol: str,
+        position_side: str,
+        qty: float,
+        fill_price: float,
+        fee_bps: Optional[float] = None,
+    ) -> float:
+        key = self._pos_key(symbol, position_side)
+        pos = self._hedge_positions.get(key)
+        if pos is None or float(pos.get("qty") or 0) <= 0:
+            return 0.0
+        close_qty = min(float(qty), float(pos["qty"]))
+        entry = float(pos["entry_price"])
+        if position_side == "LONG":
+            gross = (fill_price - entry) * close_qty
+        else:
+            gross = (entry - fill_price) * close_qty
+        fee = self._fee_usdt(close_qty * fill_price, fee_bps)
+        self.wallet_usdt += gross - fee
+        pos["qty"] = float(pos["qty"]) - close_qty
+        if float(pos["qty"]) <= 1e-12:
+            self._hedge_positions.pop(key, None)
+        return gross - fee
 
     def place_order(
         self,
         symbol: str,
-        side,  # OrderSide enum
-        order_type,  # OrderType enum
+        side,
+        order_type,
         quantity: float,
         price: Optional[float] = None,
         stop_price: Optional[float] = None,
@@ -82,14 +171,38 @@ class MockBinanceAPI:
         post_only: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """Simulate placing an order — instant fill at current price."""
-        fill_price = price or self._last_prices.get(symbol, 0.0)
+        fill_price = float(price or self._last_prices.get(symbol, 0.0) or 0.0)
         order_id = f"mock_{uuid.uuid4().hex[:12]}"
         cid = client_order_id or f"mcid_{uuid.uuid4().hex[:10]}"
 
         side_val = side.value if hasattr(side, "value") else str(side)
         type_val = order_type.value if hasattr(order_type, "value") else str(order_type)
+        qty = float(quantity or 0.0)
 
-        result = {
+        pside = str(position_side or "").upper()
+        if not pside:
+            if reduce_only or close_position:
+                pside = "LONG" if side_val.upper() == "SELL" else "SHORT"
+            else:
+                pside = "LONG" if side_val.upper() == "BUY" else "SHORT"
+
+        if qty > 0 and fill_price > 0:
+            if reduce_only or close_position:
+                self._apply_reduce(
+                    symbol=symbol,
+                    position_side=pside,
+                    qty=qty,
+                    fill_price=fill_price,
+                )
+            else:
+                self._apply_open(
+                    symbol=symbol,
+                    position_side=pside,
+                    qty=qty,
+                    fill_price=fill_price,
+                )
+
+        return {
             "order_id": order_id,
             "id": order_id,
             "client_order_id": cid,
@@ -103,30 +216,18 @@ class MockBinanceAPI:
             "filled_quantity": quantity,
             "status": "filled",
             "created_at": datetime.now().timestamp(),
+            "position_side": pside,
         }
 
-        logger.debug(
-            "MockBinanceAPI.place_order: %s %s %s qty=%.6f @ %.4f",
-            symbol,
-            side_val,
-            type_val,
-            quantity,
-            fill_price,
-        )
-        return result
-
     def cancel_order(self, order_id: str, symbol: str) -> bool:
-        """Simulate canceling an order."""
         self._open_orders.pop(order_id, None)
         return True
 
     def cancel_algo_order(self, order_id: str, symbol: str) -> bool:
-        """Simulate canceling an algo (stop/tp) order."""
         self._open_orders.pop(order_id, None)
         return True
 
     def get_order(self, order_id: str, symbol: str) -> Optional[Dict[str, Any]]:
-        """Get order status — always returns filled for mock."""
         return {
             "order_id": order_id,
             "status": "filled",
@@ -136,39 +237,27 @@ class MockBinanceAPI:
         }
 
     def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
-        """No open orders in mock (everything fills instantly)."""
         return []
 
     def get_positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Return open positions in the same shape as ``BinanceAPI.get_positions``."""
         out: List[Dict[str, Any]] = []
-        for sym, pos in self._positions.items():
+        for (sym, pside), pos in self._hedge_positions.items():
             if symbol and str(sym).upper() != str(symbol).upper():
                 continue
-            try:
-                qty = float(pos.get("contracts") or pos.get("size") or 0.0)
-            except (TypeError, ValueError):
-                qty = 0.0
-            if qty == 0:
+            qty = float(pos.get("qty") or 0.0)
+            if qty <= 0:
                 continue
-            raw_side = str(pos.get("side", "") or "").upper()
-            if raw_side in {"LONG", "SHORT"}:
-                side = raw_side
-            else:
-                side = "LONG" if qty >= 0 else "SHORT"
-            mark = float(
-                pos.get("mark_price") or self._last_prices.get(sym, 0.0) or 0.0
-            )
+            mark = float(self._last_prices.get(sym, pos.get("entry_price", 0.0)) or 0.0)
             entry = float(pos.get("entry_price") or 0.0)
             out.append(
                 {
                     "symbol": sym,
-                    "side": side.lower(),
-                    "position_side": side,
-                    "positionSide": side,
-                    "position_amount": abs(qty),
-                    "positionAmt": abs(qty),
-                    "contracts": abs(qty),
+                    "side": pside.lower(),
+                    "position_side": pside,
+                    "positionSide": pside,
+                    "position_amount": qty,
+                    "positionAmt": qty,
+                    "contracts": qty,
                     "mark_price": mark,
                     "markPrice": mark,
                     "entry_price": entry,
@@ -178,25 +267,31 @@ class MockBinanceAPI:
         return out
 
     def get_position(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """Get mock position for a symbol."""
-        pos = self._positions.get(symbol)
-        if pos:
-            # Update mark price to latest
-            pos["mark_price"] = self._last_prices.get(symbol, pos.get("entry_price", 0))
-            return pos
+        positions = self.get_positions(symbol)
+        if not positions:
+            return {
+                "symbol": symbol,
+                "size": 0,
+                "contracts": 0,
+                "mark_price": self._last_prices.get(symbol, 0),
+            }
+        pos = positions[0]
         return {
             "symbol": symbol,
-            "size": 0,
-            "contracts": 0,
-            "mark_price": self._last_prices.get(symbol, 0),
+            "size": pos.get("contracts", 0),
+            "contracts": pos.get("contracts", 0),
+            "mark_price": pos.get("mark_price", 0),
+            "entry_price": pos.get("entry_price", 0),
         }
 
     def get_balance(self) -> Dict[str, Any]:
-        """Mock balance."""
-        return {"total": 10000.0, "available": 10000.0}
+        return {
+            "total": self.wallet_usdt,
+            "available": self.wallet_usdt,
+            "wallet_balance": self.wallet_usdt,
+        }
 
     def get_symbol_info(self, symbol: str) -> Dict[str, Any]:
-        """Mock symbol info with reasonable defaults."""
         return {
             "symbol": symbol,
             "price_precision": 2,
@@ -208,5 +303,4 @@ class MockBinanceAPI:
         }
 
     def get_open_orders_for_sl_cleanup(self, symbol: str) -> List[Dict[str, Any]]:
-        """Mock: no open algo orders to clean up."""
         return []

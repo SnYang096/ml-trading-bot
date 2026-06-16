@@ -9,6 +9,11 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Protocol
 
+from src.order_management.multileg_symbol_owner import (
+    filter_places_for_owner,
+    refresh_symbol_owner,
+    runtime_holds_symbol_engine,
+)
 from src.order_management.multi_leg_orchestrator import MultiLegLiveOrchestrator
 from src.order_management.multi_leg_risk_governor import RiskRejection
 from src.time_series_model.live.decision_chain_debug import (
@@ -118,7 +123,7 @@ class MultiLegLiveDaemon:
         # Contract: at most one multi-leg strategy may hold/open on one symbol.
         symbol_owner: Dict[str, str] = {}
         for rt in self.runtimes:
-            if not self._runtime_holds_symbol(rt):
+            if not runtime_holds_symbol_engine(rt.engine):
                 continue
             sym = str(rt.symbol or "").upper().strip()
             if sym and sym not in symbol_owner:
@@ -168,50 +173,49 @@ class MultiLegLiveDaemon:
                 )
                 # Refresh from engine slot state so chop regime_exit on this bar
                 # releases the symbol before trend on_bar (timeline parity).
-                self._refresh_symbol_owner(symbol_owner, sym)
+                refresh_symbol_owner(self.runtimes, symbol_owner, sym)
                 owner = symbol_owner.get(sym, "")
-                if owner and owner != str(rt.name or ""):
-                    dropped = [
-                        a
-                        for a in actions
-                        if str((a or {}).get("action", "") or "").lower() == "place"
-                    ]
-                    if dropped:
-                        actions = [
-                            a
-                            for a in actions
-                            if str((a or {}).get("action", "") or "").lower() != "place"
-                        ]
-                        rejected_count += len(dropped)
-                        logger.info(
-                            "multi-leg symbol conflict: reject %d opening actions for %s (%s owned by %s)",
-                            len(dropped),
-                            sym,
-                            rt.name,
-                            owner,
-                        )
-                        try:
-                            for da in dropped:
-                                side_conflict = str(
-                                    (da or {}).get("side", "na") or "na"
-                                ).lower()
-                                METRICS.multi_leg_risk_reject_codes_total.labels(
-                                    strategy=rt.name,
-                                    symbol=rt.symbol,
-                                    code="symbol_conflict",
-                                ).inc(1)
-                                METRICS.record_strategy_event(
-                                    scope="hedge",
-                                    strategy=rt.name,
-                                    symbol=rt.symbol,
-                                    event="symbol_conflict",
-                                    side=side_conflict,
-                                )
-                        except Exception:
-                            logger.debug(
-                                "multi-leg symbol-conflict metrics skipped",
-                                exc_info=True,
+                dropped_actions = [
+                    a
+                    for a in actions
+                    if str((a or {}).get("action", "") or "").lower() == "place"
+                    and owner
+                    and owner != str(rt.name or "")
+                ]
+                actions, dropped = filter_places_for_owner(
+                    actions, owner=owner, runtime_name=str(rt.name or "")
+                )
+                if dropped:
+                    rejected_count += dropped
+                    logger.info(
+                        "multi-leg symbol conflict: reject %d opening actions for %s (%s owned by %s)",
+                        dropped,
+                        sym,
+                        rt.name,
+                        owner,
+                    )
+                    try:
+                        for da in dropped_actions:
+                            side_conflict = str(
+                                (da or {}).get("side", "na") or "na"
+                            ).lower()
+                            METRICS.multi_leg_risk_reject_codes_total.labels(
+                                strategy=rt.name,
+                                symbol=rt.symbol,
+                                code="symbol_conflict",
+                            ).inc(1)
+                            METRICS.record_strategy_event(
+                                scope="hedge",
+                                strategy=rt.name,
+                                symbol=rt.symbol,
+                                event="symbol_conflict",
+                                side=side_conflict,
                             )
+                    except Exception:
+                        logger.debug(
+                            "multi-leg symbol-conflict metrics skipped",
+                            exc_info=True,
+                        )
                 action_count += len(actions)
                 if not actions and chain_debug_enabled("multi_leg"):
                     log_multileg_bar_no_actions(
@@ -245,7 +249,7 @@ class MultiLegLiveDaemon:
                 if self.stats_collector is not None:
                     self._record_multileg_funnel(rt=rt, actions=actions, report=report)
                 rejected_count += len(report.risk.rejected)
-                self._refresh_symbol_owner(symbol_owner, sym)
+                refresh_symbol_owner(self.runtimes, symbol_owner, sym)
                 execution_count += len(report.execution_results) + len(
                     report.reconciliation_results
                 )
@@ -419,46 +423,6 @@ class MultiLegLiveDaemon:
                 sc.record_order_placed(rt.symbol, rt.name)
         except Exception:
             logger.debug("multi-leg funnel record skipped", exc_info=True)
-
-    def _refresh_symbol_owner(self, symbol_owner: Dict[str, str], sym: str) -> None:
-        """Rebuild owner from current engine slots (chop runtimes precede trend)."""
-        sym_u = str(sym or "").upper().strip()
-        owner = ""
-        for rt in self.runtimes:
-            if str(rt.symbol or "").upper().strip() != sym_u:
-                continue
-            if self._runtime_holds_symbol(rt):
-                owner = str(rt.name or "")
-                break
-        if owner:
-            symbol_owner[sym_u] = owner
-        else:
-            symbol_owner.pop(sym_u, None)
-
-    @staticmethod
-    def _runtime_holds_symbol(rt: StrategyRuntime) -> bool:
-        """True when this engine occupies the symbol (not just filled inventory)."""
-        holds = getattr(rt.engine, "holds_real_grid_slot", None)
-        if callable(holds):
-            try:
-                if bool(holds()):
-                    return True
-            except Exception:
-                logger.debug(
-                    "multi-leg daemon: holds_real_grid_slot raised for %s",
-                    rt.name,
-                    exc_info=True,
-                )
-        try:
-            if bool(list(rt.engine.local_position_snapshots())):
-                return True
-        except Exception:
-            logger.debug(
-                "multi-leg daemon: local_position_snapshots raised for %s",
-                rt.name,
-                exc_info=True,
-            )
-        return False
 
     def _reconcile_due(self, symbol: str) -> bool:
         if self.reconcile_interval_seconds <= 0:

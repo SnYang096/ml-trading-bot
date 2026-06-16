@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -64,6 +66,7 @@ class MultiLegConcurrencyGate:
         *,
         cooldown_bars: int = 0,
         max_segment_starts_per_symbol_per_day: int = 0,
+        persistence_path: Optional[Path] = None,
     ) -> None:
         self.max_symbols = max(1, int(max_symbols))
         self._cooldown_seconds = max(0, int(cooldown_bars)) * BAR_MINUTES * 60
@@ -75,9 +78,63 @@ class MultiLegConcurrencyGate:
         self._daily_starts: Dict[Tuple[str, str, str], int] = {}
         # Backtest: override calendar day from bar timestamp (live uses wall clock).
         self._eval_utc_day: Optional[str] = None
+        # Persistence: JSON file for _daily_starts across restarts.
+        self._persistence_path = Path(persistence_path) if persistence_path else None
+        self._load_daily_starts()
 
     def set_evaluation_utc_day(self, utc_day: Optional[str]) -> None:
         self._eval_utc_day = str(utc_day).strip() if utc_day else None
+
+    # ── Persistence ──────────────────────────────────────────────────────
+
+    def _load_daily_starts(self) -> None:
+        """Restore ``_daily_starts`` from JSON on disk (survives daemon restart)."""
+        if self._persistence_path is None or not self._persistence_path.exists():
+            return
+        try:
+            raw = json.loads(self._persistence_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            logger.warning(
+                "multi-leg daily starts: failed to load %s",
+                self._persistence_path,
+                exc_info=True,
+            )
+            return
+        if not isinstance(raw, list):
+            return
+        loaded: Dict[Tuple[str, str, str], int] = {}
+        for entry in raw:
+            if not isinstance(entry, (list, tuple)) or len(entry) != 4:
+                continue
+            sym, strat, day, count = entry
+            loaded[(str(sym), str(strat), str(day))] = int(count)
+        self._daily_starts = loaded
+        logger.info(
+            "multi-leg daily starts: loaded %d entries from %s",
+            len(loaded),
+            self._persistence_path,
+        )
+
+    def _save_daily_starts(self) -> None:
+        """Persist ``_daily_starts`` to JSON (called after every ``record_segment_start``)."""
+        if self._persistence_path is None:
+            return
+        try:
+            self._persistence_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = [
+                [sym, strat, day, count]
+                for (sym, strat, day), count in self._daily_starts.items()
+            ]
+            self._persistence_path.write_text(
+                json.dumps(payload, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        except OSError:
+            logger.warning(
+                "multi-leg daily starts: failed to save %s",
+                self._persistence_path,
+                exc_info=True,
+            )
 
     def register(
         self, symbol: str, engine: Any, *, strategy: str = "chop_grid"
@@ -170,6 +227,7 @@ class MultiLegConcurrencyGate:
             self._active_utc_day(),
         )
         self._daily_starts[key] = self._daily_starts.get(key, 0) + 1
+        self._save_daily_starts()
 
     def _daily_starts_count(self, symbol: str, strategy: str) -> int:
         key = (

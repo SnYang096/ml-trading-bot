@@ -562,3 +562,98 @@ def test_reconcile_publishes_unified_reconciliation_metrics(monkeypatch) -> None
         "position_mismatch": 0,
     }
     assert calls[0]["source"] == "multi_leg_orchestrator"
+
+
+@dataclass
+class FollowUpEngine(FakeEngine):
+    pending_rounds: list[list[dict[str, Any]]] = field(default_factory=list)
+    _pop_idx: int = 0
+
+    def pop_pending_actions(self) -> list[dict[str, Any]]:
+        if self._pop_idx >= len(self.pending_rounds):
+            return []
+        out = list(self.pending_rounds[self._pop_idx])
+        self._pop_idx += 1
+        return out
+
+
+def test_follow_up_place_protection_blocked_when_kill_switch_halted(
+    tmp_path,
+) -> None:
+    from datetime import datetime, timezone
+
+    from src.order_management.multi_leg_kill_switch import (
+        MultiLegKillSwitchConfig,
+        MultiLegKillSwitchTracker,
+    )
+    from src.time_series_model.core.constitution.account_risk_guard import (
+        AccountRiskSnapshot,
+    )
+
+    tracker = MultiLegKillSwitchTracker(
+        config=MultiLegKillSwitchConfig(
+            enabled=True,
+            daily_loss_limit=0.06,
+            max_dd=0.20,
+            cooldown_minutes=0,
+        ),
+        state_path=tmp_path / "kill_switch_state.json",
+    )
+    now = datetime(2026, 6, 16, 12, 0, tzinfo=timezone.utc)
+    tracker.begin_batch()
+    tracker.update_from_equity(10_000.0, now=now)
+    tracker.begin_batch()
+    tracker.update_from_equity(9_300.0, now=now)
+    assert tracker.is_halted()
+
+    engine = FollowUpEngine(
+        pending_rounds=[
+            [
+                {
+                    "action": "place_protection",
+                    "symbol": "BTCUSDT",
+                    "side": "SELL",
+                    "quantity": 0.01,
+                    "price": 49_000.0,
+                }
+            ]
+        ]
+    )
+    adapter = _adapter()
+    orchestrator = MultiLegLiveOrchestrator(
+        engine=engine,
+        governor=MultiLegPortfolioRiskGovernor(
+            MultiLegRiskLimits(
+                max_gross_notional=1_000_000.0, max_net_notional=1_000_000.0
+            ),
+            account_snapshot_provider=lambda: AccountRiskSnapshot(
+                equity=9_300.0, gross_notional=0.0
+            ),
+            kill_switch_tracker=tracker,
+        ),
+        adapter=adapter,
+        reconciler=MultiLegReconciler(
+            ReconciliationPolicy(client_id_prefixes={"dat_", "cg_"})
+        ),
+    )
+
+    report = orchestrator.run_actions(
+        [
+            {
+                "action": "market_exit",
+                "symbol": "BTCUSDT",
+                "side": "LONG",
+                "quantity": 0.01,
+            }
+        ],
+        reconcile=False,
+    )
+
+    executed = [
+        str(a.get("action"))
+        for call in adapter.execute_actions.call_args_list
+        for a in call.args[0]
+    ]
+    assert "market_exit" in executed
+    assert "place_protection" not in executed
+    assert any("kill_switch" in r.reason for r in report.risk.rejected)

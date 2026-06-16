@@ -695,19 +695,49 @@ class ChopGridLiveEngine(SegmentLifecycleMixin):
             leg_id=leg_id,
         )
         self.state.inventory.append(pos)
+        winding_down = self._segment_winding_down()
         self._promote_to_active()
-        self._pending_actions.extend(
-            self._protection_actions(
-                order_id=leg_id,
-                pos=pos,
-                timestamp=str(report.get("trade_time") or self.state.last_timestamp),
+        timestamp = str(report.get("trade_time") or self.state.last_timestamp)
+        if winding_down:
+            # Segment already exiting — do NOT queue SL/TP (they'd become
+            # orphaned exchange orders).  Queue immediate market_exit instead.
+            logger.warning(
+                "chop_grid late fill after segment exit: symbol=%s "
+                "side=%s qty=%.8f leg=%s — queueing immediate market_exit",
+                symbol,
+                pos_side,
+                filled_qty,
+                leg_id,
             )
-        )
+            self._pending_actions.append(
+                {
+                    "action": "market_exit",
+                    "order_id": f"{leg_id}_late_fill_cleanup",
+                    "leg_id": leg_id,
+                    "symbol": symbol,
+                    "side": pos_side,
+                    "level": level,
+                    "quantity": filled_qty,
+                    "exit_price": last_px,
+                    "reason": "late_fill_cleanup",
+                    "timestamp": timestamp,
+                }
+            )
+        else:
+            self._pending_actions.extend(
+                self._protection_actions(
+                    order_id=leg_id,
+                    pos=pos,
+                    timestamp=timestamp,
+                )
+            )
         logger.info(
-            "chop_grid late entry fill ingested: symbol=%s leg_id=%s qty=%.8f",
+            "chop_grid late entry fill ingested: symbol=%s leg_id=%s qty=%.8f "
+            "winding_down=%s",
             symbol,
             leg_id,
             filled_qty,
+            winding_down,
         )
         return True
 

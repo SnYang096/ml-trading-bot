@@ -7,15 +7,19 @@ the shared account beyond gross/net exposure or resting-order limits.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
+from src.order_management.multi_leg_kill_switch import MultiLegKillSwitchTracker
 from src.time_series_model.core.constitution.account_risk_guard import (
     AccountRiskSnapshot,
     evaluate_account_risk,
     resolve_account_risk_limits,
     snapshot_for_backtest,
 )
+
+logger = logging.getLogger(__name__)
 
 
 Action = Dict[str, Any]
@@ -86,12 +90,17 @@ class MultiLegPortfolioRiskGovernor:
         limits: MultiLegRiskLimits,
         *,
         account_snapshot_provider: Optional[Callable[[], AccountRiskSnapshot]] = None,
+        kill_switch_tracker: Optional[MultiLegKillSwitchTracker] = None,
+        on_halt_change: Optional[Callable] = None,
     ) -> None:
         self.limits = limits
         self._account_risk_limits = resolve_account_risk_limits(
             limits.account_risk_limits
         )
         self._account_snapshot_provider = account_snapshot_provider
+        self._kill_switch_tracker = kill_switch_tracker
+        if kill_switch_tracker is not None and on_halt_change is not None:
+            kill_switch_tracker.on_halt_change = on_halt_change
 
     def check_actions(
         self,
@@ -106,26 +115,45 @@ class MultiLegPortfolioRiskGovernor:
         long_by_symbol, short_by_symbol = _exposure_maps(positions)
         resting_orders = len(list(open_orders))
 
+        tracker = self._kill_switch_tracker
+        if tracker is not None:
+            tracker.begin_batch()
+            self._refresh_kill_switch_from_account(tracker)
+
+        effective_drawdown = drawdown_pct
+        if tracker is not None and tracker.drawdown_pct is not None:
+            effective_drawdown = tracker.drawdown_pct
+
         for action in actions:
             kind = str(action.get("action", "") or "").lower()
-            if kind in {"cancel", "market_exit"}:
+            if kind in {"cancel", "market_exit", "cancel_protection"}:
                 approved.append(dict(action))
                 if kind == "cancel" and resting_orders > 0:
                     resting_orders -= 1
                 continue
+
+            kill_reason = tracker.blocks_action(kind) if tracker is not None else None
+            if kill_reason:
+                rejected.append(RiskRejection(dict(action), kill_reason))
+                continue
+
+            if kind == "place_protection":
+                approved.append(dict(action))
+                continue
+
             if kind != "place":
                 approved.append(dict(action))
                 continue
 
             if (
                 self.limits.max_drawdown_pct is not None
-                and drawdown_pct is not None
-                and float(drawdown_pct) >= float(self.limits.max_drawdown_pct)
+                and effective_drawdown is not None
+                and float(effective_drawdown) >= float(self.limits.max_drawdown_pct)
             ):
                 rejected.append(
                     RiskRejection(
                         dict(action),
-                        f"max_drawdown_pct exceeded: {float(drawdown_pct):.4f} >= "
+                        f"max_drawdown_pct exceeded: {float(effective_drawdown):.4f} >= "
                         f"{float(self.limits.max_drawdown_pct):.4f}",
                     )
                 )
@@ -177,6 +205,22 @@ class MultiLegPortfolioRiskGovernor:
             resting_orders += 1
 
         return RiskCheckResult(approved_actions=approved, rejected=rejected)
+
+    def _refresh_kill_switch_from_account(
+        self, tracker: MultiLegKillSwitchTracker
+    ) -> None:
+        if self._account_snapshot_provider is None:
+            return
+        try:
+            snap = self._account_snapshot_provider()
+        except Exception:
+            logger.warning(
+                "multi-leg kill-switch: account snapshot failed", exc_info=True
+            )
+            return
+        if snap is None or float(snap.equity or 0.0) <= 0:
+            return
+        tracker.update_from_equity(float(snap.equity))
 
     def _account_risk_violation(
         self,

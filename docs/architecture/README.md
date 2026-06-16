@@ -39,6 +39,8 @@
 | 文档                                                           | 说明                                                                        |
 | -------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | [live_stream/multi_leg_live_daemon.md](live_stream/multi_leg_live_daemon.md) | C multileg 守护进程架构（Feature Bus、orchestrator、对账） |
+| [live_stream/20260616_late_fill_infinite_loop_postmortem_CN.md](live_stream/20260616_late_fill_infinite_loop_postmortem_CN.md) | Jun 16 late-fill 事故复盘 |
+| [account_safety_gate_CN.md](account_safety_gate_CN.md) | 账户级 Safety Gate：宪法 kill-switch 统一执行边界（TG / 禁开 / 可平） |
 | [multi_leg_user_stream_design.md](multi_leg_user_stream_design.md) | Multi-leg **User-stream 现状 + 三层兜底 + 监控/并发 backlog** |
 | [segment-lifecycle.md](segment-lifecycle.md)                   | C multileg **段生命周期专题**（ghost 根因 + P0–P4 实现 + 单测）；可观测性见 abc 文档 |
 | [abc_execution_layer_issues_CN.md](abc_execution_layer_issues_CN.md) | ABC **执行层总账**：近期修复、TruthSync 术语、对账 metrics Phase 0–6、Live 观察 |

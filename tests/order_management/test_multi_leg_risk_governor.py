@@ -191,3 +191,67 @@ def test_rejects_new_places_when_drawdown_limit_is_reached() -> None:
 
     assert result.approved_actions == []
     assert "max_drawdown_pct exceeded" in result.rejected[0].reason
+
+
+def test_rejects_place_when_kill_switch_halted(tmp_path) -> None:
+    from datetime import datetime, timezone
+
+    from src.order_management.multi_leg_kill_switch import (
+        MultiLegKillSwitchConfig,
+        MultiLegKillSwitchTracker,
+    )
+    from src.time_series_model.core.constitution.account_risk_guard import (
+        AccountRiskSnapshot,
+    )
+
+    tracker = MultiLegKillSwitchTracker(
+        config=MultiLegKillSwitchConfig(
+            enabled=True,
+            daily_loss_limit=0.06,
+            max_dd=0.20,
+            cooldown_minutes=0,
+        ),
+        state_path=tmp_path / "kill_switch_state.json",
+    )
+    now = datetime(2026, 6, 16, 12, 0, tzinfo=timezone.utc)
+    tracker.begin_batch()
+    tracker.update_from_equity(10_000.0, now=now)
+    tracker.begin_batch()
+    tracker.update_from_equity(9_300.0, now=now)
+    assert tracker.is_halted()
+
+    governor = MultiLegPortfolioRiskGovernor(
+        MultiLegRiskLimits(
+            max_gross_notional=1_000_000.0, max_net_notional=1_000_000.0
+        ),
+        account_snapshot_provider=lambda: AccountRiskSnapshot(
+            equity=9_300.0, gross_notional=0.0
+        ),
+        kill_switch_tracker=tracker,
+    )
+
+    place = governor.check_actions(
+        [
+            {
+                "action": "place",
+                "symbol": "BTCUSDT",
+                "side": "BUY",
+                "quantity": 0.01,
+                "price": 60_000.0,
+            }
+        ]
+    )
+    assert not place.ok
+    assert "kill_switch" in place.rejected[0].reason
+
+    exit_ok = governor.check_actions(
+        [
+            {
+                "action": "market_exit",
+                "symbol": "BTCUSDT",
+                "side": "LONG",
+                "quantity": 0.01,
+            }
+        ]
+    )
+    assert exit_ok.ok

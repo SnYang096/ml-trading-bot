@@ -128,6 +128,10 @@ from src.order_management.multi_leg_risk_governor import (  # noqa: E402
     MultiLegPortfolioRiskGovernor,
     MultiLegRiskLimits,
 )
+from src.order_management.multi_leg_kill_switch import (  # noqa: E402
+    MultiLegKillSwitchConfig,
+    MultiLegKillSwitchTracker,
+)
 from src.order_management.chop_grid_concurrency import (  # noqa: E402
     MultiLegConcurrencyGate,
 )
@@ -505,14 +509,59 @@ def build_daemon(
     if args.mode in ("mainnet", "testnet") and isinstance(api, BinanceAPI):
         _account_snapshot_provider = _multi_leg_account_snapshot_provider(api)
 
-    def _drawdown_pct_from_env() -> float | None:
-        raw = os.getenv("MULTI_LEG_CURRENT_DRAWDOWN_PCT", "")
-        if not raw:
-            return None
+    _kill_switch_cfg = MultiLegKillSwitchConfig.from_constitution_yaml(_const_path)
+    _kill_switch_tracker = MultiLegKillSwitchTracker(
+        config=_kill_switch_cfg,
+        state_path=Path(args.state_dir) / "kill_switch_state.json",
+    )
+    _kill_switch_tracker.load()
+    if _account_snapshot_provider is not None:
         try:
-            return float(raw)
-        except ValueError:
-            return None
+            startup_snap = _account_snapshot_provider()
+            if startup_snap is not None and float(startup_snap.equity or 0.0) > 0:
+                _kill_switch_tracker.update_from_equity(float(startup_snap.equity))
+                logger.info(
+                    "multi-leg kill-switch: armed equity=%.2f limits daily=%.0f%% "
+                    "max_dd=%.0f%%",
+                    float(startup_snap.equity),
+                    _kill_switch_cfg.daily_loss_limit * 100.0,
+                    _kill_switch_cfg.max_dd * 100.0,
+                )
+        except Exception:
+            logger.warning(
+                "multi-leg kill-switch: startup equity init failed",
+                exc_info=True,
+            )
+
+    def _drawdown_pct_provider() -> float | None:
+        raw = os.getenv("MULTI_LEG_CURRENT_DRAWDOWN_PCT", "")
+        if raw:
+            try:
+                return float(raw)
+            except ValueError:
+                pass
+        return _kill_switch_tracker.drawdown_pct
+
+    def _on_kill_switch_halt_change(
+        was_halted: bool, is_halted: bool, reasons: list
+    ) -> None:
+        try:
+            from src.monitoring.telegram import send_telegram_message
+
+            if is_halted:
+                dd = _kill_switch_tracker.drawdown_pct
+                dd_str = f"{dd:.1%}" if dd is not None else "n/a"
+                text = (
+                    f"🚨 C层 kill-switch HALT\n"
+                    f"原因: {', '.join(reasons) if reasons else 'unknown'}\n"
+                    f"回撤: {dd_str}\n"
+                    f"equity: {_kill_switch_tracker.last_equity:.2f}"
+                )
+            else:
+                text = "✅ C层 kill-switch RECOVERED"
+            send_telegram_message(text, stamp_key="c_layer_halt")
+        except Exception:
+            logger.warning("kill-switch TG notification failed", exc_info=True)
 
     if args.bar_source == "feature-store":
         from src.live_data_stream.feature_bus import resolve_disk_primary_timeframe
@@ -548,6 +597,7 @@ def build_daemon(
             max_cg,
             cooldown_bars=cooldown_bars,
             max_segment_starts_per_symbol_per_day=daily_starts,
+            persistence_path=Path(args.state_dir) / "daily_segment_starts.json",
         )
         if max_cg > 0
         else None
@@ -578,6 +628,8 @@ def build_daemon(
             governor = MultiLegPortfolioRiskGovernor(
                 risk_limits,
                 account_snapshot_provider=_account_snapshot_provider,
+                kill_switch_tracker=_kill_switch_tracker,
+                on_halt_change=_on_kill_switch_halt_change,
             )
             sym_u = str(symbol).strip().upper()
             reconciler = MultiLegReconciler(
@@ -600,7 +652,7 @@ def build_daemon(
                 run_id=run_id,
                 strategy_name=strategy,
                 symbol=symbol,
-                drawdown_pct_provider=_drawdown_pct_from_env,
+                drawdown_pct_provider=_drawdown_pct_provider,
             )
             runtimes.append(
                 StrategyRuntime(

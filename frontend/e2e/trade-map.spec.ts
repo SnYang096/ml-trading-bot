@@ -8,7 +8,7 @@
  *   npx playwright test --config=e2e/playwright.config.ts --headed
  */
 
-import { test, expect } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 
 // ═══════════════════════════════════════════════
 // 工具
@@ -23,7 +23,7 @@ async function waitForReady(page: import('@playwright/test').Page) {
     const el = document.querySelector('[class*="status"]');
     const t = el?.textContent || '';
     return t.length > 0 && !t.includes('loading') && !t.includes('加载');
-  }, { timeout: 25_000 }).catch(() => {});
+  }, { timeout: 25_000 }).catch(() => { });
 }
 
 function getChartRange(page: import('@playwright/test').Page) {
@@ -330,7 +330,7 @@ test.describe('URL参数', () => {
   test('29-无效symbol不崩溃', async ({ page }) => {
     try {
       await page.goto('/trade-map?symbol=INVALID_XYZ', { waitUntil: 'domcontentloaded', timeout: 20_000 });
-    } catch {}
+    } catch { }
     await page.waitForTimeout(3000);
     await expect(page.locator('#root')).toBeAttached();
     expect((await page.locator('#root').innerHTML()).length).toBeGreaterThan(100);

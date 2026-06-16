@@ -124,17 +124,18 @@ def _make_engine_pair(
     tmp_path: Path,
     *,
     symbol: str = "HYPEUSDT",
+    tag: str = "default",
 ) -> tuple[ChopGridLiveEngine, DualAddTrendLiveEngine, MultiLegConcurrencyGate]:
     gate = MultiLegConcurrencyGate(max_symbols=6, cooldown_bars=0)
     chop = ChopGridLiveEngine(
         config_path=_chop_cfg(tmp_path),
-        state_path=tmp_path / "chop_state.json",
+        state_path=tmp_path / f"chop_state_{tag}.json",
         level_notional=100.0,
         bar_simulation=True,
     )
     trend = DualAddTrendLiveEngine(
         config_path=_trend_cfg(tmp_path),
-        state_path=tmp_path / "trend_state.json",
+        state_path=tmp_path / f"trend_state_{tag}.json",
         unit_notional=100.0,
     )
     chop.state.symbol = trend.state.symbol = symbol
@@ -204,11 +205,11 @@ def test_timeline_and_daemon_agree_on_same_bar_chop_exit_trend_enter(
     tmp_path: Path,
 ) -> None:
     """E2E: real engines — timeline merge matches daemon routing on handoff bar."""
-    chop_tl, trend_tl, _ = _make_engine_pair(tmp_path, symbol="HYPEUSDT")
+    chop_tl, trend_tl, _ = _make_engine_pair(tmp_path, symbol="HYPEUSDT", tag="tl")
     bar = _bar_kwargs()
     timeline = _timeline_actions(chop_tl, trend_tl, **bar)
 
-    chop_dm, trend_dm, _ = _make_engine_pair(tmp_path, symbol="HYPEUSDT")
+    chop_dm, trend_dm, _ = _make_engine_pair(tmp_path, symbol="HYPEUSDT", tag="dm")
     adapter_a = _adapter()
     adapter_b = _adapter()
     daemon = MultiLegLiveDaemon(
@@ -240,10 +241,10 @@ def test_timeline_and_daemon_agree_on_same_bar_chop_exit_trend_enter(
     assert report.rejected_count == 0
     assert adapter_a.execute_actions.called
     assert adapter_b.execute_actions.called
-    daemon_exits = _action_kinds(
-        adapter_a.execute_actions.call_args.args[0]
-        + adapter_b.execute_actions.call_args.args[0]
-    )
+    daemon_exits: List[str] = []
+    for adapter in (adapter_a, adapter_b):
+        for call in adapter.execute_actions.call_args_list:
+            daemon_exits.extend(_action_kinds(call.args[0]))
     assert "market_exit" in daemon_exits
     assert "place" in daemon_exits
     assert chop_dm.state.segment_state == SegmentState.IDLE.value

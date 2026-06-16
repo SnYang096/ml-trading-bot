@@ -87,13 +87,21 @@ Phase 4: engine.on_execution_results(results)       → 更新状态
 | 步骤 | 状态 |
 |------|------|
 | 1min bar 加载 + 2h 特征 | ✅ |
-| Engines 初始化 | ✅ |
-| MockBinanceAPI 补全 | ✅ |
-| Adapter + Governor 集成 | ✅ |
-| 两阶段 action 处理 | ✅ |
-| PnL tracking (realized_pnl diff) | ✅ |
-| Constitution gates | ✅ |
-| 验证 | ⏳ |
+| 2h OHLC 聚合（非 first-1m OHLC） | ✅ |
+| Engines 初始化（chop `bar_simulation=False`） | ✅ |
+| MockBinanceAPI 持仓 / wallet / fee | ✅ |
+| Per-strategy `MultiLegLiveOrchestrator` + Governor | ✅ |
+| `MultilegTimelineAccount`（ledger + mock wallet） | ✅ |
+| Compound sizing（`--no-compound-sizing` 可 A/B） | ✅ |
+| Symbol-owner place veto（handoff 对齐 daemon） | ✅ |
+| Constitution kill-switch / daily loss | ✅ |
+| 验证（parity 单测 + variant_grid 重跑） | ✅ |
+
+### 与 live 仍存在的差异
+
+- 无完整 `MultiLegLiveDaemon` 1m replay / user-stream 跨 bar 迟到 fill
+- Mock 即时成交、无 slippage
+- Wall-clock cooldown / REST reconcile 漂移未模拟
 
 ## 6. 验证标准
 

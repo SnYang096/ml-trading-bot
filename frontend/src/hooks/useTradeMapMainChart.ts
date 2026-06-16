@@ -1,18 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  CandlestickSeries,
-  LineSeries,
-  createChart,
-  createSeriesMarkers,
-  type IChartApi,
-  type ISeriesApi,
-  type ISeriesMarkersPluginApi,
-  type CandlestickData,
-  type LineData,
-  type SeriesMarker,
-  type Time,
-} from 'lightweight-charts';
 import type { Candle, MainOverlaySpec, TradeLink, TradeMarker } from '@/api/types.ts';
+import { useTheme } from '@/context/ThemeContext.tsx';
+import {
+  buildTradeLinkLines,
+  markersForChartDisplay,
+  markersToLwc,
+  prepareChartMarkers,
+  sanitizeCandlesForLwc,
+} from '@/lib/tradeMap';
+import {
+  isValidLogicalRange,
+  visibleLogicalRange,
+  type LogicalRange,
+} from '@/lib/tradeMap/candles.ts';
 import {
   bandHighlightSeriesOptions,
   buildChopGridLineSpecs,
@@ -26,29 +25,30 @@ import {
   type ChopMapPayload,
   type TimeSpan,
 } from '@/lib/tradeMap/chartOverlay.ts';
+import { candleSeriesOptions, chartLayoutOptions } from '@/lib/tradeMap/chartTheme.ts';
 import {
   CHART_THEME,
   CHOP_REGIME_FILL,
-  PREFILTER_STAGE_FILL,
   GATE_STAGE_FILL,
+  PREFILTER_STAGE_FILL,
 } from '@/lib/tradeMap/constants.ts';
-import {
-  buildTradeLinkLines,
-  markersForChartDisplay,
-  markersToLwc,
-  prepareChartMarkers,
-  sanitizeCandlesForLwc,
-} from '@/lib/tradeMap';
-import {
-  isValidLogicalRange,
-  visibleLogicalRange,
-  type LogicalRange,
-} from '@/lib/tradeMap/candles.ts';
 import type { FeatureOverlays } from '@/lib/tradeMap/types.ts';
-import { candleSeriesOptions, chartLayoutOptions } from '@/lib/tradeMap/chartTheme.ts';
-import { useTheme } from '@/context/ThemeContext.tsx';
 import type { LayerState } from '@/stores/tradeMapStore.ts';
 import { useTradeMapStore } from '@/stores/tradeMapStore.ts';
+import {
+  CandlestickSeries,
+  LineSeries,
+  createChart,
+  createSeriesMarkers,
+  type CandlestickData,
+  type IChartApi,
+  type ISeriesApi,
+  type ISeriesMarkersPluginApi,
+  type LineData,
+  type SeriesMarker,
+  type Time,
+} from 'lightweight-charts';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 function labelSpecsEqual(a: ChopGridLabelSpec[], b: ChopGridLabelSpec[]): boolean {
   if (a.length !== b.length) return false;

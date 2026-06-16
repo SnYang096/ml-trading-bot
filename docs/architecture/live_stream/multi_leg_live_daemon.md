@@ -1,6 +1,6 @@
 # 多腿（Multi-Leg）实盘 / 影子盘守护进程架构
 
-**相关**：User-stream 三层兜底与监控 backlog → [multi_leg_user_stream_design.md](../multi_leg_user_stream_design.md) · 对账专题 → [HEDGE_RECONCILIATION_CN.md](../../deployment/HEDGE_RECONCILIATION_CN.md)
+**相关**：User-stream 三层兜底与监控 backlog → [multi_leg_user_stream_design.md](../multi_leg_user_stream_design.md) · 对账专题 → [HEDGE_RECONCILIATION_CN.md](../../deployment/HEDGE_RECONCILIATION_CN.md) · **2026-06-16 late-fill 事故复盘** → [20260616_late_fill_infinite_loop_postmortem_CN.md](20260616_late_fill_infinite_loop_postmortem_CN.md) · **账户级 Safety Gate 设计** → [account_safety_gate_CN.md](../account_safety_gate_CN.md)
 
 ## 名字是什么意思
 
@@ -206,8 +206,14 @@ on_execution_report(report)
 - 组合总 net 名义敞口上限
 - 单标的 gross / net 上限
 - 最大挂单数（resting orders）
+- **宪法 kill-switch**（`MultiLegKillSwitchTracker`）：从交易所 balance 跟踪 peak / 日周月 anchor equity，调用与 B 层相同的 `evaluate_safety_state()`；超 `daily_loss_limit` / `max_dd` 等阈值时 block 新 `place` / `place_protection`；状态持久化于 `{state_dir}/kill_switch_state.json`
+  - **testnet/mainnet**：Governor 每 batch 前拉 balance snapshot 更新 tracker
+  - **`shadow`**：无 `account_snapshot_provider`，tracker **不更新 equity**，halt 基本不生效（见 [account_safety_gate_CN.md](../account_safety_gate_CN.md) §7.2）
+  - **Phase 1 待做**：halt 边沿 Telegram 告警
 
-`cancel` 与 `market_exit` **始终放行**（默认视为降风险动作）。
+`cancel`、`cancel_protection` 与 `market_exit` **始终放行**（默认视为降风险动作）。Orchestrator 的 follow-up 与 reconcile protection 路径同样经 Governor，避免 bypass。
+
+详见事故复盘：[20260616_late_fill_infinite_loop_postmortem_CN.md](20260616_late_fill_infinite_loop_postmortem_CN.md) §3。
 
 ### 执行适配器（Execution Adapter）
 

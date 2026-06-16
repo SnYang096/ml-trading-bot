@@ -144,33 +144,32 @@ class MultiLegLiveOrchestrator:
             open_orders=orders,
             drawdown_pct=self._current_drawdown_pct(),
         )
-        execution_results = (
-            self.adapter.execute_actions(risk.approved_actions)
-            if risk.approved_actions
-            else []
-        )
+        execution_results: List[MultiLegExecutionResult] = []
+        if risk.approved_actions:
+            execution_results = self.adapter.execute_actions(risk.approved_actions)
         _call_optional(self.engine, "on_execution_results", execution_results)
 
         # ── Drain follow-up actions (e.g. stop-loss / take-profit after entry fills) ──
-        # The engine queues protection orders in _pending_actions during
-        # on_execution_results.  In the user-stream path they are drained by
-        # on_execution_report → pop_pending_actions; in the sync
-        # (run_actions / backtest) path we must drain them here, otherwise
-        # stop-loss orders are never sent to the exchange.
         max_follow_up_rounds = 8
+        merged_rejected = list(risk.rejected)
         for _ in range(max_follow_up_rounds):
             follow_ups = _call_snapshot(self.engine, "pop_pending_actions")
             if not follow_ups:
                 break
-            fu_results = self.adapter.execute_actions(follow_ups)
+            fu_risk, fu_results = self._execute_via_governor(
+                follow_ups,
+                positions=positions,
+                open_orders=orders,
+            )
+            merged_rejected.extend(fu_risk.rejected)
             _call_optional(self.engine, "on_execution_results", fu_results)
-            # Extend the outer execution_results so callers see the full
-            # set of placed orders (including protection orders).
             if fu_results:
-                if isinstance(execution_results, list):
-                    execution_results.extend(fu_results)
-                else:
-                    execution_results = list(fu_results)
+                execution_results.extend(fu_results)
+        if merged_rejected != risk.rejected:
+            risk = RiskCheckResult(
+                approved_actions=risk.approved_actions,
+                rejected=merged_rejected,
+            )
 
         reconciliation = None
         reconciliation_results: List[MultiLegExecutionResult] = []
@@ -212,6 +211,29 @@ class MultiLegLiveOrchestrator:
             return float(v)
         except (TypeError, ValueError):
             return None
+
+    def _execute_via_governor(
+        self,
+        actions: Iterable[Action],
+        *,
+        positions: Iterable[Mapping[str, Any]],
+        open_orders: Iterable[Mapping[str, Any]],
+    ) -> tuple[RiskCheckResult, List[MultiLegExecutionResult]]:
+        action_list = [dict(a) for a in actions]
+        if not action_list:
+            return RiskCheckResult(), []
+        risk = self.governor.check_actions(
+            action_list,
+            positions=_exchange_positions_to_exposures(positions),
+            open_orders=open_orders,
+            drawdown_pct=self._current_drawdown_pct(),
+        )
+        results = (
+            self.adapter.execute_actions(risk.approved_actions)
+            if risk.approved_actions
+            else []
+        )
+        return risk, results
 
     def reconcile(
         self,
@@ -293,7 +315,11 @@ class MultiLegLiveOrchestrator:
             exchange_orders=orders,
         )
         if protection_actions:
-            prot_results = self.adapter.execute_actions(protection_actions)
+            _prot_risk, prot_results = self._execute_via_governor(
+                protection_actions,
+                positions=positions,
+                open_orders=orders,
+            )
             results.extend(prot_results)
             _call_optional(self.engine, "on_execution_results", prot_results)
 
@@ -305,9 +331,11 @@ class MultiLegLiveOrchestrator:
                 self.symbol,
                 len(report.suggested_actions),
             )
-            # Reconciliation actions are cancel-only by construction today. Route
-            # them through the same adapter so client logging stays consistent.
-            cancel_results = self.adapter.execute_actions(report.suggested_actions)
+            _cancel_risk, cancel_results = self._execute_via_governor(
+                report.suggested_actions,
+                positions=positions,
+                open_orders=orders,
+            )
             results.extend(cancel_results)
             _call_optional(self.engine, "on_execution_results", cancel_results)
         return report, results
@@ -386,7 +414,13 @@ class MultiLegLiveOrchestrator:
         self._persist_execution_report(report_dict)
         follow_ups = _call_snapshot(self.engine, "pop_pending_actions")
         if follow_ups:
-            results = self.adapter.execute_actions(follow_ups)
+            orders = self.adapter.sync_open_orders(self.symbol or None)
+            positions = self.adapter.sync_positions(self.symbol or None)
+            _fu_risk, results = self._execute_via_governor(
+                follow_ups,
+                positions=positions,
+                open_orders=orders,
+            )
             _call_optional(self.engine, "on_execution_results", results)
         self._persist_positions()
 
