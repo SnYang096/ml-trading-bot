@@ -167,7 +167,7 @@ def _get_multileg_tp_sl_orders(
 
 
 _MULTILEG_TERMINAL_ORDER_STATUSES = frozenset(
-    {"closed", "canceled", "cancelled", "expired", "rejected"}
+    {"canceled", "cancelled", "expired", "rejected"}
 )
 
 
@@ -401,7 +401,10 @@ def _multileg_open_rows(
             # Filter ghost positions: live hedge persists open legs in
             # multi_leg_positions. Pruned legs leave filled orders in
             # multi_leg_orders (status filled/closed) — hide unless still open.
-            if positions_table_used and leg_key not in active_leg_ids:
+            # Only apply this filter when the positions table has *active* open
+            # legs; an empty active set (e.g. after engine restart wiped the
+            # table) should fall back to order-based detection.
+            if positions_table_used and active_leg_ids and leg_key not in active_leg_ids:
                 continue
             entry_ts = _parse_ts(row.get("filled_at")) or _parse_ts(
                 row.get("created_at")

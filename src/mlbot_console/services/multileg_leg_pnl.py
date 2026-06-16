@@ -622,7 +622,7 @@ def multileg_pnl_by_order_id(
         entry_key = _order_key(entry)
         if not entry_key or entry_key in out:
             continue
-        if positions_table_used:
+        if positions_table_used and active_leg_ids:
             leg_key = str(entry.get("leg_id") or entry_key).strip()
             if leg_key not in active_leg_ids:
                 continue

@@ -555,10 +555,15 @@ class MultiLegStorage:
         active = [str(x) for x in active_leg_ids if str(x)]
         conn = self._connect()
         try:
+            # Guard: an empty active list means the engine has no inventory
+            # (e.g. just after restart).  Closing *all* open positions in that
+            # case would wipe legitimate exchange holdings that the engine has
+            # not yet discovered.  Return 0 (nothing closed) instead.
+            if not active:
+                return 0
+
             params: list[Any] = [run_id, str(strategy), str(symbol), *active]
-            not_in = ""
-            if active:
-                not_in = f"AND leg_id NOT IN ({','.join('?' for _ in active)})"
+            not_in = f"AND leg_id NOT IN ({','.join('?' for _ in active)})"
             cur = conn.execute(
                 f"""
                 UPDATE multi_leg_positions
@@ -576,9 +581,7 @@ class MultiLegStorage:
             # Also close entry/inventory orders for pruned legs
             # so CMS open-positions view won't show ghost entries.
             order_params: list[Any] = [str(strategy), str(symbol), *active]
-            order_not_in = ""
-            if active:
-                order_not_in = f"AND leg_id NOT IN ({','.join('?' for _ in active)})"
+            order_not_in = f"AND leg_id NOT IN ({','.join('?' for _ in active)})"
             conn.execute(
                 f"""
                 UPDATE multi_leg_orders
