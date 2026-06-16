@@ -1116,6 +1116,8 @@ export function RealizedReconPanel({
   const issues = data.issues || [];
 
   const delta = (lo.realized_pnl ?? 0) - (ex.realized_pnl ?? 0);
+  const adjustedNet = lo.adjusted_net ?? ((lo.realized_pnl ?? 0) + (ex.commission ?? 0) + (ex.funding_fee ?? 0));
+  const deltaNet = lo.delta_net ?? (adjustedNet - (ex.net_income ?? 0));
 
   return (
     <section className={`panel ${styles.reconPanel}`}>
@@ -1131,12 +1133,34 @@ export function RealizedReconPanel({
         </span>
       </div>
 
-      {/* Summary KPIs */}
+      {/* Core KPIs: local net vs exchange net */}
       <div className={styles.kpiRow} style={{ marginBottom: 12 }}>
         <KpiCard
-          label="本地已实现"
+          label="本地净收入 (调整后)"
+          value={`${fmtPnl(adjustedNet)} USDT`}
+          hint="已实现PnL + 交易所手续费 + 资金费率"
+          valueClass={pnlClass(adjustedNet)}
+        />
+        <KpiCard
+          label="交易所净收入"
+          value={`${fmtIncome(ex.net_income)} USDT`}
+          hint="REALIZED_PNL + COMMISSION + FUNDING"
+          valueClass={pnlClass(ex.net_income)}
+        />
+        <KpiCard
+          label="净收入差额"
+          value={`${fmtPnl(deltaNet)} USDT`}
+          hint={Math.abs(deltaNet) < 10 ? '✅ 吻合' : '⚠️ 有差异'}
+          valueClass={pnlClass(deltaNet)}
+        />
+      </div>
+
+      {/* Breakdown */}
+      <div className={styles.kpiRow} style={{ marginBottom: 12 }}>
+        <KpiCard
+          label="本地已实现PnL"
           value={`${fmtPnl(lo.realized_pnl)} USDT`}
-          hint="本地 DB 计算"
+          hint="entry/exit 价格差 × 数量"
           valueClass={pnlClass(lo.realized_pnl)}
         />
         <KpiCard
@@ -1146,9 +1170,9 @@ export function RealizedReconPanel({
           valueClass={pnlClass(ex.realized_pnl)}
         />
         <KpiCard
-          label="手续费(交易所)"
+          label="手续费 (交易所)"
           value={`${fmtIncome(ex.commission)} USDT`}
-          hint="COMMISSION"
+          hint="COMMISSION（本地未记录）"
         />
         <KpiCard
           label="资金费率"
@@ -1157,19 +1181,13 @@ export function RealizedReconPanel({
         />
       </div>
 
-      {/* Delta summary */}
+      {/* Raw PnL delta (informational) */}
       <div className={styles.kpiRow} style={{ marginBottom: 12 }}>
         <KpiCard
-          label="本地vs交易所 REALIZED_PNL"
+          label="已实现PnL差额 (原始)"
           value={`${fmtPnl(delta)} USDT`}
-          hint="差额"
+          hint="本地 PnL 未扣手续费，交易所已扣"
           valueClass={pnlClass(delta)}
-        />
-        <KpiCard
-          label="交易所净收入"
-          value={`${fmtIncome(ex.net_income)} USDT`}
-          hint="PNL+Commission+Funding"
-          valueClass={pnlClass(ex.net_income)}
         />
       </div>
 

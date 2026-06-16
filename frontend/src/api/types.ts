@@ -449,5 +449,7 @@ export interface AccountRealizedReconciliation {
   local?: {
     realized_pnl?: number;
     commission?: number;
+    adjusted_net?: number;
+    delta_net?: number;
   };
 }

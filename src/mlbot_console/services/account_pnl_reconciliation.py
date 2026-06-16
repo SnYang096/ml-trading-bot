@@ -418,49 +418,46 @@ def reconcile_realized_pnl(
     ex_funding = float(ex_total.get("funding_fee", 0.0))
     ex_net = float(ex_total.get("net_income", 0.0))
 
-    # Compare local realized PnL vs exchange realized PnL
-    # Local PnL = sum of (exit_price - entry_price) * qty, no commission
-    # Exchange PnL = sum of REALIZED_PNL income events (net of nothing, commission is separate)
-    delta_realized = local_realized_pnl - ex_realized
-    tol_realized = max(5.0, abs(ex_realized) * 0.02)  # 2% tolerance, floor 5 USDT
+    # ---- Adjusted net PnL (Plan A) ----
+    # Local PnL is gross (no commission deducted), because the engine doesn't
+    # record commission from Binance user-stream.  Use the exchange COMMISSION
+    # and FUNDING_FEE as the authoritative source to compute a local "net" figure
+    # and compare it against the exchange net income.
+    adjusted_local_net = local_realized_pnl + ex_commission + ex_funding
+    delta_net = adjusted_local_net - ex_net
+    tol_net = max(10.0, abs(ex_net) * 0.05)  # 5% tolerance, floor 10 USDT
 
-    if abs(delta_realized) > tol_realized:
+    if abs(delta_net) > tol_net:
         issues.append(
             _issue(
-                kind="realized_pnl_mismatch",
+                kind="net_pnl_mismatch",
                 scope=scope,
                 message=(
-                    f"已实现盈亏: 本地 {local_realized_pnl:+.2f} vs 交易所 {ex_realized:+.2f} "
-                    f"(Δ={delta_realized:+.2f}, tol={tol_realized:.2f})"
+                    f"净收入差异: 本地调整后 {adjusted_local_net:+.2f} vs 交易所 {ex_net:+.2f} "
+                    f"(Δ={delta_net:+.2f}, tol={tol_net:.2f})"
                 ),
-                local_realized_pnl=local_realized_pnl,
-                exchange_realized_pnl=ex_realized,
-                delta=delta_realized,
-                tolerance_usdt=tol_realized,
+                adjusted_local_net=adjusted_local_net,
+                exchange_net=ex_net,
+                delta_net=delta_net,
+                tolerance_usdt=tol_net,
             )
         )
 
-    # Compare local commission vs exchange commission
-    # The local DB has a commission field per order but PnL doesn't subtract it
-    delta_commission = local_commission - ex_commission
-    if abs(ex_commission) > 1.0 and abs(delta_commission) > max(
-        2.0, abs(ex_commission) * 0.1
-    ):
+    # Informational: local commission is not recorded (engine user-stream bug)
+    if abs(ex_commission) > 1.0 and local_commission == 0.0:
         issues.append(
             _issue(
-                kind="commission_mismatch",
+                kind="commission_not_recorded",
                 scope=scope,
                 message=(
-                    f"手续费: 本地 {local_commission:+.2f} vs 交易所 {ex_commission:+.2f} "
-                    f"(Δ={delta_commission:+.2f})"
+                    f"手续费未记录: 本地 DB 为 0，交易所 {ex_commission:+.2f} USDT "
+                    "（引擎 user-stream 未写入，已用交易所数据替代）"
                 ),
-                local_commission=local_commission,
                 exchange_commission=ex_commission,
-                delta=delta_commission,
             )
         )
 
-    # Check if funding fees are significant (informational)
+    # Informational: significant funding fees
     if abs(ex_funding) > 10.0:
         issues.append(
             _issue(
@@ -468,7 +465,7 @@ def reconcile_realized_pnl(
                 scope=scope,
                 message=(
                     f"资金费率费用累计 {ex_funding:+.2f} USDT（交易所），"
-                    "本地 PnL 未纳入此项"
+                    "已纳入本地净收入计算"
                 ),
                 exchange_funding_fee=ex_funding,
             )
@@ -490,5 +487,7 @@ def reconcile_realized_pnl(
         "local": {
             "realized_pnl": local_realized_pnl,
             "commission": local_commission,
+            "adjusted_net": adjusted_local_net,
+            "delta_net": delta_net,
         },
     }

@@ -1,9 +1,10 @@
 inventory:
-  # 初始开仓腿：TREND = 只开当前趋势方向一腿；若改成 [LONG, SHORT] 才是多空同时开。
+  # 初始开仓腿：[LONG, SHORT] = 多空同时各开一腿（双向）；TREND = 只开当前趋势方向。
   initial_legs:
-  - TREND
+  - LONG
+  - SHORT
   # 加仓方向：trend = 只顺当前趋势方向加仓；both = 上下突破都可加仓。
-  add_mode: trend
+  add_mode: both
   # 趋势方向来源：dynamic_bar 表示每根信号 bar 用最新 trend_direction 判断 LONG/SHORT。
   trend_direction_source: dynamic_bar
   # 趋势翻转处理：close_offside_all = 平掉新趋势反向的所有腿（含初始腿和加仓腿）。
