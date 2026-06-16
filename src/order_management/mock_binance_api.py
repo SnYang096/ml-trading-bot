@@ -111,7 +111,13 @@ class MockBinanceAPI:
         qty: float,
         fill_price: float,
         fee_bps: Optional[float] = None,
-    ) -> None:
+    ) -> bool:
+        # Margin gate: a broke account (no free equity) cannot open new risk.
+        # Real exchanges reject the order; without this the mock keeps opening
+        # and the wallet spirals arbitrarily negative (see穿仓 artifact in
+        # recent_range_to_bear).  Reduce-only fills bypass this path entirely.
+        if self.wallet_usdt + self.unrealized_pnl_usdt() <= 0:
+            return False
         key = self._pos_key(symbol, position_side)
         fee = self._fee_usdt(qty * fill_price, fee_bps)
         self.wallet_usdt -= fee
@@ -124,11 +130,12 @@ class MockBinanceAPI:
                 "qty": qty,
                 "entry_price": fill_price,
             }
-            return
+            return True
         old_qty = float(pos["qty"])
         new_qty = old_qty + qty
         pos["entry_price"] = (pos["entry_price"] * old_qty + fill_price * qty) / new_qty
         pos["qty"] = new_qty
+        return True
 
     def _apply_reduce(
         self,
@@ -220,12 +227,16 @@ class MockBinanceAPI:
                         # No position to reduce — discard order
                         continue
                 else:
-                    self._apply_open(
+                    opened = self._apply_open(
                         symbol=symbol,
                         position_side=pside,
                         qty=qty,
                         fill_price=fill_price,
                     )
+                    if not opened:
+                        # Margin gate rejected the entry — drop the order
+                        # (no fill) rather than open into a broke account.
+                        continue
                 filled_results.append(
                     {
                         **order,
@@ -315,6 +326,7 @@ class MockBinanceAPI:
             }
 
         # --- MARKET orders: instant fill ---
+        filled_status = "filled"
         if qty > 0 and fill_price > 0:
             if reduce_only or close_position:
                 self._apply_reduce(
@@ -324,12 +336,31 @@ class MockBinanceAPI:
                     fill_price=fill_price,
                 )
             else:
-                self._apply_open(
+                opened = self._apply_open(
                     symbol=symbol,
                     position_side=pside,
                     qty=qty,
                     fill_price=fill_price,
                 )
+                if not opened:
+                    # Margin gate: broke account cannot open new risk.
+                    return {
+                        "order_id": order_id,
+                        "id": order_id,
+                        "client_order_id": cid,
+                        "symbol": symbol,
+                        "side": side_val,
+                        "type": type_val,
+                        "quantity": quantity,
+                        "price": fill_price,
+                        "average_price": fill_price,
+                        "filled": 0,
+                        "filled_quantity": 0,
+                        "status": "rejected",
+                        "reason": "insufficient_margin",
+                        "created_at": datetime.now().timestamp(),
+                        "position_side": pside,
+                    }
 
         return {
             "order_id": order_id,
@@ -343,7 +374,7 @@ class MockBinanceAPI:
             "average_price": fill_price,
             "filled": quantity,
             "filled_quantity": quantity,
-            "status": "filled",
+            "status": filled_status,
             "created_at": datetime.now().timestamp(),
             "position_side": pside,
         }

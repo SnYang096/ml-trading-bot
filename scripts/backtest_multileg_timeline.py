@@ -526,19 +526,21 @@ def run_timeline_backtest(
             )
 
             if account.halted or account.daily_loss_blocks_new_entries(daily_loss):
+                # Mirror live kill-switch (multi_leg_kill_switch._RISK_INCREASING_ACTIONS):
+                # only risk-increasing `place` is blocked while halted.  Reduce-only
+                # actions (market_exit / cancel / cancel_protection) and reduce-only
+                # `place_protection` (SL/TP) must still flow to the orchestrator so
+                # existing positions can be exited and protected.  Previously a
+                # blanket `continue` here skipped run_actions entirely, stranding
+                # open positions that then bled mark-to-market for months.
                 kept = []
                 for a in actions:
                     kind = str(a.get("action", "")).lower()
-                    if kind in {"market_exit", "cancel", "cancel_protection"}:
-                        kept.append(a)
-                    elif kind == "place":
+                    if kind == "place":
                         account.trades_rej += 1
                     else:
                         kept.append(a)
                 actions = kept
-
-            if account.halted:
-                continue
 
             if dry_run:
                 account.trades_ok += sum(
