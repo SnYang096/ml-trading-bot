@@ -231,7 +231,11 @@ resource_allocation:
 multi_leg:
   strategies:
     - chop_grid # C-layer chop grid (mean-reversion inventory); mutually exclusive per symbol with trend_scalp.
-    - trend_scalp # C-layer regime trend scalp legs; mutually exclusive per symbol with chop_grid.
+    # trend_scalp DISABLED 2026-06-17: all backtest variants (standard, bidirectional, relaxed)
+    # show consistent DD>20% halt in bear/range markets.  Old +736% result was an artifact of
+    # zero slippage + capital-normalized (non-compound) sizing + no DD kill switch.
+    # Config files preserved under config/strategies/trend_scalp/ for future research.
+    # - trend_scalp # C-layer regime trend scalp legs; mutually exclusive per symbol with chop_grid.
   # Per-strategy segment DD budgets → leg notional at runtime (see multileg_sizing.py).
   # Worst-case single-segment loss ≈ segment_dd_target × equity when all inventory slots fill.
   # Observed account DD is usually lower; tune each strategy independently for balanced risk.
@@ -272,9 +276,8 @@ multi_leg:
     max_net_notional_pct: 2.00 # ≥ 2-leg same-direction net (18000); 3-leg same-direction intentionally blocked.
     max_symbol_gross_notional_pct: 2.70 # ≥ chop 4 levels (16000) + trend 3 legs (27000).
     max_symbol_net_notional_pct: 1.80 # ≥ 2-leg same-direction net (18000).
-    # chop_grid + trend_scalp: shared cap on distinct symbols with any active
-    # multi-leg strategy segment. Neither strategy counts ghost (no inventory /
-    # pending orders / exchange activity) segments toward the limit.
+    # chop_grid: shared cap on distinct symbols with active multi-leg strategy.
+    # (trend_scalp disabled 2026-06-17; see strategies section above.)
     max_concurrent_multi_leg_symbols: 6
     # Minimum bars (×120 min) before a symbol can switch back to the previous
     # strategy after a chop↔trend handover. Prevents thrashing that generates

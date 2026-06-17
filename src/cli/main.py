@@ -4267,7 +4267,7 @@ def multileg_monitor(
 
 
 @multileg.command("shadow")
-@click.option("--strategies", default="chop_grid,trend_scalp", show_default=True)
+@click.option("--strategies", default="chop_grid", show_default=True)  # trend_scalp disabled 2026-06-17
 @click.option("--bar-source", default="feature-store", show_default=True)
 @click.option("--once", is_flag=True, help="仅跑一次")
 @click.option("--poll-seconds", type=float, default=60.0, show_default=True)
@@ -4304,7 +4304,7 @@ def multileg_shadow(
     show_default=True,
     type=click.Choice(["testnet", "mainnet"]),
 )
-@click.option("--strategies", default="chop_grid,trend_scalp", show_default=True)
+@click.option("--strategies", default="chop_grid", show_default=True)  # trend_scalp disabled 2026-06-17
 @click.option("--bar-source", default="feature-store", show_default=True)
 @click.option("--poll-seconds", type=float, default=60.0, show_default=True)
 @click.option("--allow-shared-account", is_flag=True)

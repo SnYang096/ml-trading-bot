@@ -768,7 +768,9 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     p.add_argument("--mode", choices=["shadow", "testnet", "mainnet"], default="shadow")
-    p.add_argument("--strategies", default="chop_grid,trend_scalp")
+    p.add_argument(
+        "--strategies", default="chop_grid"
+    )  # trend_scalp disabled 2026-06-17
     p.add_argument(
         "--universe",
         default="highcap",
