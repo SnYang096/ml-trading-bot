@@ -1,5 +1,6 @@
 import { apiGet } from '@/api/client.ts';
 import type { OrderRow, SymbolRow } from '@/api/types.ts';
+import { useTheme } from '@/context/ThemeContext.tsx';
 import { usePageVisible } from '@/hooks/usePageVisible.ts';
 import { useTradeMapBundle } from '@/hooks/useTradeMapBundle.ts';
 import { useTradeMapFeatureCatalog } from '@/hooks/useTradeMapFeatureCatalog.ts';
@@ -33,6 +34,7 @@ export function TradeMapPage() {
   const [mainChart, setMainChart] = useState<IChartApi | null>(null);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const pageVisible = usePageVisible();
+  const { chartTheme: ct } = useTheme();
 
   const symbol = useTradeMapStore((s) => s.symbol);
   const timeframe = useTradeMapStore((s) => s.timeframe);
@@ -283,7 +285,7 @@ export function TradeMapPage() {
                 refreshMainOverlays().catch(() => { });
               }}
             />
-            EMA1200
+            <span style={{ color: ct.emaPrimary }}>●</span> EMA1200
           </label>
           <label className={styles.chk}>
             <input
@@ -294,7 +296,7 @@ export function TradeMapPage() {
                 refreshMainOverlays().catch(() => { });
               }}
             />
-            W-EMA200
+            <span style={{ color: ct.emaSecondary }}>●</span> W-EMA200
           </label>
         </div>
 

@@ -5,9 +5,9 @@ version: 4
 # ── 杠杆管理 ──
 leverage:
   initial: 2.0
-  max: 5.0          # R5: 步进2x→3x→4x→5x
+  max: 5.0 # R5: 步进2x→3x→4x→5x
   step: 1.0
-  max_position_notional: 500000  # 仓位上限$500k
+  max_position_notional: 500000 # 仓位上限$500k
 
 # ── 入场条件 (AND) — 冠军三重过滤 ──
 entry:
@@ -26,7 +26,7 @@ roll_trigger:
 take_profit:
   type: equity_profit_ladder
   trigger_multiple: 5.0 # 权益达5x初始本金触发
-  base_daily_sell_fraction: 0.05  # R5: 基础卖出比例5%
+  base_daily_sell_fraction: 0.05 # R5: 基础卖出比例5%
   acceleration:
     type: power
     exponent: 1.0
@@ -35,27 +35,27 @@ take_profit:
   # ── v4: 上涨过滤 ──
   uptrend_filter:
     enabled: true
-    require_above_ema1200: true    # 价格 > EMA1200
-    max_pullback_from_peak: 0.15   # 离峰值回撤 < 15%
+    require_above_ema1200: true # 价格 > EMA1200
+    max_pullback_from_peak: 0.15 # 离峰值回撤 < 15%
   # ── v4: 底仓保护 ──
   residual_position:
     enabled: true
-    min_fraction: 0.20  # 保留20%底仓永不卖出
+    min_fraction: 0.20 # 保留20%底仓永不卖出
 
 # ── 风控 ──
 risk_management:
-  equity_dd_stop_pct: 0.35   # R5: 紧风控35%
+  equity_dd_stop_pct: 0.35 # R5: 紧风控35%
   price_dd_stop_pct: 0.60
-  risk_cooldown_bars: 336    # 28天(2h bar)
+  risk_cooldown_bars: 336 # 28天(2h bar)
   max_concurrent_symbols: 3
   max_position_pct: 0.30
 
 # ── 第二波重入 (v4) ──
 reentry:
-  standard_cooldown_bars: 720   # 60天标准冷却
+  standard_cooldown_bars: 720 # 60天标准冷却
   wave2_enabled: true
-  wave2_min_cooldown_bars: 48   # 4天最短冷却
-  wave2_pullback_from_peak: 0.12  # 从峰值回撤≥12%
+  wave2_min_cooldown_bars: 48 # 4天最短冷却
+  wave2_pullback_from_peak: 0.12 # 从峰值回撤≥12%
   wave2_require_roc5_positive: true
 
 # ── 信号源 ──
