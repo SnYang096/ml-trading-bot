@@ -375,9 +375,13 @@ def reconcile_all_accounts(
                 spot_ledger_db=(
                     Path(str(spot_ledger_db)) if spot_ledger_db else Path("/dev/null")
                 ),
-                multi_leg_db=Path(str(multi_leg_db)) if multi_leg_db else Path("/dev/null"),
+                multi_leg_db=(
+                    Path(str(multi_leg_db)) if multi_leg_db else Path("/dev/null")
+                ),
                 feature_bus_root=(
-                    Path(str(feature_bus_root)) if feature_bus_root else Path("/dev/null")
+                    Path(str(feature_bus_root))
+                    if feature_bus_root
+                    else Path("/dev/null")
                 ),
                 symbol="*",
                 lookback_days=lookback_days,

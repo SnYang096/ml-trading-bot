@@ -1193,10 +1193,10 @@ export function RealizedReconPanel({
           valueClass={isPnlGapLarge ? 'pnl-neg' : pnlClass(delta)}
         />
         <KpiCard
-          label="交易所净收入"
-          value={`${fmtIncome(ex.net_income)} USDT`}
-          hint="= REALIZED + COMMISSION + FUNDING"
-          valueClass={pnlClass(ex.net_income)}
+          label="调整后净收入差额"
+          value={`${fmtPnl(deltaNet)} USDT`}
+          hint={Math.abs(deltaNet) < 10 ? '✅ 吻合' : '⚠️ 本地调整后 vs 交易所净收入'}
+          valueClass={pnlClass(deltaNet)}
         />
       </div>
 
@@ -1214,10 +1214,10 @@ export function RealizedReconPanel({
               {issues.map((iss, idx) => {
                 const isCritical = iss.kind === 'commission_abnormal' || iss.kind === 'realized_pnl_gap' || iss.kind === 'net_pnl_mismatch';
                 return (
-                <tr key={idx} className={isCritical ? 'pnl-neg' : undefined}>
-                  <td><code>{iss.kind}</code></td>
-                  <td>{iss.message}</td>
-                </tr>
+                  <tr key={idx} className={isCritical ? 'pnl-neg' : undefined}>
+                    <td><code>{iss.kind}</code></td>
+                    <td>{iss.message}</td>
+                  </tr>
                 );
               })}
             </tbody>

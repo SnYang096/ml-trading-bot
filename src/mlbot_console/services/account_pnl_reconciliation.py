@@ -472,9 +472,11 @@ def reconcile_realized_pnl(
         )
 
     # ---- Abnormal commission (absolute threshold) ----
-    _commission_alert_threshold = float(
-        __import__("os").environ.get("MLBOT_COMMISSION_ALERT_THRESHOLD_USDT", "500")
-    )
+    # Threshold is read from TG notify module to stay consistent with
+    # the Telegram alert gate (same env var, same default).
+    from mlbot_console.services.tg_notify import COMMISSION_ALERT_THRESHOLD_USDT
+
+    _commission_alert_threshold = COMMISSION_ALERT_THRESHOLD_USDT
     if abs(ex_commission) > _commission_alert_threshold:
         issues.append(
             _issue(

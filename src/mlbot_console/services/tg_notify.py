@@ -40,12 +40,8 @@ def _env_float(name: str, default: float) -> float:
 COMMISSION_ALERT_THRESHOLD_USDT = _env_float(
     "MLBOT_COMMISSION_ALERT_THRESHOLD_USDT", 500.0
 )
-PNL_GAP_ALERT_THRESHOLD_USDT = _env_float(
-    "MLBOT_PNL_GAP_ALERT_THRESHOLD_USDT", 1000.0
-)
-TG_RECON_COOLDOWN_SEC = int(
-    _env_float("MLBOT_TG_RECON_COOLDOWN_SEC", 3600.0)
-)
+PNL_GAP_ALERT_THRESHOLD_USDT = _env_float("MLBOT_PNL_GAP_ALERT_THRESHOLD_USDT", 1000.0)
+TG_RECON_COOLDOWN_SEC = int(_env_float("MLBOT_TG_RECON_COOLDOWN_SEC", 3600.0))
 
 
 def _send_tg(text: str, *, stamp_key: str, cooldown_sec: int | None = None) -> bool:
@@ -236,7 +232,9 @@ def check_reconciliation_alerts(
             ex_commission=ex_commission,
         )
         # Long cooldown — once per day
-        if _send_tg(msg, stamp_key=f"recon:commission_missing:{scope}", cooldown_sec=86400):
+        if _send_tg(
+            msg, stamp_key=f"recon:commission_missing:{scope}", cooldown_sec=86400
+        ):
             sent.append("commission_missing")
 
     if sent:
