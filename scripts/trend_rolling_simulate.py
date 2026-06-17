@@ -32,6 +32,20 @@ ENTRY_PRESETS = {
         "ema_cross": True,
         "momentum": True,
     },
+    "r2": {
+        "desc": "R2 VWAP滚仓: 冠军入场+VWAP1200附近滚仓(回撤-45%)",
+        "weekly_pos_lt": -0.05,
+        "ema_cross": True,
+        "momentum": True,
+        "roll_near_vwap": True,
+    },
+    "r6": {
+        "desc": "R6 保守: 冠军入场+3x卖出(回撤-28%)",
+        "weekly_pos_lt": -0.05,
+        "ema_cross": True,
+        "momentum": True,
+        "ladder_trigger": 3.0,
+    },
     "base": {
         "desc": "基准: W-EMA200下方+EMA1200金叉VWAP",
         "weekly_pos_lt": 0.0,
@@ -101,6 +115,7 @@ def simulate_symbol(
     ema_cross=True,
     momentum=False,
     compression=False,
+    roll_near_vwap=False,
 ):
     ohlc = ohlc.copy()
     close = ohlc["close"]
@@ -267,9 +282,13 @@ def simulate_symbol(
                     last_exit_bar = i
                     continue
 
-            # Roll
+            # Roll (with optional VWAP proximity filter)
             px_dd_peak = (c - peak_px) / peak_px
-            if px_dd_peak <= -0.20 and upnl > 0 and lev < max_leverage and c > 0:
+            roll_ok = px_dd_peak <= -0.20 and upnl > 0 and lev < max_leverage and c > 0
+            if roll_near_vwap and roll_ok and "vwap1200" in ohlc.columns:
+                vwap_val = float(ohlc["vwap1200"].iloc[i])
+                roll_ok = roll_ok and abs(c - vwap_val) / c < 0.05
+            if roll_ok:
                 old_lev = lev
                 lev = min(lev + 1.0, max_leverage)
                 pos_qty = (cur_eq * lev) / c
@@ -535,11 +554,16 @@ def run(
                 initial_capital=initial_capital,
                 initial_leverage=initial_leverage,
                 max_leverage=max_leverage,
-                ladder_trigger=ladder_trigger,
+                ladder_trigger=preset.get("ladder_trigger", ladder_trigger),
                 eq_dd_stop=eq_dd_stop,
                 px_dd_stop=px_dd_stop,
                 allow_reentry=not no_reentry,
-                **{k: v for k, v in preset.items() if k != "desc"},
+                roll_near_vwap=preset.get("roll_near_vwap", False),
+                **{
+                    k: v
+                    for k, v in preset.items()
+                    if k not in ("desc", "ladder_trigger", "roll_near_vwap")
+                },
             )
             results[sym] = r
             print(

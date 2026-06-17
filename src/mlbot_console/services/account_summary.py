@@ -715,6 +715,7 @@ def _empty_strategy_row(
         "unrealized_pnl": 0.0,
         "closed_trades": 0,
         "open_positions": 0,
+        "is_online": True,
     }
 
 
@@ -1005,11 +1006,18 @@ def build_account_summary(
         }
         for s in scope_blocks
     }
+    # Mark online/offline status; keep all strategies (including offline with DB records)
+    for key, row in strategy_rows.items():
+        sid = str(row.get("strategy") or "").lower()
+        scope = str(row.get("scope") or "")
+        row["is_online"] = sid in live_strategy_ids.get(scope, set())
+
+    # Sort: online first, then offline; within each group, alphabetically
     strategy_rows = {
-        key: row
-        for key, row in strategy_rows.items()
-        if str(row.get("strategy") or "").lower()
-        in live_strategy_ids.get(str(row.get("scope") or ""), set())
+        key: row for key, row in sorted(
+            strategy_rows.items(),
+            key=lambda item: (not item[1].get("is_online", True), item[0])
+        )
     }
 
     daily = _merge_daily([s["daily_realized"] for s in scope_blocks])

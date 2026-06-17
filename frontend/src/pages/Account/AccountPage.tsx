@@ -244,7 +244,7 @@ export function AccountPage() {
           ) : null}
         </section>
 
-        <header style={{ marginTop: 32 }}>
+        <header style={{ marginTop: 32 }} id="reconciliation">
           <h2>交易所对账</h2>
           <p className={`muted ${styles.sectionNote}`}>比对币安 API 实际资产与本地数据库记录的差异。</p>
         </header>

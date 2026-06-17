@@ -285,10 +285,17 @@ export function MarginBreakdownPanel({
                   {exOpen} 腿
                   {localOpen !== exOpen ? (
                     <span className={styles.marginWarn}>
-                      {' '}
-                      · 本地未平 {localOpen}（与交易所不一致时请查对账）
+                      {' · 本地未平 '}
+                      {localOpen}
+                      {'（与交易所不一致，请'}
+                      <a href="#reconciliation" style={{ textDecoration: 'underline' }}>
+                        查看对账明细
+                      </a>
+                      {'）'}
                     </span>
-                  ) : null}
+                  ) : (
+                    <span> · 本地未平 {localOpen} ✓</span>
+                  )}
                 </p>
               ) : (
                 <p className={`muted ${styles.marginScopeNote}`}>
@@ -539,13 +546,19 @@ export function AccountHierarchyTable({
                       (st.closed_trades ?? 0) === 0 &&
                       (st.open_positions ?? 0) === 0;
                     const title = st.strategy_title || st.strategy || dash;
+                    const offline = st.is_online === false;
                     return (
                       <tr
                         key={`${scopeKey}-${st.strategy}`}
-                        className={`${styles.strategyRow} ${inactive ? 'muted' : ''}`}
+                        className={`${styles.strategyRow} ${inactive || offline ? 'muted' : ''}`}
                       >
                         <td>
-                          <div className={styles.strategyNameCell}>{title}</div>
+                          <div className={styles.strategyNameCell}>
+                            {title}
+                            {offline ? (
+                              <span className={`${styles.offlineTag} muted`}>（已下线）</span>
+                            ) : null}
+                          </div>
                         </td>
                         <td className={styles.inheritedDash}>{dash}</td>
                         <td className={styles.inheritedDash}>{dash}</td>
@@ -668,10 +681,12 @@ export function StrategiesTable({ strategies }: { strategies: AccountStrategyRow
               (s.unrealized_pnl ?? 0) === 0 &&
               (s.closed_trades ?? 0) === 0 &&
               (s.open_positions ?? 0) === 0;
+            const offline = s.is_online === false;
             return (
-              <tr key={`${s.scope}-${s.strategy}`} className={inactive ? 'muted' : undefined}>
+              <tr key={`${s.scope}-${s.strategy}`} className={inactive || offline ? 'muted' : undefined}>
                 <td>
                   {scopeLabel} · {title}
+                  {offline ? <span className="muted">（已下线）</span> : null}
                 </td>
                 <td className={pnlClass(s.realized_pnl)}>{fmtPnl(s.realized_pnl)}</td>
                 <td className={pnlClass(s.unrealized_pnl)}>{fmtPnl(s.unrealized_pnl)}</td>

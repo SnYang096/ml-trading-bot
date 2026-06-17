@@ -372,6 +372,7 @@ export interface AccountStrategyRow {
   unrealized_pnl?: number | null;
   closed_trades?: number | null;
   open_positions?: number | null;
+  is_online?: boolean;
 }
 
 export interface AccountSummary {
