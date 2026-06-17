@@ -175,14 +175,9 @@ export function useTradeMapMainChart(params: MainChartParams) {
         s.current = null;
       }
     }
-    for (const s of mainOverlaySeriesRef.current.values()) {
-      try {
-        chart.removeSeries(s);
-      } catch {
-        /* */
-      }
-    }
-    mainOverlaySeriesRef.current.clear();
+    // NOTE: mainOverlaySeriesRef (EMA1200, W-EMA200) is NOT cleared here.
+    // It is managed independently by applyMainOverlays to avoid being
+    // destroyed every time chop layers refresh.
   }, []);
 
   const refreshPriceAutoscale = useCallback(() => {

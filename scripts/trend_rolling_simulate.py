@@ -202,16 +202,15 @@ def simulate_symbol(
         bars_since_exit = i - last_exit_bar
 
         if not in_pos:
-            trend_up = (
-                c > float(ema1200.iloc[i]) if not pd.isna(ema1200.iloc[i]) else False
-            )
+            # 空仓时继续更新peak_px，确保再入场回撤计算准确
+            peak_px = max(peak_px, c)
+            ema1200_col = ohlc["ema1200"]
             can_reentry = False
             if sig and bars_since_exit >= reentry_cooldown:
                 can_reentry = True  # 完整入场信号 + 冷却期
             elif (
                 last_exit_profit
                 and bars_since_exit >= 48  # 利润出场后最短4天(48*2h)
-                and trend_up
                 and (c / peak_px < 0.88)  # 从上次峰值回撤>12%才允许重新上车
                 and roc5.iloc[i] > 0  # 短期动量确认
             ):
@@ -316,7 +315,18 @@ def simulate_symbol(
 
             # Roll (step-wise +1x, with position notional cap)
             px_dd_peak = (c - peak_px) / peak_px
-            roll_ok = px_dd_peak <= -0.20 and upnl > 0 and lev < max_leverage and c > 0
+            # 先计算受notional cap约束的最大可达杠杆
+            max_achievable_lev = min(
+                max_leverage,
+                max_position_notional / cur_eq if cur_eq > 0 else max_leverage,
+            )
+            # 只在杠杆有实际提升空间时才触发roll
+            roll_ok = (
+                px_dd_peak <= -0.20
+                and upnl > 0
+                and lev < max_achievable_lev - 0.01
+                and c > 0
+            )
             if roll_near_vwap and roll_ok and "vwap1200" in ohlc.columns:
                 vwap_val = float(ohlc["vwap1200"].iloc[i])
                 roll_ok = roll_ok and abs(c - vwap_val) / c < 0.05
@@ -326,8 +336,10 @@ def simulate_symbol(
                 new_notional = cur_eq * lev
                 if new_notional > max_position_notional:
                     lev = max_position_notional / cur_eq if cur_eq > 0 else lev
-                    if lev <= old_lev:
-                        continue
+                # 双重确保杠杆真正增加
+                if lev <= old_lev + 0.01:
+                    lev = old_lev
+                    continue
                 pos_qty = (cur_eq * lev) / c
                 rolls += 1
                 trades.append(
@@ -346,7 +358,11 @@ def simulate_symbol(
             # Ladder — 只在上涨时卖出
             eq_mult = cur_eq / initial_capital
             peak_pullback = (peak_px - c) / peak_px if peak_px > 0 else 0
-            ema1200_val = float(ema1200.iloc[i]) if not pd.isna(ema1200.iloc[i]) else c
+            ema1200_val = (
+                float(ohlc["ema1200"].iloc[i])
+                if not pd.isna(ohlc["ema1200"].iloc[i])
+                else c
+            )
             is_uptrend = c > ema1200_val
             near_peak = peak_pullback < 0.15  # 离峰值回撤<15%才算"近高点"
             if eq_mult >= ladder_trigger and pos_qty > 0 and is_uptrend and near_peak:
@@ -354,6 +370,10 @@ def simulate_symbol(
                 max_frac = 1.0 if eq_mult >= ladder_trigger * 3 else 0.99
                 sell_frac = min(max_frac, ladder_base_frac * spd)
                 sq = pos_qty * sell_frac
+                # 底仓保护: 保留至少20%仓位，永不卖完
+                min_residual = (eq * initial_leverage / c) * 0.20 if c > 0 else 0
+                if pos_qty - sq < min_residual:
+                    sq = max(0, pos_qty - min_residual)
                 if sq > 0:
                     eq += sq * (c - entry_px)
                     pos_qty -= sq
@@ -374,10 +394,8 @@ def simulate_symbol(
                             peak_pullback=float(peak_pullback),
                         )
                     )
-                    if pos_qty <= 0:
-                        in_pos = False
-                        last_exit_bar = i
-                        last_exit_profit = eq > initial_capital
+                    if pos_qty <= min_residual * 1.01:  # 接近底仓时停止卖出
+                        pass  # 保持持仓，等待下一波上涨
         else:
             peak_eq = max(peak_eq, eq)
 
@@ -415,7 +433,13 @@ def plot_trading_map(symbol, ohlc, result, out_dir):
     """Bokeh HTML 交易地图 — K线 + VWAP/EMA + 入场/滚仓/卖出标记 + 权益曲线"""
     try:
         from bokeh.plotting import figure as bk_figure, output_file, save
-        from bokeh.models import HoverTool, ColumnDataSource, Span, Div
+        from bokeh.models import (
+            HoverTool,
+            ColumnDataSource,
+            Span,
+            Div,
+            NumeralTickFormatter,
+        )
         from bokeh.layouts import column as bk_column
         from bokeh.resources import INLINE
     except ImportError:
@@ -444,6 +468,11 @@ def plot_trading_map(symbol, ohlc, result, out_dir):
     num = (tp * vol).rolling(1200, min_periods=120).sum()
     den = vol.rolling(1200, min_periods=120).sum()
     vwap1200_4h = num / den.replace(0, np.nan)
+
+    # Weekly EMA200 (resample to weekly, compute, then reindex back to 4h)
+    weekly_close = ohlc_4h["close"].resample("W").last().dropna()
+    weekly_ema200 = weekly_close.ewm(span=200, adjust=False).mean()
+    wema200_4h = weekly_ema200.reindex(ohlc_4h.index, method="ffill")
 
     bar_w = pd.Timedelta(hours=4).total_seconds() * 1000 * 0.7
 
@@ -493,6 +522,14 @@ def plot_trading_map(symbol, ohlc, result, out_dir):
         fill_alpha=0.8,
     )
 
+    p.line(
+        ohlc_4h.index,
+        wema200_4h,
+        line_color="#38bdf8",
+        line_width=2.0,
+        line_alpha=0.8,
+        legend_label="W-EMA(200)",
+    )
     p.line(
         ohlc_4h.index,
         vwap1200_4h,
@@ -609,6 +646,7 @@ def plot_trading_map(symbol, ohlc, result, out_dir):
     p.legend.click_policy = "hide"
     p.grid.grid_line_alpha = 0.25
     p.yaxis.axis_label = "Price (USDT)"
+    p.yaxis.formatter = NumeralTickFormatter(format="0,0")
 
     # ═══ Panel 2: Equity curve ═══
     eq_curve = _build_eq_curve(ohlc, trades, init_cap)
@@ -641,6 +679,7 @@ def plot_trading_map(symbol, ohlc, result, out_dir):
     )
     p_eq.grid.grid_line_alpha = 0.25
     p_eq.yaxis.axis_label = "Equity ($)"
+    p_eq.yaxis.formatter = NumeralTickFormatter(format="$0,0")
 
     # ═══ Panel 3: Leverage ═══
     lev_curve = _build_lev_curve(ohlc, trades)
@@ -665,6 +704,7 @@ def plot_trading_map(symbol, ohlc, result, out_dir):
         )
     p_lev.grid.grid_line_alpha = 0.25
     p_lev.yaxis.axis_label = "Lev"
+    p_lev.yaxis.formatter = NumeralTickFormatter(format="0.0")
 
     # Summary
     busted = result.get("busted", False)
@@ -837,7 +877,7 @@ def run(
 def main():
     p = argparse.ArgumentParser(description="趋势滚仓模拟器 v3")
     p.add_argument("--symbols", default=",".join(DEFAULT_SYMBOLS))
-    p.add_argument("--start", default="2022-01-01")
+    p.add_argument("--start", default="2020-01-01")
     p.add_argument("--end", default="2026-06-01")
     p.add_argument(
         "--entry",
@@ -867,10 +907,10 @@ def main():
     print(f"  Entry:   {args.entry} — {preset['desc']}")
     print(f"  Symbols: {symbols}  |  Period: {args.start}→{args.end}")
     print(
-        f"  Capital: ${args.initial_capital:,.0f}/sym  |  Lev: {args.initial_leverage}x→{args.max_leverage}x"
+        f"  Capital: ${args.initial_capital:,.0f}/sym  |  Lev: {args.initial_leverage}x→{preset.get('max_leverage', args.max_leverage)}x"
     )
     print(
-        f"  Ladder:  {args.ladder_trigger}x equity  |  EqDD stop: {args.eq_dd_stop*100:.0f}%  |  PxDD stop: {args.px_dd_stop*100:.0f}%"
+        f"  Ladder:  {preset.get('ladder_trigger', args.ladder_trigger)}x equity  |  EqDD stop: {preset.get('eq_dd_stop', args.eq_dd_stop)*100:.0f}%  |  PxDD stop: {args.px_dd_stop*100:.0f}%"
     )
     print(f"  Re-entry: {'OFF' if args.no_reentry else 'ON (60d cooldown)'}")
     print("=" * 70)
