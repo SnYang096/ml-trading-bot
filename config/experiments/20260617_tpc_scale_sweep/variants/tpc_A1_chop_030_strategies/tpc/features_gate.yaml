@@ -1,0 +1,16 @@
+name: tpc_gate
+description: |
+  TPC Gate 特征白名单：与 ME 类似, TPC 的 ema_1200_position late-entry 保护
+  是有意的策略层决策, 显式允许. 其余按执行风险/订单流/波动稳定性白名单.
+
+feature_pipeline:
+  allowed_gate_deny_features:
+    # TPC late-entry 保护 (策略层决策, 保留)
+    - "ema_1200_position"
+    # TPC 专属 chop 语义（gate 仅保留 semantic_chop）
+    - "tpc_semantic_chop"
+    - "tpc_semantic_chop_ts_q"
+    - "vol_regime_shift*"
+    # Chop / 震荡噪声
+    - "bb_width_normalized_pct"
+    - "range_compression_*"

@@ -191,6 +191,7 @@ def simulate_symbol(
     num_entries = 0
     last_risk_bar = -risk_cooldown
     last_exit_bar = -reentry_cooldown
+    last_exit_profit = False  # 上次出场是否盈利
     trades = []
     min_bars = max(1200, 200 * 7)
 
@@ -200,24 +201,41 @@ def simulate_symbol(
         sig = bool(entry_sig.iloc[i])
         bars_since_exit = i - last_exit_bar
 
-        if not in_pos and sig and bars_since_exit >= reentry_cooldown:
-            entry_px = c
-            peak_px = c
-            lev = initial_leverage
-            pos_qty = (eq * lev) / c
-            in_pos = True
-            last_risk_bar = -risk_cooldown
-            num_entries += 1
-            trades.append(
-                dict(
-                    entry_time=str(ts),
-                    entry_price=entry_px,
-                    leverage=lev,
-                    pos_qty=float(pos_qty),
-                    type="entry",
-                    entry_num=num_entries,
-                )
+        if not in_pos:
+            trend_up = (
+                c > float(ema1200.iloc[i]) if not pd.isna(ema1200.iloc[i]) else False
             )
+            can_reentry = False
+            if sig and bars_since_exit >= reentry_cooldown:
+                can_reentry = True  # 完整入场信号 + 冷却期
+            elif (
+                last_exit_profit
+                and bars_since_exit >= 48  # 利润出场后最短4天(48*2h)
+                and trend_up
+                and (c / peak_px < 0.88)  # 从上次峰值回撤>12%才允许重新上车
+                and roc5.iloc[i] > 0  # 短期动量确认
+            ):
+                can_reentry = True  # 第二波：利润出场后趋势延续再入场
+            if can_reentry:
+                entry_px = c
+                peak_px = c
+                lev = initial_leverage
+                pos_qty = (eq * lev) / c
+                in_pos = True
+                last_risk_bar = -risk_cooldown
+                last_exit_profit = False
+                num_entries += 1
+                trades.append(
+                    dict(
+                        entry_time=str(ts),
+                        entry_price=entry_px,
+                        leverage=lev,
+                        pos_qty=float(pos_qty),
+                        type="entry",
+                        entry_num=num_entries,
+                        is_reentry=last_exit_profit,
+                    )
+                )
 
         if in_pos:
             upnl = pos_qty * (c - entry_px)
@@ -265,6 +283,7 @@ def simulate_symbol(
                 if pos_qty <= 0:
                     in_pos = False
                     last_exit_bar = i
+                    last_exit_profit = eq > initial_capital
                     continue
             px_dd = (c - entry_px) / entry_px if entry_px > 0 else 0.0
             if (
@@ -292,6 +311,7 @@ def simulate_symbol(
                 if pos_qty <= 0:
                     in_pos = False
                     last_exit_bar = i
+                    last_exit_profit = eq > initial_capital
                     continue
 
             # Roll (step-wise +1x, with position notional cap)
@@ -323,9 +343,13 @@ def simulate_symbol(
                     )
                 )
 
-            # Ladder
+            # Ladder — 只在上涨时卖出
             eq_mult = cur_eq / initial_capital
-            if eq_mult >= ladder_trigger and pos_qty > 0:
+            peak_pullback = (peak_px - c) / peak_px if peak_px > 0 else 0
+            ema1200_val = float(ema1200.iloc[i]) if not pd.isna(ema1200.iloc[i]) else c
+            is_uptrend = c > ema1200_val
+            near_peak = peak_pullback < 0.15  # 离峰值回撤<15%才算"近高点"
+            if eq_mult >= ladder_trigger and pos_qty > 0 and is_uptrend and near_peak:
                 spd = min(5.0, (eq_mult / ladder_trigger) ** 1.0)
                 max_frac = 1.0 if eq_mult >= ladder_trigger * 3 else 0.99
                 sell_frac = min(max_frac, ladder_base_frac * spd)
@@ -347,11 +371,13 @@ def simulate_symbol(
                             eq_mult=float(eq_mult),
                             remaining_qty=float(pos_qty),
                             equity=float(eq),
+                            peak_pullback=float(peak_pullback),
                         )
                     )
                     if pos_qty <= 0:
                         in_pos = False
                         last_exit_bar = i
+                        last_exit_profit = eq > initial_capital
         else:
             peak_eq = max(peak_eq, eq)
 
@@ -386,97 +412,278 @@ def simulate_symbol(
 
 # ═══ Plotting ═══
 def plot_trading_map(symbol, ohlc, result, out_dir):
+    """Bokeh HTML 交易地图 — K线 + VWAP/EMA + 入场/滚仓/卖出标记 + 权益曲线"""
     try:
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
+        from bokeh.plotting import figure as bk_figure, output_file, save
+        from bokeh.models import HoverTool, ColumnDataSource, Span, Div
+        from bokeh.layouts import column as bk_column
+        from bokeh.resources import INLINE
     except ImportError:
-        print("  [SKIP] matplotlib not available")
+        print("  [SKIP] bokeh not installed, pip install bokeh")
         return
+
     trades = result.get("trades", [])
     if not trades:
         return
-    fig, axes = plt.subplots(
-        3, 1, figsize=(20, 12), sharex=True, gridspec_kw={"height_ratios": [3, 1, 1]}
+
+    close = ohlc["close"]
+    init_cap = result.get("initial_capital", 10000.0)
+
+    # Resample to 4h for cleaner K-line
+    ohlc_4h = (
+        ohlc.resample("4h")
+        .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
+        .dropna()
     )
-    ax_p, ax_e, ax_l = axes[0], axes[1], axes[2]
-    ax_p.plot(ohlc.index, ohlc["close"], color="gray", alpha=0.4, lw=0.5, label="Close")
-    if "ema1200" in ohlc.columns:
-        ax_p.plot(
-            ohlc.index,
-            ohlc["ema1200"],
-            color="blue",
-            alpha=0.5,
-            lw=0.8,
-            label="EMA1200",
-        )
-    if "vwap1200" in ohlc.columns:
-        ax_p.plot(
-            ohlc.index,
-            ohlc["vwap1200"],
-            color="orange",
-            alpha=0.5,
-            lw=0.8,
-            label="VWAP1200",
-        )
+
+    # Recompute indicators on 4h
+    ema1200_4h = ohlc_4h["close"].ewm(span=1200, adjust=False).mean()
+    h, l, c = ohlc_4h["high"], ohlc_4h["low"], ohlc_4h["close"]
+    tp = (h + l + c) / 3.0
+    vol = ohlc_4h.get("volume", pd.Series(1, index=ohlc_4h.index)).clip(lower=0.0)
+    num = (tp * vol).rolling(1200, min_periods=120).sum()
+    den = vol.rolling(1200, min_periods=120).sum()
+    vwap1200_4h = num / den.replace(0, np.nan)
+
+    bar_w = pd.Timedelta(hours=4).total_seconds() * 1000 * 0.7
+
+    # ═══ Panel 1: K-line + indicators + markers ═══
+    p = bk_figure(
+        title=f"{symbol} — Trend Rolling ({result.get('num_entries',0)} entries, {result.get('roll_count',0)} rolls)",
+        x_axis_type="datetime",
+        width=1400,
+        height=500,
+        tools="pan,wheel_zoom,box_zoom,reset,save",
+    )
+
+    inc = ohlc_4h.close >= ohlc_4h.open
+    dec = ~inc
+    p.segment(
+        ohlc_4h.index[inc],
+        ohlc_4h.high[inc],
+        ohlc_4h.index[inc],
+        ohlc_4h.low[inc],
+        color="#26a69a",
+        line_width=1,
+    )
+    p.segment(
+        ohlc_4h.index[dec],
+        ohlc_4h.high[dec],
+        ohlc_4h.index[dec],
+        ohlc_4h.low[dec],
+        color="#ef5350",
+        line_width=1,
+    )
+    p.vbar(
+        ohlc_4h.index[inc],
+        bar_w,
+        ohlc_4h.open[inc],
+        ohlc_4h.close[inc],
+        fill_color="#26a69a",
+        line_color="#26a69a",
+        fill_alpha=0.8,
+    )
+    p.vbar(
+        ohlc_4h.index[dec],
+        bar_w,
+        ohlc_4h.open[dec],
+        ohlc_4h.close[dec],
+        fill_color="#ef5350",
+        line_color="#ef5350",
+        fill_alpha=0.8,
+    )
+
+    p.line(
+        ohlc_4h.index,
+        vwap1200_4h,
+        line_color="#c026d3",
+        line_width=1.5,
+        line_alpha=0.8,
+        legend_label="VWAP(1200)",
+    )
+    p.line(
+        ohlc_4h.index,
+        ema1200_4h,
+        line_color="#f59e0b",
+        line_width=1.5,
+        line_alpha=0.8,
+        legend_label="EMA(1200)",
+    )
+
+    # Collect markers
+    entry_x, entry_y, entry_lbl = [], [], []
+    roll_x, roll_y, roll_lbl = [], [], []
+    sell_x, sell_y, sell_lbl = [], [], []
+    risk_x, risk_y, risk_lbl = [], [], []
+
     for t in trades:
-        ts = pd.Timestamp(t.get("entry_time") or t.get("time") or t.get("exit_time"))
-        if ts is None:
+        ts_raw = t.get("entry_time") or t.get("time") or t.get("exit_time")
+        if ts_raw is None:
             continue
+        ts = pd.Timestamp(ts_raw)
         tp = t.get("type", "")
         px = t.get("entry_price") or t.get("price", 0)
+        if px <= 0:
+            continue
         if tp == "entry":
-            ax_p.axvline(ts, color="green", alpha=0.5, lw=1.5)
-            ax_p.annotate(
-                f"E#{t.get('entry_num','')} {t.get('leverage','')}x",
-                (ts, px),
-                fontsize=6,
-                color="green",
-                xytext=(5, 15),
-                textcoords="offset points",
-                arrowprops=dict(arrowstyle="->", color="green", alpha=0.4),
-            )
+            entry_x.append(ts)
+            entry_y.append(px)
+            entry_lbl.append(f"Entry #{t.get('entry_num','?')} {t.get('leverage','')}x")
         elif tp == "roll":
-            ax_p.axvline(ts, color="purple", alpha=0.4, lw=1, ls=":")
+            roll_x.append(ts)
+            roll_y.append(px)
+            roll_lbl.append(
+                f"Roll {t.get('old_leverage','')}->{t.get('new_leverage','')}x"
+            )
         elif tp == "ladder_sell":
-            ax_p.scatter(ts, px, color="red", s=8, alpha=0.3, marker="v")
+            sell_x.append(ts)
+            sell_y.append(px)
+            sell_lbl.append(
+                f"Sell {t.get('sell_frac',0)*100:.0f}% @{t.get('eq_mult',0):.1f}x"
+            )
         elif "risk" in tp:
-            ax_p.axvline(ts, color="darkred", alpha=0.4, lw=1, ls="--")
-    ax_p.set_ylabel("Price (USDT)")
-    ax_p.legend(loc="upper left", fontsize=7)
-    ax_p.set_title(
-        f"{symbol} — Trend Rolling v3 ({result.get('num_entries',0)} entries)",
-        fontsize=12,
-        fontweight="bold",
+            risk_x.append(ts)
+            risk_y.append(px)
+            risk_lbl.append(f"Risk: {tp}")
+
+    renderers = []
+    if entry_x:
+        src = ColumnDataSource({"x": entry_x, "y": entry_y, "label": entry_lbl})
+        r = p.scatter(
+            "x",
+            "y",
+            source=src,
+            marker="triangle",
+            size=14,
+            color="#22c55e",
+            line_color="#166534",
+            legend_label="Entry",
+            fill_alpha=0.9,
+        )
+        renderers.append(r)
+        p.add_tools(HoverTool(tooltips=[("Entry", "@label")], renderers=[r]))
+    if roll_x:
+        src = ColumnDataSource({"x": roll_x, "y": roll_y, "label": roll_lbl})
+        r = p.scatter(
+            "x",
+            "y",
+            source=src,
+            marker="diamond",
+            size=12,
+            color="#3b82f6",
+            line_color="#1e40af",
+            legend_label="Roll",
+            fill_alpha=0.9,
+        )
+        renderers.append(r)
+        p.add_tools(HoverTool(tooltips=[("Roll", "@label")], renderers=[r]))
+    if sell_x:
+        src = ColumnDataSource({"x": sell_x, "y": sell_y, "label": sell_lbl})
+        r = p.scatter(
+            "x",
+            "y",
+            source=src,
+            marker="inverted_triangle",
+            size=9,
+            color="#ef4444",
+            line_color="#991b1b",
+            legend_label="Ladder Sell",
+            fill_alpha=0.7,
+        )
+        renderers.append(r)
+        p.add_tools(HoverTool(tooltips=[("Sell", "@label")], renderers=[r]))
+    if risk_x:
+        src = ColumnDataSource({"x": risk_x, "y": risk_y, "label": risk_lbl})
+        r = p.scatter(
+            "x",
+            "y",
+            source=src,
+            marker="x",
+            size=12,
+            color="#7f1d1d",
+            legend_label="Risk Reduce",
+        )
+        renderers.append(r)
+
+    p.legend.location = "top_left"
+    p.legend.click_policy = "hide"
+    p.grid.grid_line_alpha = 0.25
+    p.yaxis.axis_label = "Price (USDT)"
+
+    # ═══ Panel 2: Equity curve ═══
+    eq_curve = _build_eq_curve(ohlc, trades, init_cap)
+    p_eq = bk_figure(
+        title="Equity Curve (USDT)",
+        x_axis_type="datetime",
+        width=1400,
+        height=200,
+        x_range=p.x_range,
+        tools="pan,wheel_zoom,box_zoom,reset,save",
     )
-    ax_p.grid(True, alpha=0.3)
-    eq_curve = _build_eq_curve(ohlc, trades, result["initial_capital"])
-    ax_e.plot(eq_curve.index, eq_curve.values, color="darkgreen", lw=1)
-    ax_e.axhline(result["initial_capital"], color="gray", ls="--", alpha=0.5)
-    ax_e.axhline(
-        result["initial_capital"] * 5,
-        color="orange",
-        ls="--",
-        alpha=0.5,
-        label="5x trigger",
+    p_eq.line(eq_curve.index, eq_curve.values, line_width=2, color="#2563eb")
+    p_eq.add_layout(
+        Span(
+            location=init_cap,
+            dimension="width",
+            line_color="#9ca3af",
+            line_dash="dashed",
+            line_width=1,
+        )
     )
-    ax_e.set_ylabel("Equity ($)")
-    ax_e.legend(loc="upper left", fontsize=7)
-    ax_e.grid(True, alpha=0.3)
+    p_eq.add_layout(
+        Span(
+            location=init_cap * 5,
+            dimension="width",
+            line_color="#f59e0b",
+            line_dash="dashed",
+            line_width=1,
+        )
+    )
+    p_eq.grid.grid_line_alpha = 0.25
+    p_eq.yaxis.axis_label = "Equity ($)"
+
+    # ═══ Panel 3: Leverage ═══
     lev_curve = _build_lev_curve(ohlc, trades)
-    ax_l.fill_between(lev_curve.index, 0, lev_curve.values, color="blue", alpha=0.3)
-    ax_l.plot(lev_curve.index, lev_curve.values, color="blue", lw=1)
-    for lv in [1, 2, 3]:
-        ax_l.axhline(lv, color="gray", ls="--", alpha=0.3)
-    ax_l.set_ylabel("Leverage")
-    ax_l.set_xlabel("Date")
-    ax_l.grid(True, alpha=0.3)
-    plt.tight_layout()
-    p = out_dir / f"trading_map_{symbol}.png"
-    fig.savefig(p, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  Trading map: {p}")
+    p_lev = bk_figure(
+        title="Leverage",
+        x_axis_type="datetime",
+        width=1400,
+        height=120,
+        x_range=p.x_range,
+        tools="pan,wheel_zoom,box_zoom,reset,save",
+    )
+    p_lev.line(lev_curve.index, lev_curve.values, line_width=2, color="#8b5cf6")
+    for lv in [1, 2, 3, 5]:
+        p_lev.add_layout(
+            Span(
+                location=lv,
+                dimension="width",
+                line_color="#9ca3af",
+                line_dash="dotted",
+                line_width=0.5,
+            )
+        )
+    p_lev.grid.grid_line_alpha = 0.25
+    p_lev.yaxis.axis_label = "Lev"
+
+    # Summary
+    busted = result.get("busted", False)
+    summary = (
+        f"<p style='font-size:13px;max-width:1400px'>"
+        f"<b>{result.get('num_entries',0)} entries</b> | "
+        f"Final: <b>${result.get('final_equity',0):,.0f}</b> ({result.get('total_return',0):.2f}x) | "
+        f"CAGR: {result.get('cagr',0)*100:.1f}% | MaxDD: {result.get('max_dd',0)*100:.1f}% | "
+        f"Rolls: {result.get('roll_count',0)} | Sells: {result.get('total_sells',0)} | "
+        f"RiskCuts: {result.get('risk_reduces',0)} | "
+        f"<span style='color:{"#ef4444" if busted else "#22c55e"}'>{'BUSTED' if busted else 'OK'}</span>"
+        f"</p>"
+    )
+
+    layout = bk_column(Div(text=summary, width=1400), p, p_eq, p_lev)
+    out_path = out_dir / f"trading_map_{symbol}.html"
+    output_file(str(out_path), title=f"Trend Rolling — {symbol}", mode="inline")
+    save(layout, resources=INLINE)
+    print(f"  Trading map: {out_path}")
 
 
 def _build_eq_curve(ohlc, trades, init_cap):
