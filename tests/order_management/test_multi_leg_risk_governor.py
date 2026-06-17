@@ -195,6 +195,7 @@ def test_rejects_new_places_when_drawdown_limit_is_reached() -> None:
 
 def test_rejects_place_when_kill_switch_halted(tmp_path) -> None:
     from datetime import datetime, timezone
+    from unittest.mock import patch
 
     from src.order_management.multi_leg_kill_switch import (
         MultiLegKillSwitchConfig,
@@ -230,17 +231,24 @@ def test_rejects_place_when_kill_switch_halted(tmp_path) -> None:
         kill_switch_tracker=tracker,
     )
 
-    place = governor.check_actions(
-        [
-            {
-                "action": "place",
-                "symbol": "BTCUSDT",
-                "side": "BUY",
-                "quantity": 0.01,
-                "price": 60_000.0,
-            }
-        ]
-    )
+    # Freeze time so _refresh_kill_switch_from_account doesn't reset the
+    # daily boundary (the tracker was set up on 2026-06-16; without the
+    # mock the refresh uses real datetime.now which may be a new day).
+    fake_now = lambda tz=None: now
+    with patch("src.order_management.multi_leg_kill_switch.datetime") as mock_dt:
+        mock_dt.now.side_effect = fake_now
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        place = governor.check_actions(
+            [
+                {
+                    "action": "place",
+                    "symbol": "BTCUSDT",
+                    "side": "BUY",
+                    "quantity": 0.01,
+                    "price": 60_000.0,
+                }
+            ]
+        )
     assert not place.ok
     assert "kill_switch" in place.rejected[0].reason
 
