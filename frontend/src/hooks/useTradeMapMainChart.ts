@@ -138,20 +138,31 @@ export function useTradeMapMainChart(params: MainChartParams) {
       if (scrollAdjust) {
         useTradeMapStore.setState({ historyScrollAdjust: null });
       }
-      const cur = rangeBeforeSetData ?? chart.timeScale().getVisibleLogicalRange();
-      if (!fitPending && isValidLogicalRange(cur, barCount)) {
-        if (rangeBeforeSetData) {
-          chart.timeScale().setVisibleLogicalRange(cur);
+
+      /* ── Initial load / symbol switch → snap to tail ── */
+      if (fitPending) {
+        const lr = visibleLogicalRange(barCount);
+        if (lr && isValidLogicalRange(lr, barCount)) {
+          chart.timeScale().setVisibleLogicalRange(lr);
+          useTradeMapStore.getState().setBundlePhase({ chartFitPending: false });
         }
         return;
       }
-      const lr = visibleLogicalRange(barCount);
-      if (lr && isValidLogicalRange(lr, barCount)) {
-        chart.timeScale().setVisibleLogicalRange(lr);
-        if (fitPending) {
-          useTradeMapStore.getState().setBundlePhase({ chartFitPending: false });
-        }
-      }
+
+      /*
+       * ── Poll / overlay refresh → preserve user's scroll position ──
+       *
+       * With rightOffset > 0 the timeScale's visible range extends beyond
+       * barCount (e.g. rightOffset=8 → to ≈ barCount+7), so the old
+       * isValidLogicalRange(to < barCount) check always failed and forced
+       * a snap-to-right on every poll tick.
+       *
+       * Now we simply trust the captured range and restore it.
+       * rangeBeforeSetData is only set on history prepend (handled above
+       * via scrollAdjust), so for normal poll we skip the restore too —
+       * lightweight-charts preserves the visible logical range across
+       * series.setData() when data is only appended.
+       */
     },
     [],
   );
