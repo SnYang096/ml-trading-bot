@@ -1,47 +1,61 @@
-# Rolling Trend（滚仓趋势）—— Portfolio-level Leverage Compounding
+# Rolling Trend（趋势滚仓）—— 指标驱动杠杆复利
 #
-# 信号源: TPC (Trend Pullback Continuation) — E13_structural 配置
-# 执行层: 组合级别杠杆滚仓
+# 入场: 周线EMA200下方 + EMA1200金叉VWAP1200
+# 杠杆: 2x起步 → 3x（价格跌20%且当前盈利时升级）
+# 卖出: 达5倍后spot式阶梯越长越卖，永不全部清仓
 #
 # 与 B 系统的区别:
 #   - B 系统: per-trade risk-based sizing (1-2% risk/trade)
-#   - 滚仓:   portfolio-level leverage maintenance (2-5x target)
+#   - 滚仓:   portfolio-level leverage maintenance (2-3x target)
 #
-# 账户: 独立 Binance U 本位合约账户
+# 与旧版（TPC信号）的区别:
+#   - 旧版: 依赖TPC E13_structural模型信号入场
+#   - 新版: 纯指标驱动（EMA200周线 + EMA1200/VWAP1200金叉）
+#
+# 模拟器: scripts/trend_rolling_simulate.py
 
 strategy:
   name: rolling_trend
   description: |
-    Portfolio-level leveraged trend following using TPC entry signals.
-    Starts at 2x leverage, rolls to higher leverage on EMA1200 dips,
-    takes profit at 5x/10x entry multiples.
+    趋势滚仓：周线EMA200深熊 + EMA1200金叉VWAP1200入场，
+    2x杠杆起步，价格跌20%且盈利→3x，
+    5倍后spot式阶梯越长越卖，永不全部清仓。
   owner: quant_team
   archetype: RollingTrendLeverage
 
-  # 信号复用 TPC
-  signal_source: tpc
-  signal_config: E13_structural  # ema1200 structural exit, no trailing
-  
+  # 信号: 指标驱动（非TPC模型）
+  signal_source: indicator
   timeframe: "120T"
   symbol_include: []
   symbol_exclude: []
 
 # 滚仓参数
 rolling:
-  initial_leverage: 2.0       # 初始杠杆 (1-3x)
-  max_leverage: 3.0           # 最大杠杆上限（>3x 历史回测 SOL/XRP 爆仓）
+  initial_leverage: 2.0       # 初始杠杆
+  max_leverage: 3.0           # 最大杠杆上限
   leverage_step: 1.0          # 每次滚仓加多少倍
-  
+
+  # 入场条件 (AND)
+  entry:
+    weekly_ema_200_position_lt: 0.0    # 价格在周线EMA200下方
+    ema1200_cross_above_vwap1200: true # EMA1200金叉VWAP1200
+
   # 滚仓触发 (AND条件)
   roll_trigger:
-    drawdown_threshold: 0.20  # 从peak回撤 ≥20%
-    ema_recovery: ema1200     # 价格回到EMA1200上方
-  
-  # 止盈
+    price_drawdown_from_entry: 0.20  # 从入场价回撤 ≥20%
+    require_profitable: true          # 且当前有浮盈
+
+  # 止盈 (spot式阶梯)
   take_profit:
-    target_1: 5.0             # entry价格 ×5 → 减半仓
-    target_2: 10.0            # entry价格 ×10 → 全平
-  
+    type: profit_ladder                # 阶梯卖出
+    trigger_multiple: 5.0             # entry价格 ×5 触发
+    base_daily_sell_fraction: 0.05    # 每次最多卖剩余仓位的5%
+    acceleration:
+      type: power
+      exponent: 0.75
+      max_speed_multiplier: 4.0
+    never_full_exit: true             # 永不全部清仓
+
   # 风控
   risk:
     equity_hard_stop: 0.50    # 总equity回撤50% → 全平
@@ -49,20 +63,7 @@ rolling:
 
 # 实验记录
 experiments:
-  phase_1_bull:
-    date: 2026-06-10
-    segment: bull_2023_2024
-    config: E13_structural
-    results:
-      spot_1x: "$60k→$221k (3.7x), CAGR 137%, busts 0/6"
-      lever_2_3x: "$60k→$358k (6.0x), CAGR 214%, busts 0/6"
-      lever_2_5x: "$60k→$599k (10x), CAGR 367%, busts 2/6 near"
-    conclusion: "2-3x safest across all symbols"
-  
-  phase_1_bear:
-    date: 2026-06-10
-    segment: bear_2022
-    results:
-      spot_1x: "$60k→$68k (1.1x) — survived bear!"
-      lever_2_3x: "$60k→$57k (1.0x)"
-    conclusion: "Bear market: spot only, no leverage"
+  phase_1_initial:
+    date: 2026-06-17
+    description: 指标驱动版初版回测
+    results: pending

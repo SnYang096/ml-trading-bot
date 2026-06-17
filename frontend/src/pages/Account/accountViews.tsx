@@ -1115,9 +1115,11 @@ export function RealizedReconPanel({
   const lo = data.local || {};
   const issues = data.issues || [];
 
-  const delta = (lo.realized_pnl ?? 0) - (ex.realized_pnl ?? 0);
+  const delta = lo.raw_pnl_delta ?? ((lo.realized_pnl ?? 0) - (ex.realized_pnl ?? 0));
   const adjustedNet = lo.adjusted_net ?? ((lo.realized_pnl ?? 0) + (ex.commission ?? 0) + (ex.funding_fee ?? 0));
   const deltaNet = lo.delta_net ?? (adjustedNet - (ex.net_income ?? 0));
+  const isCommissionAbnormal = Math.abs(ex.commission ?? 0) > 500;
+  const isPnlGapLarge = Math.abs(delta) > 1000;
 
   return (
     <section className={`panel ${styles.reconPanel}`}>
@@ -1172,7 +1174,8 @@ export function RealizedReconPanel({
         <KpiCard
           label="手续费 (交易所)"
           value={`${fmtIncome(ex.commission)} USDT`}
-          hint="COMMISSION（本地未记录）"
+          hint={isCommissionAbnormal ? '⚠ 异常偏高，请检查策略' : 'COMMISSION（本地未记录）'}
+          valueClass={isCommissionAbnormal ? 'pnl-neg' : undefined}
         />
         <KpiCard
           label="资金费率"
@@ -1181,13 +1184,19 @@ export function RealizedReconPanel({
         />
       </div>
 
-      {/* Raw PnL delta (informational) */}
+      {/* Raw PnL delta */}
       <div className={styles.kpiRow} style={{ marginBottom: 12 }}>
         <KpiCard
           label="已实现PnL差额 (原始)"
           value={`${fmtPnl(delta)} USDT`}
-          hint="本地 PnL 未扣手续费，交易所已扣"
-          valueClass={pnlClass(delta)}
+          hint={isPnlGapLarge ? '🚨 本地 vs 交易所差异显著，需排查' : '本地 PnL 未扣手续费，交易所已扣'}
+          valueClass={isPnlGapLarge ? 'pnl-neg' : pnlClass(delta)}
+        />
+        <KpiCard
+          label="交易所净收入"
+          value={`${fmtIncome(ex.net_income)} USDT`}
+          hint="= REALIZED + COMMISSION + FUNDING"
+          valueClass={pnlClass(ex.net_income)}
         />
       </div>
 
@@ -1202,12 +1211,15 @@ export function RealizedReconPanel({
               </tr>
             </thead>
             <tbody>
-              {issues.map((iss, idx) => (
-                <tr key={idx}>
+              {issues.map((iss, idx) => {
+                const isCritical = iss.kind === 'commission_abnormal' || iss.kind === 'realized_pnl_gap' || iss.kind === 'net_pnl_mismatch';
+                return (
+                <tr key={idx} className={isCritical ? 'pnl-neg' : undefined}>
                   <td><code>{iss.kind}</code></td>
                   <td>{iss.message}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

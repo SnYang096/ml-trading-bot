@@ -175,6 +175,7 @@ def account_realized_reconciliation(
         symbol="*",
         start_time_ms=start_ms,
         end_time_ms=now_ms,
+        lookback_days=lookback_days,
     )
     data["lookback_days"] = lookback_days
     return ok(data)

@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Mapping, Optional
 from mlbot_console.services.account_summary import build_account_summary
 from mlbot_console.services.exchange_income import fetch_scope_income
 from mlbot_console.services.symbols import is_all_symbols
+from mlbot_console.services.tg_notify import check_reconciliation_alerts
 
 logger = logging.getLogger(__name__)
 
@@ -341,6 +342,7 @@ def reconcile_realized_pnl(
     symbol: str = "*",
     start_time_ms: Optional[int] = None,
     end_time_ms: Optional[int] = None,
+    lookback_days: int = 90,
 ) -> Dict[str, Any]:
     """Compare local DB realized PnL against Binance income history.
 
@@ -418,6 +420,32 @@ def reconcile_realized_pnl(
     ex_funding = float(ex_total.get("funding_fee", 0.0))
     ex_net = float(ex_total.get("net_income", 0.0))
 
+    # ---- Raw PnL delta (local realized vs exchange REALIZED_PNL) ----
+    # This is the "true" PnL gap before any adjustments.
+    # A large gap here suggests the local entry/exit PnL algorithm disagrees
+    # with the exchange — possible causes:
+    #   - Phantom positions inflating local PnL
+    #   - Missed fill reports
+    #   - Price rounding / fee-inclusive price differences
+    raw_pnl_delta = local_realized_pnl - ex_realized
+    tol_raw = max(50.0, abs(ex_realized) * 0.10)  # 10% tolerance, floor 50 USDT
+
+    if abs(raw_pnl_delta) > tol_raw:
+        issues.append(
+            _issue(
+                kind="realized_pnl_gap",
+                scope=scope,
+                message=(
+                    f"已实现PnL原始差异: 本地 {local_realized_pnl:+.2f} vs 交易所 {ex_realized:+.2f} "
+                    f"(Δ={raw_pnl_delta:+.2f}, tol={tol_raw:.2f})"
+                ),
+                local_realized_pnl=local_realized_pnl,
+                exchange_realized_pnl=ex_realized,
+                raw_pnl_delta=raw_pnl_delta,
+                tolerance_usdt=tol_raw,
+            )
+        )
+
     # ---- Adjusted net PnL (Plan A) ----
     # Local PnL is gross (no commission deducted), because the engine doesn't
     # record commission from Binance user-stream.  Use the exchange COMMISSION
@@ -440,6 +468,25 @@ def reconcile_realized_pnl(
                 exchange_net=ex_net,
                 delta_net=delta_net,
                 tolerance_usdt=tol_net,
+            )
+        )
+
+    # ---- Abnormal commission (absolute threshold) ----
+    _commission_alert_threshold = float(
+        __import__("os").environ.get("MLBOT_COMMISSION_ALERT_THRESHOLD_USDT", "500")
+    )
+    if abs(ex_commission) > _commission_alert_threshold:
+        issues.append(
+            _issue(
+                kind="commission_abnormal",
+                scope=scope,
+                message=(
+                    f"⚠ 异常手续费: 交易所累计 {ex_commission:+.2f} USDT "
+                    f"超过阈值 {_commission_alert_threshold:.0f} USDT，"
+                    "请检查是否存在滑点、手续费率异常或频繁交易"
+                ),
+                exchange_commission=ex_commission,
+                threshold_usdt=_commission_alert_threshold,
             )
         )
 
@@ -471,7 +518,7 @@ def reconcile_realized_pnl(
             )
         )
 
-    return {
+    result = {
         "ok": len(issues) == 0,
         "scope": scope,
         "issues": issues,
@@ -485,9 +532,22 @@ def reconcile_realized_pnl(
             "fetched_at": income.get("fetched_at"),
         },
         "local": {
-            "realized_pnl": local_realized_pnl,
-            "commission": local_commission,
-            "adjusted_net": adjusted_local_net,
-            "delta_net": delta_net,
+            "realized_pnl": float(local_realized_pnl),
+            "commission": float(local_commission),
+            "adjusted_net": float(adjusted_local_net),
+            "delta_net": float(delta_net),
+            "raw_pnl_delta": float(raw_pnl_delta),
         },
     }
+
+    # ---- Fire TG alerts for abnormal conditions ----
+    # Best-effort: alert failures must not break the reconciliation response.
+    try:
+        check_reconciliation_alerts(
+            reconciliation_result=result,
+            lookback_days=lookback_days,
+        )
+    except Exception:
+        logger.warning("reconcile_realized_pnl: tg alert check failed", exc_info=True)
+
+    return result

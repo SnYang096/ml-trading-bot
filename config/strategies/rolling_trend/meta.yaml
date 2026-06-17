@@ -1,9 +1,9 @@
 strategy:
   name: rolling-trend-120T
   description: |
-    Portfolio-level leveraged trend following. Uses TPC E13_structural signals
-    for entry timing, manages leverage at portfolio level instead of per-trade
-    risk-based sizing. Starts 2x, rolls to 3x on EMA1200 dips.
+    趋势滚仓策略：周线EMA200下方 + EMA1200金叉VWAP1200入场，
+    2x杠杆起步，价格跌20%且盈利→升至3x，
+    达5倍后spot式阶梯越长越卖，永不全部清仓。
   owner: quant_team
   archetype: RollingTrendLeverage
   timeframe: "120T"
@@ -12,6 +12,4 @@ strategy:
     - ETHUSDT
     - SOLUSDT
     - BNBUSDT
-    - XRPUSDT
-    - ADAUSDT
   symbol_exclude: []

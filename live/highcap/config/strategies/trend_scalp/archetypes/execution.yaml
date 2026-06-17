@@ -38,18 +38,25 @@ take_profit:
   # 最小绝对价格距离；0 表示不启用绝对下限。
   min_abs: 0.0
 order_model:
+  # Maker execution: passive LIMIT entries (lower fees), taker MARKET exits.
+  maker_execution: true
   # 入场订单：marketable_limit = Binance LIMIT + IOC，用限价表达最大滑点保护。
-  # BUY 最高价 = 参考价 * (1 + max_slippage_bps/10000)；SELL 最低价反向计算。
   entry_order_type: marketable_limit
-  # 加仓订单同理；动量加仓不使用长期挂单，避免价格跑掉后残留过期信号。
+  # 加仓订单同理。
   add_order_type: marketable_limit
-  # marketable limit 最大允许滑点；超过这个价格就不成交/只部分成交，剩余由 IOC 自动取消。
+  # marketable limit 最大允许滑点。
   max_slippage_bps: 5.0
-  # 非 IOC 残留挂单的超时 bar 数；用于兜底撤掉过期 entry/add 订单。
+  # Maker 入场最长等待 bar 数；超时撤单重新在当前价挂 maker。
+  maker_entry_max_wait_bars: 2
+  # Maker 入场重挂 bar 间隔；0 = 不重挂。
+  maker_repeg_bars: 0
+  # 非 IOC 残留挂单的超时 bar 数。
   pending_timeout_bars: 1
-  # 回测里的入场成交滑点（不含手续费）；实盘会用真实 fill price/fee 回写审计。
+  # 出场模式：market（taker，立即成交风险出清）。
+  exit_order_type: market
+  # 回测里的入场成交滑点（不含手续费）。
   simulated_entry_slippage_bps: 2.0
-  # 回测里的加仓成交滑点（不含手续费）；让动量突破成交比 touch-fill 更保守。
+  # 回测里的加仓成交滑点。
   simulated_add_slippage_bps: 2.0
 risk:
   # 最短趋势段 bar 数；低于该长度的 entry/hold 段会被过滤。

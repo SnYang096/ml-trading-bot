@@ -451,5 +451,6 @@ export interface AccountRealizedReconciliation {
     commission?: number;
     adjusted_net?: number;
     delta_net?: number;
+    raw_pnl_delta?: number;
   };
 }
