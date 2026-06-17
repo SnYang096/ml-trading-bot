@@ -12,4 +12,4 @@ strategy:
     - SOLUSDT
     - BNBUSDT
   symbol_exclude:
-    - BTCUSDT  # 冠军入场条件对BTC不触发
+    - BTCUSDT # 冠军入场条件对BTC不触发

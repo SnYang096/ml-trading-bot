@@ -42,7 +42,9 @@ class SpotOrderManager:
         self.db_path = Path(db_path)
         self.api = api
         self.shadow = bool(shadow)
-        self.client_prefix = "".join(ch for ch in client_prefix if ch.isalnum())[:12] or "sa"
+        self.client_prefix = (
+            "".join(ch for ch in client_prefix if ch.isalnum())[:12] or "sa"
+        )
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
         if self.shadow:
@@ -55,8 +57,7 @@ class SpotOrderManager:
 
     def _init_db(self) -> None:
         with self._connect() as conn:
-            conn.execute(
-                """
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS spot_orders (
                     order_id TEXT PRIMARY KEY,
                     created_at TEXT NOT NULL,
@@ -70,14 +71,21 @@ class SpotOrderManager:
                     client_order_id TEXT,
                     raw_json TEXT
                 )
-                """
-            )
+                """)
             self._ensure_order_columns(conn)
             # Additional indexes (2026-06-17 review)
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_spot_orders_symbol_status ON spot_orders(symbol, status)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_spot_orders_exchange_order_id ON spot_orders(exchange_order_id)")
-            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_spot_orders_client_order_id ON spot_orders(client_order_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_spot_orders_created_at ON spot_orders(created_at)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_spot_orders_symbol_status ON spot_orders(symbol, status)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_spot_orders_exchange_order_id ON spot_orders(exchange_order_id)"
+            )
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_spot_orders_client_order_id ON spot_orders(client_order_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_spot_orders_created_at ON spot_orders(created_at)"
+            )
             conn.commit()
 
     def _ensure_order_columns(self, conn: sqlite3.Connection) -> None:
@@ -160,9 +168,11 @@ class SpotOrderManager:
                     status,
                     exchange_order_id,
                     client_order_id,
-                    json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
-                    if payload
-                    else None,
+                    (
+                        json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+                        if payload
+                        else None
+                    ),
                     filled_qty,
                     filled_quote,
                     now,
@@ -269,7 +279,9 @@ class SpotOrderManager:
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def cancel_exchange_order(self, symbol: str, exchange_order_id: str) -> Dict[str, Any]:
+    def cancel_exchange_order(
+        self, symbol: str, exchange_order_id: str
+    ) -> Dict[str, Any]:
         if self.shadow or self.api is None:
             return {"status": "shadow"}
         return self.api.cancel_order(symbol, exchange_order_id)

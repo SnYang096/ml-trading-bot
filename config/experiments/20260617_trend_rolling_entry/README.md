@@ -2,14 +2,14 @@
 
 ## Phase checklist
 
-| Phase | 状态 | 说明 |
-|-------|------|------|
-| 0 (特征) | ✅ | 120T OHLC + 自计算指标 (wEMA200, EMA1200, VWAP1200, ATR%) |
-| 1 (扫描) | ✅ | `entry_scan.csv` — 24变体×4币种完整排名 |
-| 2 (定参) | ✅ | 见 `DECISION.md` |
-| 3 (分段回测) | ⬜ | pending — 需要 canonical 三阶段 segment_matrix |
-| 4 (交易地图) | ✅ | `results/trend_rolling/trading_map_*.png` |
-| 5 (promote) | ⬜ | pending |
+| Phase        | 状态 | 说明                                                      |
+| ------------ | ---- | --------------------------------------------------------- |
+| 0 (特征)     | ✅    | 120T OHLC + 自计算指标 (wEMA200, EMA1200, VWAP1200, ATR%) |
+| 1 (扫描)     | ✅    | `entry_scan.csv` — 24变体×4币种完整排名                   |
+| 2 (定参)     | ✅    | 见 `DECISION.md`                                          |
+| 3 (分段回测) | ⬜    | pending — 需要 canonical 三阶段 segment_matrix            |
+| 4 (交易地图) | ✅    | `results/trend_rolling/trading_map_*.png`                 |
+| 5 (promote)  | ⬜    | pending                                                   |
 
 ## 实验目标
 
@@ -40,12 +40,12 @@ python scripts/trend_rolling_entry_scan.py \
 
 ### 扫描结果摘要
 
-| 排名 | 变体 | 类别 | 总收益 | 倍数 | 最差DD | 入场数 |
-|------|------|------|--------|------|--------|--------|
-| 🥇 | F1_winner2 | 组合 | $253,313 | 6.58x | -53.7% | 3 |
-| 🥈 | F0_winner1 | 组合 | $211,355 | 5.28x | -67.8% | 4 |
-| 🥉 | B3_ema1200_near_vwap | 交叉 | $169,257 | 4.23x | -60.7% | 4 |
-| 4 | C1_atr_low_ema | 压缩 | $102,347 | 2.56x | -64.2% | 4 |
+| 排名 | 变体                 | 类别 | 总收益   | 倍数  | 最差DD | 入场数 |
+| ---- | -------------------- | ---- | -------- | ----- | ------ | ------ |
+| 🥇    | F1_winner2           | 组合 | $253,313 | 6.58x | -53.7% | 3      |
+| 🥈    | F0_winner1           | 组合 | $211,355 | 5.28x | -67.8% | 4      |
+| 🥉    | B3_ema1200_near_vwap | 交叉 | $169,257 | 4.23x | -60.7% | 4      |
+| 4    | C1_atr_low_ema       | 压缩 | $102,347 | 2.56x | -64.2% | 4      |
 
 ### 关键发现
 
@@ -64,10 +64,10 @@ PYTHONPATH=src:scripts python -m scripts.event_backtest \
 
 ## 文件清单
 
-| 文件 | 说明 |
-|------|------|
-| `README.md` | 本文件 |
-| `DECISION.md` | 定参决策 + promote 建议 |
-| `entry_variants.yaml` | 24 种入场变体定义 |
-| `phase3_grid.yaml` | Phase 3 分段回测 grid (pending) |
-| `../../results/trend_rolling/entry_scan.csv` | Phase 1 扫描结果 |
+| 文件                                         | 说明                            |
+| -------------------------------------------- | ------------------------------- |
+| `README.md`                                  | 本文件                          |
+| `DECISION.md`                                | 定参决策 + promote 建议         |
+| `entry_variants.yaml`                        | 24 种入场变体定义               |
+| `phase3_grid.yaml`                           | Phase 3 分段回测 grid (pending) |
+| `../../results/trend_rolling/entry_scan.csv` | Phase 1 扫描结果                |

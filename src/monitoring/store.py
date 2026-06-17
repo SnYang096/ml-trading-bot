@@ -91,7 +91,9 @@ _DRIFT_SKIP_STATUSES = frozenset(
 )
 
 
-def monitored_strategies_from_artifacts(artifacts: Dict[str, Any]) -> Optional[set[str]]:
+def monitored_strategies_from_artifacts(
+    artifacts: Dict[str, Any],
+) -> Optional[set[str]]:
     """Strategies resolved for this manifest run (heartbeat.strategies csv)."""
     hb = artifacts.get("heartbeat") or {}
     if not isinstance(hb, dict):
@@ -205,7 +207,9 @@ def update_monitoring_index(
     cadences[cadence] = cadence_row
     index["updated_at"] = datetime.now(timezone.utc).isoformat()
 
-    idx_path.write_text(json.dumps(index, indent=2, ensure_ascii=False), encoding="utf-8")
+    idx_path.write_text(
+        json.dumps(index, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     latest_link = idx_path.parent / f"latest_{cadence}.json"
     latest_link.write_text(json.dumps(cadence_row, indent=2), encoding="utf-8")
     return idx_path

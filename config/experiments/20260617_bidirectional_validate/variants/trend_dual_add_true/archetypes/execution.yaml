@@ -3,8 +3,8 @@ inventory:
   # Relaxed exposure limits let the winning side build 4-5 units
   # while keeping 1 unit on the losing side as hedge.
   initial_legs:
-  - LONG
-  - SHORT
+    - LONG
+    - SHORT
   # 加仓方向：both = 上下突破都可加仓。
   add_mode: both
   # 趋势方向来源：dynamic_bar 表示每根信号 bar 用最新 trend_direction 判断 LONG/SHORT。

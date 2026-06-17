@@ -724,11 +724,11 @@ CREATE INDEX IF NOT EXISTS idx_monitor_event_strategy_status ON monitor_event(st
 
 各 JSON 文件写入方式（经代码验证，2026-06-17）：
 
-| 文件 | 写入方式 | 是否原子 |
-|---|---|---|
-| `kill_switch_state.json` (`multi_leg_kill_switch.py:155`) | `write_text()` 直接写入 | ❌ |
-| `trend_scalp_{SYM}.json` (`position_tracker.py:1169`) | `tmp.write_text()` + `tmp.replace()` | ✅ |
-| `chop_grid_{SYM}.json` (`chop_grid_concurrency.py:129`) | `write_text()` 直接写入 | ❌ |
+| 文件                                                      | 写入方式                             | 是否原子 |
+| --------------------------------------------------------- | ------------------------------------ | -------- |
+| `kill_switch_state.json` (`multi_leg_kill_switch.py:155`) | `write_text()` 直接写入              | ❌        |
+| `trend_scalp_{SYM}.json` (`position_tracker.py:1169`)     | `tmp.write_text()` + `tmp.replace()` | ✅        |
+| `chop_grid_{SYM}.json` (`chop_grid_concurrency.py:129`)   | `write_text()` 直接写入              | ❌        |
 
 `position_tracker.py` 已实现原子写入。其余两个文件在进程崩溃时可能截断/损坏。
 

@@ -1014,9 +1014,10 @@ def build_account_summary(
 
     # Sort: online first, then offline; within each group, alphabetically
     strategy_rows = {
-        key: row for key, row in sorted(
+        key: row
+        for key, row in sorted(
             strategy_rows.items(),
-            key=lambda item: (not item[1].get("is_online", True), item[0])
+            key=lambda item: (not item[1].get("is_online", True), item[0]),
         )
     }
 

@@ -24,7 +24,6 @@ from typing import Optional, List, Dict, Any
 
 import click
 
-
 # =============================================================================
 # Project root detection
 # =============================================================================
@@ -788,7 +787,9 @@ def console_cmd(port: int, bind: str, reload: bool, force: bool) -> None:
     if force and _port_is_in_use(port, bind=bind):
         pids = _find_listening_pids(port)
         if pids:
-            click.echo(f"⚠️  Port {port} in use by PID(s) {pids}; terminating (--force)...")
+            click.echo(
+                f"⚠️  Port {port} in use by PID(s) {pids}; terminating (--force)..."
+            )
             _kill_pids(pids)
             import time as _time
 
@@ -799,7 +800,9 @@ def console_cmd(port: int, bind: str, reload: bool, force: bool) -> None:
 
     click.echo("🌐 MLBot Business Console — 实盘 CMS (FastAPI)")
     click.echo(f"   bind:    http://{bind}:{port}/")
-    click.echo(f"   Trade Map: http://{bind if bind not in ('0.0.0.0', '::') else 'localhost'}:{port}/trade-map")
+    click.echo(
+        f"   Trade Map: http://{bind if bind not in ('0.0.0.0', '::') else 'localhost'}:{port}/trade-map"
+    )
     click.echo("   本地 R&D 实验: mlbot rolling-dashboard → /rd")
     click.echo("   Ctrl+C 停止")
 
@@ -1233,9 +1236,7 @@ def data_download_open_interest(
 
 
 @data.command("download-open-interest-vision")
-@click.option(
-    "--symbols", "-s", default="HYPEUSDT", help="Comma-separated symbols"
-)
+@click.option("--symbols", "-s", default="HYPEUSDT", help="Comma-separated symbols")
 @click.option(
     "--universe-config",
     default=None,
@@ -1244,7 +1245,9 @@ def data_download_open_interest(
 @click.option("--universe-set", default="starter_a")
 @click.option("--universe-groups", default=None)
 @click.option("--start-date", required=True, help="YYYY-MM-DD (inclusive)")
-@click.option("--end-date", default=None, help="YYYY-MM-DD inclusive (default: today UTC)")
+@click.option(
+    "--end-date", default=None, help="YYYY-MM-DD inclusive (default: today UTC)"
+)
 @click.option(
     "--data-dir",
     default="data/open_interest/vision_zip",
@@ -1320,7 +1323,9 @@ def data_download_open_interest_vision(
 @click.option("--universe-set", default="starter_a")
 @click.option("--universe-groups", default=None)
 @click.option("--start-date", required=True, help="YYYY-MM-DD (inclusive)")
-@click.option("--end-date", default=None, help="YYYY-MM-DD inclusive (default: today UTC)")
+@click.option(
+    "--end-date", default=None, help="YYYY-MM-DD inclusive (default: today UTC)"
+)
 @click.option(
     "--data-dir",
     default="data/book_depth/zip",
@@ -1385,9 +1390,7 @@ def data_download_book_depth(
 
 
 @data.command("download-depth-snapshots")
-@click.option(
-    "--symbols", "-s", default="BTCUSDT", help="Comma-separated symbols"
-)
+@click.option("--symbols", "-s", default="BTCUSDT", help="Comma-separated symbols")
 @click.option("--poll-count", type=int, default=1, show_default=True)
 @click.option("--poll-interval-sec", type=float, default=60.0, show_default=True)
 @click.option(
@@ -3733,7 +3736,9 @@ def diff(strategy, ts1, ts2, config_path):
 
 
 @pipeline.command("deploy")
-@click.option("--diff", "show_diff", is_flag=True, help="只查看研究仓与 live/highcap 差异")
+@click.option(
+    "--diff", "show_diff", is_flag=True, help="只查看研究仓与 live/highcap 差异"
+)
 @click.option("--deploy", "do_deploy", is_flag=True, help="执行部署 (对比 + 复制)")
 @click.option("--rollback", is_flag=True, help="显示 live/highcap 回滚指引")
 @click.option("--strategy", multiple=True, help="指定策略 (可重复；默认脚本内置策略集)")
@@ -4129,7 +4134,9 @@ def multileg_validate_config(config_path: str, constitution_yaml: str):
     ),
 )
 @click.option("--config", "config_path", default="", help="可选：指定 pipeline YAML")
-@click.option("--stage", default="auto", help="auto|rolling_sim|grid_backtest|dual_add_backtest")
+@click.option(
+    "--stage", default="auto", help="auto|rolling_sim|grid_backtest|dual_add_backtest"
+)
 @click.option("--month", default="", help="可选：YYYY-MM 或逗号分隔多个月")
 @click.option("--end-date", default="", help="可选：截止日期")
 @click.option("--dry-run", is_flag=True, help="打印命令不执行")
@@ -4222,7 +4229,9 @@ def multileg_replay(
 
 
 @multileg.command("gate")
-@click.option("--run-dir", required=True, help="rolling run root: .../_rolling_sim/<run_id>")
+@click.option(
+    "--run-dir", required=True, help="rolling run root: .../_rolling_sim/<run_id>"
+)
 @click.option(
     "--config",
     "config_path",
@@ -4267,7 +4276,9 @@ def multileg_monitor(
 
 
 @multileg.command("shadow")
-@click.option("--strategies", default="chop_grid", show_default=True)  # trend_scalp disabled 2026-06-17
+@click.option(
+    "--strategies", default="chop_grid", show_default=True
+)  # trend_scalp disabled 2026-06-17
 @click.option("--bar-source", default="feature-store", show_default=True)
 @click.option("--once", is_flag=True, help="仅跑一次")
 @click.option("--poll-seconds", type=float, default=60.0, show_default=True)
@@ -4304,7 +4315,9 @@ def multileg_shadow(
     show_default=True,
     type=click.Choice(["testnet", "mainnet"]),
 )
-@click.option("--strategies", default="chop_grid", show_default=True)  # trend_scalp disabled 2026-06-17
+@click.option(
+    "--strategies", default="chop_grid", show_default=True
+)  # trend_scalp disabled 2026-06-17
 @click.option("--bar-source", default="feature-store", show_default=True)
 @click.option("--poll-seconds", type=float, default=60.0, show_default=True)
 @click.option("--allow-shared-account", is_flag=True)
@@ -8124,7 +8137,9 @@ def research_promote(args):
 @research.command("init")
 @click.argument("topic")
 @click.option("--strategy", default="tpc")
-@click.option("--layers", default="regime", help="Layer hint for README (comma-separated)")
+@click.option(
+    "--layers", default="regime", help="Layer hint for README (comma-separated)"
+)
 @click.option("--segment", default="recent_6m_oos")
 @click.option("--force", is_flag=True, help="Overwrite existing experiment directory")
 def research_init(topic, strategy, layers, segment, force):
@@ -8264,7 +8279,9 @@ def monitor_segments(config_path: str):
 )
 @click.option("--timeframe", default="120T", show_default=True)
 @click.option("--lookback-days", default=7, show_default=True, type=int)
-@click.option("--symbols", default="", help="Comma-separated symbols (default: bus listing)")
+@click.option(
+    "--symbols", default="", help="Comma-separated symbols (default: bus listing)"
+)
 @click.option("--output", required=True, help="Output parquet path")
 def monitor_export_window(
     bus_root: str, timeframe: str, lookback_days: int, symbols: str, output: str
@@ -8332,7 +8349,9 @@ def monitor_archive_batch(
     default="",
     help="weekly|monthly|quarterly|yearly (see config/monitoring/schedules.yaml)",
 )
-@click.option("--all", "run_all", is_flag=True, help="Run every cadence in schedules.yaml")
+@click.option(
+    "--all", "run_all", is_flag=True, help="Run every cadence in schedules.yaml"
+)
 @click.option(
     "--schedules",
     default="config/monitoring/schedules.yaml",
@@ -8342,7 +8361,12 @@ def monitor_archive_batch(
 @click.option("--dry-run", is_flag=True)
 @click.option("--list", "list_only", is_flag=True, help="List cadence names")
 def monitor_schedule(
-    cadence: str, run_all: bool, schedules: str, run_ts: str, dry_run: bool, list_only: bool
+    cadence: str,
+    run_all: bool,
+    schedules: str,
+    run_ts: str,
+    dry_run: bool,
+    list_only: bool,
 ):
     """Scheduled monitor: run manifest + update index.json + rd_registry.sqlite (CMS)."""
     args = ["--schedules", schedules]
@@ -8366,7 +8390,9 @@ def monitor_schedule(
 @click.option("--window-days", default=7, show_default=True, type=int)
 @click.option("--dry-run", is_flag=True)
 @click.option("--skip-telegram", is_flag=True)
-def monitor_rebalance_check(symbol: str, window_days: int, dry_run: bool, skip_telegram: bool):
+def monitor_rebalance_check(
+    symbol: str, window_days: int, dry_run: bool, skip_telegram: bool
+):
     """Regime Cockpit NAV rebalance check → monitor_event + optional TG (T2d)."""
     args = ["--symbol", symbol, "--window-days", str(window_days)]
     if dry_run:
@@ -8397,7 +8423,9 @@ def monitor_check_staleness(schedules: str, dry_run: bool):
 @click.option("--interval-seconds", default=60.0, show_default=True, type=float)
 @click.option("--mainnet", is_flag=True, help="Use MULTI_LEG_BINANCE_FUTURES_* keys")
 @click.option("--dry-run", is_flag=True, help="Print alerts only, no Telegram")
-@click.option("--force-notify", is_flag=True, help="Skip cooldown and send if triggered")
+@click.option(
+    "--force-notify", is_flag=True, help="Skip cooldown and send if triggered"
+)
 @click.option(
     "--change-pct",
     default=None,

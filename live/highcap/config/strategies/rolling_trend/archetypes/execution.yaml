@@ -10,15 +10,15 @@ leverage:
 
 # ── 入场条件 (AND) — 冠军三重过滤 ──
 entry:
-  weekly_ema_200_position_lt: -0.05    # 价格低于周线EMA200至少5%
-  ema1200_cross_above_vwap1200: true   # EMA1200金叉VWAP1200
-  require_momentum: true               # roc_5>0 AND roc_20>0
+  weekly_ema_200_position_lt: -0.05 # 价格低于周线EMA200至少5%
+  ema1200_cross_above_vwap1200: true # EMA1200金叉VWAP1200
+  require_momentum: true # roc_5>0 AND roc_20>0
 
 # ── 滚仓触发 (AND) — VWAP支撑位滚仓 ──
 roll_trigger:
-  price_drawdown_from_peak_pct: 0.20   # 价格从峰值跌≥20%
-  require_profitable: true             # 当前浮盈>0
-  near_vwap1200_pct: 0.05              # 价格在VWAP1200 ±5%范围内（主力成本区支撑）
+  price_drawdown_from_peak_pct: 0.20 # 价格从峰值跌≥20%
+  require_profitable: true # 当前浮盈>0
+  near_vwap1200_pct: 0.05 # 价格在VWAP1200 ±5%范围内（主力成本区支撑）
   rationale: "只在VWAP1200支撑位附近升级杠杆，避免半山腰加杠杆"
 
 # ── 止盈 (equity-based 阶梯) ──
