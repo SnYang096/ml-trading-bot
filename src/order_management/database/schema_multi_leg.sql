@@ -94,3 +94,15 @@ CREATE INDEX IF NOT EXISTS idx_multi_leg_positions_run ON multi_leg_positions(ru
 CREATE INDEX IF NOT EXISTS idx_multi_leg_positions_strategy_symbol ON multi_leg_positions(strategy, symbol);
 CREATE INDEX IF NOT EXISTS idx_multi_leg_execution_reports_run ON multi_leg_execution_reports(run_id);
 CREATE INDEX IF NOT EXISTS idx_multi_leg_reconciliation_run ON multi_leg_reconciliation_snapshots(run_id);
+
+-- Additional indexes (2026-06-17 review)
+-- P0: CMS/reconcile queries filter by status on every page load
+CREATE INDEX IF NOT EXISTS idx_multi_leg_positions_status ON multi_leg_positions(status);
+-- P1: phantom cleanup cascades, leg_id lookup
+CREATE INDEX IF NOT EXISTS idx_multi_leg_orders_leg_id ON multi_leg_orders(leg_id);
+-- P1: reconcile queries open exchange orders
+CREATE INDEX IF NOT EXISTS idx_multi_leg_orders_exchange_status ON multi_leg_orders(exchange_order_id, status);
+-- P1: console/diagnostic queries by symbol+time
+CREATE INDEX IF NOT EXISTS idx_multi_leg_execution_reports_symbol_time ON multi_leg_execution_reports(symbol, event_time);
+-- P2: time-range queries
+CREATE INDEX IF NOT EXISTS idx_multi_leg_orders_created_at ON multi_leg_orders(created_at);

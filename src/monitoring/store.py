@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS monitor_event (
   output_dir    TEXT,
   ts            TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_monitor_event_ts ON monitor_event(ts);
+CREATE INDEX IF NOT EXISTS idx_monitor_event_source_ts ON monitor_event(source, ts);
+CREATE INDEX IF NOT EXISTS idx_monitor_event_strategy_status ON monitor_event(strategy, status);
 """
 
 

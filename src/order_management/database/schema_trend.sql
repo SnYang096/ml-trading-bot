@@ -153,3 +153,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_client_order_id ON orders(client_or
 CREATE INDEX IF NOT EXISTS idx_stop_loss_trailing_position_id ON stop_loss_trailing(position_id);
 CREATE INDEX IF NOT EXISTS idx_performance_metrics_date ON performance_metrics(date);
 CREATE INDEX IF NOT EXISTS idx_performance_metrics_symbol ON performance_metrics(symbol);
+
+-- Additional indexes (2026-06-17 review)
+CREATE INDEX IF NOT EXISTS idx_orders_binance_order_id ON orders(binance_order_id);
+CREATE INDEX IF NOT EXISTS idx_positions_symbol_status ON positions(symbol, status);
+CREATE INDEX IF NOT EXISTS idx_orders_position_id_status ON orders(position_id, status);

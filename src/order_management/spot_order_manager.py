@@ -73,6 +73,11 @@ class SpotOrderManager:
                 """
             )
             self._ensure_order_columns(conn)
+            # Additional indexes (2026-06-17 review)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_spot_orders_symbol_status ON spot_orders(symbol, status)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_spot_orders_exchange_order_id ON spot_orders(exchange_order_id)")
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_spot_orders_client_order_id ON spot_orders(client_order_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_spot_orders_created_at ON spot_orders(created_at)")
             conn.commit()
 
     def _ensure_order_columns(self, conn: sqlite3.Connection) -> None:
