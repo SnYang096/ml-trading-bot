@@ -1,0 +1,8 @@
+# trend_scalp — bidirectional variant (LONG+SHORT simultaneous initial legs)
+strategy:
+  name: trend-scalp-120T-bidirectional
+  archetype: TrendScalp
+  timeframe: "120T"
+  bidirectional: true
+  symbol_include: [BTCUSDT, ETHUSDT, BNBUSDT, SOLUSDT, XRPUSDT, HYPEUSDT]
+  symbol_exclude: []

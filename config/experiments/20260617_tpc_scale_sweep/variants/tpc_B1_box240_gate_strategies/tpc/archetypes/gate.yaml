@@ -1,0 +1,36 @@
+# TPC Gate — B1: 加 box_stability_240 gate（20天箱体过滤）
+# 假设：20天级稳定箱体不适合 trend swing，应 deny
+schema:
+  phases:
+    - hard_gate
+    - guardrail
+  evaluation_order: hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+hard_gates:
+  - id: gate_tpc_semantic_chop_high
+    tag: HARD_TPC_SEMANTIC_CHOP
+    phase: hard_gate
+    priority: 6
+    reason: 高 chop 不追趋势回调
+    when:
+      tpc_semantic_chop:
+        value_gt: 0.4
+    then:
+      action: deny
+    locked: true
+  - id: gate_box_stable_240
+    tag: HARD_BOX_STABLE_240
+    phase: hard_gate
+    priority: 7
+    reason: "B1: 20天级稳定箱体内不做趋势回调（240-bar window）"
+    when:
+      box_stability_240:
+        value_gte: 0.85
+    then:
+      action: deny
+    locked: false
+guardrails: []
+system_safety: []

@@ -42,7 +42,7 @@ rolling:
 
   # 滚仓触发 (AND条件)
   roll_trigger:
-    price_drawdown_from_entry: 0.20  # 从入场价回撤 ≥20%
+    price_drawdown_from_peak: 0.20     # 从峰值回撤 ≥20%
     require_profitable: true          # 且当前有浮盈
 
   # 止盈 (spot式阶梯)

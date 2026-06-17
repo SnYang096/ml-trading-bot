@@ -1,0 +1,79 @@
+inventory:
+  # True dual_add: open both LONG+SHORT, add to winner, let trend run.
+  # Relaxed exposure limits let the winning side build 4-5 units
+  # while keeping 1 unit on the losing side as hedge.
+  initial_legs:
+  - LONG
+  - SHORT
+  # 加仓方向：both = 上下突破都可加仓。
+  add_mode: both
+  # 趋势方向来源：dynamic_bar 表示每根信号 bar 用最新 trend_direction 判断 LONG/SHORT。
+  trend_direction_source: dynamic_bar
+  # 趋势翻转处理：close_offside_all = 平掉新趋势反向的所有腿（含初始腿和加仓腿）。
+  flip_action: close_offside_all
+  # 翻转后不在同一段内立即按新方向 reseed；等下一 regime 段再开仓。
+  reseed_on_flip: false
+  # 单方向最多加仓次数；不含初始腿。
+  max_adds_per_side: 4
+  # 最大总腿数（long + short）；放宽到 6 让赢方充分加仓。
+  max_gross_exposure_units: 6
+  # 最大净腿数绝对值（abs(long - short)）；放宽到 4 允许强趋势偏离。
+  max_net_exposure_units: 4
+  # 回测里的亏损腿最长持有 bar 数；超过且该腿仍亏损则按 loser_timeout 平仓。
+  max_loser_hold_bars: 24
+add_spacing:
+  # 加仓间距基准：atr = 用入场段冻结 ATR 计算阶梯。
+  primary: atr
+  # 每次顺趋势加仓间距 = atr_mult * ATR。
+  atr_mult: 0.75
+take_profit:
+  # basket = 当前篮子整体净 PnL 达标后一起平；per_leg = 每条腿独立止盈。
+  mode: basket
+  # 实盘当前固定加入往返手续费缓冲；此字段保留为研究/配置说明。
+  fee_aware: true
+  # 止盈距离取 max(ATR 距离、百分比距离、绝对距离)。
+  distance: max
+  # ATR 止盈距离 = atr_mult * ATR。
+  atr_mult: 0.6
+  # 最小百分比止盈距离；0.0012 = 0.12%。
+  min_pct: 0.0012
+  # 最小绝对价格距离；0 表示不启用绝对下限。
+  min_abs: 0.0
+order_model:
+  # Maker execution: passive LIMIT entries (lower fees), taker MARKET exits.
+  maker_execution: true
+  # 入场订单：marketable_limit = Binance LIMIT + IOC，用限价表达最大滑点保护。
+  entry_order_type: marketable_limit
+  # 加仓订单同理。
+  add_order_type: marketable_limit
+  # marketable limit 最大允许滑点。
+  max_slippage_bps: 5.0
+  # Maker 入场最长等待 bar 数；超时撤单重新在当前价挂 maker。
+  maker_entry_max_wait_bars: 2
+  # Maker 入场重挂 bar 间隔；0 = 不重挂。
+  maker_repeg_bars: 0
+  # 非 IOC 残留挂单的超时 bar 数。
+  pending_timeout_bars: 1
+  # 出场模式：market（taker，立即成交风险出清）。
+  exit_order_type: market
+  # 回测里的入场成交滑点（不含手续费）。
+  simulated_entry_slippage_bps: 2.0
+  # 回测里的加仓成交滑点。
+  simulated_add_slippage_bps: 2.0
+risk:
+  # 最短趋势段 bar 数；低于该长度的 entry/hold 段会被过滤。
+  min_segment_bars: 6
+  # 最长趋势段 bar 数；到期后按 regime_exit/段结束平仓。
+  max_segment_bars: 120
+  # 趋势/低 chop 条件丢失时强制退出当前段。
+  force_exit_on_regime_loss: true
+  # regime_only = 不在段内按 MTM 亏损硬止损；max_loss_per_segment 作为门禁/报告约束。
+  risk_stop_mode: regime_only
+  # 段级最大亏损阈值；risk_stop_mode=mtm 时触发段内 risk_stop，当前 regime_only 下用于门禁。
+  max_loss_per_segment: 0.02
+  # 实盘保护止损模式：catastrophic = 成交后为每条腿挂灾难级 STOP_MARKET；none = 不挂。
+  protection_stop_mode: catastrophic
+  # 灾难止损距离下限之一：catastrophic_stop_atr_mult * ATR。
+  catastrophic_stop_atr_mult: 8.0
+  # 灾难止损距离下限之二：catastrophic_stop_tp_mult * 单腿 TP 距离；最终取两者较大。
+  catastrophic_stop_tp_mult: 8.0

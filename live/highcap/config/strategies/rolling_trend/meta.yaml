@@ -1,0 +1,22 @@
+strategy:
+  name: rolling-trend-120T
+  description: |
+    趋势滚仓策略（实盘配置）：
+    冠军入场(周线EMA200下方5%+EMA1200金叉VWAP+动量向上)，
+    2x→3x杠杆滚仓，权益5x触发spot式阶梯卖出。
+  owner: quant_team
+  archetype: RollingTrendLeverage
+  timeframe: "120T"
+  symbol_include:
+    - ETHUSDT
+    - SOLUSDT
+    - BNBUSDT
+  symbol_exclude:
+    - BTCUSDT  # 冠军入场条件对BTC不触发，暂排除
+  signal_source: indicator
+  signals:
+    - weekly_ema_200_position_f
+    - ema_1200_position_f
+    - macro_tp_vwap_1200_position_f
+    - roc_5_f
+    - roc_20_f

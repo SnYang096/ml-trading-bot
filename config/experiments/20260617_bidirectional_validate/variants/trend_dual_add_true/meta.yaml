@@ -1,0 +1,9 @@
+# trend_scalp — true dual_add variant (LONG+SHORT, add to winner, relaxed exposure)
+# Key changes from trend_bi: gross 4→6, net 2→4, adds 3→4
+strategy:
+  name: trend-scalp-120T-dual-add-true
+  archetype: TrendScalp
+  timeframe: "120T"
+  bidirectional: true
+  symbol_include: [BTCUSDT, ETHUSDT, BNBUSDT, SOLUSDT, XRPUSDT, HYPEUSDT]
+  symbol_exclude: []

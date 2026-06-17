@@ -374,6 +374,11 @@ def build_symbol_dataset(
     df["box_stability"] = feats[f"box_stability_{w}"]
     df["box_touches_hi"] = feats[f"box_touches_hi_{w}"]
     df["box_touches_lo"] = feats[f"box_touches_lo_{w}"]
+    # Include ALL windowed box columns (60/120/240/480/1200) so that
+    # downstream consumers (backtest, live) have the same feature set.
+    for col in feats.columns:
+        if col not in df.columns:
+            df[col] = feats[col]
     df["box_valid"] = (
         df["box_hi"].notna()
         & df["box_lo"].notna()

@@ -1,0 +1,59 @@
+# TPC Scale Sweep — chop/box 尺度 + regime side + 加仓止损
+#
+# 假设：
+#   A1/A2: chop gate 阈值微调（0.3/0.5 vs prod 0.4）
+#   B1/B2: box stability gate 用更大窗口（240/480 bars vs 之前无 box gate）
+#   C1:    bull 段只允许 LONG（消除空单拖累）
+#   D1:    加仓独立止损（不继承母仓）
+#
+# 运行:
+#   PYTHONPATH=src:scripts python -m scripts.event_backtest \
+#     --variant-grid config/experiments/20260617_tpc_scale_sweep/tpc_scale_sweep_grid.yaml \
+#     --quiet-signal-logs
+
+experiment_id: tpc_scale_sweep_20260617
+strategy: tpc
+market_segment_path: config/market_segment.yaml
+data_path: data/parquet_data
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+
+segment_matrix:
+  segments:
+    - bear_2022
+    - bull_2023_2024
+    - recent_range_to_bear
+  variants:
+    # ── Baseline ──
+    - suffix: E0_prod
+      strategies_root: config/strategies
+      output_dir: results/tpc/experiments/tpc_scale_sweep_20260617/E0_prod
+
+    # ── A: Chop gate 阈值 ──
+    - suffix: A1_chop_030
+      strategies_root: config/experiments/20260617_tpc_scale_sweep/variants/tpc_A1_chop_030_strategies
+      output_dir: results/tpc/experiments/tpc_scale_sweep_20260617/A1_chop_030
+
+    - suffix: A2_chop_050
+      strategies_root: config/experiments/20260617_tpc_scale_sweep/variants/tpc_A2_chop_050_strategies
+      output_dir: results/tpc/experiments/tpc_scale_sweep_20260617/A2_chop_050
+
+    # ── B: Box stability gate（更大窗口） ──
+    - suffix: B1_box240_gate
+      strategies_root: config/experiments/20260617_tpc_scale_sweep/variants/tpc_B1_box240_gate_strategies
+      output_dir: results/tpc/experiments/tpc_scale_sweep_20260617/B1_box240_gate
+
+    - suffix: B2_box480_gate
+      strategies_root: config/experiments/20260617_tpc_scale_sweep/variants/tpc_B2_box480_gate_strategies
+      output_dir: results/tpc/experiments/tpc_scale_sweep_20260617/B2_box480_gate
+
+    # ── C: Bull long only ──
+    - suffix: C1_bull_long
+      strategies_root: config/experiments/20260617_tpc_scale_sweep/variants/tpc_C1_bull_long_strategies
+      output_dir: results/tpc/experiments/tpc_scale_sweep_20260617/C1_bull_long
+
+    # ── D: 加仓独立止损 ──
+    - suffix: D1_add_stop_indep
+      strategies_root: config/experiments/20260617_tpc_scale_sweep/variants/tpc_D1_add_stop_2atr_strategies
+      output_dir: results/tpc/experiments/tpc_scale_sweep_20260617/D1_add_stop_indep

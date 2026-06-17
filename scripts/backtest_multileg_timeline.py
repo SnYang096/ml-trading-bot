@@ -85,6 +85,14 @@ def _build_features(data_dir, symbols):
 
 
 def _lookup(feats, sym, ts):
+    """Build the full feature dict for a single bar, mirroring live behaviour.
+
+    The live ``FeatureStoreBarProvider`` passes ``**raw`` (all feature-bus
+    columns) to the engine so that ``is_stable_box_bar`` and
+    ``features_pass_prefilter_rules`` can inspect windowed box columns
+    (``box_stability_120``, ``box_width_pct_60``, etc.).  This function
+    replicates that by forwarding every column from the feature DataFrame.
+    """
     df = feats.get(sym)
     if df is None or df.empty:
         return {}
@@ -92,16 +100,41 @@ def _lookup(feats, sym, ts):
     if df.empty:
         return {}
     r = df.iloc[-1]
-    return {
-        "semantic_chop": float(r.get("semantic_chop", r.get("bpc_semantic_chop", 0.5))),
-        "bpc_semantic_chop": float(
-            r.get("bpc_semantic_chop", r.get("semantic_chop", 0.5))
-        ),
-        "box_pos_60": float(r.get("box_pos_60", 0.5)),
-        "box_prefilter": bool(r.get("box_prefilter", False)),
-        "trend_confidence": float(r.get("trend_confidence", 0.0)),
-        "trend_direction": str(r.get("trend_direction", "UP")),
-    }
+
+    def _safe_float(v, default=0.0):
+        try:
+            fv = float(v)
+            return default if (pd.isna(fv) or not np.isfinite(fv)) else fv
+        except (TypeError, ValueError):
+            return default
+
+    # Start with all columns from the feature DataFrame (mirrors **raw in live).
+    features: Dict[str, Any] = {}
+    for col in df.columns:
+        val = r[col]
+        if isinstance(val, (np.bool_, bool)):
+            features[col] = bool(val)
+        elif isinstance(val, (np.integer, np.floating, int, float)):
+            features[col] = _safe_float(val)
+        elif isinstance(val, str):
+            features[col] = val
+        elif val is not None and not (isinstance(val, float) and pd.isna(val)):
+            features[col] = val
+
+    # Ensure canonical keys that the engine always expects.
+    chop = _safe_float(
+        features.get("semantic_chop", features.get("bpc_semantic_chop")),
+        0.5,
+    )
+    features["semantic_chop"] = chop
+    features["bpc_semantic_chop"] = _safe_float(
+        features.get("bpc_semantic_chop", chop), 0.5
+    )
+    features["trend_confidence"] = _safe_float(features.get("trend_confidence"), 0.0)
+    features["trend_direction"] = str(features.get("trend_direction", "UP"))
+    if "box_prefilter" not in features:
+        features["box_prefilter"] = bool(features.get("box_prefilter", False))
+    return features
 
 
 def _is_valid_entry_time(

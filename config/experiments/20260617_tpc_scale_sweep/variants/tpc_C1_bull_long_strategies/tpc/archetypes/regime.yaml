@@ -1,0 +1,41 @@
+# TPC Regime — C1: Bull 段只允许 LONG（通过 side_mask 实现）
+# 假设：W7 bull_2023_2024 空单 -4.90R 拖后腿，关掉熊墙 short tier 可消除
+allowed_regimes:
+  bull:
+    description: 强趋势市 — ADX50>25 且 EMA1200>0.1，适合结构退出（不 trailing）
+    match: all
+    rules:
+      - feature: adx_50
+        operator: ">="
+        value: 25
+      - feature: ema_1200_position
+        operator: ">="
+        value: 0.1
+  bear:
+    description: 弱势/下跌/震荡 — ADX50≤20 或 EMA1200 下方，必须 trailing 保护
+    match: any
+    rules:
+      - feature: adx_50
+        operator: <=
+        value: 20
+      - feature: ema_1200_position
+        operator: <=
+        value: -0.1
+  neutral:
+    description: 震荡/无方向 — 默认回退，trailing 保护
+    match: any
+    rules:
+      - feature: adx_50
+        operator: <=
+        value: 25
+allowed_sides:
+  - long
+  - short
+side_mask:
+  enabled: true
+  short_when:
+    description: "C1: 短单只在 ema_1200_position < 0.1 时允许（bull 段禁空）"
+    ema_1200_position:
+      value_lt: 0.1
+locked: false
+notes: "C1: 通过 side_mask.short_when 在 bull (EMA1200≥0.1) 段禁止 SHORT，消除空单拖累"

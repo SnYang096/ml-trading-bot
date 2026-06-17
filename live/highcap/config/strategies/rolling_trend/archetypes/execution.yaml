@@ -8,10 +8,12 @@ leverage:
   max: 3.0
   step: 1.0
 
-# ── 入场条件 (AND) ──
+# ── 入场条件 (AND) — 冠军入场 ──
+# Phase A 扫描结论: 深熊5% + EMA1200金叉VWAP + 动量向上 = 爆炸利润
 entry:
-  weekly_ema_200_position_lt: 0.0
-  ema1200_cross_above_vwap1200: true
+  weekly_ema_200_position_lt: -0.05    # 价格低于周线EMA200至少5%（深熊确认）
+  ema1200_cross_above_vwap1200: true   # EMA1200金叉VWAP1200（结构拐点）
+  require_momentum: true               # roc_5>0 AND roc_20>0（动量确认）
 
 # ── 滚仓触发 (AND 条件) ──
 roll_trigger:

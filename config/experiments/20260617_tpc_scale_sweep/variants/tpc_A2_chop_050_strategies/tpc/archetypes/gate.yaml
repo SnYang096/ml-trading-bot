@@ -1,0 +1,25 @@
+# TPC Gate — A2: chop 阈值收紧 0.4→0.5
+# 假设：更严格的 chop 过滤可以减少噪声入场
+schema:
+  phases:
+    - hard_gate
+    - guardrail
+  evaluation_order: hard_gate -> guardrail
+  governance:
+    selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
+    min_gate_score: 0.0
+    alert_threshold: 0.25
+hard_gates:
+  - id: gate_tpc_semantic_chop_high
+    tag: HARD_TPC_SEMANTIC_CHOP
+    phase: hard_gate
+    priority: 6
+    reason: "A2: chop 0.4→0.5 收紧，只在低 chop 环境入场"
+    when:
+      tpc_semantic_chop:
+        value_gt: 0.5
+    then:
+      action: deny
+    locked: false
+guardrails: []
+system_safety: []
