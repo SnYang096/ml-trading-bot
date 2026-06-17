@@ -1,0 +1,13 @@
+# chop_grid — baseline variant (live archetypes, P0 prefilter fix)
+strategy:
+  name: chop-grid-120T
+  archetype: ChopGrid
+  timeframe: "120T"
+  bidirectional: true
+  symbol_include: [BTCUSDT, ETHUSDT, BNBUSDT, SOLUSDT, XRPUSDT]
+  symbol_exclude: []
+
+# Required by chop_grid_backtest for FeatureStore auto-detection
+grid_backtest:
+  feature_store_dir: feature_store
+  feature_store_timeframe: 120T

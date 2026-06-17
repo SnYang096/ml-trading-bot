@@ -25,9 +25,9 @@
 | Phase | 内容                   | 状态                                   |
 | ----- | ---------------------- | -------------------------------------- |
 | A0    | 基线回测（P0 fix 后）  | ✅ 完成 — 全 segment 盈利，maxDD ≤9.21% |
-| A1    | 多 Box 共识过滤        | 待定                                   |
-| A2    | compression_score 入场 | 待定                                   |
-| A3    | Wall 静态信号          | 待定                                   |
+| A1    | Box Macro IC scan      | ✅ Phase 1 完成 — 发现 stability 负 IC |
+| A2    | compression_score IC   | ✅ Phase 1 完成 — 弱负 IC，无价值 |
+| A3    | Wall 静态信号          | 待定 — 需先 build wall features |
 | A4    | 组合最佳配置           | 待定                                   |
 | B     | Shadow 实盘验证        | 待定                                   |
 | C     | 实盘上线               | 待定                                   |

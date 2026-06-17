@@ -39,6 +39,17 @@ ENTRY_PRESETS = {
         "momentum": True,
         "roll_near_vwap": True,
     },
+    "r5": {
+        "desc": "R5 高杠杆: 2x→5x步进+仓位上限+紧风控",
+        "weekly_pos_lt": -0.05,
+        "ema_cross": True,
+        "momentum": True,
+        "roll_near_vwap": True,
+        "max_leverage": 5.0,
+        "max_position_notional": 500000,
+        "eq_dd_stop": 0.35,
+        "ladder_base_frac": 0.05,
+    },
     "r6": {
         "desc": "R6 保守: 冠军入场+3x卖出(回撤-28%)",
         "weekly_pos_lt": -0.05,
@@ -116,6 +127,7 @@ def simulate_symbol(
     momentum=False,
     compression=False,
     roll_near_vwap=False,
+    max_position_notional=float("inf"),
 ):
     ohlc = ohlc.copy()
     close = ohlc["close"]
@@ -282,7 +294,7 @@ def simulate_symbol(
                     last_exit_bar = i
                     continue
 
-            # Roll (with optional VWAP proximity filter)
+            # Roll (step-wise +1x, with position notional cap)
             px_dd_peak = (c - peak_px) / peak_px
             roll_ok = px_dd_peak <= -0.20 and upnl > 0 and lev < max_leverage and c > 0
             if roll_near_vwap and roll_ok and "vwap1200" in ohlc.columns:
@@ -291,6 +303,11 @@ def simulate_symbol(
             if roll_ok:
                 old_lev = lev
                 lev = min(lev + 1.0, max_leverage)
+                new_notional = cur_eq * lev
+                if new_notional > max_position_notional:
+                    lev = max_position_notional / cur_eq if cur_eq > 0 else lev
+                    if lev <= old_lev:
+                        continue
                 pos_qty = (cur_eq * lev) / c
                 rolls += 1
                 trades.append(
@@ -553,16 +570,27 @@ def run(
                 ohlc,
                 initial_capital=initial_capital,
                 initial_leverage=initial_leverage,
-                max_leverage=max_leverage,
+                max_leverage=preset.get("max_leverage", max_leverage),
                 ladder_trigger=preset.get("ladder_trigger", ladder_trigger),
-                eq_dd_stop=eq_dd_stop,
+                ladder_base_frac=preset.get("ladder_base_frac", 0.08),
+                eq_dd_stop=preset.get("eq_dd_stop", eq_dd_stop),
                 px_dd_stop=px_dd_stop,
                 allow_reentry=not no_reentry,
                 roll_near_vwap=preset.get("roll_near_vwap", False),
+                max_position_notional=preset.get("max_position_notional", float("inf")),
                 **{
                     k: v
                     for k, v in preset.items()
-                    if k not in ("desc", "ladder_trigger", "roll_near_vwap")
+                    if k
+                    not in (
+                        "desc",
+                        "ladder_trigger",
+                        "roll_near_vwap",
+                        "max_leverage",
+                        "max_position_notional",
+                        "eq_dd_stop",
+                        "ladder_base_frac",
+                    )
                 },
             )
             results[sym] = r

@@ -1,0 +1,9 @@
+# Minimal features config: only wall_features_f for incremental build
+# Used to add wall features to existing feature_store layer
+
+name: chop_grid_wall_only
+description: Wall features only — incremental merge onto existing chop_grid layer
+
+feature_pipeline:
+  requested_features:
+    - wall_features_f

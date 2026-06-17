@@ -29,7 +29,7 @@ quick_layer_scans:
   # A1: box_stability_240 plateau (chop 环境下)
   - mode: feature-plateau
     features_parquet: *parquet
-    label: forward_rr
+    label: forward_rr_good
     filter:
       - "bpc_semantic_chop>=0.52"
     feature: box_stability_240
@@ -40,7 +40,7 @@ quick_layer_scans:
   # A1: box_pos_240 range scan
   - mode: feature-plateau
     features_parquet: *parquet
-    label: forward_rr
+    label: forward_rr_good
     filter:
       - "bpc_semantic_chop>=0.52"
     feature: box_pos_240
@@ -59,7 +59,7 @@ quick_layer_scans:
   # A2: compression score plateau
   - mode: feature-plateau
     features_parquet: *parquet
-    label: forward_rr
+    label: forward_rr_good
     filter:
       - "bpc_semantic_chop>=0.52"
     feature: box_compression_score

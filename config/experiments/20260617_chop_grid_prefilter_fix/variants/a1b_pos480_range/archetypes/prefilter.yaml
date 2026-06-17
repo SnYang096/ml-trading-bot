@@ -1,0 +1,25 @@
+# Chop grid prefilter — A1b variant: box_pos_480 range filter
+# Phase 1 IC scan: box_pos_480 positive IC (+0.027)
+# → Filter for middle position in 480-bar box
+
+rules:
+  - feature: box_pos_60
+    operator: ">="
+    value: 0.40
+    locked: true
+    lock_reason: chop_grid box_pos_60 lower bound (OOS stack ablation 2026-06-04)
+  - feature: box_pos_60
+    operator: <=
+    value: 0.60
+    locked: true
+    lock_reason: chop_grid box_pos_60 upper bound (OOS stack ablation 2026-06-04)
+
+  # A1b: box_pos_480 range (Phase 1 IC scan finding)
+  - feature: box_pos_480
+    operator: ">="
+    value: 0.30
+    rationale: "IC@1=+0.027 for box_pos_480. Ensure price not too low in 480-bar box."
+  - feature: box_pos_480
+    operator: <=
+    value: 0.70
+    rationale: "IC@1=+0.027 for box_pos_480. Ensure price not too high in 480-bar box."

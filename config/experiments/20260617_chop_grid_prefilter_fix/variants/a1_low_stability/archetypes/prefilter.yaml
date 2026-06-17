@@ -1,0 +1,22 @@
+# Chop grid prefilter — A1 variant: low stability filter
+# Phase 1 IC scan: box_stability_240 NEGATIVE IC (-0.04)
+# Q1 (low) mean_rr=+0.60 vs Q4 (high) mean_rr=-0.46
+# → Filter for LOW stability (counter-intuitive: high stability = exhausted momentum)
+
+rules:
+  - feature: box_pos_60
+    operator: ">="
+    value: 0.40
+    locked: true
+    lock_reason: chop_grid box_pos_60 lower bound (OOS stack ablation 2026-06-04)
+  - feature: box_pos_60
+    operator: <=
+    value: 0.60
+    locked: true
+    lock_reason: chop_grid box_pos_60 upper bound (OOS stack ablation 2026-06-04)
+
+  # A1: low stability filter (Phase 1 IC scan finding)
+  - feature: box_stability_240
+    operator: <
+    value: 0.40
+    rationale: "IC@1=-0.040, Q1(low) mean_rr=+0.60 vs Q4(high)=-0.46. High stability = exhausted momentum."

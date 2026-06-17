@@ -686,7 +686,7 @@ export function StrategiesTable({ strategies }: { strategies: AccountStrategyRow
               <tr key={`${s.scope}-${s.strategy}`} className={inactive || offline ? 'muted' : undefined}>
                 <td>
                   {scopeLabel} · {title}
-                  {offline ? <span className="muted">（已下线）</span> : null}
+                  {offline ? <span className={`${styles.offlineTag} muted`}>（已下线）</span> : null}
                 </td>
                 <td className={pnlClass(s.realized_pnl)}>{fmtPnl(s.realized_pnl)}</td>
                 <td className={pnlClass(s.unrealized_pnl)}>{fmtPnl(s.unrealized_pnl)}</td>
