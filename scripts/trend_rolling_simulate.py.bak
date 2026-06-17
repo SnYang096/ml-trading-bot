@@ -1,0 +1,894 @@
+#!/usr/bin/env python3
+"""趋势滚仓模拟器 v3 — 冠军入场 + 可重入 + 交易地图
+
+Entry presets:
+  champion (default): 周线EMA200下方5% + EMA1200金叉VWAP + 动量向上
+  base:              周线EMA200下方 + EMA1200金叉VWAP
+  deep:              周线EMA200下方10% + EMA1200金叉VWAP
+  compression:       ATR低位 + 价格突破EMA1200
+  custom:            自定义参数
+
+Leverage: 2x 初始 → 3x (价格从峰值跌20%且当前盈利)
+Risk: 权益回撤≥50% → 减半仓；价格距入场跌60% → 减半仓
+Exit: 权益达5倍后越长越卖, ≥15x允许清仓
+Re-entry: 允许清仓后重新入场 (60天冷却)
+
+用法:
+  python scripts/trend_rolling_simulate.py --entry champion --plot
+  python scripts/trend_rolling_simulate.py --entry base --plot
+  python scripts/trend_rolling_simulate.py --entry deep --plot
+"""
+
+import argparse
+import json
+import math
+from pathlib import Path
+from typing import Dict, List
+
+import numpy as np
+import pandas as pd
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
+ENTRY_PRESETS = {
+    "champion": {
+        "desc": "冠军入场: 周线EMA200下方5% + EMA1200金叉VWAP + 动量向上",
+        "weekly_pos_lt": -0.05,
+        "ema_cross": True,
+        "require_momentum": True,
+    },
+    "base": {
+        "desc": "基准入场: 周线EMA200下方 + EMA1200金叉VWAP",
+        "weekly_pos_lt": 0.0,
+        "ema_cross": True,
+        "require_momentum": False,
+    },
+    "deep": {
+        "desc": "深熊入场: 周线EMA200下方10% + EMA1200金叉VWAP",
+        "weekly_pos_lt": -0.10,
+        "ema_cross": True,
+        "require_momentum": False,
+    },
+    "compression": {
+        "desc": "压缩入场: ATR低位 + 价格突破EMA1200",
+        "weekly_pos_lt": 0.0,
+        "ema_cross": False,
+        "require_momentum": False,
+        "use_compression": True,
+    },
+}
+
+
+def load_ohlc(symbol: str) -> pd.DataFrame:
+    p = _REPO_ROOT / "cache" / "timeframes" / f"{symbol}_120T.parquet"
+    df = pd.read_parquet(p)
+    if df.index.tz is None:
+        df.index = df.index.tz_localize("UTC")
+    return df
+
+
+def compute_weekly_ema200(ohlc: pd.DataFrame) -> pd.Series:
+    weekly = ohlc["close"].resample("W").last().dropna()
+    weekly_ema200 = weekly.ewm(span=200, adjust=False).mean()
+    return weekly_ema200.reindex(ohlc.index, method="ffill")
+
+
+def compute_ema1200(close: pd.Series) -> pd.Series:
+    return close.ewm(span=1200, adjust=False).mean()
+
+
+def compute_vwap1200(ohlc: pd.DataFrame) -> pd.Series:
+    h, l, c, vol = ohlc["high"], ohlc["low"], ohlc["close"], ohlc["volume"]
+    tp = (h + l + c) / 3.0
+    num = (tp * vol).rolling(window=1200, min_periods=120).sum()
+    den = vol.rolling(window=1200, min_periods=120).sum()
+    return num / den.replace(0, np.nan)
+
+
+def ladder_speed(
+    mtm: float, trigger: float = 5.0, exp: float = 1.0, max_spd: float = 5.0
+) -> float:
+    """speed = min(max_spd, (mtm / trigger) ** exp)"""
+    if mtm < trigger or trigger <= 0:
+        return 0.0
+    return min(max_spd, float((mtm / trigger) ** exp))
+
+
+def simulate_symbol(
+    ohlc: pd.DataFrame,
+    *,
+    initial_capital: float = 10000.0,
+    initial_leverage: float = 2.0,
+    max_leverage: float = 3.0,
+    ladder_trigger: float = 5.0,
+    ladder_base_frac: float = 0.08,
+    ladder_exp: float = 1.0,
+    ladder_max_spd: float = 5.0,
+    eq_dd_stop: float = 0.50,
+    px_dd_stop: float = 0.60,
+    risk_cooldown_bars: int = 336,  # 28 days at 2h bars
+) -> Dict:
+    """趋势滚仓模拟 (v2)
+
+    Entry (AND):
+      weekly_ema_200_position < 0
+      ema1200 crosses ABOVE vwap1200
+
+    Leverage: 2x→3x when px drops ≥20% from peak AND upnl > 0
+
+    Risk (with cooldown to prevent death-by-a-thousand-cuts):
+      equity DD from peak ≥ eq_dd_stop → halve position, then cooldown
+      price DD from entry ≥ px_dd_stop → halve position, then cooldown
+
+    Exit (equity-based ladder):
+      equity / initial_capital ≥ ladder_trigger → start selling
+      sell_frac = min(max_frac, base_frac * speed)
+      at ≥3× trigger, allow full exit
+    """
+    ohlc = ohlc.copy()
+    close = ohlc["close"]
+
+    weekly_ema200 = compute_weekly_ema200(ohlc)
+    ohlc["weekly_ema_200_position"] = (close - weekly_ema200) / close.replace(0, np.nan)
+    ohlc["ema1200"] = compute_ema1200(close)
+    ohlc["vwap1200"] = compute_vwap1200(ohlc)
+
+    ema1200_s = ohlc["ema1200"]
+    vwap1200_s = ohlc["vwap1200"]
+    above = ema1200_s > vwap1200_s
+    cross_up = above & (~above.shift(1).fillna(False))
+
+    # State
+    eq = initial_capital
+    peak_eq = eq
+    max_dd = 0.0
+    pos_qty = 0.0
+    entry_px = 0.0
+    peak_px = 0.0
+    lev = 0.0
+    in_pos = False
+    busted = False
+    rolls = 0
+    sells = 0
+    sell_notional = 0.0
+    risk_cuts = 0
+    last_risk_bar = -risk_cooldown_bars  # cooldown tracker
+
+    trades: List[Dict] = []
+    min_bars = max(1200, 200 * 7)
+
+    for i in range(min_bars, len(ohlc)):
+        bar = ohlc.iloc[i]
+        c = float(bar["close"])
+        ts = ohlc.index[i]
+
+        # ── Entry ──
+        if not in_pos:
+            wp = float(bar.get("weekly_ema_200_position", 1.0) or 1.0)
+            cu = bool(cross_up.iloc[i])
+            if wp < 0.0 and cu and c > 0:
+                entry_px = c
+                peak_px = c
+                lev = initial_leverage
+                pos_qty = (eq * lev) / c
+                in_pos = True
+                last_risk_bar = -risk_cooldown_bars
+                trades.append(
+                    dict(
+                        entry_time=str(ts),
+                        entry_price=entry_px,
+                        leverage=lev,
+                        pos_qty=float(pos_qty),
+                        type="entry",
+                    )
+                )
+
+        if in_pos:
+            upnl = pos_qty * (c - entry_px)
+            cur_eq = eq + upnl
+            peak_px = max(peak_px, c)
+
+            if cur_eq <= 100:
+                eq = 100
+                pos_qty = 0
+                lev = 0
+                in_pos = False
+                busted = True
+                trades.append(
+                    dict(exit_time=str(ts), exit_price=c, exit_equity=eq, type="bust")
+                )
+                break
+
+            peak_eq = max(peak_eq, cur_eq)
+            eq_dd = (cur_eq - peak_eq) / peak_eq if peak_eq > 0 else 0.0
+            max_dd = min(max_dd, eq_dd)
+
+            bars_since_risk = i - last_risk_bar
+
+            # ── Risk: Equity DD stop (with cooldown) ──
+            if (
+                eq_dd <= -eq_dd_stop
+                and pos_qty > 0
+                and bars_since_risk >= risk_cooldown_bars
+            ):
+                cut = pos_qty * 0.5
+                eq += cut * (c - entry_px)
+                pos_qty -= cut
+                risk_cuts += 1
+                last_risk_bar = i
+                trades.append(
+                    dict(
+                        time=str(ts),
+                        price=c,
+                        type="risk_eq_dd",
+                        reduce_qty=float(cut),
+                        eq_dd=float(eq_dd),
+                        remaining_qty=float(pos_qty),
+                    )
+                )
+                upnl = pos_qty * (c - entry_px)
+                cur_eq = eq + upnl
+                if pos_qty <= 0:
+                    in_pos = False
+                    continue
+
+            # ── Risk: Price DD stop (with cooldown) ──
+            px_dd = (c - entry_px) / entry_px if entry_px > 0 else 0.0
+            if (
+                px_dd <= -px_dd_stop
+                and pos_qty > 0
+                and bars_since_risk >= risk_cooldown_bars
+            ):
+                cut = pos_qty * 0.5
+                eq += cut * (c - entry_px)
+                pos_qty -= cut
+                risk_cuts += 1
+                last_risk_bar = i
+                trades.append(
+                    dict(
+                        time=str(ts),
+                        price=c,
+                        type="risk_px_dd",
+                        reduce_qty=float(cut),
+                        px_dd=float(px_dd),
+                        remaining_qty=float(pos_qty),
+                    )
+                )
+                upnl = pos_qty * (c - entry_px)
+                cur_eq = eq + upnl
+                if pos_qty <= 0:
+                    in_pos = False
+                    continue
+
+            # ── Roll: px drops 20% from peak AND profitable ──
+            px_dd_peak = (c - peak_px) / peak_px
+            if px_dd_peak <= -0.20 and upnl > 0 and lev < max_leverage and c > 0:
+                old_lev = lev
+                lev = min(lev + 1.0, max_leverage)
+                pos_qty = (cur_eq * lev) / c
+                rolls += 1
+                trades.append(
+                    dict(
+                        time=str(ts),
+                        price=c,
+                        type="roll",
+                        old_leverage=old_lev,
+                        new_leverage=lev,
+                        pnl=float(upnl),
+                        px_dd_peak=float(px_dd_peak),
+                        peak_px=float(peak_px),
+                    )
+                )
+
+            # ── Profit ladder (equity-based) ──
+            eq_mult = cur_eq / initial_capital
+            if eq_mult >= ladder_trigger and pos_qty > 0:
+                spd = ladder_speed(
+                    eq_mult,
+                    trigger=ladder_trigger,
+                    exp=ladder_exp,
+                    max_spd=ladder_max_spd,
+                )
+                if spd > 0:
+                    max_frac = 1.0 if eq_mult >= ladder_trigger * 3 else 0.99
+                    sell_frac = min(max_frac, ladder_base_frac * spd)
+                    sell_qty = pos_qty * sell_frac
+                    if sell_qty > 0:
+                        eq += sell_qty * (c - entry_px)
+                        pos_qty -= sell_qty
+                        sells += 1
+                        sell_notional += sell_qty * c
+                        trades.append(
+                            dict(
+                                time=str(ts),
+                                price=c,
+                                type="ladder_sell",
+                                sell_qty=float(sell_qty),
+                                sell_notional=float(sell_qty * c),
+                                sell_frac=float(sell_frac),
+                                speed=float(spd),
+                                eq_mult=float(eq_mult),
+                                remaining_qty=float(pos_qty),
+                                equity=float(eq),
+                            )
+                        )
+                        if pos_qty <= 0:
+                            in_pos = False
+        else:
+            peak_eq = max(peak_eq, eq)
+
+    # Close at end
+    if in_pos and not busted:
+        eq += pos_qty * (float(ohlc.iloc[-1]["close"]) - entry_px)
+        if eq < 0:
+            eq = 100
+            busted = True
+
+    start = ohlc.index[min_bars]
+    years = max(0.01, (ohlc.index[-1] - start).days / 365.25)
+    tot_ret = eq / initial_capital
+    cagr = tot_ret ** (1.0 / years) - 1.0 if eq > 0 else -1.0
+
+    return dict(
+        final_equity=float(eq),
+        initial_capital=initial_capital,
+        total_return=float(tot_ret),
+        cagr=float(cagr),
+        max_dd=float(max_dd),
+        busted=busted,
+        roll_count=rolls,
+        risk_reduces=risk_cuts,
+        total_sells=sells,
+        total_sell_notional=float(sell_notional),
+        years=float(years),
+        trades=trades,
+    )
+    """趋势滚仓模拟 (v2)
+
+    Entry (AND):
+      weekly_ema_200_position < 0
+      ema1200 crosses ABOVE vwap1200
+
+    Leverage: 2x→3x when px drops ≥20% from peak AND upnl > 0
+
+    Risk:
+      equity DD from peak ≥ eq_dd_stop → halve position
+      price DD from entry ≥ px_dd_stop → halve position
+
+    Exit (equity-based ladder):
+      equity / initial_capital ≥ ladder_trigger → start selling
+      sell_frac = min(max_frac, base_frac * speed)
+      at ≥3× trigger, allow full exit
+    """
+    ohlc = ohlc.copy()
+    close = ohlc["close"]
+
+    weekly_ema200 = compute_weekly_ema200(ohlc)
+    ohlc["weekly_ema_200_position"] = (close - weekly_ema200) / close.replace(0, np.nan)
+    ohlc["ema1200"] = compute_ema1200(close)
+    ohlc["vwap1200"] = compute_vwap1200(ohlc)
+
+    ema1200_s = ohlc["ema1200"]
+    vwap1200_s = ohlc["vwap1200"]
+    above = ema1200_s > vwap1200_s
+    cross_up = above & (~above.shift(1).fillna(False))
+
+    # State
+    eq = initial_capital
+    peak_eq = eq
+    max_dd = 0.0
+    pos_qty = 0.0
+    entry_px = 0.0
+    peak_px = 0.0
+    lev = 0.0
+    in_pos = False
+    busted = False
+    rolls = 0
+    sells = 0
+    sell_notional = 0.0
+    risk_cuts = 0
+
+    trades: List[Dict] = []
+    min_bars = max(1200, 200 * 7)
+
+    for i in range(min_bars, len(ohlc)):
+        bar = ohlc.iloc[i]
+        c = float(bar["close"])
+        ts = ohlc.index[i]
+
+        # ── Entry ──
+        if not in_pos:
+            wp = float(bar.get("weekly_ema_200_position", 1.0) or 1.0)
+            cu = bool(cross_up.iloc[i])
+            if wp < 0.0 and cu and c > 0:
+                entry_px = c
+                peak_px = c
+                lev = initial_leverage
+                pos_qty = (eq * lev) / c
+                in_pos = True
+                trades.append(
+                    dict(
+                        entry_time=str(ts),
+                        entry_price=entry_px,
+                        leverage=lev,
+                        pos_qty=float(pos_qty),
+                        type="entry",
+                    )
+                )
+
+        if in_pos:
+            upnl = pos_qty * (c - entry_px)
+            cur_eq = eq + upnl
+            peak_px = max(peak_px, c)
+
+            if cur_eq <= 100:
+                eq = 100
+                pos_qty = 0
+                lev = 0
+                in_pos = False
+                busted = True
+                trades.append(
+                    dict(exit_time=str(ts), exit_price=c, exit_equity=eq, type="bust")
+                )
+                break
+
+            peak_eq = max(peak_eq, cur_eq)
+            eq_dd = (cur_eq - peak_eq) / peak_eq if peak_eq > 0 else 0.0
+            max_dd = min(max_dd, eq_dd)
+
+            # ── Risk: Equity DD stop ──
+            if eq_dd <= -eq_dd_stop and pos_qty > 0:
+                cut = pos_qty * 0.5
+                eq += cut * (c - entry_px)
+                pos_qty -= cut
+                risk_cuts += 1
+                trades.append(
+                    dict(
+                        time=str(ts),
+                        price=c,
+                        type="risk_eq_dd",
+                        reduce_qty=float(cut),
+                        eq_dd=float(eq_dd),
+                        remaining_qty=float(pos_qty),
+                    )
+                )
+                upnl = pos_qty * (c - entry_px)
+                cur_eq = eq + upnl
+                if pos_qty <= 0:
+                    in_pos = False
+                    continue
+
+            # ── Risk: Price DD stop ──
+            px_dd = (c - entry_px) / entry_px if entry_px > 0 else 0.0
+            if px_dd <= -px_dd_stop and pos_qty > 0:
+                cut = pos_qty * 0.5
+                eq += cut * (c - entry_px)
+                pos_qty -= cut
+                risk_cuts += 1
+                trades.append(
+                    dict(
+                        time=str(ts),
+                        price=c,
+                        type="risk_px_dd",
+                        reduce_qty=float(cut),
+                        px_dd=float(px_dd),
+                        remaining_qty=float(pos_qty),
+                    )
+                )
+                upnl = pos_qty * (c - entry_px)
+                cur_eq = eq + upnl
+                if pos_qty <= 0:
+                    in_pos = False
+                    continue
+
+            # ── Roll: px drops 20% from peak AND profitable ──
+            px_dd_peak = (c - peak_px) / peak_px
+            if px_dd_peak <= -0.20 and upnl > 0 and lev < max_leverage and c > 0:
+                old_lev = lev
+                lev = min(lev + 1.0, max_leverage)
+                pos_qty = (cur_eq * lev) / c
+                rolls += 1
+                trades.append(
+                    dict(
+                        time=str(ts),
+                        price=c,
+                        type="roll",
+                        old_leverage=old_lev,
+                        new_leverage=lev,
+                        pnl=float(upnl),
+                        px_dd_peak=float(px_dd_peak),
+                        peak_px=float(peak_px),
+                    )
+                )
+
+            # ── Profit ladder (equity-based) ──
+            eq_mult = cur_eq / initial_capital
+            if eq_mult >= ladder_trigger and pos_qty > 0:
+                spd = ladder_speed(
+                    eq_mult,
+                    trigger=ladder_trigger,
+                    exp=ladder_exp,
+                    max_spd=ladder_max_spd,
+                )
+                if spd > 0:
+                    max_frac = 1.0 if eq_mult >= ladder_trigger * 3 else 0.99
+                    sell_frac = min(max_frac, ladder_base_frac * spd)
+                    sell_qty = pos_qty * sell_frac
+                    if sell_qty > 0:
+                        eq += sell_qty * (c - entry_px)
+                        pos_qty -= sell_qty
+                        sells += 1
+                        sell_notional += sell_qty * c
+                        trades.append(
+                            dict(
+                                time=str(ts),
+                                price=c,
+                                type="ladder_sell",
+                                sell_qty=float(sell_qty),
+                                sell_notional=float(sell_qty * c),
+                                sell_frac=float(sell_frac),
+                                speed=float(spd),
+                                eq_mult=float(eq_mult),
+                                remaining_qty=float(pos_qty),
+                                equity=float(eq),
+                            )
+                        )
+                        if pos_qty <= 0:
+                            in_pos = False
+        else:
+            peak_eq = max(peak_eq, eq)
+
+    # Close at end
+    if in_pos and not busted:
+        eq += pos_qty * (float(ohlc.iloc[-1]["close"]) - entry_px)
+        if eq < 0:
+            eq = 100
+            busted = True
+
+    start = ohlc.index[min_bars]
+    years = max(0.01, (ohlc.index[-1] - start).days / 365.25)
+    tot_ret = eq / initial_capital
+    cagr = tot_ret ** (1.0 / years) - 1.0 if eq > 0 else -1.0
+
+    return dict(
+        final_equity=float(eq),
+        initial_capital=initial_capital,
+        total_return=float(tot_ret),
+        cagr=float(cagr),
+        max_dd=float(max_dd),
+        busted=busted,
+        roll_count=rolls,
+        risk_reduces=risk_cuts,
+        total_sells=sells,
+        total_sell_notional=float(sell_notional),
+        years=float(years),
+        trades=trades,
+    )
+
+
+def plot_trading_map(
+    symbol: str, ohlc: pd.DataFrame, result: Dict, out_dir: Path
+) -> None:
+    """绘制交易地图"""
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("  [SKIP] matplotlib not available")
+        return
+
+    trades = result.get("trades", [])
+    if not trades:
+        return
+
+    fig, axes = plt.subplots(
+        3, 1, figsize=(20, 12), sharex=True, gridspec_kw={"height_ratios": [3, 1, 1]}
+    )
+    ax_p, ax_e, ax_l = axes[0], axes[1], axes[2]
+
+    # Price
+    ax_p.plot(ohlc.index, ohlc["close"], color="gray", alpha=0.4, lw=0.5, label="Close")
+    if "ema1200" in ohlc.columns:
+        ax_p.plot(
+            ohlc.index,
+            ohlc["ema1200"],
+            color="blue",
+            alpha=0.5,
+            lw=0.8,
+            label="EMA1200",
+        )
+    if "vwap1200" in ohlc.columns:
+        ax_p.plot(
+            ohlc.index,
+            ohlc["vwap1200"],
+            color="orange",
+            alpha=0.5,
+            lw=0.8,
+            label="VWAP1200",
+        )
+    if "weekly_ema_200_position" in ohlc.columns:
+        wema = ohlc["close"] / (1 - ohlc["weekly_ema_200_position"].clip(-0.99, 0.99))
+        ax_p.plot(
+            ohlc.index, wema, color="red", alpha=0.3, lw=0.8, ls="--", label="W-EMA200"
+        )
+
+    for t in trades:
+        ts = pd.Timestamp(t.get("entry_time") or t.get("time") or t.get("exit_time"))
+        if ts is None:
+            continue
+        tp = t.get("type", "")
+        px = t.get("entry_price") or t.get("price", 0)
+        if tp == "entry":
+            ax_p.axvline(ts, color="green", alpha=0.5, lw=1.5)
+            ax_p.annotate(
+                f"E {t.get('leverage','')}x",
+                (ts, px),
+                fontsize=6,
+                color="green",
+                xytext=(5, 15),
+                textcoords="offset points",
+                arrowprops=dict(arrowstyle="->", color="green", alpha=0.4),
+            )
+        elif tp == "roll":
+            ax_p.axvline(ts, color="purple", alpha=0.4, lw=1, ls=":")
+        elif tp == "ladder_sell":
+            ax_p.scatter(ts, px, color="red", s=8, alpha=0.3, marker="v")
+        elif "risk" in tp:
+            ax_p.axvline(ts, color="darkred", alpha=0.4, lw=1, ls="--")
+
+    ax_p.set_ylabel("Price (USDT)")
+    ax_p.legend(loc="upper left", fontsize=7)
+    ax_p.set_title(
+        f"{symbol} — Trend Rolling Trading Map", fontsize=12, fontweight="bold"
+    )
+    ax_p.grid(True, alpha=0.3)
+
+    # Equity curve
+    eq_curve = _build_eq_curve(ohlc, trades, result["initial_capital"])
+    ax_e.plot(eq_curve.index, eq_curve.values, color="darkgreen", lw=1)
+    ax_e.axhline(result["initial_capital"], color="gray", ls="--", alpha=0.5)
+    ax_e.axhline(
+        result["initial_capital"] * 5,
+        color="orange",
+        ls="--",
+        alpha=0.5,
+        label="5x trigger",
+    )
+    ax_e.set_ylabel("Equity ($)")
+    ax_e.legend(loc="upper left", fontsize=7)
+    ax_e.grid(True, alpha=0.3)
+
+    # Leverage
+    lev_curve = _build_lev_curve(ohlc, trades)
+    ax_l.fill_between(lev_curve.index, 0, lev_curve.values, color="blue", alpha=0.3)
+    ax_l.plot(lev_curve.index, lev_curve.values, color="blue", lw=1)
+    for lv in [1, 2, 3]:
+        ax_l.axhline(lv, color="gray", ls="--", alpha=0.3)
+    ax_l.set_ylabel("Leverage")
+    ax_l.set_xlabel("Date")
+    ax_l.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    p = out_dir / f"trading_map_{symbol}.png"
+    fig.savefig(p, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Trading map: {p}")
+
+
+def _build_eq_curve(ohlc, trades, init_cap):
+    eq_s = pd.Series(init_cap, index=ohlc.index, dtype=float)
+    in_pos = False
+    qty = 0.0
+    ep = 0.0
+    realized = init_cap
+    ti = 0
+    for i in range(len(ohlc)):
+        c = float(ohlc.iloc[i]["close"])
+        tsi = ohlc.index[i]
+        while ti < len(trades):
+            t = trades[ti]
+            tts = pd.Timestamp(
+                t.get("entry_time") or t.get("time") or t.get("exit_time")
+            )
+            if tts is None or tts > tsi:
+                break
+            tp = t.get("type", "")
+            if tp == "entry":
+                in_pos = True
+                qty = float(t.get("pos_qty", 0))
+                ep = float(t.get("entry_price", 0))
+            elif tp in ("ladder_sell", "risk_eq_dd", "risk_px_dd"):
+                sq = float(t.get("sell_qty") or t.get("reduce_qty", 0))
+                realized += sq * (float(t.get("price", 0)) - ep)
+                qty -= sq
+                if qty <= 0:
+                    in_pos = False
+            elif tp == "bust":
+                in_pos = False
+                qty = 0
+                realized = float(t.get("exit_equity", 100))
+            ti += 1
+        eq_s.iloc[i] = realized + qty * (c - ep) if in_pos and qty > 0 else realized
+    return eq_s
+
+
+def _build_lev_curve(ohlc, trades):
+    lev_s = pd.Series(0.0, index=ohlc.index, dtype=float)
+    cur = 0.0
+    ti = 0
+    for i in range(len(ohlc)):
+        tsi = ohlc.index[i]
+        while ti < len(trades):
+            t = trades[ti]
+            tts = pd.Timestamp(
+                t.get("entry_time") or t.get("time") or t.get("exit_time")
+            )
+            if tts is None or tts > tsi:
+                break
+            tp = t.get("type", "")
+            if tp == "entry":
+                cur = float(t.get("leverage", 0))
+            elif tp == "roll":
+                cur = float(t.get("new_leverage", cur))
+            elif tp == "bust":
+                cur = 0.0
+            ti += 1
+        lev_s.iloc[i] = cur
+    return lev_s
+
+
+def run_simulation(
+    symbols,
+    start_date,
+    end_date,
+    *,
+    initial_capital=10000.0,
+    initial_leverage=2.0,
+    max_leverage=3.0,
+    ladder_trigger=5.0,
+    eq_dd_stop=0.50,
+    px_dd_stop=0.60,
+    plot=False,
+    out_dir=None,
+):
+    results = {}
+    for sym in symbols:
+        print(f"  Simulating {sym}...")
+        try:
+            ohlc = load_ohlc(sym).loc[start_date:end_date]
+            if len(ohlc) < 2000:
+                results[sym] = {"error": "insufficient_data"}
+                continue
+            r = simulate_symbol(
+                ohlc,
+                initial_capital=initial_capital,
+                initial_leverage=initial_leverage,
+                max_leverage=max_leverage,
+                ladder_trigger=ladder_trigger,
+                eq_dd_stop=eq_dd_stop,
+                px_dd_stop=px_dd_stop,
+            )
+            results[sym] = r
+            print(
+                f"    Equity: ${r['final_equity']:,.0f} | CAGR: {r['cagr']*100:.1f}% | "
+                f"MaxDD: {r['max_dd']*100:.1f}% | Rolls: {r['roll_count']} | "
+                f"Sells: {r['total_sells']} | RiskCut: {r['risk_reduces']} | Bust: {r['busted']}"
+            )
+            if plot and out_dir and "error" not in r:
+                plot_trading_map(sym, ohlc, r, out_dir)
+        except FileNotFoundError:
+            results[sym] = {"error": "data_not_found"}
+        except Exception as e:
+            import traceback
+
+            traceback.print_exc()
+            results[sym] = {"error": str(e)}
+
+    valid = {k: v for k, v in results.items() if "error" not in v}
+    n = len(valid) or 1
+    return dict(
+        per_symbol=results,
+        total_equity=float(sum(v["final_equity"] for v in valid.values())),
+        total_return=float(
+            sum(v["final_equity"] for v in valid.values()) / (n * initial_capital)
+        ),
+        avg_cagr=float(np.mean([v["cagr"] for v in valid.values()])),
+        worst_max_dd=float(min((v["max_dd"] for v in valid.values()), default=0)),
+        busts=sum(1 for v in valid.values() if v["busted"]),
+        symbol_count=n,
+    )
+
+
+def main():
+    parser = argparse.ArgumentParser(description="趋势滚仓策略模拟器 v2")
+    parser.add_argument("--symbols", default=",".join(DEFAULT_SYMBOLS))
+    parser.add_argument("--start", default="2022-01-01")
+    parser.add_argument("--end", default="2026-06-01")
+    parser.add_argument("--initial-capital", type=float, default=10000.0)
+    parser.add_argument("--initial-leverage", type=float, default=2.0)
+    parser.add_argument("--max-leverage", type=float, default=3.0)
+    parser.add_argument(
+        "--ladder-trigger", type=float, default=5.0, help="权益倍数触发"
+    )
+    parser.add_argument("--eq-dd-stop", type=float, default=0.50, help="权益回撤止损")
+    parser.add_argument("--px-dd-stop", type=float, default=0.60, help="价格回撤止损")
+    parser.add_argument("--output", default="results/trend_rolling")
+    parser.add_argument("--plot", action="store_true", help="绘制交易地图")
+    args = parser.parse_args()
+
+    symbols = [s.strip() for s in args.symbols.split(",")]
+    out_dir = Path(args.output)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    print("=" * 70)
+    print("  趋势滚仓策略模拟器 v2")
+    print("=" * 70)
+    print(f"  Symbols: {symbols}  |  Period: {args.start} → {args.end}")
+    print(
+        f"  Capital: ${args.initial_capital:,.0f}/sym  |  Lev: {args.initial_leverage}x→{args.max_leverage}x"
+    )
+    print(
+        f"  Ladder trigger: {args.ladder_trigger}x equity  |  EqDD stop: {args.eq_dd_stop*100:.0f}%  |  PxDD stop: {args.px_dd_stop*100:.0f}%"
+    )
+    print(f"  Entry: W-EMA200下方 + EMA1200金叉VWAP1200")
+    print(
+        f"  Exit: 权益≥{args.ladder_trigger}x阶梯越长越卖, ≥{args.ladder_trigger*3}x可清仓"
+    )
+    print("=" * 70)
+
+    results = run_simulation(
+        symbols,
+        args.start,
+        args.end,
+        initial_capital=args.initial_capital,
+        initial_leverage=args.initial_leverage,
+        max_leverage=args.max_leverage,
+        ladder_trigger=args.ladder_trigger,
+        eq_dd_stop=args.eq_dd_stop,
+        px_dd_stop=args.px_dd_stop,
+        plot=args.plot,
+        out_dir=out_dir,
+    )
+
+    print(f"\n{'='*70}\n  SUMMARY\n{'='*70}")
+    print(
+        f"  Total Equity: ${results['total_equity']:,.0f}  |  Return: {results['total_return']:.2f}x"
+    )
+    print(
+        f"  Avg CAGR: {results['avg_cagr']*100:.1f}%  |  Worst MaxDD: {results['worst_max_dd']*100:.1f}%"
+    )
+    print(f"  Busts: {results['busts']}/{results['symbol_count']}")
+    print(
+        f"\n  {'Symbol':<12s} {'Final $':>10s} {'Return':>7s} {'CAGR':>8s} {'MaxDD':>7s} {'Rolls':>6s} {'Sells':>6s} {'RiskCut':>7s} {'Bust':>5s}"
+    )
+    print("  " + "-" * 72)
+    for sym in symbols:
+        r = results["per_symbol"].get(sym, {})
+        if "error" in r:
+            print(f"  {sym:<12s} {'ERROR: '+str(r['error'])}")
+        else:
+            print(
+                f"  {sym:<12s} ${r['final_equity']:>8,.0f} {r['total_return']:6.2f}x "
+                f"{r['cagr']*100:7.1f}% {r['max_dd']*100:6.1f}% "
+                f"{r['roll_count']:5d} {r['total_sells']:5d} {r['risk_reduces']:6d} "
+                f"{'YES' if r['busted'] else 'NO':>5s}"
+            )
+
+    # Save
+    summary = {k: v for k, v in results.items() if k != "per_symbol"}
+    summary["per_symbol"] = {}
+    for sym, r in results["per_symbol"].items():
+        summary["per_symbol"][sym] = (
+            {k: v for k, v in r.items() if k != "trades"} if "error" not in r else r
+        )
+    with open(out_dir / "summary.json", "w") as f:
+        json.dump(summary, f, indent=2, default=str)
+    with open(out_dir / "full_results.json", "w") as f:
+        json.dump(results, f, indent=2, default=str)
+    print(f"\n  Saved to {out_dir}/")
+
+
+if __name__ == "__main__":
+    main()
