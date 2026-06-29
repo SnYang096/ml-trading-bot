@@ -1,0 +1,37 @@
+# trend_scalp 20bps 压力测试 — baseline vs hold_scaled
+#
+#   python scripts/run_multileg_param_tune.py \
+#     --tune-yaml config/experiments/20260618_multileg_param_tune/trend_stress_20bps.yaml
+
+strategy: trend_scalp
+engine: diagnose_dual_add_trend
+
+base_config: config/strategies/trend_scalp/meta.yaml
+
+backtest:
+  start: "2024-01-01"
+  end: "2026-05-31"
+  symbols: "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT"
+  warmup_days: 120
+  data_dir: data/parquet_data
+  initial_capital: 10000
+  execution_timeframe: 1min
+  fee_bps: 20
+  entry_slippage_bps: 2
+  add_slippage_bps: 2
+  market_exit_slippage_bps: 0
+  no_maps: true
+  initial_hedge: false
+  reseed_on_flip: false
+
+output_root: results/trend_scalp/stress_20bps_20260618
+
+variants:
+  - id: baseline_20bps
+    description: prod stack，24@1min hold，fee 20bps（对齐 chop reconcile 1min_20bps）
+    overrides: {}
+
+  - id: hold_scaled_20bps
+    description: scale hold + fee 20bps
+    overrides:
+      scale_max_loser_hold_to_signal: true

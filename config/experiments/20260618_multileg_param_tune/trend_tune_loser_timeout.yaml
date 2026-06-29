@@ -1,0 +1,73 @@
+# trend_scalp loser_timeout 优化 — Phase 2
+#
+# 2026-06-18 结论（见 results/trend_scalp/loser_timeout_tune_20260618_rerun/）：
+#   赢家：hold_scaled（scale_max_loser_hold_to_signal）→ +163%, 笔胜率 79%, loser_timeout 0%
+#   单关 reseed：+40%（仍有效）；hold_480@1min 与 hold_scaled 同量级
+#
+#   python scripts/run_multileg_param_tune.py \
+#     --tune-yaml config/experiments/20260618_multileg_param_tune/trend_tune_loser_timeout.yaml
+#
+# 假设：72% 成交来自 24@1min loser_timeout + 同段立即 reseed 循环。
+# 本 grid 测试：拉长 hold（按信号 bar 缩放）+ 禁止 timeout 后 reseed + 组合。
+
+strategy: trend_scalp
+engine: diagnose_dual_add_trend
+
+base_config: config/strategies/trend_scalp/meta.yaml
+
+backtest:
+  start: "2024-01-01"
+  end: "2026-05-31"
+  symbols: "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT"
+  warmup_days: 120
+  data_dir: data/parquet_data
+  initial_capital: 10000
+  execution_timeframe: 1min
+  fee_bps: 4
+  entry_slippage_bps: 2
+  add_slippage_bps: 2
+  market_exit_slippage_bps: 0
+  no_maps: true
+  initial_hedge: false
+  reseed_on_flip: false
+
+output_root: results/trend_scalp/loser_timeout_tune_20260618
+
+variants:
+  - id: baseline
+    description: 现 diagnose 栈（24@1min hold，timeout 后可 reseed）
+    overrides: {}
+
+  - id: hold_scaled
+    description: max_loser_hold 按 2h 信号缩放 → 24×120 = 2880@1min
+    overrides:
+      scale_max_loser_hold_to_signal: true
+
+  - id: no_reseed_after_timeout
+    description: 首次 loser_timeout 后本段不再 seed（砍循环）
+    overrides:
+      reseed_on_loser_timeout: false
+
+  - id: combo_scaled_no_reseed
+    description: P0 组合 — 拉长 hold + 禁止 timeout 后 reseed
+    overrides:
+      scale_max_loser_hold_to_signal: true
+      reseed_on_loser_timeout: false
+
+  - id: combo_plus_wider_add
+    description: 组合 + 加仓间距 1.0×ATR（上轮略优）
+    overrides:
+      scale_max_loser_hold_to_signal: true
+      reseed_on_loser_timeout: false
+      step_atr_mult: 1.0
+
+  - id: hold_480
+    description: 中间值 — 480@1min（8h）固定 hold
+    overrides:
+      max_loser_hold_bars: 480
+
+  - id: hold_480_no_reseed
+    description: 8h hold + 禁止 timeout 后 reseed
+    overrides:
+      max_loser_hold_bars: 480
+      reseed_on_loser_timeout: false

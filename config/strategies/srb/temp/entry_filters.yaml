@@ -1,0 +1,25 @@
+# SRB Entry Filter Archetype
+# Auto-promoted by optimize_entry_filter_plateau.py
+# Date: 2026-05-21 19:56
+# Promoted: 1 filters (0 plateau + 0 snotio-only)
+# Locked pool kept: 1 (missing -> disabled)
+# Baseline snotio: 0.3256, σ=1.490
+# Significance: z-test one-sided p<0.1, min_trades=3
+#
+# 职责: "现在该入场吗?" → 硬二值控制入场时机
+# 多个 filter 之间是 OR 关系
+# Tier A = plateau + 显著, Tier B = snotio + 显著 (no plateau)
+
+filters:
+- id: srb_orderflow_success_breakout
+  enabled: true
+  locked: true
+  promote_never_disable: true
+  description: 近 SR 成功推进：价格与 CVD 同向，且与突破方向一致
+  conditions:
+  - feature: srb_sr_success_breakout_score
+    operator: '>='
+    value: 0.12
+  lock_reason: null
+  notes: 'promote_never_disable: z-test未过，保留磁盘历史阈值'
+combination_mode: or
