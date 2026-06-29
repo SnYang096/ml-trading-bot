@@ -1,51 +1,15 @@
-# SRB Gate (optimized, auto-promoted)
-# 来源: /home/yin/trading/ml_trading_bot/results/srb/validate_static.constrained/srb/20260521_154746/strategies/srb/gate_draft.yaml
-# 优化规则: 0/1 条通过优化
-# Phase split: system_safety=2, hard_gate=1
-
+# SRB Gate MVP：空白，由管线 stat / meta 后续填充；避免误拷 TPC 硬阈值
 schema:
   phases:
-  - system_safety
-  - hard_gate
-  - guardrail
+    - system_safety
+    - hard_gate
+    - guardrail
   evaluation_order: system_safety -> hard_gate -> guardrail
   governance:
     selection_method: gate_score (Youden's J = tail_capture - good_deny_rate)
     min_gate_score: 0.0
     alert_threshold: 0.25
-# NOTE: gate_srb_tpc_semantic_chop_high 已迁移至 archetypes/regime.yaml。
+
 hard_gates: []
 guardrails: []
-system_safety:
-- id: gate_srb_vol_persistence_mid
-  tag: HARD_SRB_VOL_PERSISTENCE
-  phase: system_safety
-  priority: 12
-  reason: 与 BPC/TPC/ME 对齐：低波噪声切换/拖泥带水期不做趋势延续
-  when:
-    all_of:
-    - vol_persistence:
-        value_gt: 0.0029
-    - vol_persistence:
-        value_lt: 0.0616
-  then:
-    action: deny
-  locked: true
-  promote_never_disable: true
-  lock_reason: 波动率持久性安全门
-- id: gate_srb_vol_leverage_asymmetry_mid
-  tag: HARD_SRB_VOL_LEVERAGE_ASYMMETRY
-  phase: system_safety
-  priority: 13
-  reason: 与 BPC/ME 对齐：波动杠杆非对称严重时趋势容易被拖垮
-  when:
-    all_of:
-    - vol_leverage_asymmetry:
-        value_gt: 0.0558
-    - vol_leverage_asymmetry:
-        value_lt: 0.1482
-  then:
-    action: deny
-  locked: true
-  promote_never_disable: true
-  lock_reason: 波动杠杆非对称安全门
+system_safety: []
