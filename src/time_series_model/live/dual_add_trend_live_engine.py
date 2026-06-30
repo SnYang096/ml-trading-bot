@@ -26,6 +26,7 @@ from src.time_series_model.live.segment_lifecycle import (
     segment_occupies_slot,
 )
 from src.config.strategy_layout import resolve_strategy_config_input
+from src.time_series_model.grid.subbar_replay import effective_max_loser_hold_bars
 from src.order_management.grid_execution_adapter import (
     GridExecutionResult,
     derive_multileg_client_order_id,
@@ -70,8 +71,10 @@ class DualAddEngineConfig:
     catastrophic_stop_atr_mult: float = 8.0
     catastrophic_stop_tp_mult: float = 8.0
     flip_action: str = "close_offside_all"
-    reseed_on_flip: bool = True
-    initial_hedge: bool = True
+    reseed_on_flip: bool = False
+    reseed_on_loser_timeout: bool = True
+    initial_hedge: bool = False
+    max_loser_hold_bars: int = 24
     entry_order_type: str = "marketable_limit"
     add_order_type: str = "marketable_limit"
     max_slippage_bps: float = 5.0
@@ -106,6 +109,7 @@ class DualAddPosition:
     quantity: float
     seq: int
     entry_time: str
+    entry_bar: int = 0
     protection_order_ids: List[str] = field(default_factory=list)
 
 
@@ -131,6 +135,7 @@ class DualAddTrendState:
     last_reconciliation_ok: bool = True
     last_reconciliation_issues: List[str] = field(default_factory=list)
     block_reseed_after_flip: bool = False
+    block_reseed_after_loser_timeout: bool = False
     # ── Retroactive-fill guard ──
     # Order lookups keyed by exchange_order_id / client_order_id / order_id.
     # Populated when orders are pruned from pending_orders; never persisted
@@ -154,6 +159,18 @@ def _load_dual_add_config(path: str | Path) -> DualAddEngineConfig:
     tp = obj.get("take_profit", {}) or {}
     risk = obj.get("risk", {}) or {}
     order_model = obj.get("order_model", {}) or {}
+    dual_live = obj.get("dual_add_live", {}) or obj.get("dual_add_backtest", {}) or {}
+    strategy = obj.get("strategy", {}) or {}
+    signal_tf = str(strategy.get("timeframe", "120T"))
+    exec_tf = str(dual_live.get("execution_timeframe", "1min"))
+    scale_hold = bool(dual_live.get("scale_max_loser_hold_to_signal", False))
+    raw_hold = int(inv.get("max_loser_hold_bars", 24))
+    eff_hold = effective_max_loser_hold_bars(
+        max_loser_hold_bars=raw_hold,
+        signal_timeframe=signal_tf,
+        execution_timeframe=exec_tf,
+        scale_max_loser_hold_to_signal=scale_hold,
+    )
     return DualAddEngineConfig(
         entry_trend_min=float(regime.get("entry_min", 0.80)),
         exit_trend_below=float(regime.get("exit_below", 0.50)),
@@ -178,9 +195,11 @@ def _load_dual_add_config(path: str | Path) -> DualAddEngineConfig:
         catastrophic_stop_atr_mult=float(risk.get("catastrophic_stop_atr_mult", 8.0)),
         catastrophic_stop_tp_mult=float(risk.get("catastrophic_stop_tp_mult", 8.0)),
         flip_action=str(inv.get("flip_action", "close_offside_all")),
-        reseed_on_flip=bool(inv.get("reseed_on_flip", True)),
-        initial_hedge=set(inv.get("initial_legs", ["LONG", "SHORT"]))
+        reseed_on_flip=bool(inv.get("reseed_on_flip", False)),
+        reseed_on_loser_timeout=bool(inv.get("reseed_on_loser_timeout", True)),
+        initial_hedge=set(inv.get("initial_legs", ["TREND"]))
         == {"LONG", "SHORT"},
+        max_loser_hold_bars=eff_hold,
         entry_order_type=str(order_model.get("entry_order_type", "marketable_limit")),
         add_order_type=str(order_model.get("add_order_type", "marketable_limit")),
         max_slippage_bps=float(order_model.get("max_slippage_bps", 5.0)),
@@ -313,6 +332,9 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
             bar_index=int(raw.get("bar_index", 0) or 0),
             last_entry_signal_ts=str(raw.get("last_entry_signal_ts", "")),
             block_reseed_after_flip=bool(raw.get("block_reseed_after_flip", False)),
+            block_reseed_after_loser_timeout=bool(
+                raw.get("block_reseed_after_loser_timeout", False)
+            ),
             last_reconciliation_ok=bool(raw.get("last_reconciliation_ok", True)),
             last_reconciliation_issues=[
                 str(x) for x in raw.get("last_reconciliation_issues", [])
@@ -451,6 +473,7 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
                     not self.state.inventory
                     and not self.state.pending_orders
                     and not self.state.block_reseed_after_flip
+                    and not self.state.block_reseed_after_loser_timeout
                     and self._entry_decision_allowed(features, timestamp)
                 ):
                     self._mark_entry_signal_used(features, timestamp)
@@ -471,6 +494,7 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
                     )
                     return actions
                 actions.extend(self._target_exits(high, low, close, timestamp))
+                actions.extend(self._loser_timeout_exits(close, timestamp))
                 if (
                     segment_allows_new_entry(self.state.segment_state)
                     or self.state.segment_state == SegmentState.CLOSING.value
@@ -827,6 +851,7 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
                 quantity=fill_delta,
                 seq=order.seq,
                 entry_time=str(report.get("trade_time") or self.state.last_timestamp),
+                entry_bar=int(self.state.bar_index),
             )
             self.state.inventory.append(new_position)
             winding_down = self._segment_winding_down()
@@ -897,6 +922,7 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
             last_timestamp=timestamp,
             bar_index=0,
             block_reseed_after_flip=False,
+            block_reseed_after_loser_timeout=False,
             last_entry_signal_ts=str(
                 getattr(self.state, "last_entry_signal_ts", "") or ""
             ),
@@ -962,6 +988,32 @@ class DualAddTrendLiveEngine(SegmentLifecycleMixin):
                     self._market_exit(pos, pos.entry_price - tp, timestamp, "tp")
                 )
                 actions.extend(self._cancel_protection_actions(pos, timestamp, "tp"))
+            else:
+                remaining.append(pos)
+        self.state.inventory = remaining
+        return actions
+
+    def _loser_timeout_exits(
+        self, close: float, timestamp: str
+    ) -> List[Dict[str, Any]]:
+        if self.cfg.max_loser_hold_bars <= 0 or not self.state.inventory:
+            return []
+        actions: List[Dict[str, Any]] = []
+        remaining: List[DualAddPosition] = []
+        for pos in self.state.inventory:
+            held_bars = int(self.state.bar_index) - int(pos.entry_bar)
+            if held_bars < self.cfg.max_loser_hold_bars:
+                remaining.append(pos)
+                continue
+            if self._position_pnl_pct(pos, close) < 0:
+                actions.append(
+                    self._market_exit(pos, close, timestamp, "loser_timeout")
+                )
+                actions.extend(
+                    self._cancel_protection_actions(pos, timestamp, "loser_timeout")
+                )
+                if not self.cfg.reseed_on_loser_timeout:
+                    self.state.block_reseed_after_loser_timeout = True
             else:
                 remaining.append(pos)
         self.state.inventory = remaining

@@ -29,6 +29,9 @@ regime:
   max_semantic_chop_hold: 0.40
   exclude_box_prefilter: true
 inventory:
+  initial_legs:
+    - LONG
+    - SHORT
   flip_action: close_offside_all
   max_adds_per_side: 3
   max_gross_exposure_units: 4
@@ -1669,3 +1672,134 @@ def test_protection_fill_leg_hint_zero_filled_qty_removes_position(
 
     assert handled is True
     assert engine.state.inventory == []
+
+
+def _loser_timeout_config(tmp_path: Path) -> Path:
+    path = tmp_path / "dual_add_loser_timeout.yaml"
+    path.write_text(
+        """
+strategy:
+  timeframe: "120T"
+dual_add_live:
+  execution_timeframe: 1min
+  scale_max_loser_hold_to_signal: false
+regime:
+  entry_min: 0.80
+  exit_below: 0.50
+  max_semantic_chop_entry: 0.25
+  max_semantic_chop_hold: 0.40
+  exclude_box_prefilter: true
+inventory:
+  initial_legs:
+    - TREND
+  max_loser_hold_bars: 3
+  reseed_on_loser_timeout: true
+add_spacing:
+  atr_mult: 0.50
+take_profit:
+  mode: basket
+  atr_mult: 10.0
+  min_pct: 0.50
+  min_abs: 0.0
+order_model:
+  entry_order_type: marketable_limit
+  add_order_type: marketable_limit
+  max_slippage_bps: 5.0
+  pending_timeout_bars: 1
+risk:
+  diagnostic_fee_bps: 4.0
+  max_loss_per_segment: 0.50
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_dual_add_loser_timeout_closes_losing_leg(tmp_path: Path) -> None:
+    engine = DualAddTrendLiveEngine(
+        config_path=_loser_timeout_config(tmp_path),
+        state_path=tmp_path / "state.json",
+        unit_notional=100.0,
+    )
+    features = {
+        "trend_confidence": 1.0,
+        "trend_direction": "UP",
+        "semantic_chop": 0.0,
+        "box_prefilter": False,
+    }
+    actions = engine.on_bar(
+        symbol="BTCUSDT",
+        timestamp="2026-01-01T00:00:00Z",
+        high=101.0,
+        low=99.0,
+        close=100.0,
+        atr=2.0,
+        features=features,
+    )
+    assert len(actions) == 1
+    engine.on_execution_results(
+        [
+            GridExecutionResult(
+                action="place",
+                status="open",
+                symbol="BTCUSDT",
+                order_id="ex_lt_1",
+                client_order_id=str(actions[0].get("client_order_id")),
+                raw=actions[0],
+            )
+        ]
+    )
+    engine.on_execution_report(
+        {
+            "order_id": "ex_lt_1",
+            "client_order_id": actions[0].get("client_order_id"),
+            "status": "FILLED",
+            "filled_qty": 1.0,
+            "last_filled_price": 100.0,
+            "trade_time": "2026-01-01T00:01:00Z",
+        }
+    )
+    assert len(engine.state.inventory) == 1
+
+    exit_actions: list = []
+    all_actions: list = []
+    for i in range(4):
+        exit_actions = engine.on_bar(
+            symbol="BTCUSDT",
+            timestamp=f"2026-01-01T00:{10 + i:02d}:00Z",
+            high=99.5,
+            low=98.5,
+            close=99.0,
+            atr=2.0,
+            features=features,
+        )
+        all_actions.extend(exit_actions)
+
+    assert any(
+        str(a.get("reason", "")) == "loser_timeout"
+        for a in all_actions
+        if str(a.get("action", "")).lower() == "market_exit"
+    )
+
+
+def test_dual_add_load_config_scales_loser_hold_to_execution_bars(tmp_path: Path) -> None:
+    path = tmp_path / "scaled_hold.yaml"
+    path.write_text(
+        """
+strategy:
+  timeframe: "120T"
+dual_add_live:
+  execution_timeframe: 1min
+  scale_max_loser_hold_to_signal: true
+inventory:
+  max_loser_hold_bars: 24
+""",
+        encoding="utf-8",
+    )
+    from src.time_series_model.live.dual_add_trend_live_engine import (
+        _load_dual_add_config,
+    )
+
+    cfg = _load_dual_add_config(path)
+    assert cfg.max_loser_hold_bars == 2880
+    assert cfg.initial_hedge is False
