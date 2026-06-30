@@ -39,6 +39,28 @@ def timeframe_to_timedelta(timeframe: str) -> pd.Timedelta:
     return pd.to_timedelta(tf)
 
 
+def effective_max_loser_hold_bars(
+    *,
+    max_loser_hold_bars: int,
+    signal_timeframe: str,
+    execution_timeframe: str,
+    scale_max_loser_hold_to_signal: bool,
+) -> int:
+    """Scale signal-bar ``max_loser_hold_bars`` to execution-bar count (e.g. 24@120T → 2880@1min)."""
+    base = int(max_loser_hold_bars)
+    exec_tf = str(execution_timeframe or signal_timeframe or "").strip()
+    sig_tf = str(signal_timeframe or "").strip()
+    if not scale_max_loser_hold_to_signal:
+        return max(1, base)
+    if not exec_tf or exec_tf == sig_tf:
+        return max(1, base)
+    sig_s = timeframe_to_timedelta(sig_tf).total_seconds()
+    ex_s = timeframe_to_timedelta(exec_tf).total_seconds()
+    if ex_s <= 0:
+        return max(1, base)
+    return max(1, int(round(base * (sig_s / ex_s))))
+
+
 def segment_execution_bounds(
     signal_index: pd.DatetimeIndex,
     s: int,

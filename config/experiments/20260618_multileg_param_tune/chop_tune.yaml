@@ -1,0 +1,62 @@
+# chop_grid 参数调优 — 编辑 variants.overrides 后批量回测
+#
+#   python scripts/run_multileg_param_tune.py \
+#     --tune-yaml config/experiments/20260618_multileg_param_tune/chop_tune.yaml
+#
+# overrides 键见同目录 参数调优指南_CN.md §4
+
+strategy: chop_grid
+engine: chop_grid_backtest
+
+base_config: config/strategies/chop_grid/meta.yaml
+
+backtest:
+  start: "2024-01-01"
+  end: "2026-05-31"
+  symbols: "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT"
+  warmup_days: 120
+  data_dir: data/parquet_data
+  initial_capital: 10000
+  maker_fee_bps: 2
+  taker_fee_bps: 5
+  forced_exit_slippage_bps: 0
+  no_maps: true
+
+output_root: results/chop_grid/param_tune_20260618
+
+variants:
+  - id: baseline
+    description: prod locked stack（archetypes 默认）
+    overrides: {}
+
+  - id: no_replenish
+    description: P1 省费 — 关补挂（fee A/B 候选 B）
+    overrides:
+      max_replenish_per_level: 0
+
+  - id: exit_038
+    description: P0 — 略早退出 chop（降 forced）
+    overrides:
+      exit_chop_min: 0.38
+
+  - id: entry_055
+    description: P0 — 更严 chop 进场（少假 chop 段）
+    overrides:
+      chop_min: 0.55
+
+  - id: wider_spacing
+    description: P1 — 加宽层间距 0.4%（少 turn）
+    overrides:
+      grid_pct: 0.004
+
+  - id: levels_2
+    description: P1 — 每侧 2 层（少 cascade）
+    overrides:
+      max_levels: 2
+      max_open_levels_total: 4
+
+  - id: combo_no_replenish_exit038
+    description: P0+P1 组合 — 早退 + 关补挂
+    overrides:
+      exit_chop_min: 0.38
+      max_replenish_per_level: 0

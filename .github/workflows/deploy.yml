@@ -602,7 +602,7 @@ jobs:
               quant-engine:latest \
               bash -lc 'python scripts/run_multi_leg_live.py \
                 --mode mainnet \
-                --strategies chop_grid \
+                --strategies chop_grid trend_scalp \
                 --universe highcap \
                 --bar-source feature-store \
                 --feature-bus-root live/shared_feature_bus \

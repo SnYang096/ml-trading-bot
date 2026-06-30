@@ -133,6 +133,7 @@ def _load_dual_add_defaults(path: Path) -> dict:
         ),
         "initial_hedge": set(inv.get("initial_legs", ["LONG", "SHORT"]))
         == {"LONG", "SHORT"},
+        "reseed_on_loser_timeout": bool(inv.get("reseed_on_loser_timeout", True)),
         "exclude_box": bool(regime.get("exclude_box_prefilter", True)),
         "stability_min": float(box_pf.get("stability_min", 0.85)),
         "width_min": float(box_pf.get("width_min", 0.04)),
@@ -169,6 +170,9 @@ class DualAddConfig:
     add_mode: str = "both"
     flip_action: str = "keep"
     reseed_on_flip: bool = True
+    # When False, the first loser_timeout in a segment blocks further seed/re-entry
+    # until the regime segment ends (reduces churn from 24min cut → immediate re-open).
+    reseed_on_loser_timeout: bool = True
     chop_signal: str = "raw"
     chop_ts_window: int = 1200
     chop_ts_min_periods: int = 150
@@ -306,6 +310,7 @@ def simulate_dual_add_segment(
     flip_forced = 0
     last_flat_bar = -1
     block_reseed_after_flip = False
+    block_reseed_after_loser_timeout = False
 
     def seed_positions(px: float, ts: pd.Timestamp, bar_i: int) -> None:
         nonlocal last_add_long, last_add_short
@@ -451,6 +456,7 @@ def simulate_dual_add_segment(
             and not positions
             and bar_i > last_flat_bar
             and not block_reseed_after_flip
+            and not block_reseed_after_loser_timeout
         ):
             seed_positions(close, ts, bar_i)
             seeded_this_bar = True
@@ -504,6 +510,8 @@ def simulate_dual_add_segment(
                 if _position_pnl(pos["side"], float(pos["entry"]), close, fee) < 0:
                     record(pos, close, ts, "loser_timeout")
                     positions.remove(pos)
+                    if not cfg.reseed_on_loser_timeout:
+                        block_reseed_after_loser_timeout = True
             enforce_net_cap(close, ts)
 
         # In both-side mode, price extension may add on either side. Strict
@@ -645,6 +653,7 @@ def run(args: argparse.Namespace) -> Tuple[pd.DataFrame, pd.DataFrame]:
         add_mode=args.add_mode,
         flip_action=args.flip_action,
         reseed_on_flip=bool(args.reseed_on_flip),
+        reseed_on_loser_timeout=bool(args.reseed_on_loser_timeout),
         chop_signal=args.chop_signal,
         chop_ts_window=args.chop_ts_window,
         chop_ts_min_periods=args.chop_ts_min_periods,
@@ -1044,6 +1053,15 @@ def main() -> None:
             "closes offside inventory and waits for the next regime segment entry."
         ),
     )
+    ap.add_argument(
+        "--reseed-on-loser-timeout",
+        action=argparse.BooleanOptionalAction,
+        default=defaults.get("reseed_on_loser_timeout", True),
+        help=(
+            "When disabled, the first loser_timeout in a segment blocks further "
+            "seed/re-entry until the regime segment ends (cuts churn loops)."
+        ),
+    )
     ap.add_argument("--chop-min", type=float, default=defaults.get("chop_min", 0.40))
     ap.add_argument(
         "--exit-chop-min", type=float, default=defaults.get("exit_chop_min", 0.25)
@@ -1284,6 +1302,7 @@ def main() -> None:
             trades=trades,
             segments=segments,
             title="Dual Add Trend Continuous Trading Map",
+            initial_capital=portfolio_initial,
         )
     cfg_dump = dict(vars(args))
     cfg_dump["_resolved_max_loser_hold_bars"] = resolved_hold

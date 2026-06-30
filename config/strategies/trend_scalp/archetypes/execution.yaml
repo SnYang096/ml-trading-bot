@@ -10,6 +10,8 @@ inventory:
   flip_action: close_offside_all
   # 翻转后不在同一段内立即按新方向 reseed；等下一 regime 段再开仓（实验 2026-05 优于 reseed）。
   reseed_on_flip: false
+  # 首次 loser_timeout 后是否允许同段再 seed；false 可抑制「切亏腿→立刻再开」循环（研究默认 true）。
+  reseed_on_loser_timeout: true
   # 单方向最多加仓次数；不含初始 TREND 腿。
   max_adds_per_side: 3
   # 最大总腿数（long + short）；限制总风险敞口。

@@ -1,23 +1,29 @@
+# Live trend_scalp execution — aligned with config/strategies/trend_scalp + hold_scaled overlay.
+dual_add_live:
+  execution_timeframe: 1min
+  scale_max_loser_hold_to_signal: true
+
 inventory:
-  # 初始开仓腿：[LONG, SHORT] = 多空同时各开一腿（双向）；TREND = 只开当前趋势方向。
+  # 初始开仓腿：TREND = 只开当前趋势方向一腿；若改成 [LONG, SHORT] 才是多空同时开。
   initial_legs:
-    - LONG
-    - SHORT
+  - TREND
   # 加仓方向：trend = 只顺当前趋势方向加仓；both = 上下突破都可加仓。
-  add_mode: both
+  add_mode: trend
   # 趋势方向来源：dynamic_bar 表示每根信号 bar 用最新 trend_direction 判断 LONG/SHORT。
   trend_direction_source: dynamic_bar
   # 趋势翻转处理：close_offside_all = 平掉新趋势反向的所有腿（含初始腿和加仓腿）。
   flip_action: close_offside_all
   # 翻转后不在同一段内立即按新方向 reseed；等下一 regime 段再开仓（实验 2026-05 优于 reseed）。
   reseed_on_flip: false
+  # 首次 loser_timeout 后是否允许同段再 seed；false 可抑制「切亏腿→立刻再开」循环（研究默认 true）。
+  reseed_on_loser_timeout: true
   # 单方向最多加仓次数；不含初始 TREND 腿。
   max_adds_per_side: 3
   # 最大总腿数（long + short）；限制总风险敞口。
   max_gross_exposure_units: 4
   # 最大净腿数绝对值（abs(long - short)）；限制单边偏离。
   max_net_exposure_units: 2
-  # 回测里的亏损腿最长持有 bar 数；超过且该腿仍亏损则按 loser_timeout 平仓。
+  # 信号 bar 上的亏损腿最长持有 bar 数；live 经 dual_add_live 缩放到 1min bar。
   max_loser_hold_bars: 24
 add_spacing:
   # 加仓间距基准：atr = 用入场段冻结 ATR 计算阶梯。
@@ -38,25 +44,17 @@ take_profit:
   # 最小绝对价格距离；0 表示不启用绝对下限。
   min_abs: 0.0
 order_model:
-  # Maker execution: passive LIMIT entries (lower fees), taker MARKET exits.
-  maker_execution: true
   # 入场订单：marketable_limit = Binance LIMIT + IOC，用限价表达最大滑点保护。
   entry_order_type: marketable_limit
-  # 加仓订单同理。
+  # 加仓订单同理；动量加仓不使用长期挂单，避免价格跑掉后残留过期信号。
   add_order_type: marketable_limit
-  # marketable limit 最大允许滑点。
+  # marketable limit 最大允许滑点；超过这个价格就不成交/只部分成交，剩余由 IOC 自动取消。
   max_slippage_bps: 5.0
-  # Maker 入场最长等待 bar 数；超时撤单重新在当前价挂 maker。
-  maker_entry_max_wait_bars: 2
-  # Maker 入场重挂 bar 间隔；0 = 不重挂。
-  maker_repeg_bars: 0
-  # 非 IOC 残留挂单的超时 bar 数。
+  # 非 IOC 残留挂单的超时 bar 数；用于兜底撤掉过期 entry/add 订单。
   pending_timeout_bars: 1
-  # 出场模式：market（taker，立即成交风险出清）。
-  exit_order_type: market
-  # 回测里的入场成交滑点（不含手续费）。
+  # 回测里的入场成交滑点（不含手续费）；实盘会用真实 fill price/fee 回写审计。
   simulated_entry_slippage_bps: 2.0
-  # 回测里的加仓成交滑点。
+  # 回测里的加仓成交滑点（不含手续费）；让动量突破成交比 touch-fill 更保守。
   simulated_add_slippage_bps: 2.0
 risk:
   # 最短趋势段 bar 数；低于该长度的 entry/hold 段会被过滤。

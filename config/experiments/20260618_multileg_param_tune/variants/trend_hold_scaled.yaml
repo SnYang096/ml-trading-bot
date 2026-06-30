@@ -1,0 +1,17 @@
+# Research overlay — trend_scalp hold scaled to signal bar (2h → 2880@1min)
+#
+# Use with diagnose / param tune:
+#   python scripts/diagnose_dual_add_trend.py \
+#     --config config/experiments/20260618_multileg_param_tune/variants/trend_hold_scaled.yaml \
+#     ...
+#
+# 2024-01~2026-05 diagnose: +163% timeline vs baseline -15%; loser_timeout 72% → 0%.
+
+extends: ../../../strategies/trend_scalp/meta.yaml
+
+dual_add_backtest:
+  execution_timeframe: 1min
+  scale_max_loser_hold_to_signal: true
+
+inventory:
+  reseed_on_loser_timeout: true

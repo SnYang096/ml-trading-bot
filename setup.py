@@ -36,9 +36,10 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/yourusername/ml-trading-project",
-    packages=find_packages(where=".", include=["src*", "scripts*"]),
+    packages=find_packages(where="src") + find_packages(where=".", include=["scripts*"]),
     package_dir={
-        "": ".",
+        "": "src",
+        "scripts": "scripts",
     },
     classifiers=[
         "Development Status :: 3 - Alpha",

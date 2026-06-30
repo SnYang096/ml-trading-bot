@@ -1,0 +1,70 @@
+# trend_scalp 参数调优 — 编辑 variants.overrides 后批量回测
+#
+#   python scripts/run_multileg_param_tune.py \
+#     --tune-yaml config/experiments/20260618_multileg_param_tune/trend_tune.yaml
+
+strategy: trend_scalp
+engine: diagnose_dual_add_trend
+
+base_config: config/strategies/trend_scalp/meta.yaml
+
+backtest:
+  start: "2024-01-01"
+  end: "2026-05-31"
+  symbols: "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT"
+  warmup_days: 120
+  data_dir: data/parquet_data
+  initial_capital: 10000
+  execution_timeframe: 1min
+  fee_bps: 4
+  entry_slippage_bps: 2
+  add_slippage_bps: 2
+  market_exit_slippage_bps: 0
+  no_maps: true
+  # 对齐 archetypes：单腿 TREND、flip 不 reseed
+  initial_hedge: false
+  reseed_on_flip: false
+
+output_root: results/trend_scalp/param_tune_20260618
+
+variants:
+  - id: baseline
+    description: prod locked stack
+    overrides: {}
+
+  - id: trend_075
+    description: P0 — 更严趋势进场
+    overrides:
+      trend_min: 0.75
+
+  - id: chop_cap_020
+    description: P0 — 进场 chop 上限更严
+    overrides:
+      exit_chop_min: 0.20
+
+  - id: chop_hold_035
+    description: P0 — 持仓 chop 上限更严
+    overrides:
+      chop_min: 0.35
+
+  - id: wider_add
+    description: P1 — 加仓间距 1.0×ATR（少 add）
+    overrides:
+      step_atr_mult: 1.0
+
+  - id: wider_tp
+    description: P1 — 篮子止盈 min 0.18%
+    overrides:
+      tp_pct: 0.0018
+
+  - id: max_adds_2
+    description: P2 — 每侧最多加 2 次
+    overrides:
+      max_adds_per_side: 2
+
+  - id: combo_strict_regime
+    description: P0 组合 — 高 trend + 低 chop cap
+    overrides:
+      trend_min: 0.75
+      exit_chop_min: 0.20
+      chop_min: 0.35

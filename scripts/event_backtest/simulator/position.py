@@ -43,6 +43,10 @@ from src.time_series_model.live.spot_accum_simple import (
     is_spot_accum_archetype,
     maybe_spot_simple_partial_sell,
 )
+from src.time_series_model.live.srb_regime import (
+    srb_add_position_allowed,
+    should_reject_srb_add_by_shape,
+)
 
 
 def _resolve_add_position_size_multiplier(add_rules, add_number, signal=None):

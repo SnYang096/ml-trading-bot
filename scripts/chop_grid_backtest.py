@@ -1390,6 +1390,7 @@ def main() -> None:
             trades=trades,
             segments=segments,
             title="Chop Grid Continuous Trading Map",
+            initial_capital=portfolio_initial,
         )
 
     trade_summary, segment_summary = _summary_tables(trades, segments, equity)

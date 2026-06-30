@@ -28,8 +28,15 @@ def write_continuous_trading_map(
     trades: pd.DataFrame,
     segments: pd.DataFrame,
     title: str,
+    initial_capital: float | None = None,
 ) -> None:
-    """Write a single multi-symbol continuous map with candle and trade overlays."""
+    """Write a single multi-symbol continuous map with candle and trade overlays.
+
+    Layout (SRB trading-map style, top → bottom):
+      1. Summary metrics + per-symbol comparison table
+      2. Portfolio equity (USDT) + drawdown
+      3. One price panel per symbol
+    """
     if trades.empty and segments.empty:
         return
     try:
@@ -49,14 +56,25 @@ def write_continuous_trading_map(
     x_end = pd.Timestamp(end, tz="UTC")
     warmup_start = x_start - pd.Timedelta(days=warmup_days)
     bar_width_ms = pd.Timedelta(timeframe).total_seconds() * 1000 * 0.72
+    n_sym = max(
+        1,
+        int(trades["symbol"].nunique()) if not trades.empty and "symbol" in trades.columns else 1,
+    )
+    cap = float(initial_capital if initial_capital is not None else 10_000.0 * n_sym)
     summary_html = _summary_html(
         trades=trades,
         start=x_start,
         end=x_end,
         width=1300,
         title=title,
+        initial_capital=cap,
     )
     figs = []
+    eq_fig = _build_portfolio_equity_figure(trades, initial_capital=cap)
+    if eq_fig is not None:
+        figs.append(eq_fig)
+
+    price_figs = []
 
     for symbol in selected_symbols:
         raw = _load_symbol_1m(data_dir, symbol, warmup_start, x_end)
@@ -123,9 +141,10 @@ def write_continuous_trading_map(
         p.legend.click_policy = "hide"
         p.xaxis.axis_label = "Time"
         p.yaxis.axis_label = "Price"
-        figs.append(p)
+        price_figs.append(p)
 
-    if not figs:
+    figs.extend(price_figs)
+    if not price_figs:
         return
     out_path.parent.mkdir(parents=True, exist_ok=True)
     output_file(out_path, title=title)
@@ -147,46 +166,150 @@ def _summary_html(
     end: pd.Timestamp,
     width: int,
     title: str,
+    initial_capital: float = 10_000.0,
 ) -> str:
     total_trades = int(len(trades)) if not trades.empty else 0
-    pnl_usd = 0.0
-    if total_trades > 0 and "pnl_usd_realized" in trades.columns:
-        pnl_usd = float(
-            pd.to_numeric(trades["pnl_usd_realized"], errors="coerce").fillna(0.0).sum()
-        )
     pnl_col = "pnl_per_capital" if "pnl_per_capital" in trades.columns else "pnl_r"
-    total_r = (
-        float(pd.to_numeric(trades[pnl_col], errors="coerce").fillna(0.0).sum())
-        if total_trades > 0 and pnl_col in trades.columns
-        else 0.0
-    )
     win_rate = (
         float((pd.to_numeric(trades[pnl_col], errors="coerce").fillna(0.0) > 0).mean())
         if total_trades > 0 and pnl_col in trades.columns
         else 0.0
     )
-    if "strategy" in trades.columns and not trades.empty:
-        source = ", ".join(
-            f"multi_leg:{k}:{int(v)}"
-            for k, v in trades["strategy"].value_counts().items()
-        )
-    else:
-        source = f"multi_leg:{total_trades}"
     months = f"{start.strftime('%Y-%m')}~{end.strftime('%Y-%m')}"
+    per_sym_html = _per_symbol_table_html(trades, initial_capital=initial_capital)
+    port = _portfolio_headline(trades, initial_capital=initial_capital)
     return (
         f"<h2>{title}</h2>"
-        f"<p>months={months} | trades={total_trades} | total_r={total_r:.4f} "
-        f"| realized_pnl_usd={pnl_usd:,.2f} | win_rate={win_rate:.2%} | source=({source})</p>"
+        f"<p><b>区间</b> {months} | <b>成交</b> {total_trades} | "
+        f"<b>组合收益</b> {port['return_pct']:.2f}% | "
+        f"<b>期末权益</b> ${port['final_capital']:,.0f} | "
+        f"<b>最大回撤</b> {port['max_dd_pct']:.2f}% | "
+        f"<b>胜率</b> {win_rate:.2%}</p>"
+        f"{per_sym_html}"
         f"<p style='font-size:13px;line-height:1.45;max-width:{width}px'>"
+        "<b>上方资金图</b> = 多币等权组合权益（每笔平仓后更新，口径同 capital_report）。"
         "<b>图例（价格图）</b> 叠在图内左上角。品红实线 = 各 symbol <b>自身</b> 2H K 线上"
         "滚动典型价 VWAP（1200 根 bar，仅价格尺度展示）；橙线 = 同周期 <b>EMA(1200)</b> on close。"
-        "Multi-leg 策略不走旧 <code>TradeIntent/event_backtest</code>，因此本连续图未拼接"
-        "PCM/prefilter/gate 阶梯漏斗附图；这些策略的阈值/结构选择来自 rolling calibration window "
-        "写出的 <code>strategies_calibrated</code>。"
+        "Multi-leg 策略不走旧 <code>TradeIntent/event_backtest</code>，因此无 PCM 漏斗附图。"
         "绿/红 K 线为涨跌。入场→出场：<b>实线</b>=首仓腿，<b>虚线</b>=加仓腿；"
-        "△ 多 · ▽ 空 · ◇ 加仓 · □ 平仓。"
+        "△ 多 · ▽ 空 · ◇ 加仓 · □ 平仓。全窗口标记密集时请框选 zoom。"
         "</p>"
     )
+
+
+def _portfolio_headline(
+    trades: pd.DataFrame, *, initial_capital: float
+) -> dict[str, float]:
+    from scripts.pipeline.multileg_portfolio_metrics import build_portfolio_equity_curve
+
+    if trades.empty or "pnl_per_capital" not in trades.columns:
+        return {
+            "final_capital": float(initial_capital),
+            "return_pct": 0.0,
+            "max_dd_pct": 0.0,
+        }
+    curve = build_portfolio_equity_curve(trades)
+    if curve.empty:
+        return {
+            "final_capital": float(initial_capital),
+            "return_pct": 0.0,
+            "max_dd_pct": 0.0,
+        }
+    final_pc = float(curve["cum_pnl_per_capital"].iloc[-1])
+    final_cap = float(initial_capital) * (1.0 + final_pc)
+    dd = float(curve["drawdown"].min()) if "drawdown" in curve.columns else 0.0
+    return {
+        "final_capital": final_cap,
+        "return_pct": final_pc * 100.0,
+        "max_dd_pct": abs(dd) * 100.0,
+    }
+
+
+def _per_symbol_table_html(
+    trades: pd.DataFrame, *, initial_capital: float
+) -> str:
+    if trades.empty or "symbol" not in trades.columns:
+        return ""
+    pc = pd.to_numeric(trades.get("pnl_per_capital"), errors="coerce").fillna(0.0)
+    n = max(1, int(trades["symbol"].nunique()))
+    bucket = float(initial_capital) / n
+    rows = []
+    for sym, grp in trades.assign(_pc=pc).groupby("symbol", sort=True):
+        ret = float(grp["_pc"].sum()) * 100.0
+        profit = bucket * float(grp["_pc"].sum())
+        wr = float((grp["_pc"] > 0).mean()) * 100.0
+        rows.append(
+            f"<tr><td>{sym}</td><td>{len(grp)}</td>"
+            f"<td>{ret:.2f}%</td><td>${profit:,.0f}</td><td>{wr:.1f}%</td></tr>"
+        )
+    if not rows:
+        return ""
+    return (
+        "<h3>分币种对比（等权资金桶）</h3>"
+        "<table border='1' cellpadding='6' cellspacing='0' "
+        "style='border-collapse:collapse;font-size:13px'>"
+        "<tr><th>Symbol</th><th>Trades</th><th>Return%</th>"
+        "<th>Profit $</th><th>Win%</th></tr>"
+        + "".join(rows)
+        + "</table>"
+    )
+
+
+def _build_portfolio_equity_figure(
+    trades: pd.DataFrame, *, initial_capital: float
+):
+    """Bokeh equity + drawdown panel (aligned with event_backtest trading map)."""
+    if trades.empty or "pnl_per_capital" not in trades.columns:
+        return None
+    try:
+        from bokeh.models import ColumnDataSource, HoverTool
+        from bokeh.plotting import figure
+    except Exception:
+        return None
+
+    from scripts.pipeline.multileg_portfolio_metrics import build_portfolio_equity_curve
+
+    curve = build_portfolio_equity_curve(trades)
+    if curve.empty or len(curve) < 2:
+        return None
+
+    t = pd.to_datetime(curve["exit_time"], utc=True)
+    eq = float(initial_capital) * (1.0 + curve["cum_pnl_per_capital"].astype(float))
+    peak = eq.cummax()
+    dd_pct = (eq - peak) / peak.replace(0, pd.NA) * 100.0
+
+    # Downsample for browser performance on 10k+ trades
+    if len(eq) > 800:
+        step = max(1, len(eq) // 800)
+        idx = list(range(0, len(eq), step))
+        if idx[-1] != len(eq) - 1:
+            idx.append(len(eq) - 1)
+        t = t.iloc[idx]
+        eq = eq.iloc[idx]
+        dd_pct = dd_pct.iloc[idx]
+
+    src = ColumnDataSource({"t": t, "equity": eq, "dd_pct": dd_pct})
+    p = figure(
+        title="组合权益曲线（USDT，多币等权；每笔平仓后更新）",
+        x_axis_type="datetime",
+        width=1300,
+        height=260,
+        tools="pan,wheel_zoom,box_zoom,reset,save",
+    )
+    p.line("t", "equity", source=src, line_width=2, color="#2563eb")
+    p.add_tools(
+        HoverTool(
+            tooltips=[
+                ("Time", "@t{%F %H:%M}"),
+                ("Equity ($)", "@equity{0,0.0}"),
+                ("Drawdown%", "@dd_pct{0.2f}"),
+            ],
+            formatters={"@t": "datetime"},
+        )
+    )
+    p.yaxis.axis_label = "Equity (USDT)"
+    p.grid.grid_line_alpha = 0.25
+    return p
 
 
 def _add_segment_boxes(
