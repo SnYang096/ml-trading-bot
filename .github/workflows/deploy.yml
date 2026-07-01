@@ -37,7 +37,7 @@
 #   /opt/quant-engine/.env → business-console compose（mainnet + 可选 spot 合并，与 binance_*_mainnet.env 同步写入）。
 #   /opt/quant-engine/monitoring → CI 解压 deploy/monitoring，docker compose 拉起 Grafana :3000（缺 compose 时 apt 安装）；
 #   /opt/quant-engine/deploy/business-console → CI 在 runner 上 npm run build，tarball 含 static/dist；
-#     服务器仅 Python 镜像 build（无 Node/OOM）；up.sh 健康检查失败则整单 deploy 失败。
+#     服务器仅 Python 镜像 build（无 Node/OOM）；up.sh 健康检查；与 quant 重启可 workflow 分步部署。
 #   指标端口：quant-feature-bus 9192→9090，quant-trend-swing 9190→9090，quant-hedge-multileg 9191→9090，quant-spot-accum 9193→9090。
 #   注意：Prometheus 运行在 Docker 内，不能抓取只绑定宿主 127.0.0.1 的端口；端口发布需对 docker bridge 可达。
 #   切勿挂 /opt/quant-engine/live → /app/live，会顶掉镜像内 highcap/config 与 scripts。
@@ -60,6 +60,14 @@ on:
         description: "不重跑 Vision prepare（宿主 ticks/bars 已就绪 / prepare 已 active exited）。仍会 pull + 重启 bus 与 consumers。"
         type: boolean
         default: false
+      deploy_monitoring:
+        description: "部署 Grafana 监控栈 (:3000)"
+        type: boolean
+        default: true
+      deploy_business_console:
+        description: "部署 Trade Map 业务控制台 (:8800)"
+        type: boolean
+        default: true
 
   push:
     branches: [main]
@@ -693,10 +701,9 @@ jobs:
               echo "quant-warmup-prepare systemd: ${st:-unknown}（需为 active：此前须成功跑一次 prepare）"
             else
               if ! sudo systemctl start --no-block quant-warmup-prepare; then
-                echo "::error::quant-warmup-prepare 未能排队启动"
+                echo "::warning::quant-warmup-prepare 未能排队启动（交易栈 deploy 继续；请在主机: journalctl -u quant-warmup-prepare -n 80）"
                 sudo systemctl status quant-warmup-prepare --no-pager || true
                 sudo journalctl -u quant-warmup-prepare --no-pager -n 80 || true
-                exit 1
               fi
             fi
             # Macro seed：restart 保证每次部署都会跑 oneshot；日常由 timer 每日 02:00 UTC 刷新。
@@ -738,9 +745,11 @@ jobs:
             echo "Disk: $(df -h / | tail -1 | awk '{print $4}') free"
 
       - name: 📦 Pack monitoring stack (Grafana + Prometheus + sqlite-web)
+        if: github.event_name == 'push' || inputs.deploy_monitoring != false
         run: tar czf mlbot-monitoring.tgz -C deploy monitoring
 
       - name: 📤 Upload monitoring bundle
+        if: github.event_name == 'push' || inputs.deploy_monitoring != false
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.DEPLOY_HOST }}
@@ -750,6 +759,7 @@ jobs:
           target: "/tmp/"
 
       - name: 🔄 Install monitoring stack & start Grafana
+        if: github.event_name == 'push' || inputs.deploy_monitoring != false
         continue-on-error: true
         uses: appleboy/ssh-action@v1
         with:
@@ -799,12 +809,17 @@ jobs:
             echo ""
             echo "=== 🧹 Cleanup old Grafana dashboard UIDs ==="
             if command -v curl >/dev/null 2>&1; then
+              GRAFANA_AUTH_OK=0
               for i in $(seq 1 30); do
-                if curl -fsS -u admin:admin http://localhost:3000/api/health >/dev/null 2>&1; then
+                if curl -fsS -u admin:admin http://localhost:3000/api/user >/dev/null 2>&1; then
+                  GRAFANA_AUTH_OK=1
                   break
                 fi
                 sleep 2
               done
+              if [ "$GRAFANA_AUTH_OK" != 1 ]; then
+                echo "::notice::Grafana 非默认 admin/admin 或未就绪；跳过旧 dashboard UID 清理"
+              else
               for uid in \
                 quant-engine-main \
                 quant-multi-leg \
@@ -837,6 +852,7 @@ jobs:
                     ;;
                 esac
               done
+              fi
             else
               echo "::warning::curl not found; skip old Grafana dashboard UID cleanup"
             fi
@@ -854,6 +870,9 @@ jobs:
             echo "Metrics: 宿主 9192=feature-bus / 9190=trend-swing / 9191=hedge-multileg / 9193=spot-accum（Prometheus 经 host.docker.internal，见 deploy/monitoring/prometheus.yml）。"
 
       - name: 📦 Pack business console (Trade Map)
+        id: pack_business_console
+        if: github.event_name == 'push' || inputs.deploy_business_console != false
+        continue-on-error: true
         run: |
           set -euo pipefail
           ROOT="${GITHUB_WORKSPACE}"
@@ -936,6 +955,10 @@ jobs:
               live/highcap/config
 
       - name: 📤 Upload business console bundle
+        if: |
+          (github.event_name == 'push' || inputs.deploy_business_console != false) &&
+          steps.pack_business_console.outcome == 'success'
+        continue-on-error: true
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.DEPLOY_HOST }}
@@ -945,6 +968,10 @@ jobs:
           target: "/tmp/"
 
       - name: 🔄 Install business console & start Trade Map
+        if: |
+          (github.event_name == 'push' || inputs.deploy_business_console != false) &&
+          steps.pack_business_console.outcome == 'success'
+        continue-on-error: true
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}
@@ -1035,8 +1062,7 @@ jobs:
               exit 1
             fi
             if ! grep -q "MULTI_LEG_BINANCE_FUTURES_API_KEY=" /opt/quant-engine/.env; then
-              echo "::error::/opt/quant-engine/.env 缺少 MULTI_LEG_BINANCE_FUTURES_API_KEY，请重新运行 deploy 的 Write API keys 步骤。"
-              exit 1
+              echo "::warning::/opt/quant-engine/.env 缺少 MULTI_LEG_BINANCE_FUTURES_API_KEY；Trade Map 仍可只读展示，账户 API 可能不可用"
             fi
 
             cd /opt/quant-engine/deploy/business-console
@@ -1057,8 +1083,10 @@ jobs:
         if: always()
         run: |
           {
-            echo "### Business console"
+            echo "### Panel stacks (optional)"
+            echo "- Pack business console: \`${{ steps.pack_business_console.outcome || 'skipped' }}\`"
             echo "- Trade Map: \`http://127.0.0.1:8800/trade-map\` (SSH \`-L 8800:127.0.0.1:8800\`)"
             echo "- Grafana: \`http://127.0.0.1:3000\` (SSH \`-L 3000:127.0.0.1:3000\`)"
-            echo "- If **Install business console** failed, :8800 will not listen; see step logs + \`docker logs mlbot-business-console\`"
+            echo "- Grafana 401 on UID cleanup = 已改过 admin 密码，可忽略"
+            echo "- 若 **Pack/Install business console** 失败，交易栈不受影响；见对应步骤日志"
           } >> "$GITHUB_STEP_SUMMARY"
