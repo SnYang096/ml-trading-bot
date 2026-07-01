@@ -10,7 +10,6 @@ import {
 import {
   isValidLogicalRange,
   visibleLogicalRange,
-  type LogicalRange,
 } from '@/lib/tradeMap/candles.ts';
 import {
   bandHighlightSeriesOptions,
@@ -123,12 +122,7 @@ export function useTradeMapMainChart(params: MainChartParams) {
   paramsRef.current = params;
 
   const applyChartViewport = useCallback(
-    (
-      chart: IChartApi,
-      barCount: number,
-      fitPending: boolean,
-      rangeBeforeSetData?: LogicalRange | null,
-    ) => {
+    (chart: IChartApi, barCount: number, fitPending: boolean) => {
       const scrollAdjust = useTradeMapStore.getState().historyScrollAdjust;
       if (scrollAdjust && isValidLogicalRange(scrollAdjust, barCount)) {
         chart.timeScale().setVisibleLogicalRange(scrollAdjust);
@@ -157,9 +151,7 @@ export function useTradeMapMainChart(params: MainChartParams) {
        * isValidLogicalRange(to < barCount) check always failed and forced
        * a snap-to-right on every poll tick.
        *
-       * Now we simply trust the captured range and restore it.
-       * rangeBeforeSetData is only set on history prepend (handled above
-       * via scrollAdjust), so for normal poll we skip the restore too —
+       * Now we simply trust scrollAdjust for history prepend; for normal poll
        * lightweight-charts preserves the visible logical range across
        * series.setData() when data is only appended.
        */
@@ -402,9 +394,8 @@ export function useTradeMapMainChart(params: MainChartParams) {
     const p = paramsRef.current;
     const clean = sanitizeCandlesForLwc(p.candles) as CandlestickData<Time>[];
     if (!clean.length) return;
-    const rangeBeforeSetData = chart.timeScale().getVisibleLogicalRange();
     series.setData(clean);
-    applyChartViewport(chart, clean.length, p.chartFitPending, rangeBeforeSetData);
+    applyChartViewport(chart, clean.length, p.chartFitPending);
     applyMainOverlays(chart);
     applyChopLayers(chart, series);
     applyTradeLinks(chart);
