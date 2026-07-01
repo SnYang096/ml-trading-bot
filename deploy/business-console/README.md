@@ -18,10 +18,16 @@ chmod +x deploy/business-console/run_console.sh
 
 ## Production (Docker)
 
+CI builds the frontend on the GitHub runner (`npm run build` → `src/mlbot_console/static/dist/`)
+before packing the tarball. The Docker image is **Python-only** (no Node on the VPS).
+
 ```bash
 cd /opt/quant-engine/deploy/business-console
-docker compose up -d --build
+chmod +x up.sh
+./up.sh
 ```
+
+Manual equivalent: `make frontend-build` at repo root, then `docker compose up -d --build`.
 
 Build context is the **repository root** (`../..` → `/opt/quant-engine`): image includes `src/mlbot_console`, `src/time_series_model`, `src/config` (archetype prefilter/gate regions), and `config/strategies`. Account overview uses `requests`, `ccxt`, and `python-dotenv` via `mlbot_console.services.spot_ccxt` (no `order_management` copy).
 

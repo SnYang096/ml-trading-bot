@@ -838,6 +838,11 @@ jobs:
         run: |
           set -euo pipefail
           ROOT="${GITHUB_WORKSPACE}"
+          # Build frontend on CI runner (avoids Node OOM during docker build on small VPS).
+          cd "${ROOT}/frontend"
+          npm ci
+          npm run build
+          test -f "${ROOT}/src/mlbot_console/static/dist/index.html"
           for p in \
             deploy/business-console \
             deploy/systemd/quant-business-console.service \
@@ -919,7 +924,6 @@ jobs:
           target: "/tmp/"
 
       - name: 🔄 Install business console & start Trade Map
-        continue-on-error: true
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}
@@ -1010,11 +1014,19 @@ jobs:
             fi
 
             cd /opt/quant-engine/deploy/business-console
+            chmod +x up.sh 2>/dev/null || true
             if ! docker compose version >/dev/null 2>&1; then
-              echo "::notice::服务器未安装 docker compose；已跳过 Trade Map。请在主机手动安装后于 deploy/business-console 执行 docker compose up -d"
-              exit 0
+              echo "::error::服务器未安装 docker compose；Trade Map 未启动。请 apt install docker-compose-v2 后执行 deploy/business-console/up.sh"
+              exit 1
             fi
-            docker compose up -d --build --remove-orphans
+            if [ ! -f /opt/quant-engine/src/mlbot_console/static/dist/index.html ]; then
+              echo "::error::缺少预构建前端 dist；请重新 deploy（CI 会在打包前 npm run build）"
+              exit 1
+            fi
+            ./up.sh || {
+              echo "::error::business-console 启动失败（见上方 docker logs）"
+              exit 1
+            }
             echo ""
             echo "=== 📊 Business console ==="
             docker ps --filter name=mlbot-business-console --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'

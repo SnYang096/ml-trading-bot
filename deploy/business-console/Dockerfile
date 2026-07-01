@@ -1,12 +1,7 @@
 # Build context: repository root (see docker-compose.yml)
-FROM node:22-bookworm-slim AS frontend-build
-
-WORKDIR /repo
-COPY frontend/package.json frontend/package-lock.json ./frontend/
-RUN cd frontend && npm ci
-COPY frontend/ ./frontend/
-RUN mkdir -p src/mlbot_console/static && cd frontend && npm run build
-
+#
+# Frontend must be built before `docker compose build` (CI runs `make frontend-build`;
+# local: same). Avoids Node/npm inside Docker on small VPS (OOM during vite build).
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -16,7 +11,8 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 COPY src/__init__.py /app/src/__init__.py
 COPY src/mlbot_console /app/src/mlbot_console
-COPY --from=frontend-build /repo/src/mlbot_console/static/dist /app/src/mlbot_console/static/dist
+RUN test -f /app/src/mlbot_console/static/dist/index.html || \
+    (echo "ERROR: missing src/mlbot_console/static/dist — run: make frontend-build" && exit 1)
 COPY src/live_data_stream /app/src/live_data_stream
 COPY src/time_series_model /app/src/time_series_model
 COPY src/monitoring /app/src/monitoring
