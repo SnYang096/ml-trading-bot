@@ -742,6 +742,7 @@ jobs:
           target: "/tmp/"
 
       - name: 🔄 Install monitoring stack & start Grafana
+        continue-on-error: true
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}
@@ -750,37 +751,6 @@ jobs:
           command_timeout: 10m
           script: |
             set -euo pipefail
-            ensure_docker_compose() {
-              if docker compose version >/dev/null 2>&1; then
-                return 0
-              fi
-              if command -v docker-compose >/dev/null 2>&1 && docker-compose version >/dev/null 2>&1; then
-                return 0
-              fi
-              echo "Installing Docker Compose v2 plugin (docker.io only hosts lack 'docker compose')..."
-              ARCH="$(uname -m)"
-              case "$ARCH" in
-                x86_64|amd64) PLUGIN_ARCH=amd64 ;;
-                aarch64|arm64) PLUGIN_ARCH=arm64 ;;
-                *)
-                  echo "::error::unsupported arch for docker compose: ${ARCH}"
-                  exit 1
-                  ;;
-              esac
-              sudo mkdir -p /usr/local/lib/docker/cli-plugins
-              sudo curl -fsSL "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-${PLUGIN_ARCH}" \
-                -o /usr/local/lib/docker/cli-plugins/docker-compose
-              sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-              docker compose version
-            }
-            compose() {
-              ensure_docker_compose
-              if docker compose version >/dev/null 2>&1; then
-                docker compose "$@"
-              else
-                docker-compose "$@"
-              fi
-            }
             sudo mkdir -p /opt/quant-engine
             sudo tar xzf /tmp/mlbot-monitoring.tgz -C /opt/quant-engine
             rm -f /tmp/mlbot-monitoring.tgz
@@ -800,9 +770,13 @@ jobs:
             else
               echo "::notice::monitoring/.env 无 Telegram token；Grafana 可启动，告警不发 Telegram（cp .env.example .env 后 redeploy 或 restart grafana）"
             fi
+            if ! docker compose version >/dev/null 2>&1; then
+              echo "::notice::服务器未安装 docker compose；已跳过 Grafana 栈。请在主机手动安装后执行 monitoring/docker-compose.monitoring.yml"
+              exit 0
+            fi
             # sqlite-web 仅用本地 Dockerfile build，勿对 mlbot-sqlite-web:* 执行 pull（无远端仓库）
-            compose -f docker-compose.monitoring.yml pull prometheus grafana loki promtail
-            compose -f docker-compose.monitoring.yml up -d --build --remove-orphans
+            docker compose -f docker-compose.monitoring.yml pull prometheus grafana loki promtail
+            docker compose -f docker-compose.monitoring.yml up -d --build --remove-orphans
             echo ""
             echo "=== 🧹 Cleanup old Grafana dashboard UIDs ==="
             if command -v curl >/dev/null 2>&1; then
@@ -945,6 +919,7 @@ jobs:
           target: "/tmp/"
 
       - name: 🔄 Install business console & start Trade Map
+        continue-on-error: true
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}
@@ -953,37 +928,6 @@ jobs:
           command_timeout: 10m
           script: |
             set -euo pipefail
-            ensure_docker_compose() {
-              if docker compose version >/dev/null 2>&1; then
-                return 0
-              fi
-              if command -v docker-compose >/dev/null 2>&1 && docker-compose version >/dev/null 2>&1; then
-                return 0
-              fi
-              echo "Installing Docker Compose v2 plugin (docker.io only hosts lack 'docker compose')..."
-              ARCH="$(uname -m)"
-              case "$ARCH" in
-                x86_64|amd64) PLUGIN_ARCH=amd64 ;;
-                aarch64|arm64) PLUGIN_ARCH=arm64 ;;
-                *)
-                  echo "::error::unsupported arch for docker compose: ${ARCH}"
-                  exit 1
-                  ;;
-              esac
-              sudo mkdir -p /usr/local/lib/docker/cli-plugins
-              sudo curl -fsSL "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-${PLUGIN_ARCH}" \
-                -o /usr/local/lib/docker/cli-plugins/docker-compose
-              sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-              docker compose version
-            }
-            compose() {
-              ensure_docker_compose
-              if docker compose version >/dev/null 2>&1; then
-                docker compose "$@"
-              else
-                docker-compose "$@"
-              fi
-            }
             sudo mkdir -p /opt/quant-engine
             sudo tar xzf /tmp/mlbot-business-console.tgz -C /opt/quant-engine
             rm -f /tmp/mlbot-business-console.tgz
@@ -1066,7 +1010,11 @@ jobs:
             fi
 
             cd /opt/quant-engine/deploy/business-console
-            compose up -d --build --remove-orphans
+            if ! docker compose version >/dev/null 2>&1; then
+              echo "::notice::服务器未安装 docker compose；已跳过 Trade Map。请在主机手动安装后于 deploy/business-console 执行 docker compose up -d"
+              exit 0
+            fi
+            docker compose up -d --build --remove-orphans
             echo ""
             echo "=== 📊 Business console ==="
             docker ps --filter name=mlbot-business-console --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
