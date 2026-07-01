@@ -114,7 +114,8 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}/quant-engine
+  # GHCR/Docker refs must be lowercase (github.repository may be SnYang096/...).
+  IMAGE_NAME: ${{ toLower(github.repository) }}/quant-engine
 
 jobs:
   # ============================================
