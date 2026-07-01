@@ -23,11 +23,22 @@ done
 [[ -r /opt/quant-engine/.env ]] || fail "/opt/quant-engine/.env not readable (chown deploy user; chmod 600)"
 
 if [[ ! -f "$ROOT/src/mlbot_console/static/dist/index.html" ]]; then
-  fail "missing frontend dist at $ROOT/src/mlbot_console/static/dist — run: cd frontend && npm ci && npm run build"
+  fail "missing frontend dist — CI should run npm run build before pack; local: make frontend-build"
 fi
 
 if ! docker compose version >/dev/null 2>&1; then
-  fail "docker compose not installed (apt install docker-compose-v2)"
+  echo "Installing docker-compose-v2 (one-time host bootstrap)..."
+  export DEBIAN_FRONTEND=noninteractive
+  if command -v sudo >/dev/null 2>&1; then
+    sudo apt-get update -qq
+    sudo apt-get install -y docker-compose-v2
+  else
+    apt-get update -qq
+    apt-get install -y docker-compose-v2
+  fi
+fi
+if ! docker compose version >/dev/null 2>&1; then
+  fail "docker compose not available after apt install docker-compose-v2"
 fi
 
 echo "=== docker compose up --build ==="

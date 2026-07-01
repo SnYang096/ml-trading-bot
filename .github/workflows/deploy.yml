@@ -35,8 +35,9 @@
 #   /opt/quant-engine/data                    → /app/data                    (parquet_data 等)
 #   /opt/quant-engine/live/binance_mainnet.env → 通过 --env-file 注入（quant-trend-swing / quant-hedge-multileg；feature-bus 无此文件）。
 #   /opt/quant-engine/.env → business-console compose（mainnet + 可选 spot 合并，与 binance_*_mainnet.env 同步写入）。
-#   /opt/quant-engine/monitoring → CI 解压 deploy/monitoring，docker compose 拉起 Grafana :3000、Prometheus :9091、sqlite-web :8871-8873；
-#   /opt/quant-engine/deploy/business-console → CI 解压同路径，docker compose 拉起 Trade Map :8800（127.0.0.1，SSH 隧道/VPN）；
+#   /opt/quant-engine/monitoring → CI 解压 deploy/monitoring，docker compose 拉起 Grafana :3000（缺 compose 时 apt 安装）；
+#   /opt/quant-engine/deploy/business-console → CI 在 runner 上 npm run build，tarball 含 static/dist；
+#     服务器仅 Python 镜像 build（无 Node/OOM）；up.sh 健康检查失败则整单 deploy 失败。
 #   指标端口：quant-feature-bus 9192→9090，quant-trend-swing 9190→9090，quant-hedge-multileg 9191→9090，quant-spot-accum 9193→9090。
 #   注意：Prometheus 运行在 Docker 内，不能抓取只绑定宿主 127.0.0.1 的端口；端口发布需对 docker bridge 可达。
 #   切勿挂 /opt/quant-engine/live → /app/live，会顶掉镜像内 highcap/config 与 scripts。
@@ -771,8 +772,14 @@ jobs:
               echo "::notice::monitoring/.env 无 Telegram token；Grafana 可启动，告警不发 Telegram（cp .env.example .env 后 redeploy 或 restart grafana）"
             fi
             if ! docker compose version >/dev/null 2>&1; then
-              echo "::notice::服务器未安装 docker compose；已跳过 Grafana 栈。请在主机手动安装后执行 monitoring/docker-compose.monitoring.yml"
-              exit 0
+              echo "Installing docker-compose-v2..."
+              export DEBIAN_FRONTEND=noninteractive
+              sudo apt-get update -qq
+              sudo apt-get install -y docker-compose-v2
+            fi
+            if ! docker compose version >/dev/null 2>&1; then
+              echo "::error::docker compose 不可用；无法启动 Grafana"
+              exit 1
             fi
             # sqlite-web 仅用本地 Dockerfile build，勿对 mlbot-sqlite-web:* 执行 pull（无远端仓库）
             docker compose -f docker-compose.monitoring.yml pull prometheus grafana loki promtail
@@ -843,6 +850,7 @@ jobs:
           npm ci
           npm run build
           test -f "${ROOT}/src/mlbot_console/static/dist/index.html"
+          chmod +x "${ROOT}/deploy/business-console/up.sh"
           for p in \
             deploy/business-console \
             deploy/systemd/quant-business-console.service \
@@ -1014,15 +1022,7 @@ jobs:
             fi
 
             cd /opt/quant-engine/deploy/business-console
-            chmod +x up.sh 2>/dev/null || true
-            if ! docker compose version >/dev/null 2>&1; then
-              echo "::error::服务器未安装 docker compose；Trade Map 未启动。请 apt install docker-compose-v2 后执行 deploy/business-console/up.sh"
-              exit 1
-            fi
-            if [ ! -f /opt/quant-engine/src/mlbot_console/static/dist/index.html ]; then
-              echo "::error::缺少预构建前端 dist；请重新 deploy（CI 会在打包前 npm run build）"
-              exit 1
-            fi
+            chmod +x up.sh
             ./up.sh || {
               echo "::error::business-console 启动失败（见上方 docker logs）"
               exit 1
