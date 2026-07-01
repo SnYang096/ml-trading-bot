@@ -800,9 +800,8 @@ jobs:
               done
             fi
             if ! docker compose version >/dev/null 2>&1; then
-              echo "::error::docker compose 不可用；无法启动 Grafana"
-              exit 1
-            fi
+              echo "::warning::docker compose 不可用；跳过 Grafana 栈（可稍后手动 monitoring/docker-compose up -d）"
+            else
             # sqlite-web 仅用本地 Dockerfile build，勿对 mlbot-sqlite-web:* 执行 pull（无远端仓库）
             docker compose -f docker-compose.monitoring.yml pull prometheus grafana loki promtail
             docker compose -f docker-compose.monitoring.yml up -d --build --remove-orphans
@@ -856,6 +855,7 @@ jobs:
             else
               echo "::warning::curl not found; skip old Grafana dashboard UID cleanup"
             fi
+            fi
             echo ""
             echo "=== 📊 Monitoring containers ==="
             docker ps --filter name=mlbot --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
@@ -873,16 +873,13 @@ jobs:
         id: pack_business_console
         if: github.event_name == 'push' || inputs.deploy_business_console != false
         continue-on-error: true
+        env:
+          # e2e devDependency only; skip browser download on CI pack (often fails/timeouts).
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
         run: |
           set -euo pipefail
           ROOT="${GITHUB_WORKSPACE}"
-          # Build frontend on CI runner (avoids Node OOM during docker build on small VPS).
-          cd "${ROOT}/frontend"
-          npm ci
-          npm run build
-          test -f "${ROOT}/src/mlbot_console/static/dist/index.html"
-          chmod +x "${ROOT}/deploy/business-console/up.sh"
-          chmod +x "${ROOT}/deploy/business-console/ensure_docker_compose.sh"
+          echo "node: $(node -v) npm: $(npm -v)"
           for p in \
             deploy/business-console \
             deploy/systemd/quant-business-console.service \
@@ -920,6 +917,14 @@ jobs:
             test -d "${ROOT}/live/highcap/config/strategies/${sid}" \
               || { echo "::error::missing live strategy ${sid}"; exit 1; }
           done
+          # Build frontend on CI runner (avoids Node OOM during docker build on small VPS).
+          cd "${ROOT}/frontend"
+          npm ci --no-audit
+          npm run build
+          test -f "${ROOT}/src/mlbot_console/static/dist/index.html"
+          chmod +x "${ROOT}/deploy/business-console/up.sh"
+          test -f "${ROOT}/deploy/business-console/ensure_docker_compose.sh" \
+            && chmod +x "${ROOT}/deploy/business-console/ensure_docker_compose.sh"
           # Keep deploy/business-console path so compose build context (../..) = /opt/quant-engine
           tar czf mlbot-business-console.tgz \
             -C "${ROOT}" \
