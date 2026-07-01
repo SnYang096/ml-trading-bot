@@ -307,6 +307,13 @@ jobs:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
 
+      - name: Setup Node.js (business-console frontend build)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
       - name: Set lowercase GHCR image name
         run: echo "IMAGE_NAME=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')/quant-engine" >> "$GITHUB_ENV"
 
@@ -772,10 +779,15 @@ jobs:
               echo "::notice::monitoring/.env 无 Telegram token；Grafana 可启动，告警不发 Telegram（cp .env.example .env 后 redeploy 或 restart grafana）"
             fi
             if ! docker compose version >/dev/null 2>&1; then
-              echo "Installing docker-compose-v2..."
+              echo "Installing docker compose plugin..."
               export DEBIAN_FRONTEND=noninteractive
               sudo apt-get update -qq
-              sudo apt-get install -y docker-compose-v2
+              for pkg in docker-compose-v2 docker-compose-plugin; do
+                if apt-cache show "$pkg" >/dev/null 2>&1; then
+                  sudo apt-get install -y "$pkg"
+                  break
+                fi
+              done
             fi
             if ! docker compose version >/dev/null 2>&1; then
               echo "::error::docker compose 不可用；无法启动 Grafana"
@@ -851,6 +863,7 @@ jobs:
           npm run build
           test -f "${ROOT}/src/mlbot_console/static/dist/index.html"
           chmod +x "${ROOT}/deploy/business-console/up.sh"
+          chmod +x "${ROOT}/deploy/business-console/ensure_docker_compose.sh"
           for p in \
             deploy/business-console \
             deploy/systemd/quant-business-console.service \
@@ -947,8 +960,13 @@ jobs:
               /opt/quant-engine/deploy \
               /opt/quant-engine/src \
               /opt/quant-engine/config \
+              /opt/quant-engine/frontend \
               /opt/quant-engine/etc \
-              /opt/quant-engine/scripts
+              /opt/quant-engine/scripts \
+              /opt/quant-engine/live/highcap/config
+            if [ -f /opt/quant-engine/live/highcap/universe.yaml ]; then
+              sudo chown "$(whoami):$(whoami)" /opt/quant-engine/live/highcap/universe.yaml
+            fi
             sudo mkdir -p /opt/quant-engine/results/monitoring
             sudo chown -R "$(whoami):$(whoami)" /opt/quant-engine/results
             if [ -f /opt/quant-engine/deploy/systemd/mlbot-monitor-docker-run.sh ]; then
@@ -1022,7 +1040,7 @@ jobs:
             fi
 
             cd /opt/quant-engine/deploy/business-console
-            chmod +x up.sh
+            chmod +x up.sh ensure_docker_compose.sh
             ./up.sh || {
               echo "::error::business-console 启动失败（见上方 docker logs）"
               exit 1
@@ -1034,3 +1052,13 @@ jobs:
             echo "Drift CMS: http://127.0.0.1:8800/monitoring （index 来自 /opt/quant-engine/results/monitoring/index.json）"
             echo "live/highcap → universe.yaml + config/constitution + config/strategies（由 business-console CI 同步）"
             echo "可选 Basic Auth: 在 compose 环境变量中设置 MLBOT_CONSOLE_BASIC_AUTH_USER/PASSWORD 后 docker compose up -d"
+
+      - name: 📊 Deploy summary (panels)
+        if: always()
+        run: |
+          {
+            echo "### Business console"
+            echo "- Trade Map: \`http://127.0.0.1:8800/trade-map\` (SSH \`-L 8800:127.0.0.1:8800\`)"
+            echo "- Grafana: \`http://127.0.0.1:3000\` (SSH \`-L 3000:127.0.0.1:3000\`)"
+            echo "- If **Install business console** failed, :8800 will not listen; see step logs + \`docker logs mlbot-business-console\`"
+          } >> "$GITHUB_STEP_SUMMARY"

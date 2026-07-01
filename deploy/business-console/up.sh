@@ -11,6 +11,7 @@ fail() {
 }
 
 echo "=== business-console preflight ==="
+"${HERE}/ensure_docker_compose.sh"
 for p in \
   /opt/quant-engine/.env \
   /opt/quant-engine/live/shared_feature_bus \
@@ -26,19 +27,8 @@ if [[ ! -f "$ROOT/src/mlbot_console/static/dist/index.html" ]]; then
   fail "missing frontend dist — CI should run npm run build before pack; local: make frontend-build"
 fi
 
-if ! docker compose version >/dev/null 2>&1; then
-  echo "Installing docker-compose-v2 (one-time host bootstrap)..."
-  export DEBIAN_FRONTEND=noninteractive
-  if command -v sudo >/dev/null 2>&1; then
-    sudo apt-get update -qq
-    sudo apt-get install -y docker-compose-v2
-  else
-    apt-get update -qq
-    apt-get install -y docker-compose-v2
-  fi
-fi
-if ! docker compose version >/dev/null 2>&1; then
-  fail "docker compose not available after apt install docker-compose-v2"
+if ! docker info >/dev/null 2>&1; then
+  fail "cannot access docker daemon (add $(whoami) to group docker, or run deploy SSH as root)"
 fi
 
 echo "=== docker compose up --build ==="
