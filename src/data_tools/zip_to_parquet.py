@@ -20,6 +20,10 @@ from pathlib import Path
 # 设置日志
 logger = logging.getLogger(__name__)
 
+# Daily Vision ZIPs can hold ~10M+ aggTrades rows; chunk reads avoid holding the
+# full CSV plus resample intermediates in memory at once.
+AGGTRADES_CSV_CHUNK_ROWS = 500_000
+
 
 def is_binance_um_monthly_aggtrade_zip(filename: str) -> bool:
     """True for UM Vision *monthly* aggTrades ``*-aggTrades-YYYY-MM.zip``.
@@ -158,35 +162,59 @@ class DataConverter:
                         }
                     )
 
-                try:
-                    if is_binance_um_monthly_aggtrade_zip(zip_basename):
-                        logger.info(
-                            "Reading aggTrades CSV from zip into memory (%s); "
-                            "MONTHLY Vision archives are very large — expect high RAM/swap "
-                            "and long runtime (small containers may OOM; prefer daily ZIPs).",
-                            zip_basename,
-                        )
-                    else:
-                        logger.info(
-                            "Reading aggTrades CSV from zip into memory (%s); "
-                            "next log line is row count.",
-                            zip_basename,
-                        )
-                    with zip_ref.open(csv_file) as csv_handle:
-                        df = pd.read_csv(csv_handle, **read_params)
-                except Exception as read_error:
-                    logger.warning(
-                        "Primary CSV load failed for %s, retrying with python engine: %s",
-                        os.path.basename(zip_file),
-                        read_error,
+                read_engine = read_params.get("engine")
+                if is_binance_um_monthly_aggtrade_zip(zip_basename):
+                    logger.info(
+                        "Reading aggTrades CSV from zip in chunks (%s, chunk=%s); "
+                        "MONTHLY Vision archives are very large — expect long runtime.",
+                        zip_basename,
+                        AGGTRADES_CSV_CHUNK_ROWS,
                     )
-                    fallback_params = {**read_params, "engine": "python"}
-                    with zip_ref.open(csv_file) as csv_handle:
-                        df = pd.read_csv(csv_handle, **fallback_params)
+                else:
+                    logger.info(
+                        "Reading aggTrades CSV from zip in chunks (%s, chunk=%s)",
+                        zip_basename,
+                        AGGTRADES_CSV_CHUNK_ROWS,
+                    )
 
-                logger.info(f"Loaded data: {df.shape}")
+                def _iter_csv_chunks(handle, params: Dict):
+                    chunk_params = {
+                        **params,
+                        "chunksize": AGGTRADES_CSV_CHUNK_ROWS,
+                    }
+                    try:
+                        yield from pd.read_csv(handle, **chunk_params)
+                    except Exception as read_error:
+                        logger.warning(
+                            "Primary chunked CSV load failed for %s, retrying with python engine: %s",
+                            os.path.basename(zip_file),
+                            read_error,
+                        )
+                        fallback_params = {**chunk_params, "engine": "python"}
+                        yield from pd.read_csv(handle, **fallback_params)
 
-                df_ticks = self._preprocess_tick_data(df)
+                partial_aggs: List[pd.DataFrame] = []
+                total_rows = 0
+                with zip_ref.open(csv_file) as csv_handle:
+                    for chunk_idx, chunk in enumerate(
+                        _iter_csv_chunks(csv_handle, read_params), start=1
+                    ):
+                        total_rows += len(chunk)
+                        partial = self._partial_resample_agg(
+                            self._normalize_tick_chunk(chunk)
+                        )
+                        if partial is not None and not partial.empty:
+                            partial_aggs.append(partial)
+                        if chunk_idx % 5 == 0:
+                            logger.info(
+                                "Chunk progress %s: %s rows read so far",
+                                zip_basename,
+                                total_rows,
+                            )
+
+                logger.info("Loaded data: (%s, 7)", total_rows)
+
+                df_ticks = self._partial_aggs_to_tick_df(partial_aggs)
                 if df_ticks is None or df_ticks.empty:
                     logger.warning("No tick data after preprocessing for %s", zip_file)
                     return None
@@ -220,6 +248,102 @@ class DataConverter:
             logger.error(f"Error converting {zip_file}: {e}")
             return None
 
+    def _normalize_tick_chunk(self, df: pd.DataFrame) -> Optional[pd.DataFrame]:
+        """Normalize one aggTrades CSV chunk to timestamp/price/volume/side."""
+        required_cols = {"transact_time", "price", "quantity"}
+        if not all(col in df.columns for col in required_cols):
+            logger.warning("Missing required columns in %s", df.columns.tolist())
+            return None
+
+        out = pd.DataFrame(
+            {
+                "timestamp": pd.to_datetime(df["transact_time"], unit="ms", utc=True),
+                "price": pd.to_numeric(df["price"], errors="coerce"),
+                "volume": pd.to_numeric(df["quantity"], errors="coerce"),
+            }
+        )
+        out = out.dropna(subset=["timestamp", "price", "volume"])
+        if out.empty:
+            return None
+
+        if "is_buyer_maker" in df.columns:
+            out["side"] = np.where(df.loc[out.index, "is_buyer_maker"].astype(bool), -1, 1)
+        elif "side" in df.columns:
+            out["side"] = (
+                df.loc[out.index, "side"]
+                .map({"buy": 1, "sell": -1})
+                .fillna(0)
+                .astype(int)
+            )
+        else:
+            out["side"] = np.sign(out["volume"]).replace(0, 1)
+
+        return out.sort_values("timestamp")
+
+    def _partial_resample_agg(self, df: Optional[pd.DataFrame]) -> Optional[pd.DataFrame]:
+        """Resample normalized ticks to aggregate_freq partial buckets."""
+        if df is None or df.empty:
+            return None
+
+        work = df.copy()
+        work["buy_volume"] = np.where(work["side"] == 1, work["volume"], 0.0)
+        work["sell_volume"] = np.where(work["side"] == -1, work["volume"], 0.0)
+        work["price_volume"] = work["price"] * work["volume"]
+
+        return (
+            work.set_index("timestamp")
+            .resample(self.aggregate_freq)
+            .agg(
+                {
+                    "buy_volume": "sum",
+                    "sell_volume": "sum",
+                    "price_volume": "sum",
+                    "volume": "sum",
+                }
+            )
+        )
+
+    def _merge_partial_aggs(self, partial_aggs: List[pd.DataFrame]) -> Optional[pd.DataFrame]:
+        if not partial_aggs:
+            return None
+        combined = pd.concat(partial_aggs)
+        return combined.groupby(combined.index).sum()
+
+    def _agg_buckets_to_tick_df(self, agg: pd.DataFrame) -> Optional[pd.DataFrame]:
+        """Expand resampled buckets into buy/sell tick rows with VWAP price."""
+        agg = agg.copy()
+        agg["vwap"] = agg["price_volume"] / agg["volume"].replace(0, np.nan)
+
+        rows = []
+        for ts, row in agg.iterrows():
+            vwap = row["vwap"]
+            buy_vol = row["buy_volume"]
+            sell_vol = row["sell_volume"]
+            if not np.isfinite(vwap):
+                continue
+            if buy_vol > 0:
+                rows.append(
+                    {"timestamp": ts, "price": vwap, "volume": buy_vol, "side": 1}
+                )
+            if sell_vol > 0:
+                rows.append(
+                    {"timestamp": ts, "price": vwap, "volume": sell_vol, "side": -1}
+                )
+
+        if not rows:
+            return None
+
+        out = pd.DataFrame(rows)
+        return out[["timestamp", "price", "volume", "side"]]
+
+    def _partial_aggs_to_tick_df(
+        self, partial_aggs: List[pd.DataFrame]
+    ) -> Optional[pd.DataFrame]:
+        agg = self._merge_partial_aggs(partial_aggs)
+        if agg is None or agg.empty:
+            return None
+        return self._agg_buckets_to_tick_df(agg)
+
     def _preprocess_tick_data(self, df: pd.DataFrame) -> Optional[pd.DataFrame]:
         """
         预处理 tick 数据
@@ -231,73 +355,10 @@ class DataConverter:
             处理后的 DataFrame，失败返回 None
         """
         try:
-            required_cols = {"transact_time", "price", "quantity"}
-            if not all(col in df.columns for col in required_cols):
-                logger.warning("Missing required columns in %s", df.columns.tolist())
+            partial = self._partial_resample_agg(self._normalize_tick_chunk(df))
+            if partial is None or partial.empty:
                 return None
-
-            df["timestamp"] = pd.to_datetime(df["transact_time"], unit="ms", utc=True)
-            df["price"] = pd.to_numeric(df["price"], errors="coerce")
-            df["volume"] = pd.to_numeric(df["quantity"], errors="coerce")
-            df = df.dropna(subset=["timestamp", "price", "volume"])
-            df = df.sort_values("timestamp")
-
-            if "is_buyer_maker" in df.columns:
-                df["side"] = np.where(df["is_buyer_maker"].astype(bool), -1, 1)
-            elif "side" in df.columns:
-                df["side"] = (
-                    df["side"].map({"buy": 1, "sell": -1}).fillna(0).astype(int)
-                )
-            else:
-                df["side"] = np.sign(df["volume"]).replace(0, 1)
-
-            # 追加：将原始 tick 聚合到指定频率级别（显著降低体积，适用于 1h/4h 策略）
-            # 聚合逻辑：
-            # - 按指定频率内按买/卖分别累加成交量
-            # - 价格使用该时间段的整体 VWAP（price * volume / sum(volume)）
-            # - 若某时间段只有买或只有卖，则只输出对应一条记录
-            df["buy_volume"] = np.where(df["side"] == 1, df["volume"], 0.0)
-            df["sell_volume"] = np.where(df["side"] == -1, df["volume"], 0.0)
-            df["price_volume"] = df["price"] * df["volume"]
-
-            agg = (
-                df.set_index("timestamp")
-                # 使用 self.aggregate_freq 指定的频率（默认 "1s"，也可以是 "1T" 等）
-                .resample(self.aggregate_freq).agg(
-                    {
-                        "buy_volume": "sum",
-                        "sell_volume": "sum",
-                        "price_volume": "sum",
-                        "volume": "sum",
-                    }
-                )
-            )
-
-            # 计算该时间段 VWAP
-            agg["vwap"] = agg["price_volume"] / agg["volume"].replace(0, np.nan)
-
-            rows = []
-            for ts, row in agg.iterrows():
-                vwap = row["vwap"]
-                buy_vol = row["buy_volume"]
-                sell_vol = row["sell_volume"]
-                if not np.isfinite(vwap):
-                    continue
-                if buy_vol > 0:
-                    rows.append(
-                        {"timestamp": ts, "price": vwap, "volume": buy_vol, "side": 1}
-                    )
-                if sell_vol > 0:
-                    rows.append(
-                        {"timestamp": ts, "price": vwap, "volume": sell_vol, "side": -1}
-                    )
-
-            if not rows:
-                return None
-
-            agg_df = pd.DataFrame(rows)
-            return agg_df[["timestamp", "price", "volume", "side"]]
-
+            return self._partial_aggs_to_tick_df([partial])
         except Exception as e:
             logger.error("Error preprocessing tick data: %s", e)
             return None

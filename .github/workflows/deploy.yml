@@ -445,11 +445,10 @@ jobs:
             [Service]
             Type=oneshot
             RemainAfterExit=yes
-            # Docker：--memory-swap 为「内存+swap」合计上限（MiB），且须 > --memory 才允许用 swap。
-            # 实际能换出的量还受主机 swap/swapfile 大小限制；warmup 默认按日 Vision ZIP，峰值通常低于单月整包。
+            # Warmup conversion is chunked in zip_to_parquet; no Docker memory cap so
+            # a 12G host can use available RAM (stop other quant containers during warmup).
             ExecStartPre=-/usr/bin/docker rm -f quant-warmup-prepare
             ExecStart=/usr/bin/docker run --rm --name quant-warmup-prepare \
-              --memory=8192m --memory-swap=16384m \
               -v /opt/quant-engine/live/highcap/data:/app/live/highcap/data \
               -v /opt/quant-engine/data:/app/data \
               quant-engine:latest \
